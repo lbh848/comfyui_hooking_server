@@ -32,7 +32,7 @@ from queue_manager import queue_manager
 
 HISTORY_PATH = data_root(ROOT) / "logs" / "lighbd_history.jsonl"
 BOT_PATH = data_root(ROOT) / "asset_data" / "bot.json"
-CONFIG_PATH = config_root(ROOT) / "config.json"
+CONFIG_PATH = config_root(ROOT) / "settings.json"
 KEYS_PATH = config_root(ROOT) / "key" / "llm_keys.json"
 CONTEXT_MARKER = "# FULL CURRENT CONTEXT SEGMENTS\n"
 
@@ -45,7 +45,8 @@ def fail(message: str, *, state=None, source=None) -> None:
 
 
 def configure_llm() -> dict:
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    from configuration import config_path, read_config
+    config = read_config(CONFIG_PATH)
     runtime_config = {
         key: value
         for key, value in config.items()

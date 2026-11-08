@@ -1,0 +1,1441 @@
+{
+  "SoyaShowTextpysssssV2_52184dcb_mdsoya": {
+    "name": "SoyaShowTextpysssssV2_52184dcb_mdsoya",
+    "base": "ShowText|pysssss",
+    "display_name": "Show Text 🐍 V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_is_list": [
+      true
+    ],
+    "input_is_list": true,
+    "output_node": true
+  },
+  "SoyaVAELoaderV2_720d5240_mdsoya": {
+    "name": "SoyaVAELoaderV2_720d5240_mdsoya",
+    "base": "VAELoader",
+    "display_name": "Load VAE V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "VAE"
+    ],
+    "output_name": [
+      "VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaUltralyticsDetectorProviderV2_d698c018_mdsoya": {
+    "name": "SoyaUltralyticsDetectorProviderV2_d698c018_mdsoya",
+    "base": "UltralyticsDetectorProvider",
+    "display_name": "UltralyticsDetectorProvider V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "BBOX_DETECTOR",
+      "SEGM_DETECTOR"
+    ],
+    "output_name": [
+      "BBOX_DETECTOR",
+      "SEGM_DETECTOR"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaFloatConstantV2_5fac5c51_mdsoya": {
+    "name": "SoyaFloatConstantV2_5fac5c51_mdsoya",
+    "base": "FloatConstant",
+    "display_name": "Float Constant V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "FLOAT"
+    ],
+    "output_name": [
+      "value"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaJoinStringsV2_94a8afaf_mdsoya": {
+    "name": "SoyaJoinStringsV2_94a8afaf_mdsoya",
+    "base": "JoinStrings",
+    "display_name": "Join Strings V2 (Soya JSON)",
+    "json_inputs": {
+      "string2": {
+        "key": "NEGATIVE_ANIMA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaPrimitiveStringMultilineV2_ebf64f6b_mdsoya": {
+    "name": "SoyaPrimitiveStringMultilineV2_ebf64f6b_mdsoya",
+    "base": "PrimitiveStringMultiline",
+    "display_name": "Text (Multiline) V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaDCWModelPatchV2_670f1cec_mdsoya": {
+    "name": "SoyaDCWModelPatchV2_670f1cec_mdsoya",
+    "base": "DCWModelPatch",
+    "display_name": "DCW + CWM + SMC Model Patch V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "model"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaJoinStringMultiV2_e4e41a94_mdsoya": {
+    "name": "SoyaJoinStringMultiV2_e4e41a94_mdsoya",
+    "base": "JoinStringMulti",
+    "display_name": "Join String Multi V2 (Soya JSON)",
+    "json_inputs": {
+      "string_1": {
+        "key": "ANIMA_QUALITY",
+        "type": "STRING"
+      },
+      "string_2": {
+        "key": "ANIMA_ARTIST",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "string"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_3a273a5a_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_3a273a5a_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt) V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "NEGATIVE_ANIMA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_79bcdc1b_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_79bcdc1b_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt) V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "SDXL_CONTENT",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaJoinStringsV2_2c0308ec_mdsoya": {
+    "name": "SoyaJoinStringsV2_2c0308ec_mdsoya",
+    "base": "JoinStrings",
+    "display_name": "Join Strings V2 (Soya JSON)",
+    "json_inputs": {
+      "string2": {
+        "key": "NEGATIVE_SDXL",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaJoinStringMultiV2_5a4a7f20_mdsoya": {
+    "name": "SoyaJoinStringMultiV2_5a4a7f20_mdsoya",
+    "base": "JoinStringMulti",
+    "display_name": "Join String Multi V2 (Soya JSON)",
+    "json_inputs": {
+      "string_1": {
+        "key": "SDXL_QUALITY",
+        "type": "STRING"
+      },
+      "string_2": {
+        "key": "SDXL_ARTIST",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "string"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaFaceMatchConfigV2_mdsoya": {
+    "name": "SoyaFaceMatchConfigV2_mdsoya",
+    "base": "SoyaIPAPatchConfig_mdsoya",
+    "display_name": "Face Match Config V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "IPA_PATCH_CONFIG"
+    ],
+    "output_name": [
+      "config"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_e6ee2907_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_e6ee2907_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt) V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "ANIMA_QUALITY, ANIMA_CONTENT",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaBatchLoraLoaderV2_99e2fea7_mdsoya": {
+    "name": "SoyaBatchLoraLoaderV2_99e2fea7_mdsoya",
+    "base": "SoyaBatchLoraLoader_mdsoya",
+    "display_name": "Batch LoRA Loader V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "LORA_ACTIVATE",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "LORA_DATA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "MODEL",
+      "CLIP",
+      "STRING"
+    ],
+    "output_name": [
+      "model",
+      "clip",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaResizeToggleV2_1cc5161d_mdsoya": {
+    "name": "SoyaResizeToggleV2_1cc5161d_mdsoya",
+    "base": "SoyaResizeToggle_mdsoya",
+    "display_name": "Resize Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "HRF_RESTORE_SIZE",
+        "type": "STRING"
+      },
+      "target_width": {
+        "key": "IMG_W",
+        "type": "INT"
+      },
+      "target_height": {
+        "key": "IMG_H",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaSegModelProviderV2_9dc6d412_mdsoya": {
+    "name": "SoyaSegModelProviderV2_9dc6d412_mdsoya",
+    "base": "SoyaSegModelProvider_mdsoya",
+    "display_name": "Soya Seg Model Provider V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "SOYA_SEG_MODEL",
+      "SOYA_SEG_MODEL"
+    ],
+    "output_name": [
+      "eye_model",
+      "eyebrow_model"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaHandDetailerToggleV2_abf8bc6b_mdsoya": {
+    "name": "SoyaHandDetailerToggleV2_abf8bc6b_mdsoya",
+    "base": "SoyaHandDetailerToggle_mdsoya",
+    "display_name": "Hand Detailer Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "HD_ACTIVATE",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ILXL_HAND_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaHandDetailerToggleV2_75fd11c0_mdsoya": {
+    "name": "SoyaHandDetailerToggleV2_75fd11c0_mdsoya",
+    "base": "SoyaHandDetailerToggle_mdsoya",
+    "display_name": "Hand Detailer Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ANIMA_HD_ACTIVATE",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_HAND_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaEmptyLatentImageV2_83154e25_mdsoya": {
+    "name": "SoyaEmptyLatentImageV2_83154e25_mdsoya",
+    "base": "EmptyLatentImage",
+    "display_name": "Empty Latent Image V2 (Soya JSON)",
+    "json_inputs": {
+      "width": {
+        "key": "IMG_W",
+        "type": "INT"
+      },
+      "height": {
+        "key": "IMG_H",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPLoaderV2_d5ebdd28_mdsoya": {
+    "name": "SoyaCLIPLoaderV2_d5ebdd28_mdsoya",
+    "base": "CLIPLoader",
+    "display_name": "Load CLIP V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "CLIP"
+    ],
+    "output_name": [
+      "CLIP"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaEyeTagOverrideV2_627f2bc2_mdsoya": {
+    "name": "SoyaEyeTagOverrideV2_627f2bc2_mdsoya",
+    "base": "SoyaEyeTagOverride_mdsoya",
+    "display_name": "Eye Tag Override V2 (Soya JSON)",
+    "json_inputs": {
+      "character_data": {
+        "key": "CHAR_FACE_TAG_INFORM",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "character_data"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": true,
+    "output_node": false
+  },
+  "SoyaFaceMatchV2_mdsoya": {
+    "name": "SoyaFaceMatchV2_mdsoya",
+    "base": "SoyaIPAPatchMaker_mdsoya",
+    "display_name": "Face Match V2 (Soya JSON)",
+    "json_inputs": {
+      "character_names": {
+        "key": "CHAR_LIST",
+        "type": "STRING"
+      },
+      "face_crop_top": {
+        "key": "FACE_CROP_TOP",
+        "type": "FLOAT"
+      },
+      "face_crop_bottom": {
+        "key": "FACE_CROP_BOTTOM",
+        "type": "FLOAT"
+      }
+    },
+    "fixed_inputs": {
+      "ipa_cache_data": "",
+      "embed_cache_data": "",
+      "combine_method": "average"
+    },
+    "output": [
+      "IMAGE",
+      "IMAGE",
+      "STRING",
+      "STRING",
+      "IPA_FACE_CONTEXT"
+    ],
+    "output_name": [
+      "detected_faces",
+      "named_faces",
+      "names",
+      "info",
+      "face_context"
+    ],
+    "output_is_list": [
+      true,
+      true,
+      true,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCharLoraFaceDetailerV2_7a31cb14_mdsoya": {
+    "name": "SoyaCharLoraFaceDetailerV2_7a31cb14_mdsoya",
+    "base": "SoyaCharLoraFaceDetailer_mdsoya",
+    "display_name": "Char LoRA Face Detailer V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "FD_ACTIVATE",
+        "type": "STRING"
+      },
+      "quality_tags": {
+        "key": "SDXL_QUALITY",
+        "type": "STRING"
+      },
+      "artist_tags": {
+        "key": "SDXL_ARTIST",
+        "type": "STRING"
+      },
+      "negative": {
+        "key": "NEGATIVE_SDXL",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "FACE_LORA_DATA",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE",
+      "STRING"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ILXL_FACE_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaCharLoraEyeDetailerV2_230813b6_mdsoya": {
+    "name": "SoyaCharLoraEyeDetailerV2_230813b6_mdsoya",
+    "base": "SoyaCharLoraEyeDetailer_mdsoya",
+    "display_name": "Char LoRA Eye Detailer V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ED_ACTIVATE",
+        "type": "STRING"
+      },
+      "quality_tags": {
+        "key": "SDXL_QUALITY",
+        "type": "STRING"
+      },
+      "artist_tags": {
+        "key": "SDXL_ARTIST",
+        "type": "STRING"
+      },
+      "negative": {
+        "key": "NEGATIVE_SDXL",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "FACE_LORA_DATA",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE",
+      "STRING"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ILXL_EYE_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaHiresfixToggleV2_1b3a7a6c_mdsoya": {
+    "name": "SoyaHiresfixToggleV2_1b3a7a6c_mdsoya",
+    "base": "SoyaHiresfixToggle_mdsoya",
+    "display_name": "Hiresfix Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ANIMA_HRF_ACTIVATE",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_HIRESFIX",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaEyeStateDetectorV2_30273dfd_mdsoya": {
+    "name": "SoyaEyeStateDetectorV2_30273dfd_mdsoya",
+    "base": "SoyaEyeStateDetector_mdsoya",
+    "display_name": "Eye State Detector V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "FLOAT",
+      "STRING",
+      "EYE_CONTEXT"
+    ],
+    "output_name": [
+      "overlap_ratios",
+      "info",
+      "eye_context"
+    ],
+    "output_is_list": [
+      true,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaBatchLoraLoaderV2_bcc18880_mdsoya": {
+    "name": "SoyaBatchLoraLoaderV2_bcc18880_mdsoya",
+    "base": "SoyaBatchLoraLoader_mdsoya",
+    "display_name": "Batch LoRA Loader V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "STYLE_LORA_ACTIVATE",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "STYLE_LORA_DATA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "MODEL",
+      "CLIP",
+      "STRING"
+    ],
+    "output_name": [
+      "model",
+      "clip",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaBatchLoraLoaderV2_6f829e9d_mdsoya": {
+    "name": "SoyaBatchLoraLoaderV2_6f829e9d_mdsoya",
+    "base": "SoyaBatchLoraLoader_mdsoya",
+    "display_name": "Background LoRA Loader V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "BG_LORA_ACTIVATE",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "BG_LORA_DATA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "MODEL",
+      "CLIP",
+      "STRING"
+    ],
+    "output_name": [
+      "model",
+      "clip",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaScaleByV2_666934f3_mdsoya": {
+    "name": "SoyaScaleByV2_666934f3_mdsoya",
+    "base": "SoyaScaleBy_mdsoya",
+    "display_name": "Scale By V2 (Soya JSON)",
+    "json_inputs": {
+      "scale_by": {
+        "key": "HRF_SIZE",
+        "type": "FLOAT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaPathchSageAttentionKJV2_572fa407_mdsoya": {
+    "name": "SoyaPathchSageAttentionKJV2_572fa407_mdsoya",
+    "base": "PathchSageAttentionKJ",
+    "display_name": "Patch Sage Attention KJ V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaFirstSamplerV2_mdsoya": {
+    "name": "SoyaFirstSamplerV2_mdsoya",
+    "base": "SoyaFirstSampler_mdsoya",
+    "display_name": "1st sampler V2 (Soya JSON)",
+    "json_inputs": {
+      "multi_char": {
+        "key": "MULTI_CHAR",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      },
+      "LORA_ACT": {
+        "key": "LORA_ACTIVATE",
+        "type": "STRING"
+      },
+      "LORA_DATA": {
+        "key": "LORA_DATA",
+        "type": "STRING"
+      },
+      "SNAPREF": {
+        "key": "SNAPREF",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {
+      "mask_location": "",
+      "FACE_ID_DIR": ""
+    },
+    "output": [
+      "LATENT",
+      "MODEL",
+      "STRING"
+    ],
+    "output_name": [
+      "output",
+      "model",
+      "face_positions"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_FIRST_SAMPLER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler"
+      ]
+    }
+  },
+  "SoyaUNETLoaderV2_e3225a2c_mdsoya": {
+    "name": "SoyaUNETLoaderV2_e3225a2c_mdsoya",
+    "base": "UNETLoader",
+    "display_name": "Load Diffusion Model V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "model": {
+      "key": "ANIMA_DIFFUSION_MODEL",
+      "input": "unet_name"
+    }
+  },
+  "SoyaSkimmedCFG_LinInterp_CFG_PreCFGV2_42e1a892_mdsoya": {
+    "name": "SoyaSkimmedCFG_LinInterp_CFG_PreCFGV2_42e1a892_mdsoya",
+    "base": "SkimmedCFG_LinInterp_CFG_PreCFG",
+    "display_name": "Skimmed CFG - linear interpolation V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaModelPatchTorchSettingsV2_caf3488b_mdsoya": {
+    "name": "SoyaModelPatchTorchSettingsV2_caf3488b_mdsoya",
+    "base": "ModelPatchTorchSettings",
+    "display_name": "Model Patch Torch Settings V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaVAEDecodeV2_78f9754f_mdsoya": {
+    "name": "SoyaVAEDecodeV2_78f9754f_mdsoya",
+    "base": "VAEDecode",
+    "display_name": "VAE Decode V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_c4685b0e_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_c4685b0e_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt) V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "NEGATIVE_SDXL",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaPreviewImageV2_6fa7f4df_mdsoya": {
+    "name": "SoyaPreviewImageV2_6fa7f4df_mdsoya",
+    "base": "PreviewImage",
+    "display_name": "Preview Image V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "images"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": true
+  },
+  "SoyaCharLoraEyeDetailerV2_8989698d_mdsoya": {
+    "name": "SoyaCharLoraEyeDetailerV2_8989698d_mdsoya",
+    "base": "SoyaCharLoraEyeDetailer_mdsoya",
+    "display_name": "Char LoRA Eye Detailer V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ANIMA_ED_ACTIVATE",
+        "type": "STRING"
+      },
+      "quality_tags": {
+        "key": "ANIMA_QUALITY",
+        "type": "STRING"
+      },
+      "artist_tags": {
+        "key": "ANIMA_ARTIST",
+        "type": "STRING"
+      },
+      "negative": {
+        "key": "NEGATIVE_ANIMA",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "FACE_LORA_DATA",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE",
+      "STRING"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_EYE_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaCharLoraFaceDetailerV2_f0e1d26a_mdsoya": {
+    "name": "SoyaCharLoraFaceDetailerV2_f0e1d26a_mdsoya",
+    "base": "SoyaCharLoraFaceDetailer_mdsoya",
+    "display_name": "Char LoRA Face Detailer V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ANIMA_FD_ACTIVATE",
+        "type": "STRING"
+      },
+      "quality_tags": {
+        "key": "ANIMA_QUALITY",
+        "type": "STRING"
+      },
+      "artist_tags": {
+        "key": "ANIMA_ARTIST",
+        "type": "STRING"
+      },
+      "negative": {
+        "key": "NEGATIVE_ANIMA",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "FACE_LORA_DATA",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE",
+      "STRING"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "crop_preview",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_FACE_DETAILER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaHiresfixToggleV2_fb35254d_mdsoya": {
+    "name": "SoyaHiresfixToggleV2_fb35254d_mdsoya",
+    "base": "SoyaHiresfixToggle_mdsoya",
+    "display_name": "Hiresfix Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "HRF_ACTIVATE",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ILXL_HIRESFIX",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaColorCorrectV2_f0f7b696_mdsoya": {
+    "name": "SoyaColorCorrectV2_f0f7b696_mdsoya",
+    "base": "ColorCorrect",
+    "display_name": "ColorCorrect V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPSetLastLayerV2_10ebaf89_mdsoya": {
+    "name": "SoyaCLIPSetLastLayerV2_10ebaf89_mdsoya",
+    "base": "CLIPSetLastLayer",
+    "display_name": "CLIP Set Last Layer V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "CLIP"
+    ],
+    "output_name": [
+      "CLIP"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCheckpointLoaderKJV2_79611379_mdsoya": {
+    "name": "SoyaCheckpointLoaderKJV2_79611379_mdsoya",
+    "base": "CheckpointLoaderKJ",
+    "display_name": "CheckpointLoaderKJ V2 (Soya JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL",
+      "CLIP",
+      "VAE"
+    ],
+    "output_name": [
+      "MODEL",
+      "CLIP",
+      "VAE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "model": {
+      "key": "ILXL_CHECKPOINT",
+      "input": "ckpt_name"
+    }
+  },
+  "SoyaCLIPTextEncodeV2_7dbf1b26_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_7dbf1b26_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt) V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "ANIMA_CONTENT",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaSpectrumModGuidanceOptionsV2_6abfa58b_mdsoya": {
+    "name": "SoyaSpectrumModGuidanceOptionsV2_6abfa58b_mdsoya",
+    "base": "SoyaSpectrumModGuidanceOptions_mdsoya",
+    "display_name": "Spectrum Mod Guidance Options V2 (Soya JSON)",
+    "json_inputs": {
+      "positive": {
+        "key": "ANIMA_QUALITY",
+        "type": "STRING"
+      },
+      "negative": {
+        "key": "NEGATIVE_ANIMA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "SOYA_SPECTRUM_MOD_GUIDANCE_OPTIONS"
+    ],
+    "output_name": [
+      "spectrum_options"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaHiresfixSpectrumToggleV2_2ca1fb16_mdsoya": {
+    "name": "SoyaHiresfixSpectrumToggleV2_2ca1fb16_mdsoya",
+    "base": "SoyaHiresfixSpectrumToggle_mdsoya",
+    "display_name": "Hiresfix Spectrum Toggle V2 (Soya JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "ANIMA_HRF_ACTIVATE",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "ANIMA_HIRESFIX",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaShowTextpysssssV2_8d017061_mdsoya": {
+    "name": "SoyaShowTextpysssssV2_8d017061_mdsoya",
+    "base": "ShowText|pysssss",
+    "display_name": "Show Text 🐍 V2 (Soya JSON)",
+    "json_inputs": {
+      "text": {
+        "key": "FACE_LORA_DATA",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_is_list": [
+      true
+    ],
+    "input_is_list": true,
+    "output_node": true
+  },
+  "SoyaJoinStringMultiV2_80669708_mdsoya": {
+    "name": "SoyaJoinStringMultiV2_80669708_mdsoya",
+    "base": "JoinStringMulti",
+    "display_name": "Join String Multi V2 (Soya JSON)",
+    "json_inputs": {
+      "string_1": {
+        "key": "SDXL_ARTIST",
+        "type": "STRING"
+      },
+      "string_2": {
+        "key": "SDXL_QUALITY",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "string"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaJoinStringMultiV2_f88e390b_mdsoya": {
+    "name": "SoyaJoinStringMultiV2_f88e390b_mdsoya",
+    "base": "JoinStringMulti",
+    "display_name": "Join String Multi V2 (Soya JSON)",
+    "json_inputs": {
+      "string_1": {
+        "key": "ANIMA_ARTIST",
+        "type": "STRING"
+      },
+      "string_2": {
+        "key": "ANIMA_QUALITY",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "STRING"
+    ],
+    "output_name": [
+      "string"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  }
+}

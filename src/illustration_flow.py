@@ -1,13 +1,17 @@
-"""In-memory illustration, video-render, and video-input execution graphs."""
+"""Illustration history and live video-render/video-input execution graphs."""
 import asyncio
+import base64
 import contextvars
 import copy
 import functools
 import inspect
+import json
 import time
 import traceback
 import uuid
 
+from app_paths import DATA_DIR
+from json_store import write_json_atomic
 from modes.illustration_prompt_assembly import input_variables
 
 _run = contextvars.ContextVar("illustration_flow_run", default=None)
@@ -20,6 +24,11 @@ _latest_video = None
 _latest_video_input = None
 _latest_lora_feedback = None
 _notify = None
+HISTORY_LIMIT = 8
+_history = {}
+_history_dir = DATA_DIR / "illustration_flow"
+_history_dirty = set()
+_history_task = None
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration", "regenerate"}
 BACKGROUND_LLM_TYPES = {"illustration_quality_inspection", "illustration_visual_correction", "illustration_visual_selection"}
 VIDEO_INPUT_TYPES = {
@@ -39,8 +48,106 @@ TERMINAL = {"completed", "failed", "cancelled", "skipped"}
 
 
 def configure(notify):
-    global _notify
+    global _notify, _latest
     _notify = notify
+    if _history:
+        return
+    restored = []
+    for path in _history_dir.glob("*.json"):
+        try:
+            run = json.loads(path.read_text(encoding="utf-8"))
+            if run.get("kind") != "illustration" or path.stem != run["id"]:
+                continue
+            # Existing standalone character regenerations were recorded before
+            # their queue requests explicitly opted out of illustration history.
+            if (not run.get("session_id") and not run.get("backup_names")
+                    and str(run.get("label") or "").startswith("캐릭터 이미지 재생성 · ")
+                    and any(node.get("kind") == "request" and node.get("task_key") == "illustration"
+                            and not node.get("dependencies") for node in run["nodes"].values())):
+                path.unlink(missing_ok=True)
+                print(f"[ILLUST_FLOW] 캐릭터 이미지 재생성 기록 제거: run={run['id']}")
+                continue
+            for node in run["nodes"].values():
+                for key in ("_preview_image", "_preview_mask", "_preview_source"):
+                    if node.get(key):
+                        node[key] = base64.b64decode(node[key], validate=True)
+                if node["status"] not in TERMINAL:
+                    node.update(status="cancelled", ended_at=run["updated_at"],
+                                error="프로그램이 종료되어 중단된 작업입니다.")
+            if run["status"] not in TERMINAL:
+                run.update(status="cancelled", cancel_requested=True)
+            run["_active_llm_tasks"] = set()
+            restored.append(run)
+        except Exception:
+            print(f"[ILLUST_FLOW] 기록 복원 실패: {path}")
+            traceback.print_exc()
+    for run in sorted(restored, key=lambda value: value["created_at"])[-HISTORY_LIMIT:]:
+        _history[run["id"]] = run
+        _latest = run
+
+
+def find_run(run_id, *, kind="illustration"):
+    if kind == "illustration":
+        return _history.get(run_id)
+    run = {"video": _latest_video, "video_input": _latest_video_input,
+           "lora_feedback": _latest_lora_feedback}.get(kind)
+    return run if run and run["id"] == run_id else None
+
+
+def history():
+    """Return lightweight newest-first entries for navigation and backup groups."""
+    return [{key: copy.deepcopy(run.get(key)) for key in
+             ("id", "label", "session_id", "group_label", "status", "created_at", "updated_at", "revision")} | {
+                 "active": run["status"] not in TERMINAL or any(
+                     node["status"] not in TERMINAL for node in run["nodes"].values()),
+                 "backup_names": list(run.get("backup_names", [])),
+             } for run in reversed(list(_history.values()))]
+
+
+def record_backup(backup_name):
+    run = _run.get()
+    if run is None or run.get("kind") != "illustration":
+        return None
+    names = run.setdefault("backup_names", [])
+    if backup_name not in names:
+        names.append(backup_name)
+        changed(run)
+    return run["id"]
+
+
+async def _persist_history():
+    while _history_dirty:
+        await asyncio.sleep(0.5)
+        dirty = set(_history_dirty)
+        _history_dirty.clear()
+        payloads = {}
+        for run_id in dirty & _history.keys():
+            run = _history[run_id]
+            payload = serializable({key: value for key, value in run.items()
+                                    if not key.startswith("_") and key != "publish_pending"})
+            for node_id, node in run["nodes"].items():
+                for key in ("_preview_image", "_preview_mask", "_preview_source"):
+                    if node.get(key):
+                        payload["nodes"][node_id][key] = base64.b64encode(node[key]).decode("ascii")
+            payloads[run_id] = payload
+        retained = set(_history)
+
+        def write():
+            for run_id, payload in payloads.items():
+                write_json_atomic(_history_dir / f"{run_id}.json", payload)
+            for path in _history_dir.glob("*.json"):
+                if path.stem not in retained:
+                    path.unlink(missing_ok=True)
+        try:
+            await asyncio.to_thread(write)
+        except Exception:
+            print("[ILLUST_FLOW] 기록 저장 실패")
+            traceback.print_exc()
+
+
+async def flush_history(_app=None):
+    if _history_task is not None:
+        await _history_task
 
 
 def snapshot(run=None, *, kind="illustration"):
@@ -55,7 +162,7 @@ def snapshot(run=None, *, kind="illustration"):
         return None
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table", "profile_state_table", "validation_warnings"}} | {
+                   if k not in {"input", "input_variables", "output", "submitted_prompt", "attempts", "_preview_image", "_preview_mask", "_preview_source", "call1_state_table", "time_place_state_table", "profile_state_table", "validation_warnings"}} | {
                        "attempt_count": sum(event.get("type") == "attempt_start" for event in node.get("attempts", [])),
                        "validation_warnings": [{k: copy.deepcopy(v) for k, v in warning.items() if k != "input"}
                                                for warning in node.get("validation_warnings", [])],
@@ -64,23 +171,81 @@ def snapshot(run=None, *, kind="illustration"):
 
 
 def detail(run_id, node_id):
-    for run in (_latest, _latest_video, _latest_video_input, _latest_lora_feedback):
+    for run in (find_run(run_id), _latest_video, _latest_video_input, _latest_lora_feedback):
         if run is not None and run["id"] == run_id:
             node = run["nodes"].get(node_id)
             return {key: copy.deepcopy(value) for key, value in node.items()
-                    if key not in {"_preview_image", "_preview_mask"}} if node is not None else None
+                    if key not in {"_preview_image", "_preview_mask", "_preview_source"}} if node is not None else None
     print(f"[ILLUST_FLOW] 상세 정보 없음: run={run_id}, node={node_id}")
     return None
 
 
-def preview_image(run_id, node_id):
-    run = _latest
+def preview_image(run_id, node_id, *, source=False):
+    run = find_run(run_id)
     if run is not None and run["id"] == run_id:
-        image = run["nodes"].get(node_id, {}).get("_preview_image")
+        image = run["nodes"].get(node_id, {}).get("_preview_source" if source else "_preview_image")
         if image:
             return image
     print(f"[ILLUST_FLOW] 생성 이미지 없음: run={run_id}, node={node_id}")
     return None
+
+
+def record_reference_images(prompt_json):
+    """Show the exact submitted reference bytes before the generation node."""
+    run = _run.get()
+    if run is None or run.get("kind") != "illustration":
+        return
+    from illustration_json import REFERENCE_PREPROCESS_LABELS
+    from comfy_installer.resources.illustration_v2.soya_illustration_json_v2 import stage_reference_assets
+    payload = json.loads(prompt_json)
+    settings = payload["fields"].get("SNAPREF", {})
+    mode = settings.get("preprocess", "none")
+    if mode == "none" or not settings.get("enabled") or (
+            settings.get("strength_scale") == "linear" and float(settings.get("strength", 1.0)) <= 0):
+        return
+    generation = next((run["nodes"][key] for key in _frontier.get()
+                       if run["nodes"][key].get("kind") == "image"
+                       or run["nodes"][key].get("layout_group") == "illustration_generation"), None)
+    if generation is None:
+        print(f"[ILLUST_FLOW:REFERENCE] 생성 노드가 없어 전처리 미리보기 생략: run={run['id']}")
+        return
+    dependencies = [key for key in generation["dependencies"]
+                    if run["nodes"].get(key, {}).get("kind") != "reference"]
+    sources, roles = {}, {}
+    for reference in settings.get("references", []):
+        key = (reference["CHAR"], reference["asset"])
+        sources[key] = reference.get("source_asset", reference["asset"])
+        roles[key] = "얼굴 이미지" if reference.get("role") == "face" else (
+            "두 번째 대표 이미지" if reference.get("role") == "representative" else "대표 이미지")
+        if reference.get("face_asset"):
+            key = (reference["CHAR"], reference["face_asset"])
+            sources[key] = reference.get("face_source_asset", reference["face_asset"])
+            roles[key] = "얼굴 이미지"
+    selected = stage_reference_assets(payload, "first")
+    for stage, enabled in (("face", "ANIMA_FD_ACTIVATE"), ("eye", "ANIMA_ED_ACTIVATE")):
+        if payload["fields"].get(enabled):
+            for name, keys in stage_reference_assets(payload, stage).items():
+                selected.setdefault(name, []).extend(keys)
+    node_ids = []
+    for name, keys in selected.items():
+        for asset in dict.fromkeys(keys):
+            source, role = sources[(name, asset)], roles[(name, asset)]
+            node_id = f"{generation['id']}-reference-{len(node_ids)}"
+            label = f"레퍼런스 전처리 · {name or '참조'} · {role}"
+            if node_id not in run["nodes"]:
+                add_node(run, label, dependencies=dependencies, node_id=node_id,
+                         kind="reference", executor="process", layout_group="reference_preprocessing",
+                         **({"prompt_id": generation["prompt_id"]} if generation.get("prompt_id") else {}))
+            url = f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1"
+            update(run, node_id, label=label, dependencies=dependencies, status="completed",
+                   image_url=f"{url}&v={asset}", source_image_url=f"{url}&source=1&v={source}",
+                   input={"character": name, "reference": role, "preprocess": REFERENCE_PREPROCESS_LABELS[mode]},
+                   output={"preprocess": REFERENCE_PREPROCESS_LABELS[mode], "reference": role},
+                   _preview_image=base64.b64decode(payload["assets"][asset]["data"], validate=True),
+                   _preview_source=base64.b64decode(payload["assets"][source]["data"], validate=True))
+            node_ids.append(node_id)
+    if node_ids:
+        update(run, generation["id"], dependencies=list(dict.fromkeys([*dependencies, *node_ids])))
 
 
 def record_image_mask(image_bytes):
@@ -138,7 +303,7 @@ async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
 
 
 def preview_mask(run_id, node_id):
-    run = _latest
+    run = find_run(run_id)
     if run is not None and run["id"] == run_id:
         mask = run["nodes"].get(node_id, {}).get("_preview_mask")
         if mask:
@@ -152,7 +317,7 @@ def request_cancel(run_id):
     if not normalized:
         print(f"[ILLUST_FLOW] 중단 요청 실패: run_id={run_id!r}")
         return False
-    run = next((r for r in (_latest, _latest_lora_feedback) if r is not None and r["id"] == normalized), None)
+    run = next((r for r in (find_run(normalized), _latest_lora_feedback) if r is not None and r["id"] == normalized), None)
     if run is None:
         print(f"[ILLUST_FLOW] 중단할 실행 없음: run={normalized}")
         return False
@@ -210,8 +375,13 @@ def unregister_active_llm_task(registration):
 
 
 def changed(run):
+    global _history_task
     run["revision"] += 1
     run["updated_at"] = time.time()
+    if _history.get(run["id"]) is run:
+        _history_dirty.add(run["id"])
+        if _history_task is None or _history_task.done():
+            _history_task = asyncio.create_task(_persist_history())
     latest_runs = (_latest, _latest_video, _latest_video_input, _latest_lora_feedback)
     if any(run is latest for latest in latest_runs) and _notify is not None:
         # Coalesce a burst of state changes without streaming full prompts.
@@ -359,7 +529,7 @@ def _failure_output(node, error, default="작업 실패"):
     return output
 
 
-def stage(label, *, executor="process", layout_group=None):
+def stage(label, *, executor="process", layout_group=None, details=None):
     """Record executable non-LLM stages, retaining only displayable data."""
     def decorate(fn):
         signature = inspect.signature(fn)
@@ -408,6 +578,8 @@ def stage(label, *, executor="process", layout_group=None):
                     started_at=time.time(),
                 )
             try:
+                if layout_group == "illustration_generation":
+                    _frontier.set((node_id,))
                 result = await fn(*args, **kwargs)
                 failed = isinstance(result, tuple) and len(result) == 2 and not result[0]
                 output = serializable(result)
@@ -422,7 +594,8 @@ def stage(label, *, executor="process", layout_group=None):
                     output = {"generation": output}
                 update(run, node_id,
                        status="failed" if failed else "processing" if queued_image else "completed",
-                       output=output, error=str(result[1]) if failed else "", **preview)
+                       output=output, error=str(result[1]) if failed else "", **preview,
+                       **(serializable(details()) if details else {}))
                 if failed:
                     print(f"[ILLUST_FLOW] 단계 결과 실패: label={label}, output={serializable(result)}")
                 return result
@@ -450,9 +623,8 @@ def stage(label, *, executor="process", layout_group=None):
 
 def queue_added(item):
     global _latest, _latest_video, _latest_video_input, _latest_lora_feedback
-    if (item.type == "illustration"
-            and ((item.params or {}).get("raw_body") or {}).get("illustration_gen_method") == "수동 복원"):
-        print(f"[ILLUST_FLOW] 수동 그리기는 작업 흐름 등록 생략: item={item.id}")
+    if (item.params or {}).get("illustration_flow_skip") is True:
+        print(f"[ILLUST_FLOW] 작업 흐름 기록 생략: item={item.id}")
         return
     run = _run.get()
     if item.type == "bot_lora_feedback" or (item.type == "bot_lora_training" and (item.params or {}).get("feedback_run_id") and run is not None and run.get("kind") == "lora_feedback"):
@@ -535,17 +707,25 @@ def queue_added(item):
     is_root = run is None
     continuation = str((item.params or {}).get("illustration_flow_run_id") or "")
     if is_root and continuation:
-        if _latest is not None and _latest["id"] == continuation and not _latest.get("cancel_requested"):
-            run = _latest
+        previous = find_run(continuation)
+        if previous is not None and not previous.get("cancel_requested"):
+            run = previous
             run["status"] = "waiting"
         else:
             print(f"[ILLUST_FLOW] 이전 수정 흐름 연결 불가; 새 흐름 시작: run={continuation}, item={item.id}")
     if run is None:
+        params = item.params or {}
+        session_id = str(params.get("session_id") or (params.get("payload") or {}).get("session_id")
+                         or (params.get("raw_body") or {}).get("illustration_context_session_id") or "")
         run = {"id": uuid.uuid4().hex, "kind": "illustration", "label": item.label, "status": "waiting",
                "cancel_requested": False, "created_at": time.time(),
                "updated_at": time.time(), "revision": 0, "nodes": {},
-               "_active_llm_tasks": set()}
+               "_active_llm_tasks": set(), "session_id": session_id, "backup_names": []}
+        run["group_label"] = session_id[:12] if session_id else f"flow_{run['id'][:8]}"
         _latest = run
+        _history[run["id"]] = run
+        while len(_history) > HISTORY_LIMIT:
+            del _history[next(iter(_history))]
     # Manager edits are reviewed in the prompt editor; keep their graph available
     # without interrupting that review with an automatically opened dialog.
     if "edit_body" in (item.params or {}) or (item.params or {}).get("illustration_flow_auto_open") is False:
@@ -737,7 +917,7 @@ def queue_execution(fn):
                 depended = {d for n in delivery_nodes.values() for d in n["dependencies"]}
                 leaves = [n for n in delivery_nodes if n not in depended]
                 image_nodes = [key for key, value in delivery_nodes.items()
-                               if value.get("image_url") and value.get("task_key") not in BACKGROUND_LLM_TYPES
+                               if value.get("image_url") and value.get("kind") != "reference" and value.get("task_key") not in BACKGROUND_LLM_TYPES
                                and value["created_at"] >= node["created_at"]]
                 add_node(run, "결과 반환", dependencies=leaves, status=status,
                          ended_at=time.time(), kind="result", executor="process", output=serializable(result),

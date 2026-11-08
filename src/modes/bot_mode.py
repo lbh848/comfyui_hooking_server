@@ -6,23 +6,31 @@ BotMode - 삽화 설정 모드
 """
 
 from app_paths import config_root, data_root
+from configuration import config_path as application_config_path, read_config
+from app_paths import comfy_input_root
+from json_store import JsonFileCache, write_json_atomic
+from lora_paths import validate_lora_storage_name
 
 import asyncio
 import base64
+import contextvars
 from copy import deepcopy
 import hashlib
 from io import BytesIO
 import json
 import math
 import os
+from pathlib import Path
 import re
+import secrets
 import time
 import uuid
 import shutil
 import traceback
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from aiohttp import web
+from modes.word_rules import DEFAULT_WORD_RULES, normalize_word_rules
 
 from modes.visual_profiles import (
     MAX_VISUAL_CARDS,
@@ -33,6 +41,7 @@ from modes.visual_profiles import (
     effective_bot_profiles,
     effective_character_cards,
     effective_character_profiles,
+    ensure_lb_extra_batch_refine_allowed,
     store_visual_cards,
     sync_primary_cards_to_portable_data,
     sync_root_fields_to_primary_card,
@@ -42,30 +51,75 @@ from modes.visual_profiles import (
 # ─── 상수 ───────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(data_root(BASE_DIR), "asset_data")
-BOT_DIR = os.path.join(data_root(BASE_DIR), "bot")
-BOT_DATA_FILE = os.path.join(ASSET_DATA_DIR, "bot.json")
+# 감정 삽화 워크숍은 삽화 워크숍과 봇 저장소를 공유하지 않는다.
+# 요청 스코프(contextvar)에 따라 아래 경로가 해석된다.
+_BOT_PATHS = {
+    "illust": {
+        "dir": os.path.join(data_root(BASE_DIR), "bot"),
+        "data_file": os.path.join(ASSET_DATA_DIR, "bot.json"),
+        "backup_prefix": "bot.json.bak_",
+    },
+    "emotion": {
+        "dir": os.path.join(data_root(BASE_DIR), "emotion_bot"),
+        "data_file": os.path.join(ASSET_DATA_DIR, "emotion_bot.json"),
+        "backup_prefix": "emotion_bot.json.bak_",
+    },
+}
+_bot_scope: contextvars.ContextVar = contextvars.ContextVar("bot_storage_scope", default="illust")
+
+
+class _ScopedBotPath(os.PathLike):
+    """봇 경로 전역값이 요청 스코프에 따라 실제 경로로 해석되게 한다."""
+
+    def __init__(self, key: str):
+        self._key = key
+
+    def _value(self) -> str:
+        return _BOT_PATHS[_bot_scope.get()][self._key]
+
+    def __fspath__(self) -> str:
+        return self._value()
+
+    def __str__(self) -> str:
+        return self._value()
+
+    def __format__(self, spec: str) -> str:
+        return format(self._value(), spec)
+
+    def __repr__(self) -> str:
+        return f"_ScopedBotPath({self._value()!r})"
+
+
+def bot_scope() -> str:
+    return _bot_scope.get()
+
+
+def set_bot_scope(scope: str):
+    """요청 처리 동안 봇 저장소 스코프를 고정한다. 반환된 토큰으로 복원한다."""
+    return _bot_scope.set(scope if scope in _BOT_PATHS else "illust")
+
+
+def reset_bot_scope(token) -> None:
+    _bot_scope.reset(token)
+
+
+BOT_DIR = _ScopedBotPath("dir")
+BOT_DATA_FILE = _ScopedBotPath("data_file")
 ASSET_DIR = os.path.join(data_root(BASE_DIR), "asset")
 
 # ─── 시스템 프롬프트 프리셋 — 배포자료 builtin (git 추적) ───
-# builtin(prompts/bot_system_prompt/presets.json): 배포자료·읽기전용. git 커밋으로 배포.
+# Builtin presets are read-only until explicitly unlocked for this editor session.
 # local(asset_data/bot.json 의 system_prompt_presets): 이 PC 전용·편집가능. gitignore.
 # 잠금은 이름이 아니라 저장 위치로 판정한다.
-BUILTIN_PRESETS_DIR = os.path.join(data_root(BASE_DIR), "prompts", "bot_system_prompt")
+BUILTIN_PRESETS_DIR = os.path.join(BASE_DIR, "prompts", "bot_system_prompt")
 BUILTIN_PRESETS_FILE = os.path.join(BUILTIN_PRESETS_DIR, "presets.json")
 _builtin_presets_cache = None
 _builtin_presets_mtime = -1.0
-_bot_backup_digest_cache = {}
+_system_prompt_unlock_tokens: set[str] = set()
+_bot_data_caches = {"illust": JsonFileCache(), "emotion": JsonFileCache()}
 
-DEFAULT_BOT_DATA = {
-    "bots": [],
-    "positive_whitelist": [],
-    "positive_blacklist": [],
-    "system_prompt_presets": {},
-}
-
-# 삽화 모드 POSITIVE 태그 규칙 모달의 "추천 태그로 덮어쓰기" 프리셋.
-# 현재 프로젝트에서 검증해 사용하는 규칙을 서버 한 곳에서 관리한다.
-RECOMMENDED_POSITIVE_RULES = {
+# Shared POSITIVE defaults for both settings and prompt generation.
+DEFAULT_POSITIVE_RULES = {
     "positive_whitelist": (
         "* expressions",
         "* eyes",
@@ -80,44 +134,24 @@ RECOMMENDED_POSITIVE_RULES = {
     "positive_blacklist": (),
 }
 
+DEFAULT_BOT_DATA = {
+    "bots": [],
+    **{key: list(value) for key, value in DEFAULT_POSITIVE_RULES.items()},
+    "system_prompt_presets": {},
+}
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+BOT_GENDER_TAGS = (
+    "1girl", "1boy", "1male", "animal", "1girl, furry", "1boy, furry",
+    "futanari", "monster", "monster girl",
+)
 FACE_CROP_FOLDER_NAME = "FACE CROP"
 ASSET_OUTPUT_INSTRUCTION_MAX_CHARS = 120_000
-BOT_STORAGE_NAME_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
-BOT_STORAGE_NAME_ALLOWED_TEXT = "영문 대소문자, 숫자, 밑줄(_), 하이픈(-), 마침표(.)"
-_WINDOWS_RESERVED_FILE_STEMS = {
-    "CON", "PRN", "AUX", "NUL",
-    *(f"COM{index}" for index in range(1, 10)),
-    *(f"LPT{index}" for index in range(1, 10)),
-}
 
 
 def validate_bot_storage_name(value, label: str = "이름") -> str | None:
     """봇/캐릭터 이름이 모든 관련 저장 경로에서 그대로 유지되는지 검사한다."""
-    if not isinstance(value, str):
-        return f"{label}은(는) 문자열이어야 합니다."
-    if not value:
-        return f"{label}이(가) 비어있습니다."
-    if not BOT_STORAGE_NAME_ALLOWED_PATTERN.fullmatch(value):
-        invalid_chars = []
-        for char in value:
-            if re.fullmatch(r"[A-Za-z0-9_.-]", char) or char in invalid_chars:
-                continue
-            invalid_chars.append(char)
-        descriptions = [
-            "공백" if char == " " else repr(char)
-            for char in invalid_chars
-        ]
-        invalid_text = ", ".join(descriptions) or "허용되지 않은 문자"
-        return (
-            f"{label}에 사용할 수 없는 문자가 있습니다: {invalid_text}. "
-            f"사용 가능: {BOT_STORAGE_NAME_ALLOWED_TEXT}."
-        )
-    if value in {".", ".."} or value.endswith("."):
-        return f"{label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다."
-    if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_FILE_STEMS:
-        return f"{label}에 Windows 예약 이름 {value!r}을(를) 사용할 수 없습니다."
-    return None
+    return validate_lora_storage_name(value, label) or None
 
 
 def _sha256_file(path: str) -> str:
@@ -130,6 +164,7 @@ def _sha256_file(path: str) -> str:
 
 
 def _upload_image_filename(source_filename: str) -> str:
+    source_filename = os.path.basename(source_filename.replace("\\", "/"))
     ext = os.path.splitext(source_filename)[1].lower()
     if ext not in IMAGE_EXTENSIONS:
         ext = ".webp"
@@ -445,7 +480,7 @@ def _migrate_solo_group(data: dict):
             changed_card_fields = set()
             # gender_tag 기본값 보정 — 드롭박스 표시 기본값(1girl)과 일치. 비어 있으면 1girl 로 채운다.
             gt = (char.get("gender_tag") or "").strip()
-            if gt not in ("1girl", "1boy", "1male"):
+            if gt not in BOT_GENDER_TAGS:
                 char["gender_tag"] = "1girl"
                 changed_card_fields.add("gender_tag")
                 changed = True
@@ -494,11 +529,11 @@ def _ensure_bot_preset_scope(bot: dict, builtin_names, local_names):
         return
     if scope == "local" and preset in local_names:
         return
-    # 보정: builtin 우선, 그 다음 local
-    if preset and preset in builtin_names:
-        bot["preset_scope"] = "builtin"
-    elif preset and preset in local_names:
+    # A same-name release preset must never adopt a user reference.
+    if preset and preset in local_names:
         bot["preset_scope"] = "local"
+    elif preset and preset in builtin_names:
+        bot["preset_scope"] = "builtin"
     else:
         bot["preset_scope"] = "local"  # 폴백(기본은 local)
 
@@ -507,8 +542,8 @@ def _migrate_system_prompt_preset(data: dict):
     """각 봇에 system_prompt_preset + preset_scope(builtin|local) 를 보장한다.
 
     - builtin(prompts/bot_system_prompt/presets.json): 배포자료·읽기전용(git 배포).
-    - local(bot.json system_prompt_presets): 편집가능. '기본' 보장.
-    - local 에 builtin 과 이름이 같은 프리셋이 있으면 builtin 이 권위를 갖도록 local 에서 제거(dedup).
+    - Local presets remain editable, with an empty default when none exist.
+    - Same-name presets remain independent in the builtin and local channels.
     - 깨진 참조는 system_prompt 본문으로 local 프리셋을 생성해 복구.
     """
     changed = False
@@ -517,20 +552,13 @@ def _migrate_system_prompt_preset(data: dict):
         presets = {}
         data["system_prompt_presets"] = presets
         changed = True
-    if "기본" not in presets:
-        presets["기본"] = ""
-        changed = True
-        print("[BOT_MODE] 마이그레이션: local 기본 프리셋 생성 (system_prompt_presets['기본'])")
-
     builtin = _load_builtin_presets() or {}
     builtin_names = set(builtin.keys())
 
-    # dedup: local 에 builtin 이름이 있으면 local 쪽 제거 (builtin 권위)
-    for name in list(presets.keys()):
-        if name in builtin_names:
-            del presets[name]
-            changed = True
-            print(f"[BOT_MODE] 마이그레이션: local 프리셋 '{name}' → builtin 으로 이관(중복 제거)")
+    if not presets:
+        presets["기본"] = ""
+        changed = True
+        print("[BOT_MODE] 마이그레이션: local 기본 프리셋 생성 (system_prompt_presets['기본'])")
 
     local_names = set(presets.keys())
     for bot in data.get("bots", []):
@@ -576,7 +604,7 @@ def _migrate_system_prompt_preset(data: dict):
             changed = True
             print(f"[BOT_MODE] 마이그레이션: 시스템 프롬프트 본문 → local 프리셋 '{new_name}' 생성/연결 ({bot_name})")
         else:
-            bot["system_prompt_preset"] = "기본"
+            bot["system_prompt_preset"] = "기본" if "기본" in presets else next(iter(presets))
             bot["preset_scope"] = "local"
             changed = True
             print(f"[BOT_MODE] 마이그레이션: system_prompt_preset='기본' 할당 ({bot_name})")
@@ -585,20 +613,28 @@ def _migrate_system_prompt_preset(data: dict):
 
 
 def _load_bot_data() -> dict:
-    """bot.json 로드. 없으면 기본값 생성."""
-    if os.path.isfile(BOT_DATA_FILE):
+    """Reload changed bot data and return an isolated snapshot for this caller."""
+    scope = _bot_scope.get()
+    cache = _bot_data_caches[scope]
+    # 워크숍별 배포 봇 저장소를 각각 동기화한다.
+    from illustration_bot_distribution import bot_distributions
+    distribution = bot_distributions[scope]
+    with distribution.lock:
+        distribution.sync()
+        return cache.read(BOT_DATA_FILE, loader=_read_bot_data)
+
+
+def _read_bot_data(path) -> dict:
+    """Read and migrate bot data only on a cache miss."""
+    if os.path.isfile(path):
         try:
-            with open(BOT_DATA_FILE, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # 마이그레이션이 같은 파일을 교체 저장하므로 Windows 읽기 핸들을 먼저 닫는다.
-            print(f"[BOT_MODE] bot.json 로드 완료")
             if "bots" not in data:
                 data["bots"] = []
-            # 새 필드 자동 마이그레이션
-            if "positive_whitelist" not in data:
-                data["positive_whitelist"] = []
-            if "positive_blacklist" not in data:
-                data["positive_blacklist"] = []
+            for key, value in DEFAULT_POSITIVE_RULES.items():
+                data.setdefault(key, list(value))
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
             for bot in data.get("bots", []):
@@ -608,8 +644,6 @@ def _load_bot_data() -> dict:
             _migrate_system_prompt_preset(data)
             # solo/group 프로필 마이그레이션
             _migrate_solo_group(data)
-            # 후처리 봇별 설정 마이그레이션 (config.json → bot.json)
-            _migrate_postprocess_vn(data)
             return data
         except Exception as e:
             print(f"[BOT_MODE] bot.json 로드/마이그레이션 실패 — 기존 파일 보존: path={BOT_DATA_FILE}, error={e}")
@@ -622,110 +656,11 @@ def _load_bot_data() -> dict:
 
 
 def _save_bot_data(data: dict):
-    """변경된 bot.json만 교체 저장하고 서로 다른 내용의 최근 백업 100개를 보관한다."""
-    global _bot_backup_digest_cache
-    temp_path = ""
-    try:
-        serialized = json.dumps(data, indent=2, ensure_ascii=False)
-        if os.path.isfile(BOT_DATA_FILE):
-            try:
-                with open(BOT_DATA_FILE, "r", encoding="utf-8") as f:
-                    unchanged = json.load(f) == data
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                print(f"[BOT_MODE] 기존 bot.json 내용 비교 실패 — 원본을 백업한 뒤 요청 데이터 저장: {BOT_DATA_FILE}")
-                traceback.print_exc()
-            else:
-                if unchanged:
-                    print("[BOT_MODE] bot.json 내용 변경 없음 — 파일 교체와 중복 백업 생성 생략")
-                    return
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        temp_path = os.path.join(ASSET_DATA_DIR, f".bot.json.{uuid.uuid4().hex}.tmp")
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(serialized)
-            f.flush()
-            os.fsync(f.fileno())
-        backup_dir = os.path.join(ASSET_DATA_DIR, "backups")
-        if os.path.isfile(BOT_DATA_FILE):
-            os.makedirs(backup_dir, exist_ok=True)
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            backup_name = f"bot.json.bak_{stamp}_{uuid.uuid4().hex[:8]}"
-            backup_path = os.path.join(backup_dir, backup_name)
-            shutil.copy2(BOT_DATA_FILE, backup_path)
-            print(f"[BOT_MODE] bot.json 저장 전 백업 완료: {backup_path}")
-        os.replace(temp_path, BOT_DATA_FILE)
-        temp_path = ""
-        print("[BOT_MODE] bot.json 저장 완료")
-    except Exception as e:
-        print(f"[BOT_MODE] bot.json 저장 실패: {e}")
-        traceback.print_exc()
-        raise
-    finally:
-        if temp_path and os.path.isfile(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                print(f"[BOT_MODE] 저장 임시 파일 정리 실패: {temp_path}")
-                traceback.print_exc()
-
-    # 저장 성공 뒤 정리한다. 백업 정리 실패를 데이터 저장 실패로 보고하지 않는다.
-    try:
-        if os.path.isdir(backup_dir):
-            with os.scandir(backup_dir) as entries:
-                backups = sorted(
-                    (entry for entry in entries if entry.is_file(follow_symlinks=False)
-                     and re.fullmatch(r"bot\.json\.bak_\d{8}_\d{6}_[0-9a-f]{8}", entry.name)),
-                    # copy2가 원본 mtime을 보존하므로 백업 생성 시각으로 정렬한다.
-                    key=lambda entry: (entry.name[:28], entry.stat().st_ctime_ns, entry.name),
-                    reverse=True,
-                )
-            seen_contents = set()
-            retained_digests = {}
-            duplicate_count = expired_count = 0
-            checked_count = cached_count = 0
-            for entry in backups:
-                stat = entry.stat()
-                signature = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
-                cached = _bot_backup_digest_cache.get(entry.path)
-                if cached and cached[0] == signature:
-                    digest = cached[1]
-                    cached_count += 1
-                else:
-                    with open(entry.path, "rb") as f:
-                        backup_bytes = f.read()
-                    try:
-                        # 들여쓰기와 객체 키 순서만 다른 JSON도 같은 내용으로 취급한다.
-                        content = json.dumps(
-                            json.loads(backup_bytes), sort_keys=True, ensure_ascii=False,
-                            separators=(",", ":"),
-                        ).encode("utf-8")
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        print(f"[BOT_MODE] 백업 JSON 해석 실패 — 원본 바이트로 중복 비교: {entry.path}")
-                        traceback.print_exc()
-                        content = backup_bytes
-                    digest = hashlib.sha256(content).digest()
-                    checked_count += 1
-                if digest in seen_contents:
-                    duplicate_count += 1
-                else:
-                    seen_contents.add(digest)
-                    if len(seen_contents) <= 100:
-                        retained_digests[entry.path] = (signature, digest)
-                        continue
-                    expired_count += 1
-                os.remove(entry.path)
-            _bot_backup_digest_cache = retained_digests
-            print(
-                f"[BOT_MODE] 백업 내용 검사: 새 파일/변경 파일 {checked_count}개, "
-                f"변경 없는 파일 {cached_count}개 재사용"
-            )
-            if duplicate_count or expired_count:
-                print(
-                    f"[BOT_MODE] bot.json 중복 백업 {duplicate_count}개, 오래된 고유 백업 {expired_count}개 정리"
-                    " · 서로 다른 내용의 최근 100개 보관"
-                )
-    except Exception:
-        print(f"[BOT_MODE] bot.json 백업 보관 개수 정리 실패: {backup_dir}")
-        traceback.print_exc()
+    """Save changed bot data with the shared 100-distinct-version policy."""
+    from data_backups import BackupPolicy
+    prefix = _BOT_PATHS[_bot_scope.get()]["backup_prefix"]
+    policy = BackupPolicy(Path(ASSET_DATA_DIR) / "backups", prefix, prefix + "*")
+    write_json_atomic(Path(BOT_DATA_FILE), data, backup_policy=policy)
 
 
 def copy_default() -> dict:
@@ -1051,8 +986,15 @@ def _normalize_visual_guide_llm_result(
     parsed,
     targets: list[dict],
 ) -> tuple[list[dict] | None, str]:
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("suggestions"), list):
+    if parsed is None:
+        reason = "LLM 응답의 JSON 문법이 올바르지 않거나 응답이 비어 있습니다."
+    elif not isinstance(parsed, dict):
+        reason = "LLM 응답의 최상위 값은 JSON 객체여야 합니다."
+    elif not isinstance(parsed.get("suggestions"), list):
         reason = "최상위 suggestions 배열이 없습니다."
+    else:
+        reason = ""
+    if reason:
         print(f"[VISUAL_GUIDE] LLM 응답 구조 오류: {reason}, value={parsed!r}")
         return None, reason
 
@@ -1241,6 +1183,10 @@ def _log_visual_guide_llm_history(
             "input": messages,
             "output": output if isinstance(output, str) else str(output or ""),
             "completion_tokens": int(token_usage.get("completion_tokens") or 0),
+            **{key: token_usage[key] for key in (
+                "reasoning_tokens", "reasoning_chars", "reasoning_text",
+                "reasoning_tokens_estimated", "tokens_estimated",
+            ) if key in token_usage},
             "prompt_tokens": int(token_usage.get("prompt_tokens") or 0),
             "elapsed": round(max(0.0, float(elapsed or 0.0)), 3),
             "tps": round(float(token_usage.get("tps") or 0.0), 1),
@@ -1625,6 +1571,17 @@ async def _generate_visual_profile_appearance_context(
     }
 
 
+def _character_card_data(root_character: dict, extra_character: dict | None) -> dict:
+    character, source = effective_character_profiles(
+        str(root_character.get("name") or ""), root_character, extra_character,
+    )
+    if root_character.get("npc_generated") is True:
+        from modes.illustration_npc import get_npc_lifetime
+        character.update(npc_generated=True, npc_idle_calls=int(root_character.get("npc_idle_calls", 0)),
+                         npc_lifetime=get_npc_lifetime())
+    return {"character": character, "source": source, "max_cards": MAX_VISUAL_CARDS}
+
+
 class BotMode:
     """삽화 설정 모드 매니저"""
 
@@ -1666,8 +1623,13 @@ class BotMode:
         """GET /api/bot_mode/bots - 전체 봇 데이터 반환"""
         try:
             data = _load_bot_data()
+            include_cards = request.query.get("character_cards") == "1"
             # 각 캐릭터의 이미지 수도 함께 반환
             for bot in data["bots"]:
+                extras = _load_lb_extra(bot["name"]) or [] if include_cards else []
+                if isinstance(extras, dict) and "edited" in extras:
+                    extras = extras.get("edited") or []
+                extras_by_name = {str(item.get("name") or "").casefold(): item for item in extras if isinstance(item, dict)}
                 for char in bot.get("characters", []):
                     char_dir = os.path.join(BOT_DIR, bot["name"], char["name"])
                     if os.path.isdir(char_dir):
@@ -1676,6 +1638,13 @@ class BotMode:
                         char["image_count"] = len(images)
                     else:
                         char["image_count"] = 0
+                    if include_cards:
+                        try:
+                            char["card_data"] = _character_card_data(char, extras_by_name.get(str(char.get("name") or "").casefold()))
+                        except Exception as exc:
+                            print(f"[CHARACTER_CARD:API] 조회 실패: bot={bot['name']!r}, character={char.get('name')!r}, error={exc}")
+                            traceback.print_exc()
+                            char["card_data"] = {"error": str(exc)}
             return _json_ok(data)
         except Exception as e:
             print(f"[BOT_MODE] 봇 목록 조회 실패: {e}")
@@ -1701,6 +1670,8 @@ class BotMode:
                     return await self._remove_character(data, body)
                 elif action == "rename_character":
                     return await self._rename_character(data, body)
+                elif action == "set_lb_extra_batch_lock":
+                    return await self._set_lb_extra_batch_lock(data, body)
                 elif action == "toggle_rep_image":
                     return await self._toggle_rep_image(data, body)
                 elif action == "reorder_rep_images":
@@ -1765,10 +1736,9 @@ class BotMode:
 
         # soya_bot 폴더 정리
         try:
-            config_path = os.path.join(config_root(BASE_DIR), "config.json")
+            config_path = str(application_config_path(BASE_DIR))
             if os.path.isfile(config_path):
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config = json.load(f)
+                config = read_config(config_path)
                 comfy_input_dir = config.get("comfy_input_dir", "").strip()
                 if comfy_input_dir:
                     soya_bot_path = os.path.join(comfy_input_dir, "soya_bot", name)
@@ -1848,6 +1818,23 @@ class BotMode:
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 삭제: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})
+
+    async def _set_lb_extra_batch_lock(self, data, body):
+        bot_name = str(body.get("bot_name") or "").strip()
+        char_name = str(body.get("char_name") or "").strip()
+        locked = body.get("locked")
+        if not bot_name or not char_name or not isinstance(locked, bool):
+            return _json_error("봇 이름, 캐릭터 이름과 잠금 여부가 필요합니다.")
+        bot = next((item for item in data.get("bots", []) if item.get("name") == bot_name), None)
+        if bot is None:
+            return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+        character = next((item for item in bot.get("characters", [])
+                          if str(item.get("name") or "").casefold() == char_name.casefold()), None)
+        if character is None:
+            return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
+        character["lb_extra_batch_locked"] = locked
+        _save_bot_data(data)
+        return _json_ok({"character": character["name"], "locked": locked})
 
     async def _rename_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()
@@ -2036,7 +2023,7 @@ class BotMode:
         bot_name = body.get("bot_name", "").strip()
         char_name = body.get("char_name", "").strip()
         gender_tag = body.get("gender_tag", "1girl")
-        if gender_tag not in ("1girl", "1boy", "1male"):
+        if gender_tag not in BOT_GENDER_TAGS:
             gender_tag = "1girl"
         if not bot_name or not char_name:
             return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
@@ -2324,9 +2311,9 @@ class BotMode:
                 if len(cards) >= MAX_VISUAL_CARDS:
                     skip_item(char_name, "", f"프로필 최대 {MAX_VISUAL_CARDS}개 초과")
                     continue
-                # 루트 캐릭터는 카드 [1]의 렌더 값을 미러링한다. 새 카드에서
-                # 필드를 생략하면 카드 [1] 값이 다시 보일 수 있으므로 모든 카드별
-                # 렌더 필드를 명시적으로 비워 완전히 독립된 카드로 시작한다.
+                # Keep a concrete gender selection on new cards. Clear other
+                # card-local render fields explicitly so they do not inherit
+                # the primary card's mirrored root values.
                 target_card = {
                     "id": new_card_id(cards),
                     "label": (
@@ -2344,7 +2331,7 @@ class BotMode:
                     "eye_tags": "",
                     "face_loras": [],
                     "face_tags": "",
-                    "gender_tag": "",
+                    "gender_tag": cards[0].get("gender_tag") or "1girl",
                     "image_name_tag": "",
                     "loras": [],
                     "rep_images": [],
@@ -2454,12 +2441,16 @@ class BotMode:
             profile_face_selected = bool(
                 selected_target and not selected_target["is_primary"]
             )
+            from modes.illustration_npc import is_generated_image
+            bot = next((entry for entry in _load_bot_data().get("bots", []) if entry.get("name") == bot_name), {})
+            character = next((entry for entry in bot.get("characters", []) if entry.get("name") == char_name), {})
             images = []
 
             def append_image(image_dir, fname, *, image_visual_card_id=""):
                 base = os.path.splitext(fname)[0]
                 prompt = ""
                 negative = ""
+                prompt_data = {}
                 prompt_path = os.path.join(image_dir, f"{base}_prompt.json")
                 if os.path.isfile(prompt_path):
                     try:
@@ -2477,10 +2468,13 @@ class BotMode:
                     f"?visual_card_id={quote(image_visual_card_id, safe='')}"
                     if image_visual_card_id else ""
                 )
+                version = os.stat(os.path.join(image_dir, fname)).st_mtime_ns
+                card_query += ("&" if card_query else "?") + f"v={version}"
                 images.append({
                     "filename": fname,
                     "prompt": prompt,
                     "negative": negative,
+                    "generated": is_generated_image(fname, prompt_data, npc_generated=character.get("npc_generated") is True),
                     "visual_card_id": image_visual_card_id,
                     "url": (
                         f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
@@ -3045,26 +3039,8 @@ class BotMode:
                     dst = os.path.join(char_dir, new_name)
                 shutil.copy2(src, dst)
 
-                # 에셋 프롬프트도 복사
-                base = os.path.splitext(os.path.basename(src))[0]
-                asset_prompt_path = os.path.join(os.path.dirname(src), f"{base}_prompt.json")
-                prompt = ""
-                negative = ""
-                if os.path.isfile(asset_prompt_path):
-                    try:
-                        with open(asset_prompt_path, "r", encoding="utf-8") as f:
-                            pd = json.load(f)
-                            prompt = pd.get("positive", "")
-                            negative = pd.get("negative", "")
-                    except Exception:
-                        pass
-
-                new_base = os.path.splitext(new_name)[0]
-                bot_prompt_path = os.path.join(char_dir, f"{new_base}_prompt.json")
-                with open(bot_prompt_path, "w", encoding="utf-8") as f:
-                    json.dump({"prompt": prompt, "negative": negative, "source": "asset", "original_path": rel_path}, f, ensure_ascii=False)
-
-                imported.append({"filename": new_name, "prompt": prompt})
+                # 이미지만 가져온다. 에셋의 프롬프트 설정은 복사하지 않는다.
+                imported.append({"filename": new_name})
                 print(f"[BOT_MODE] 에셋 가져오기: {rel_path} → {bot_name}/{char_name}/{new_name}")
 
             return _json_ok({"imported": imported, "count": len(imported)})
@@ -3172,6 +3148,19 @@ class BotMode:
             if os.path.isfile(prompt_path):
                 os.remove(prompt_path)
 
+            # A deleted representative must not remain selected on saved cards.
+            async with self._lock:
+                data = _load_bot_data()
+                bot = next((item for item in data["bots"] if item["name"] == bot_name), None)
+                character = next((item for item in (bot or {}).get("characters", []) if item["name"] == char_name), None)
+                if character is not None:
+                    cards, _ = effective_character_cards(character)
+                    if any(filename in card.get("rep_images", []) for card in cards):
+                        for card in cards:
+                            card["rep_images"] = [name for name in card.get("rep_images", []) if name != filename]
+                        store_visual_cards(character, cards)
+                        _save_bot_data(data)
+
             print(f"[BOT_MODE] 이미지 삭제: {bot_name}/{char_name}/{filename}")
             return _json_ok({"deleted": True})
         except Exception as e:
@@ -3256,6 +3245,488 @@ class BotMode:
             all_images.extend(direct_images)
 
         return _json_ok({"outfits": outfits, "direct_images": direct_images, "all_count": len(all_images)})
+
+    # ─── 감정 삽화 봇 저장소 (봇 → 캐릭터 → 프로필 → 복장 → 감정) ──────
+    @staticmethod
+    def _emotion_store_segment(value, label: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            return f"{label} 이름이 필요합니다."
+        if value in {".", ".."} or any(char in value for char in ("/", "\\", ":", "\x00")):
+            return f"{label} 이름에 사용할 수 없는 문자가 있습니다."
+        return ""
+
+    @staticmethod
+    def _emotion_image_url(
+        bot_name: str, character: str, profile: str, outfit: str, emotion: str, filename: str
+    ) -> str:
+        return "/api/bot_mode/emotion_image?" + urlencode({
+            "bot": bot_name,
+            "character": character,
+            "profile": profile,
+            "outfit": outfit,
+            "emotion": emotion,
+            "filename": filename,
+        })
+
+    @staticmethod
+    def _emotion_cover_rel(
+        images: list[tuple[list[str], str, os.stat_result]], depth: int, limit: int = 4
+    ) -> list[str] | None:
+        """대표 이미지 상대 경로를 고른다.
+
+        지정한 깊이(폴더/…/파일)를 먼저 찾고, 없으면 첫 이미지를 쓴다.
+        복장 폴더처럼 폴더와 이미지가 섞인 단계도 대표 이미지를 가질 수 있다.
+        ``limit``은 기준 폴더 기준으로 허용할 최대 깊이다.
+        """
+        candidates = [item[0] for item in images if len(item[0]) <= limit]
+        return next((rel for rel in candidates if len(rel) == depth), None) or (
+            candidates[0] if candidates else None
+        )
+
+    def _emotion_cover_url(
+        self, bot_name: str, character: str, rel: list[str] | None
+    ) -> str:
+        """캐릭터 폴더 기준 상대 경로(폴더/…/파일)를 이미지 URL로 바꾼다."""
+        if not rel:
+            return ""
+        folders = list(rel[:-1])
+        folders += [""] * (3 - len(folders))
+        return self._emotion_image_url(bot_name, character, *folders, rel[-1])
+
+    @staticmethod
+    def _emotion_image_files(root: str) -> list[tuple[list[str], str, os.stat_result]]:
+        """root 아래 이미지 파일을 정렬 순회한다. 상대 경로 조각, 절대 경로, stat."""
+        found = []
+        if not os.path.isdir(root):
+            return found
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(name for name in dirnames if not name.startswith((".", "_")))
+            for filename in sorted(filenames):
+                if filename.startswith("_"):
+                    continue
+                if os.path.splitext(filename)[1].lower() not in IMAGE_EXTENSIONS:
+                    continue
+                path = os.path.join(dirpath, filename)
+                try:
+                    stat = os.stat(path)
+                except OSError:
+                    continue
+                rel = os.path.relpath(path, root).replace("\\", "/").split("/")
+                found.append((rel, path, stat))
+        return found
+
+    @staticmethod
+    def _emotion_flat_images(folder: str) -> list[str]:
+        """folder 바로 아래의 이미지 파일명만 정렬해 반환한다."""
+        if not os.path.isdir(folder):
+            return []
+        return [
+            filename for filename in sorted(os.listdir(folder))
+            if not filename.startswith("_")
+            and os.path.isfile(os.path.join(folder, filename))
+            and os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
+        ]
+
+    def _emotion_image_dir(
+        self, bot_name: str, character: str, profile: str, outfit: str, emotion: str
+    ) -> tuple[str | None, str]:
+        """프로필/복장/감정 폴더를 따라간다.
+
+        전부 비면 캐릭터 루트(미분류)이고, 프로필까지만/복장까지만 지정하면
+        그 폴더 바로 아래에 섞여 있는 이미지도 열 수 있다.
+        """
+        error = self._emotion_store_segment(bot_name, "봇") or self._emotion_store_segment(character, "캐릭터")
+        if error:
+            return None, error
+        parts = [profile, outfit, emotion]
+        for index, value in enumerate(parts):
+            if value and not all(parts[:index + 1]):
+                return None, "폴더 경로를 앞 단계부터 순서대로 지정하세요."
+        for value, label in zip(parts, ("프로필", "복장", "감정")):
+            if value:
+                error = self._emotion_store_segment(value, label)
+                if error:
+                    return None, error
+        root = os.path.abspath(os.path.join(BOT_DIR, bot_name, character))
+        selected = [value for value in parts if value]
+        path = os.path.abspath(os.path.join(root, *selected))
+        try:
+            if os.path.commonpath([root, path]) != root:
+                return None, "잘못된 경로입니다."
+        except ValueError:
+            return None, "잘못된 경로입니다."
+        return path, ""
+
+    def _emotion_characters(self, bot_name: str) -> list[dict]:
+        bot_dir = os.path.join(BOT_DIR, bot_name)
+        if not os.path.isdir(bot_dir):
+            return []
+        characters = []
+        for character in sorted(os.listdir(bot_dir)):
+            character_dir = os.path.join(bot_dir, character)
+            if character.startswith((".", "_")) or not os.path.isdir(character_dir):
+                continue
+            images = self._emotion_image_files(character_dir)
+            cover = self._emotion_cover_url(bot_name, character, self._emotion_cover_rel(images, 4))
+            characters.append({"name": character, "count": len(images), "cover": cover})
+        return characters
+
+    def _emotion_profiles(self, bot_name: str, character: str) -> tuple[list[dict], dict]:
+        char_dir = os.path.join(BOT_DIR, bot_name, character)
+        profiles = []
+        if os.path.isdir(char_dir):
+            for profile in sorted(os.listdir(char_dir)):
+                profile_dir = os.path.join(char_dir, profile)
+                if profile.startswith((".", "_")) or not os.path.isdir(profile_dir):
+                    continue
+                images = self._emotion_image_files(profile_dir)
+                cover_rel = self._emotion_cover_rel(images, 3, 3)
+                cover = self._emotion_cover_url(
+                    bot_name, character, [profile, *cover_rel]
+                ) if cover_rel else ""
+                profiles.append({"name": profile, "count": len(images), "cover": cover, "folder": True})
+        flat = self._emotion_flat_images(char_dir)
+        unclassified = {
+            "count": len(flat),
+            "cover": self._emotion_image_url(bot_name, character, "", "", "", flat[0]) if flat else "",
+        }
+        return profiles, unclassified
+
+    def _emotion_outfits(self, bot_name: str, character: str, profile: str) -> list[dict]:
+        profile_dir = os.path.join(BOT_DIR, bot_name, character, profile)
+        if not os.path.isdir(profile_dir):
+            return []
+        outfits = []
+        for outfit in sorted(os.listdir(profile_dir)):
+            outfit_dir = os.path.join(profile_dir, outfit)
+            if outfit.startswith((".", "_")) or not os.path.isdir(outfit_dir):
+                continue
+            images = self._emotion_image_files(outfit_dir)
+            cover_rel = self._emotion_cover_rel(images, 2, 2)
+            cover = self._emotion_cover_url(
+                bot_name, character, [profile, outfit, *cover_rel]
+            ) if cover_rel else ""
+            outfits.append({"name": outfit, "count": len(images), "cover": cover})
+        return outfits
+
+    def _emotion_emotions(self, bot_name: str, character: str, profile: str, outfit: str) -> list[dict]:
+        outfit_dir = os.path.join(BOT_DIR, bot_name, character, profile, outfit)
+        if not os.path.isdir(outfit_dir):
+            return []
+        emotions = []
+        for emotion in sorted(os.listdir(outfit_dir)):
+            emotion_dir = os.path.join(outfit_dir, emotion)
+            if emotion.startswith((".", "_")) or not os.path.isdir(emotion_dir):
+                continue
+            images = self._emotion_flat_images(emotion_dir)
+            cover = self._emotion_image_url(
+                bot_name, character, profile, outfit, emotion, images[0]
+            ) if images else ""
+            emotions.append({"name": emotion, "count": len(images), "cover": cover})
+        return emotions
+
+    def _emotion_images(
+        self, bot_name: str, character: str, profile: str, outfit: str, emotion: str
+    ) -> list[dict]:
+        folder, error = self._emotion_image_dir(bot_name, character, profile, outfit, emotion)
+        if folder is None:
+            raise ValueError(error)
+        images = []
+        for filename in self._emotion_flat_images(folder):
+            path = os.path.join(folder, filename)
+            stat = os.stat(path)
+            images.append({
+                "filename": filename,
+                "url": self._emotion_image_url(
+                    bot_name, character, profile, outfit, emotion, filename
+                ),
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
+            })
+        return images
+
+    async def handle_emotion_store_characters(self, request):
+        """GET /api/bot_mode/emotion_characters - 캐릭터 폴더 목록"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            error = self._emotion_store_segment(bot_name, "봇")
+            if error:
+                return _json_error(error)
+            return _json_ok({"characters": self._emotion_characters(bot_name)})
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 캐릭터 목록 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_profiles(self, request):
+        """GET/POST /api/bot_mode/emotion_profiles - 프로필 폴더 목록·삭제"""
+        try:
+            if request.method == "POST":
+                body = await request.json()
+                if not isinstance(body, dict) or body.get("action") != "remove":
+                    return _json_error("지원하지 않는 프로필 작업입니다.")
+                bot_name = str(body.get("bot") or "").strip()
+                character = str(body.get("character") or "").strip()
+                profile = str(body.get("profile") or "").strip()
+                error = (
+                    self._emotion_store_segment(bot_name, "봇")
+                    or self._emotion_store_segment(character, "캐릭터")
+                    or self._emotion_store_segment(profile, "프로필")
+                )
+                if error:
+                    return _json_error(error)
+                profile_dir = os.path.join(BOT_DIR, bot_name, character, profile)
+                if not os.path.isdir(profile_dir):
+                    return _json_error("존재하지 않는 프로필 폴더입니다.", status=404)
+                shutil.rmtree(profile_dir)
+                profiles, unclassified = self._emotion_profiles(bot_name, character)
+                return _json_ok({"profiles": profiles, "unclassified": unclassified})
+            bot_name = request.query.get("bot", "").strip()
+            character = request.query.get("character", "").strip()
+            error = self._emotion_store_segment(bot_name, "봇") or self._emotion_store_segment(character, "캐릭터")
+            if error:
+                return _json_error(error)
+            if not os.path.isdir(os.path.join(BOT_DIR, bot_name, character)):
+                return _json_error("캐릭터 폴더를 찾을 수 없습니다.", status=404)
+            profiles, unclassified = self._emotion_profiles(bot_name, character)
+            return _json_ok({"profiles": profiles, "unclassified": unclassified})
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 프로필 작업 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_outfits(self, request):
+        """GET/POST /api/bot_mode/emotion_outfits - 프로필 안의 복장 폴더 목록·추가·삭제"""
+        try:
+            if request.method == "POST":
+                body = await request.json()
+                if not isinstance(body, dict):
+                    return _json_error("요청을 확인하세요.")
+                action = body.get("action")
+                bot_name = str(body.get("bot") or "").strip()
+                character = str(body.get("character") or "").strip()
+                profile = str(body.get("profile") or "").strip()
+                outfit = str(body.get("outfit") or "").strip()
+                error = (
+                    self._emotion_store_segment(bot_name, "봇")
+                    or self._emotion_store_segment(character, "캐릭터")
+                    or self._emotion_store_segment(profile, "프로필")
+                    or self._emotion_store_segment(outfit, "복장")
+                )
+                if error:
+                    return _json_error(error)
+                character_dir = os.path.join(BOT_DIR, bot_name, character)
+                if not os.path.isdir(character_dir):
+                    return _json_error("캐릭터 폴더를 찾을 수 없습니다.", status=404)
+                outfit_dir = os.path.join(character_dir, profile, outfit)
+                if action == "add":
+                    if os.path.isdir(outfit_dir):
+                        return _json_error("이미 존재하는 복장입니다.")
+                    os.makedirs(outfit_dir, exist_ok=True)
+                elif action == "remove":
+                    if not os.path.isdir(outfit_dir):
+                        return _json_error("존재하지 않는 복장입니다.", status=404)
+                    shutil.rmtree(outfit_dir)
+                else:
+                    return _json_error("지원하지 않는 복장 작업입니다.")
+                return _json_ok({"outfits": self._emotion_outfits(bot_name, character, profile)})
+            bot_name = request.query.get("bot", "").strip()
+            character = request.query.get("character", "").strip()
+            profile = request.query.get("profile", "").strip()
+            error = (
+                self._emotion_store_segment(bot_name, "봇")
+                or self._emotion_store_segment(character, "캐릭터")
+                or self._emotion_store_segment(profile, "프로필")
+            )
+            if error:
+                return _json_error(error)
+            return _json_ok({"outfits": self._emotion_outfits(bot_name, character, profile)})
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 복장 작업 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_emotions(self, request):
+        """GET/POST /api/bot_mode/emotion_emotions - 복장 안의 감정 폴더 목록·추가·삭제"""
+        try:
+            if request.method == "POST":
+                body = await request.json()
+                if not isinstance(body, dict):
+                    return _json_error("요청을 확인하세요.")
+                action = body.get("action")
+                bot_name = str(body.get("bot") or "").strip()
+                character = str(body.get("character") or "").strip()
+                profile = str(body.get("profile") or "").strip()
+                outfit = str(body.get("outfit") or "").strip()
+                emotion = str(body.get("emotion") or "").strip()
+                error = (
+                    self._emotion_store_segment(bot_name, "봇")
+                    or self._emotion_store_segment(character, "캐릭터")
+                    or self._emotion_store_segment(profile, "프로필")
+                    or self._emotion_store_segment(outfit, "복장")
+                    or self._emotion_store_segment(emotion, "감정")
+                )
+                if error:
+                    return _json_error(error)
+                outfit_dir = os.path.join(BOT_DIR, bot_name, character, profile, outfit)
+                if not os.path.isdir(outfit_dir):
+                    return _json_error("복장 폴더를 찾을 수 없습니다.", status=404)
+                emotion_dir = os.path.join(outfit_dir, emotion)
+                if action == "add":
+                    if os.path.isdir(emotion_dir):
+                        return _json_error("이미 존재하는 감정입니다.")
+                    os.makedirs(emotion_dir, exist_ok=True)
+                elif action == "remove":
+                    if not os.path.isdir(emotion_dir):
+                        return _json_error("존재하지 않는 감정입니다.", status=404)
+                    shutil.rmtree(emotion_dir)
+                else:
+                    return _json_error("지원하지 않는 감정 작업입니다.")
+                return _json_ok({
+                    "emotions": self._emotion_emotions(bot_name, character, profile, outfit)
+                })
+            bot_name = request.query.get("bot", "").strip()
+            character = request.query.get("character", "").strip()
+            profile = request.query.get("profile", "").strip()
+            outfit = request.query.get("outfit", "").strip()
+            error = (
+                self._emotion_store_segment(bot_name, "봇")
+                or self._emotion_store_segment(character, "캐릭터")
+                or self._emotion_store_segment(profile, "프로필")
+                or self._emotion_store_segment(outfit, "복장")
+            )
+            if error:
+                return _json_error(error)
+            return _json_ok({
+                "emotions": self._emotion_emotions(bot_name, character, profile, outfit)
+            })
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 감정 작업 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_assets(self, request):
+        """GET/POST /api/bot_mode/emotion_assets - 감정 폴더 안의 에셋 이미지 목록·삭제"""
+        try:
+            if request.method == "POST":
+                body = await request.json()
+                if not isinstance(body, dict) or body.get("action") != "remove":
+                    return _json_error("지원하지 않는 에셋 작업입니다.")
+                bot_name = str(body.get("bot") or "").strip()
+                character = str(body.get("character") or "").strip()
+                profile = str(body.get("profile") or "").strip()
+                outfit = str(body.get("outfit") or "").strip()
+                emotion = str(body.get("emotion") or "").strip()
+                filename = str(body.get("filename") or "").strip()
+                folder, error = self._emotion_image_dir(bot_name, character, profile, outfit, emotion)
+                if folder is None:
+                    return _json_error(error)
+                if not filename or filename != os.path.basename(filename):
+                    return _json_error("파일 이름을 확인하세요.")
+                path = os.path.abspath(os.path.join(folder, filename))
+                try:
+                    if os.path.commonpath([folder, path]) != folder:
+                        return _json_error("잘못된 경로입니다.")
+                except ValueError:
+                    return _json_error("잘못된 경로입니다.")
+                if not os.path.isfile(path):
+                    return _json_error("파일을 찾을 수 없습니다.", status=404)
+                os.remove(path)
+                return _json_ok({
+                    "images": self._emotion_images(bot_name, character, profile, outfit, emotion)
+                })
+            bot_name = request.query.get("bot", "").strip()
+            character = request.query.get("character", "").strip()
+            profile = request.query.get("profile", "").strip()
+            outfit = request.query.get("outfit", "").strip()
+            emotion = request.query.get("emotion", "").strip()
+            folder, error = self._emotion_image_dir(bot_name, character, profile, outfit, emotion)
+            if folder is None:
+                return _json_error(error)
+            if not os.path.isdir(folder):
+                return _json_error("이미지 폴더를 찾을 수 없습니다.", status=404)
+            return _json_ok({
+                "images": self._emotion_images(bot_name, character, profile, outfit, emotion)
+            })
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 에셋 작업 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_upload(self, request):
+        """POST /api/bot_mode/emotion_upload - 감정 폴더에 에셋 이미지 업로드"""
+        try:
+            body = await request.post()
+            bot_name = str(body.get("bot") or "").strip()
+            character = str(body.get("character") or "").strip()
+            profile = str(body.get("profile") or "").strip()
+            outfit = str(body.get("outfit") or "").strip()
+            emotion = str(body.get("emotion") or "").strip()
+            error = (
+                self._emotion_store_segment(bot_name, "봇")
+                or self._emotion_store_segment(character, "캐릭터")
+                or self._emotion_store_segment(profile, "프로필")
+                or self._emotion_store_segment(outfit, "복장")
+                or self._emotion_store_segment(emotion, "감정")
+            )
+            if error:
+                return _json_error(error)
+            character_dir = os.path.join(BOT_DIR, bot_name, character)
+            if not os.path.isdir(character_dir):
+                return _json_error("캐릭터 폴더를 찾을 수 없습니다.", status=404)
+            emotion_dir = os.path.join(character_dir, profile, outfit, emotion)
+            os.makedirs(emotion_dir, exist_ok=True)
+            fields = body.getall("file", []) if hasattr(body, "getall") else []
+            if not fields:
+                single = body.get("file")
+                fields = [single] if single is not None else []
+            saved = []
+            for field in fields:
+                if not hasattr(field, "filename"):
+                    continue
+                ext = os.path.splitext(field.filename or "")[1].lower()
+                if not field.filename or ext not in IMAGE_EXTENSIONS:
+                    return _json_error(f"이미지 파일만 업로드할 수 있습니다: {field.filename}")
+                filename = _upload_image_filename(field.filename)
+                if not filename:
+                    return _json_error("파일 이름을 확인하세요.")
+                path = os.path.join(emotion_dir, filename)
+                with open(path, "wb") as output:
+                    output.write(field.file.read())
+                saved.append(filename)
+            if not saved:
+                return _json_error("업로드할 이미지가 없습니다.")
+            return _json_ok({
+                "saved": saved,
+                "images": self._emotion_images(bot_name, character, profile, outfit, emotion),
+            })
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 에셋 업로드 실패: {exc}")
+            return _json_error(str(exc))
+
+    async def handle_emotion_store_image(self, request):
+        """GET /api/bot_mode/emotion_image - 중첩 감정 폴더의 이미지 서빙"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            character = request.query.get("character", "").strip()
+            profile = request.query.get("profile", "").strip()
+            outfit = request.query.get("outfit", "").strip()
+            emotion = request.query.get("emotion", "").strip()
+            filename = request.query.get("filename", "").strip()
+            folder, error = self._emotion_image_dir(bot_name, character, profile, outfit, emotion)
+            if folder is None:
+                return _json_error(error)
+            if not filename or filename != os.path.basename(filename):
+                return _json_error("파일 이름을 확인하세요.")
+            filepath = os.path.abspath(os.path.join(folder, filename))
+            try:
+                if os.path.commonpath([folder, filepath]) != folder:
+                    return _json_error("잘못된 경로입니다.")
+            except ValueError:
+                return _json_error("잘못된 경로입니다.")
+            if not os.path.isfile(filepath):
+                return _json_error("파일을 찾을 수 없습니다.", status=404)
+            import mimetypes as mt
+            content_type = mt.guess_type(filepath)[0] or "image/webp"
+            return web.FileResponse(filepath, headers={"Content-Type": content_type})
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"[BOT_MODE] 감정 삽화 이미지 서빙 실패: {exc}")
+            return _json_error(str(exc))
 
     def _get_rep_image_paths(self, bot_name: str, char_name: str) -> list[dict]:
         """대표이미지 파일 경로 목록 반환."""
@@ -3480,24 +3951,7 @@ class BotMode:
                         dst = os.path.join(char_dir, new_name)
                     shutil.copy2(src, dst)
 
-                    # 프롬프트 복사
-                    base = os.path.splitext(os.path.basename(src))[0]
-                    asset_prompt_path = os.path.join(os.path.dirname(src), f"{base}_prompt.json")
-                    prompt = ""
-                    negative = ""
-                    if os.path.isfile(asset_prompt_path):
-                        try:
-                            with open(asset_prompt_path, "r", encoding="utf-8") as f:
-                                apd = json.load(f)
-                                prompt = apd.get("positive", "")
-                                negative = apd.get("negative", "")
-                        except Exception:
-                            pass
-                    new_base = os.path.splitext(new_name)[0]
-                    bot_prompt_path = os.path.join(char_dir, f"{new_base}_prompt.json")
-                    with open(bot_prompt_path, "w", encoding="utf-8") as f:
-                        json.dump({"prompt": prompt, "negative": negative, "source": "asset", "original_path": ri["path"]}, f, ensure_ascii=False)
-
+                    # 이미지만 가져온다. 에셋의 프롬프트 설정은 복사하지 않는다.
                     imported_files.append(new_name)
 
                 imported.append({"character": char_name, "files": imported_files})
@@ -3507,6 +3961,222 @@ class BotMode:
             return _json_ok({"imported": imported})
         except Exception as e:
             print(f"[BOT_MODE] 에셋 캐릭터 가져오기 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_get_importable_bot_chars(self, request):
+        """GET /api/bot_mode/importable_bot_chars?bot=대상봇
+        다른 봇의 캐릭터 목록을 대표 이미지·이미지 수·설정 포함 여부와 함께 반환한다.
+        """
+        try:
+            dest_bot_name = request.query.get("bot", "").strip()
+            if not dest_bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            data = _load_bot_data()
+            dest_bot = next(
+                (bot for bot in data.get("bots", []) if bot.get("name") == dest_bot_name),
+                None,
+            )
+            if not dest_bot:
+                return _json_error(f"봇을 찾을 수 없음: {dest_bot_name}")
+            existing_names = {
+                str(character.get("name") or "")
+                for character in dest_bot.get("characters", [])
+            }
+            result = []
+            for bot in data.get("bots", []):
+                source_bot_name = str(bot.get("name") or "").strip()
+                if not source_bot_name or source_bot_name == dest_bot_name:
+                    continue
+                extras = _load_lb_extra(source_bot_name) or []
+                if isinstance(extras, dict) and "edited" in extras:
+                    extras = extras.get("edited") or []
+                extras_by_name = {
+                    str(item.get("name") or "").casefold(): item
+                    for item in extras
+                    if isinstance(item, dict)
+                }
+                characters = []
+                for character in bot.get("characters", []):
+                    char_name = str(character.get("name") or "").strip()
+                    if not char_name:
+                        continue
+                    extra = extras_by_name.get(char_name.casefold())
+                    rep_filename = ""
+                    try:
+                        cards, _source = effective_character_cards(character, extra)
+                        rep_images = [
+                            str(value).strip()
+                            for value in (cards[0].get("rep_images") or [])
+                            if str(value).strip()
+                        ]
+                        rep_filename = rep_images[0] if rep_images else ""
+                    except Exception as card_error:
+                        print(
+                            "[BOT_IMPORT] 대표 이미지 해석 실패: "
+                            f"bot={source_bot_name!r}, character={char_name!r}, "
+                            f"error={card_error}"
+                        )
+                    char_dir = os.path.join(BOT_DIR, source_bot_name, char_name)
+                    image_names = []
+                    if os.path.isdir(char_dir):
+                        image_names = sorted(
+                            name for name in os.listdir(char_dir)
+                            if os.path.isfile(os.path.join(char_dir, name))
+                            and os.path.splitext(name)[1].lower() in IMAGE_EXTENSIONS
+                        )
+                    if not rep_filename and image_names:
+                        rep_filename = image_names[0]
+                    if rep_filename and not os.path.isfile(
+                        os.path.join(char_dir, rep_filename)
+                    ):
+                        rep_filename = ""
+                    characters.append({
+                        "name": char_name,
+                        "image_count": len(image_names),
+                        "has_settings": bool(extra) or any(
+                            key != "name" for key in character
+                        ),
+                        "already_exists": char_name in existing_names,
+                        "rep_image_url": (
+                            f"/api/bot_mode/image/{quote(source_bot_name, safe='')}/"
+                            f"{quote(char_name, safe='')}/{quote(rep_filename, safe='')}"
+                            if rep_filename else ""
+                        ),
+                    })
+                if characters:
+                    result.append({"name": source_bot_name, "characters": characters})
+            return _json_ok({"bots": result})
+        except Exception as e:
+            print(f"[BOT_IMPORT] 다른 봇 캐릭터 조회 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_import_bot_chars(self, request):
+        """POST /api/bot_mode/import_bot_chars
+        다른 봇의 캐릭터를 이미지와 설정값(카드·프롬프트)까지 현재 봇으로 복사한다.
+        """
+        try:
+            body = await request.json()
+            dest_bot_name = str(body.get("bot") or "").strip()
+            source_bot_name = str(body.get("source_bot") or "").strip()
+            requested_names = body.get("characters")
+            if not dest_bot_name or not source_bot_name:
+                return _json_error("대상 봇과 원본 봇 이름이 필요합니다.")
+            if dest_bot_name == source_bot_name:
+                return _json_error("현재 봇의 캐릭터는 가져올 수 없습니다.")
+            if not isinstance(requested_names, list) or not requested_names:
+                return _json_error("가져올 캐릭터를 선택하세요.")
+
+            async with self._lock:
+                data = _load_bot_data()
+                dest_bot = next(
+                    (bot for bot in data.get("bots", []) if bot.get("name") == dest_bot_name),
+                    None,
+                )
+                source_bot = next(
+                    (bot for bot in data.get("bots", []) if bot.get("name") == source_bot_name),
+                    None,
+                )
+                if not dest_bot:
+                    return _json_error(f"봇을 찾을 수 없음: {dest_bot_name}")
+                if not source_bot:
+                    return _json_error(f"봇을 찾을 수 없음: {source_bot_name}")
+                source_chars = {
+                    str(character.get("name") or ""): character
+                    for character in source_bot.get("characters", [])
+                    if str(character.get("name") or "").strip()
+                }
+                source_extra = _load_lb_extra(source_bot_name) or []
+                if isinstance(source_extra, dict) and "edited" in source_extra:
+                    source_extra = source_extra.get("edited") or []
+                if not isinstance(source_extra, list):
+                    source_extra = []
+                dest_extra = _load_lb_extra(dest_bot_name) or []
+                if isinstance(dest_extra, dict) and "edited" in dest_extra:
+                    dest_extra = dest_extra.get("edited") or []
+                if not isinstance(dest_extra, list):
+                    dest_extra = []
+
+                imported, errors = [], []
+                extra_changed = False
+                for raw_name in requested_names:
+                    char_name = str(raw_name or "").strip()
+                    validation_error = validate_bot_storage_name(char_name, "캐릭터 이름")
+                    if validation_error:
+                        errors.append({"character": char_name, "error": validation_error})
+                        continue
+                    if any(
+                        str(character.get("name") or "") == char_name
+                        for character in dest_bot.get("characters", [])
+                    ):
+                        errors.append({"character": char_name, "error": "이미 존재하는 캐릭터"})
+                        continue
+                    source_char = source_chars.get(char_name)
+                    if source_char is None:
+                        errors.append({"character": char_name, "error": "원본 봇에 없는 캐릭터"})
+                        continue
+                    source_dir = os.path.join(BOT_DIR, source_bot_name, char_name)
+                    if not os.path.isdir(source_dir):
+                        errors.append({"character": char_name, "error": "캐릭터 폴더가 없습니다"})
+                        continue
+                    dest_dir = os.path.join(BOT_DIR, dest_bot_name, char_name)
+                    try:
+                        shutil.copytree(source_dir, dest_dir)
+                    except Exception as copy_error:
+                        print(
+                            "[BOT_IMPORT] 캐릭터 폴더 복사 실패: "
+                            f"{source_bot_name!r}/{char_name!r} -> "
+                            f"{dest_bot_name!r}/{char_name!r}, error={copy_error}"
+                        )
+                        traceback.print_exc()
+                        errors.append({"character": char_name, "error": str(copy_error)})
+                        continue
+
+                    copied_char = deepcopy(source_char)
+                    copied_char["name"] = char_name
+                    # NPC 는 수명 만료 시 자동 삭제되므로 일반 캐릭터로 가져온다.
+                    copied_char.pop("npc_generated", None)
+                    copied_char.pop("npc_idle_calls", None)
+                    dest_bot.setdefault("characters", []).append(copied_char)
+
+                    filtered_extra = [
+                        entry for entry in dest_extra
+                        if not (
+                            isinstance(entry, dict)
+                            and str(entry.get("name") or "").casefold() == char_name.casefold()
+                        )
+                    ]
+                    if len(filtered_extra) != len(dest_extra):
+                        extra_changed = True
+                    dest_extra = filtered_extra
+                    for entry in source_extra:
+                        if (
+                            isinstance(entry, dict)
+                            and str(entry.get("name") or "").casefold() == char_name.casefold()
+                        ):
+                            dest_extra.append(deepcopy(entry))
+                            extra_changed = True
+
+                    image_count = sum(
+                        1 for name in os.listdir(dest_dir)
+                        if os.path.isfile(os.path.join(dest_dir, name))
+                        and os.path.splitext(name)[1].lower() in IMAGE_EXTENSIONS
+                    )
+                    imported.append({"character": char_name, "image_count": image_count})
+                    print(
+                        "[BOT_IMPORT] 다른 봇 캐릭터 가져오기: "
+                        f"{source_bot_name!r}/{char_name!r} -> "
+                        f"{dest_bot_name!r}/{char_name!r} ({image_count}장)"
+                    )
+
+                if imported:
+                    _save_bot_data(data)
+                    if extra_changed:
+                        _save_lb_extra(dest_bot_name, dest_extra)
+                return _json_ok({"imported": imported, "errors": errors})
+        except Exception as e:
+            print(f"[BOT_IMPORT] 다른 봇 캐릭터 가져오기 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
@@ -3637,7 +4307,10 @@ class BotMode:
         """POST /api/bot_mode/tag_filter_profile_save"""
         body = await request.json()
         name = body.get("name", "").strip()
-        steps = body.get("steps", [])
+        try:
+            steps = _validate_tag_filter_steps(body.get("steps", []))
+        except ValueError as exc:
+            return _json_error(str(exc))
         if not name:
             return _json_error("프로필 이름이 필요합니다.")
         data = _load_tag_filter_profiles()
@@ -3667,16 +4340,17 @@ class BotMode:
         body = await request.json()
         bot_name = body.get("bot", "").strip()
         items = body.get("items", [])
-        steps = body.get("steps", [])
+        try:
+            steps = _validate_tag_filter_steps(body.get("steps", []))
+        except ValueError as exc:
+            return _json_error(str(exc))
         if not bot_name:
             return _json_error("봇 이름이 필요합니다.")
         preview = []
         for item in items:
             char_name = item.get("character", "")
             filename = item.get("filename", "")
-            base = os.path.splitext(filename)[0]
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+            prompt_path = _tag_filter_prompt_path(bot_name, item)
             original = ""
             if os.path.isfile(prompt_path):
                 try:
@@ -3698,18 +4372,20 @@ class BotMode:
         body = await request.json()
         bot_name = body.get("bot", "").strip()
         items = body.get("items", [])
-        steps = body.get("steps", [])
+        try:
+            steps = _validate_tag_filter_steps(body.get("steps", []))
+        except ValueError as exc:
+            return _json_error(str(exc))
         if not bot_name:
             return _json_error("봇 이름이 필요합니다.")
         success_count = 0
         fail_count = 0
+        failed = []
         for item in items:
             try:
                 char_name = item.get("character", "")
                 filename = item.get("filename", "")
-                base = os.path.splitext(filename)[0]
-                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                prompt_path = _tag_filter_prompt_path(bot_name, item)
                 existing = {}
                 if os.path.isfile(prompt_path):
                     with open(prompt_path, "r", encoding="utf-8") as f:
@@ -3723,10 +4399,12 @@ class BotMode:
             except Exception as e:
                 fail_count += 1
                 print(f"[BOT_MODE] 태그 필터 적용 실패: {item} - {e}")
+                failed.append({"character": item.get("character", ""), "filename": item.get("filename", ""), "error": str(e)})
         return _json_ok({
             "total": len(items),
             "success_count": success_count,
             "fail_count": fail_count,
+            "failed": failed,
         })
 
     async def handle_batch_set_negative(self, request):
@@ -4102,6 +4780,8 @@ class BotMode:
                 settings = _load_word_replacements(bot_name)
                 existing_rules = list(settings.get("rules", []))
                 for rule in rules:
+                    if rule.get("type") == "weight_clamp" or rule.get("id") == "weight_clamp":
+                        continue
                     candidate = {key: value for key, value in rule.items() if key not in {"id", "applied_to"}}
                     if any(candidate == {key: value for key, value in existing.items() if key not in {"id", "applied_to"}} for existing in existing_rules):
                         print(f"[BOT_MODE] 같은 단어 규칙 추가 스킵: bot={bot_name}, rule={candidate!r}")
@@ -4110,9 +4790,9 @@ class BotMode:
                     added_count += 1
                 settings["rules"] = existing_rules
             if body.get("append") is not True or added_count:
-                _save_word_replacements(bot_name, settings)
+                settings = _save_word_replacements(bot_name, settings)
             print(f"[BOT_MODE] 단어 기반 규칙 저장: bot={bot_name}, {len(rules)}개 규칙")
-            return _json_ok({"saved": True, "added_count": added_count})
+            return _json_ok({"saved": True, "added_count": added_count, "rules": settings["rules"]})
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 저장 실패: {e}")
             traceback.print_exc()
@@ -4134,102 +4814,6 @@ class BotMode:
             print(f"[BOT_MODE] utility_settings 저장 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
-
-    async def handle_get_postprocess_vn(self, request):
-        """GET /api/bot_mode/postprocess_vn?bot=X"""
-        try:
-            bot_name = request.query.get("bot", "").strip()
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            vn = _load_postprocess_vn(bot_name)
-            return _json_ok(vn)
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_vn 로드 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_save_postprocess_vn(self, request):
-        """POST /api/bot_mode/postprocess_vn  body: {bot, vn}"""
-        try:
-            body = await request.json()
-            bot_name = body.get("bot", "").strip()
-            vn = body.get("vn", {})
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            async with self._lock:
-                _save_postprocess_vn(bot_name, vn)
-            return _json_ok({"saved": True})
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_vn 저장 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_get_postprocess_bubble(self, request):
-        """GET /api/bot_mode/postprocess_bubble?bot=X"""
-        try:
-            bot_name = request.query.get("bot", "").strip()
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            bubble = _load_postprocess_bubble(bot_name)
-            mode = _get_postprocess_mode(bot_name)
-            return _json_ok({"bubble": bubble, "mode": mode})
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_bubble 로드 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_save_postprocess_bubble(self, request):
-        """POST /api/bot_mode/postprocess_bubble  body: {bot, bubble, mode?}"""
-        try:
-            body = await request.json()
-            bot_name = body.get("bot", "").strip()
-            bubble = body.get("bubble", {})
-            mode = body.get("mode")  # 'vn' | 'bubble' (선택)
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            async with self._lock:
-                _save_postprocess_bubble(bot_name, bubble)
-                if mode in ("vn", "bubble"):
-                    _set_postprocess_mode(bot_name, mode)
-            return _json_ok({"saved": True})
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_bubble 저장 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_get_postprocess_subtitle(self, request):
-        """GET /api/bot_mode/postprocess_subtitle?bot=X"""
-        try:
-            bot_name = request.query.get("bot", "").strip()
-            if not bot_name:
-                print("[BOT_MODE] postprocess_subtitle 로드 거부: 봇 이름이 비어 있음")
-                return _json_error("봇 이름이 필요합니다.")
-            subtitle = _load_postprocess_subtitle(bot_name)
-            mode = _get_postprocess_mode(bot_name)
-            return _json_ok({"subtitle": subtitle, "mode": mode})
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_subtitle 로드 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_save_postprocess_subtitle(self, request):
-        """POST /api/bot_mode/postprocess_subtitle body: {bot, subtitle, mode?}"""
-        try:
-            body = await request.json()
-            bot_name = str(body.get("bot") or "").strip()
-            subtitle = body.get("subtitle", {})
-            mode = body.get("mode")
-            if not bot_name:
-                print("[BOT_MODE] postprocess_subtitle 저장 거부: 봇 이름이 비어 있음")
-                return _json_error("봇 이름이 필요합니다.")
-            async with self._lock:
-                _save_postprocess_subtitle(bot_name, subtitle, mode=mode)
-            return _json_ok({"saved": True})
-        except Exception as e:
-            print(f"[BOT_MODE] postprocess_subtitle 저장 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
 
     async def handle_get_lb_extra(self, request):
         """GET /api/bot_mode/lb_extra - 저장된 분류 데이터(편집본) 로드"""
@@ -4368,16 +4952,7 @@ class BotMode:
                 ),
                 None,
             )
-            character, source = effective_character_profiles(
-                str(root_character.get("name") or char_name),
-                root_character,
-                extra_character,
-            )
-            return _json_ok({
-                "character": character,
-                "source": source,
-                "max_cards": MAX_VISUAL_CARDS,
-            })
+            return _json_ok(_character_card_data(root_character, extra_character))
         except Exception as e:
             print(f"[CHARACTER_CARD:API] 조회 실패: error={e}")
             traceback.print_exc()
@@ -4428,6 +5003,8 @@ class BotMode:
                     canonical_name = str(root_character.get("name") or char_name)
                     raw_character = item.get("data")
                     try:
+                        if item.get("batch_refine") is True:
+                            ensure_lb_extra_batch_refine_allowed(root_character, item.get("visual_card_id"))
                         if not isinstance(raw_character, dict):
                             raise VisualProfileValidationError("저장할 캐릭터 카드 데이터가 필요합니다.")
                         supplied_name = str(raw_character.get("name") or "").strip()
@@ -4476,7 +5053,13 @@ class BotMode:
                             order += [card_id for card_id in current_by_id if card_id not in order]
                             cards = [current_by_id[card_id] for card_id in order if card_id in current_by_id]
                         stored_cards = store_visual_cards(root_character, cards)
-                        saved_characters.append(cards_to_character_profiles(canonical_name, stored_cards))
+                        saved_character = cards_to_character_profiles(canonical_name, stored_cards)
+                        saved_character["lb_extra_batch_locked"] = bool(root_character.get("lb_extra_batch_locked", False))
+                        if root_character.get("npc_generated") is True:
+                            from modes.illustration_npc import get_npc_lifetime
+                            saved_character.update(npc_generated=True, npc_idle_calls=int(root_character.get("npc_idle_calls", 0)),
+                                                   npc_lifetime=get_npc_lifetime())
+                        saved_characters.append(saved_character)
                     except VisualProfileValidationError as exc:
                         print(f"[CHARACTER_CARD:API] 카드 저장 건너뜀: bot={bot_name!r}, character={canonical_name!r}, error={exc}")
                         traceback.print_exc()
@@ -4520,7 +5103,11 @@ class BotMode:
             body = await request.json()
             bot_name = str(body.get("bot_name") or "").strip()
             requested_targets = body.get("targets")
+            request_id = str(body.get("request_id") or "")
             output_language = "en" if body.get("output_language") == "en" else "ko"
+            analyze_images = body.get("analyze_images", True)
+            if not isinstance(analyze_images, bool):
+                return _json_error("이미지 분석 여부는 true 또는 false여야 합니다.")
             if not bot_name:
                 print("[VISUAL_GUIDE:API] 생성 요청 거부: bot_name이 비어 있음")
                 return _json_error("봇 이름이 필요합니다.")
@@ -4672,6 +5259,9 @@ class BotMode:
                 )
                 return _json_error("LLM 통합 큐가 준비되지 않았습니다.", 503)
 
+            progress_suggestions = {}
+            progress_revision = 0
+
             async def notify_visual_guide_progress(
                 queue_item,
                 *,
@@ -4685,10 +5275,15 @@ class BotMode:
                 profile_current: int = 0,
                 profile_total: int = 0,
             ) -> None:
+                nonlocal progress_revision
+                progress_revision += 1
                 detail = {
                     "phase": "visual_profile_guide",
                     "stage": stage,
+                    "revision": progress_revision,
+                    "request_id": request_id,
                     "bot_name": bot_name,
+                    "analyze_images": analyze_images,
                     "character": character,
                     "current": character_index,
                     "completed": completed,
@@ -4698,15 +5293,23 @@ class BotMode:
                     "profile_current": profile_current,
                     "profile_total": profile_total,
                     "percentage": (
-                        (completed / character_count) * 100
+                        50 + (profile_current / profile_total) * 50
+                        if profile_total > 0
+                        else (completed / character_count) * (50 if analyze_images else 100)
                         if character_count > 0
                         else 0
                     ),
                 }
                 if suggestions is not None:
                     detail["suggestions"] = deepcopy(suggestions)
+                    for suggestion in detail["suggestions"]:
+                        identity = (suggestion["character"].casefold(), suggestion["profile_id"])
+                        progress_suggestions[identity] = suggestion
                 if error:
                     detail["error"] = error
+                # Live events carry only changed cards; polling also recovers
+                # completed cards whose individual events were missed.
+                snapshot_detail = {**detail, "suggestions": list(progress_suggestions.values())}
                 try:
                     notify_progress = getattr(
                         self._queue_manager,
@@ -4715,7 +5318,7 @@ class BotMode:
                     )
                     if not callable(notify_progress):
                         raise RuntimeError("큐 진행률 알림 함수가 없습니다")
-                    await notify_progress(queue_item, detail)
+                    await notify_progress(queue_item, detail, snapshot_detail=snapshot_detail)
                 except Exception as exc:
                     print(
                         f"[VISUAL_GUIDE:PROGRESS] 진행률 알림 실패: "
@@ -4787,6 +5390,7 @@ class BotMode:
                     messages = _build_visual_guide_messages(
                         system_prompt, call_targets, output_language,
                     )
+                    initial_messages = deepcopy(messages)
                     accepted = {}
                     usage = {}
                     last_raw_result = ""
@@ -4816,7 +5420,9 @@ class BotMode:
                     )
 
                     def result_validator(raw_result):
-                        parsed = llm_prompt_edit.parse_llm_json(raw_result)
+                        parsed = llm_prompt_edit.parse_llm_json(
+                            raw_result, repair_closing_brackets=True,
+                        )
                         normalized, reason = _normalize_visual_guide_llm_result(
                             parsed,
                             call_targets,
@@ -4865,6 +5471,20 @@ class BotMode:
                             attempt=attempt_number,
                             total_attempts=total_attempts,
                         )
+                        if (attempt_number < total_attempts and isinstance(attempt_raw, str)
+                                and attempt_raw.strip() and not attempt_raw.startswith("[LLM 실패]")):
+                            messages[:] = [*deepcopy(initial_messages), {
+                                "role": "user",
+                                "content": (
+                                    f"Regenerate the complete response for attempt {attempt_number + 1}. "
+                                    "The previous response failed JSON or schema validation. "
+                                    "Return only a valid JSON object with a top-level suggestions array. "
+                                    "Include every requested target_key exactly once, with aliases, "
+                                    "selection_guide, evidence, and confidence as specified above. "
+                                    "Close every object and array, including the final suggestion object. "
+                                    "Do not include Markdown fences or omit any requested cards."
+                                ),
+                            }]
 
                     def observe_execution(event):
                         if str(event.get("type") or "") == "execution_complete":
@@ -4915,6 +5535,7 @@ class BotMode:
                             on_attempt_failure=on_attempt_failure,
                             execution_context=execution_context,
                             execution_observer=observe_execution,
+                            retry_messages=messages,
                         )
                     except Exception as exc:
                         elapsed = time.perf_counter() - call_started
@@ -5029,7 +5650,9 @@ class BotMode:
                         }
                     profile_suggestions = accepted.get("suggestions")
                     if profile_suggestions is None:
-                        parsed = llm_prompt_edit.parse_llm_json(raw)
+                        parsed = llm_prompt_edit.parse_llm_json(
+                            raw, repair_closing_brackets=True,
+                        )
                         _normalized, reason = _normalize_visual_guide_llm_result(
                             parsed,
                             call_targets,
@@ -5085,6 +5708,9 @@ class BotMode:
                     if output_language == "en":
                         for suggestion in profile_suggestions:
                             suggestion["selection_guide_english"] = suggestion["selection_guide"]
+                    if not analyze_images:
+                        for suggestion in profile_suggestions:
+                            suggestion["visual_context_status"] = "skipped"
 
                     _log_visual_guide_llm_history(
                         llm_service_module=llm_service,
@@ -5256,6 +5882,15 @@ class BotMode:
                         "cancelled": True,
                     }
 
+                if not analyze_images:
+                    return {
+                        "suggestions": suggestions,
+                        "target_count": len(resolved_targets),
+                        "character_call_count": character_count,
+                        "completed_character_count": completed_character_count,
+                        "cancelled": False,
+                    }
+
                 appearance_jobs = []
                 appearance_total = sum(
                     len(result["call_targets"]) for result in successful_guides
@@ -5295,10 +5930,7 @@ class BotMode:
                     suggestion = job["suggestion"]
                     vision_profile_id = str(target["profile"].get("id") or "")
                     async with appearance_progress_lock:
-                        started_position = min(
-                            appearance_total,
-                            appearance_completed_count + 1,
-                        )
+                        profiles_completed_before = appearance_completed_count
                         completed_before = appearance_completed_character_count
                     await notify_visual_guide_progress(
                         queue_item,
@@ -5307,7 +5939,7 @@ class BotMode:
                         character_index=character_index,
                         profile_ids=[vision_profile_id],
                         completed=completed_before,
-                        profile_current=started_position,
+                        profile_current=profiles_completed_before,
                         profile_total=appearance_total,
                     )
                     if bool(queue_item._visual_guide_cancel_requested):
@@ -5510,6 +6142,8 @@ class BotMode:
                         "source_preset": preset,
                         "source_scope": scope,
                         "output_language": output_language,
+                        "analyze_images": analyze_images,
+                        "request_id": request_id,
                     },
                     priority=10,
                     runtime_handler=run_visual_guide_queue,
@@ -5528,8 +6162,10 @@ class BotMode:
                 f"item={queue_item.id}, targets={len(resolved_targets)}, "
                 f"character_calls={character_count}"
             )
+            if body.get("background") is True:
+                return _json_ok({"success": True, "item_id": queue_item.id, "request_id": request_id})
             try:
-                queue_result = await queue_item.completion_future
+                queue_result = await asyncio.shield(queue_item.completion_future)
             except Exception as exc:
                 print(
                     f"[VISUAL_GUIDE:QUEUE] 큐 처리 실패: bot={bot_name!r}, "
@@ -6105,10 +6741,20 @@ class BotMode:
                 text = local.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
             return _json_ok({
                 "text": text,
+                "genre": str(bot.get("genre") or ""),
                 "preset": preset,
                 "scope": scope,
                 "builtin_presets": builtin,     # 배포자료(잠금)
                 "local_presets": local,          # 사용자(편집가능)
+                "using_bots": [item["name"] for item in data.get("bots", [])
+                               if item.get("system_prompt_preset") == preset
+                               and item.get("preset_scope", "local") == scope],
+                "distribution_presets": sorted({
+                    item.get("system_prompt_preset", "") for item in data.get("bots", [])
+                    if item.get("name") in data.get("_distribution_bot_names", [])
+                    and item.get("preset_scope", "local") == "local"
+                    and item.get("system_prompt_preset") in local
+                }),
             })
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 로드 실패: {e}")
@@ -6116,14 +6762,28 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_save_system_prompt(self, request):
-        """POST /api/bot_mode/system_prompt - 시스템 프롬프트 저장 + 봇 바인딩
+        """Save or copy a system preset and bind it to a bot.
 
-        - scope=local : 프리셋 본문(덮어쓰기) + 봇 바인딩
-        - scope=builtin: 본문(배포자료, 읽기전용)은 건드리지 않고 봇 '선택(바인딩)'만 영속화.
-          → 사용자가 배포자료 프리셋을 선택한 사실을 저장하기 위함.
+        Builtin selection remains read-only unless edit_builtin is requested with
+        an editor unlock token. New presets and copies always belong to the user.
         """
         try:
             body = await request.json()
+            operation = body.get("action", "save")
+            token = body.get("builtin_unlock_token", "")
+            if not isinstance(token, str):
+                return _json_error("배포 잠금 정보를 확인하세요.")
+            if operation == "lock":
+                _system_prompt_unlock_tokens.discard(token)
+                return _json_ok({"locked": True})
+            if operation == "unlock":
+                if body.get("confirmed") is not True:
+                    return _json_error("배포 풀기 안내를 먼저 확인하세요.")
+                token = secrets.token_urlsafe(32)
+                _system_prompt_unlock_tokens.add(token)
+                return _json_ok({"builtin_unlock_token": token})
+            if operation not in {"save", "create", "duplicate"}:
+                return _json_error("지원하지 않는 시스템 지침 작업입니다.")
             bot_name = body.get("bot_name", "").strip()
             text = body.get("text", "")
             preset_name = (body.get("preset_name") or "").strip()
@@ -6134,23 +6794,48 @@ class BotMode:
                 return _json_error("저장할 프리셋이 선택되지 않았습니다. 프리셋을 먼저 선택하세요.")
             if scope not in ("local", "builtin"):
                 return _json_error(f"알 수 없는 scope 입니다: {scope}")
+            if not isinstance(text, str):
+                return _json_error("시스템 지침은 텍스트로 입력하세요.")
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
 
+            if operation in {"create", "duplicate"}:
+                if scope != "local":
+                    return _json_error("새 프리셋과 복제본은 사용자 프리셋으로 저장하세요.")
+                names = {*(_load_builtin_presets() or {}), *data.get("system_prompt_presets", {})}
+                if any(name.casefold() == preset_name.casefold() for name in names):
+                    return _json_error("이미 존재하는 프리셋 이름입니다. 다른 이름을 입력하세요.")
+
             if scope == "builtin":
-                # 배포자료(읽기전용): 본문 파일은 건드리지 않고, 봇이 이 프리셋을 '선택'했다는 사실만 바인딩.
                 builtin = _load_builtin_presets() or {}
                 if preset_name not in builtin:
                     return _json_error(f"'{preset_name}' 배포자료 프리셋을 찾을 수 없습니다.")
+                edit_builtin = body.get("edit_builtin") is True
+                if edit_builtin:
+                    if token not in _system_prompt_unlock_tokens:
+                        return _json_error("배포 프리셋은 읽기 전용입니다. 배포 풀기를 눌러 편집하세요.")
+                    builtin = {**builtin, preset_name: text}
+                    write_json_atomic(Path(BUILTIN_PRESETS_FILE), builtin)
+                    global _builtin_presets_cache, _builtin_presets_mtime
+                    _builtin_presets_cache = builtin
+                    _builtin_presets_mtime = os.path.getmtime(BUILTIN_PRESETS_FILE)
+                if "genre" in body:
+                    bot["genre"] = str(body["genre"] or "").strip()
                 bot["system_prompt_preset"] = preset_name
                 bot["preset_scope"] = "builtin"
                 _save_bot_data(data)
-                print(f"[BOT_MODE] 시스템 프롬프트 바인딩(읽기전용): {bot_name} → [builtin] '{preset_name}'")
-                return _json_ok({"saved": True, "bind_only": True})
+                print(f"[BOT_MODE] 시스템 프롬프트 {'저장' if edit_builtin else '적용'}: {bot_name} → [builtin] '{preset_name}'")
+                return _json_ok({"saved": True, "bind_only": not edit_builtin})
 
             # local: 프리셋 본문 덮어쓰기 + 봇 바인딩
+            if body.get("bind_only") is True and operation == "save":
+                if preset_name not in data.get("system_prompt_presets", {}):
+                    return _json_error("적용할 사용자 프리셋을 찾을 수 없습니다.")
+                text = data["system_prompt_presets"][preset_name]
+            if "genre" in body:
+                bot["genre"] = str(body["genre"] or "").strip()
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
             data["system_prompt_presets"][preset_name] = text  # local 프리셋 덮어쓰기
@@ -6211,13 +6896,10 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_delete_system_prompt_preset(self, request):
-        """DELETE /api/bot_mode/system_prompt_presets - local 프리셋 삭제
+        """Delete a preset after validating replacements for every referencing bot.
 
-        scope=local 만 삭제 허용. builtin(배포자료)은 삭제 불가.
-        충돌(이 프리셋을 참조 중인 봇 존재) 처리:
-          - reassign 없음 → {"conflict": true, "bots": [...]} 구조화 응답(프론트 재할당 모달용).
-          - reassign={bot_name: {"scope","preset"}} 있음 → 각 봇을 대체 프리셋으로 바인딩(타겟 본문
-            덮어쓰기 ❌, handle_save_system_prompt 의 local 경로는 본문까지 덮어쓰므로 재사용 금지) 후 삭제.
+        Builtin presets require an editor unlock token. Reassignment changes
+        bindings only, preserving the replacement presets' text.
         """
         try:
             body = await request.json()
@@ -6225,20 +6907,23 @@ class BotMode:
             scope = (body.get("scope") or "local").strip()
             if not name:
                 return _json_error("프리셋 이름이 비어있습니다.")
-            if scope == "builtin":
-                return _json_error("배포자료(읽기전용) 프리셋은 삭제할 수 없습니다.")
+            if scope not in {"builtin", "local"}:
+                return _json_error("배포 또는 사용자 프리셋을 선택하세요.")
+            if scope == "builtin" and body.get("builtin_unlock_token") not in _system_prompt_unlock_tokens:
+                return _json_error("배포 프리셋은 읽기 전용입니다. 배포 풀기로 잠금을 해제하세요.")
             builtin = _load_builtin_presets() or {}
-            if name in builtin:
-                return _json_error(f"'{name}' 은(는) 배포자료(읽기전용)라 삭제할 수 없습니다.")
             data = _load_bot_data()
             presets = data.get("system_prompt_presets", {})
-            if name not in presets:
-                return _json_error(f"사용자 프리셋을 찾을 수 없습니다: {name}")
+            source = builtin if scope == "builtin" else presets
+            if name not in source:
+                return _json_error(f"프리셋을 찾을 수 없습니다: {name}")
+            if scope == "local" and len(presets) <= 1:
+                return _json_error("사용자 프리셋은 하나 이상 남겨 주세요.")
 
-            # 이 프리셋을 참조 중인 봇들 (local scope 한정)
+            # Resolve all references before changing either store.
             using_bots = [b for b in data.get("bots", [])
                           if (b.get("system_prompt_preset") or "").strip() == name
-                          and (b.get("preset_scope") or "local") == "local"]
+                          and (b.get("preset_scope") or "local") == scope]
 
             reassigned = []
             if using_bots:
@@ -6273,12 +6958,12 @@ class BotMode:
                         return _json_error(f"{bname} 의 대체 프리셋 scope 가 잘못되었습니다: {tscope}")
                     if not tpreset:
                         return _json_error(f"{bname} 의 대체 프리셋이 비어있습니다.")
+                    if tscope == scope and tpreset == name:
+                        return _json_error(f"{bname} 의 대체 프리셋이 삭제 대상과 같습니다: {tpreset}")
                     if tscope == "builtin":
                         if tpreset not in builtin:
                             return _json_error(f"{bname} → 배포자료 프리셋을 찾을 수 없습니다: {tpreset}")
                     else:  # local
-                        if tpreset == name:
-                            return _json_error(f"{bname} 의 대체 프리셋이 삭제 대상과 같습니다: {tpreset}")
                         if tpreset not in presets:
                             return _json_error(f"{bname} → 사용자 프리셋을 찾을 수 없습니다: {tpreset}")
 
@@ -6290,14 +6975,22 @@ class BotMode:
                     tpreset = (tgt.get("preset") or "").strip()
                     b["system_prompt_preset"] = tpreset
                     b["preset_scope"] = tscope
+                    b["system_prompt"] = (builtin if tscope == "builtin" else presets)[tpreset]
                     reassigned.append({"name": bname, "scope": tscope, "preset": tpreset})
                     print(f"[BOT_MODE] 재할당(삭제 충돌 회피): {bname} → [{tscope}] '{tpreset}' (삭제 대상 '{name}')")
 
-            del presets[name]
+            if scope == "builtin":
+                builtin = {key: value for key, value in builtin.items() if key != name}
+                write_json_atomic(Path(BUILTIN_PRESETS_FILE), builtin)
+                global _builtin_presets_cache, _builtin_presets_mtime
+                _builtin_presets_cache = builtin
+                _builtin_presets_mtime = os.path.getmtime(BUILTIN_PRESETS_FILE)
+            else:
+                del presets[name]
             data["system_prompt_presets"] = presets
             _save_bot_data(data)
-            print(f"[BOT_MODE] local 시스템 프롬프트 프리셋 삭제: {name}")
-            resp = {"deleted": True, "presets": presets}
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제: [{scope}] {name}")
+            resp = {"deleted": True, "presets": presets, "builtin_presets": builtin}
             if reassigned:
                 resp["reassigned"] = reassigned
             return _json_ok(resp)
@@ -6318,6 +7011,19 @@ def _json_error(msg, status=400):
 
 
 # ─── 태그 필터 프로필 관리 ─────────────────────────────────
+def _tag_filter_prompt_path(bot_name: str, item: dict) -> str:
+    """Resolve the same per-card FACE sidecar used by tagging and previews."""
+    filename = str(item.get("filename") or "")
+    if not filename or os.path.basename(filename) != filename or "/" in filename or "\\" in filename:
+        raise ValueError("필터링할 이미지 파일 이름을 확인하세요.")
+    char_name = str(item.get("character") or "")
+    target = resolve_bot_visual_target(bot_name, char_name, str(item.get("visual_card_id") or ""))
+    if target is None:
+        raise ValueError("필터링할 캐릭터 카드를 찾을 수 없습니다.")
+    directory = bot_visual_artifact_dir(bot_name, char_name, target["visual_card_id"]) if filename == "_face_image.webp" else os.path.join(BOT_DIR, bot_name, char_name)
+    return os.path.join(directory, f"{os.path.splitext(filename)[0]}_prompt.json")
+
+
 def _load_tag_filter_profiles() -> dict:
     default = {"profiles": {"기본": []}, "active_profile": "기본"}
     if os.path.isfile(TAG_FILTER_PROFILES_FILE):
@@ -6333,13 +7039,46 @@ def _load_tag_filter_profiles() -> dict:
 
 
 def _save_tag_filter_profiles(data: dict):
-    try:
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        with open(TAG_FILTER_PROFILES_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[BOT_MODE] tag_filter_profiles 저장 실패: {e}")
-        traceback.print_exc()
+    write_json_atomic(Path(TAG_FILTER_PROFILES_FILE), data)
+
+
+def _validate_tag_filter_steps(steps) -> list[dict]:
+    """Validate editor rules before saving, previewing, or changing image tags."""
+    if not isinstance(steps, list):
+        raise ValueError("필터 규칙 목록을 확인하세요.")
+    validated = deepcopy(steps)
+    for index, step in enumerate(validated, 1):
+        if not isinstance(step, dict) or step.get("action") not in {
+            "remove_match", "split_by", "replace", "strip_prefix", "strip_suffix", "strip", "lower",
+        }:
+            raise ValueError(f"필터 {index}단계의 처리 방식을 확인하세요.")
+        action = step["action"]
+        if action in {"remove_match", "strip_prefix", "strip_suffix"}:
+            pattern = step.get("pattern", "")
+            if not isinstance(pattern, str) or not pattern:
+                raise ValueError(f"필터 {index}단계의 정규식 패턴을 입력하세요.")
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"필터 {index}단계의 정규식 패턴을 확인하세요: {exc}") from exc
+        elif action == "split_by":
+            separator = step.get("separator", "_")
+            if not isinstance(separator, str) or not separator:
+                raise ValueError(f"필터 {index}단계의 구분자를 입력하세요.")
+            take = step.get("take", 0)
+            if isinstance(take, str):
+                take = take.strip()
+                if re.fullmatch(r"-?\d+", take):
+                    take = int(take)
+                elif not re.fullmatch(r"(?:-?\d+)?:(?:-?\d+)?", take) or take == ":":
+                    raise ValueError(f"필터 {index}단계의 위치를 숫자 또는 범위로 입력하세요.")
+            elif not isinstance(take, int):
+                raise ValueError(f"필터 {index}단계의 위치를 확인하세요.")
+            step["take"] = take
+        elif action == "replace":
+            if not isinstance(step.get("from"), str) or not step["from"] or not isinstance(step.get("to", ""), str):
+                raise ValueError(f"필터 {index}단계의 치환 문자를 확인하세요.")
+    return validated
 
 
 import re as _re
@@ -6437,7 +7176,7 @@ def _load_patch_settings(bot_name: str) -> dict:
                 return data
         except Exception as e:
             print(f"[BOT_MODE] patch_settings 로드 실패: {e}")
-    return {"face_crop_top": 1.0, "face_crop_bottom": 1.0, "emb_target": "대표만"}
+    return {"face_crop_top": 2.5, "face_crop_bottom": 1.0, "emb_target": "대표만"}
 
 
 def _save_patch_settings(bot_name: str, settings: dict):
@@ -6461,22 +7200,27 @@ def _load_word_replacements(bot_name: str) -> dict:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                data["rules"] = normalize_word_rules(data.get("rules", []))
                 print(f"[BOT_MODE] 단어 기반 규칙 로드: {bot_name} ({len(data.get('rules', []))}개 규칙)")
                 return data
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
             traceback.print_exc()
             raise
-    return {"rules": []}
+    return {"rules": deepcopy(DEFAULT_WORD_RULES)}
 
 
 def _save_word_replacements(bot_name: str, data: dict):
+    data = {**data, "rules": normalize_word_rules(
+        data.get("rules", []), fallback_rules=_load_word_replacements(bot_name)["rules"],
+    )}
     path = _word_replacements_path(bot_name)
     bot_dir = os.path.dirname(path)
     os.makedirs(bot_dir, exist_ok=True)
     _backup_data_file_before_overwrite(path, "단어 기반 규칙")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    return data
 
 
 LB_EXTRA_FILE = "_lb_extra.json"
@@ -6533,222 +7277,16 @@ def _save_utility_settings(bot_name: str, char_name: str, settings: dict):
         json.dump(settings, f, indent=2, ensure_ascii=False)
 
 
-# ─── 후처리 봇별 설정 (postprocess_vn) ─────────────────────
-def _load_postprocess_vn(bot_name: str) -> dict:
-    """봇의 postprocess_vn 반환. 없으면 기본값."""
-    if not bot_name:
-        from modes.postprocess import _default_vn
-        return _default_vn()
-    try:
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_vn"), dict):
-            from modes.postprocess import _merge_vn_defaults
-            return _merge_vn_defaults(bot["postprocess_vn"])
-    except Exception as e:
-        print(f"[BOT_MODE] postprocess_vn 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    from modes.postprocess import _default_vn
-    return _default_vn()
-
-
-def _save_postprocess_vn(bot_name: str, vn: dict):
-    """봇의 postprocess_vn 저장. 백업 후 bot.json 갱신."""
-    if not bot_name:
-        raise ValueError("봇 이름이 필요합니다.")
-    data = _load_bot_data()
-    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-    if not bot:
-        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    # 임시/파생 필드는 저장 제외
-    clean = dict(vn or {})
-    clean.pop("emotion_rows", None)
-    clean.pop("emotion_total", None)
-    bot["postprocess_vn"] = clean
-    _save_bot_data(data)
-    print(f"[BOT_MODE] postprocess_vn 저장: bot={bot_name}")
-
-
-# ─── 후처리 봇별 설정 (postprocess_bubble: 말풍선 모드) ─────────────
-def _load_postprocess_bubble(bot_name: str) -> dict:
-    """봇의 postprocess_bubble 반환. 없으면 기본값."""
-    if not bot_name:
-        from modes.postprocess import _default_bubble
-        return _default_bubble()
-    try:
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_bubble"), dict):
-            from modes.postprocess import _default_bubble
-            base = _default_bubble()
-            base.update(bot["postprocess_bubble"])
-            return base
-    except Exception as e:
-        print(f"[BOT_MODE] postprocess_bubble 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    from modes.postprocess import _default_bubble
-    return _default_bubble()
-
-
-def _save_postprocess_bubble(bot_name: str, bubble: dict):
-    """봇의 postprocess_bubble 저장. 백업 후 bot.json 갱신."""
-    if not bot_name:
-        raise ValueError("봇 이름이 필요합니다.")
-    data = _load_bot_data()
-    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-    if not bot:
-        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    from modes.postprocess import (
-        normalize_layout_font_scale,
-        normalize_min_font_size,
-    )
-    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
-    clean = dict(bubble or {})
-    # 폐기된 말풍선 옵션은 기존 클라이언트가 보내더라도 다시 저장하지 않는다.
-    clean.pop("tail_len", None)
-    clean.pop("conf", None)
-    clean["layout_font_scale"] = normalize_layout_font_scale(
-        clean.get("layout_font_scale", 2.0)
-    )
-    clean["min_font_size"] = normalize_min_font_size(clean.get("min_font_size", 0))
-    # 자간/행간/가로축소/폰트id 정규화(범위 클램프)
-    try:
-        clean["letter_spacing"] = max(-0.10, min(0.05, float(clean.get("letter_spacing", -0.03))))
-    except (TypeError, ValueError):
-        clean["letter_spacing"] = -0.03
-    try:
-        clean["line_height_ratio"] = max(1.0, min(1.40, float(clean.get("line_height_ratio", 1.15))))
-    except (TypeError, ValueError):
-        clean["line_height_ratio"] = 1.15
-    try:
-        clean["text_width_scale"] = max(0.70, min(1.00, float(clean.get("text_width_scale", 1.0))))
-    except (TypeError, ValueError):
-        clean["text_width_scale"] = 1.0
-    clean["font_id"] = str(clean.get("font_id", "system") or "system")
-    clean["onnx_device"] = normalize_device_key(clean.get("onnx_device", "auto"))
-    clean["cpu_threads"] = normalize_cpu_threads(clean.get("cpu_threads", 0))
-    bot["postprocess_bubble"] = clean
-    _save_bot_data(data)
-    print(f"[BOT_MODE] postprocess_bubble 저장: bot={bot_name}")
-
-
-def _load_postprocess_subtitle(bot_name: str) -> dict:
-    """봇의 postprocess_subtitle 반환. 저장값이 없으면 안전한 기본값."""
-    from modes.postprocess import _default_subtitle
-    from modes.subtitle_render import normalize_subtitle_settings
-
-    if not bot_name:
-        print("[BOT_MODE] postprocess_subtitle 기본값 사용: 봇 이름이 비어 있음")
-        return _default_subtitle()
-    try:
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_subtitle"), dict):
-            return normalize_subtitle_settings(bot["postprocess_subtitle"])
-        print(f"[BOT_MODE] postprocess_subtitle 저장값 없음: bot={bot_name!r}")
-    except Exception as e:
-        print(f"[BOT_MODE] postprocess_subtitle 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    return _default_subtitle()
-
-
-def _save_postprocess_subtitle(
-    bot_name: str,
-    subtitle: dict,
-    *,
-    mode: str | None = None,
-) -> None:
-    """검증된 봇별 자막 설정과 선택적 활성 모드를 한 번에 저장한다."""
-    if not bot_name:
-        raise ValueError("봇 이름이 필요합니다.")
-    if mode is not None and mode not in ("vn", "bubble", "subtitle"):
-        raise ValueError(f"잘못된 postprocess_mode: {mode}")
-    from modes.subtitle_render import normalize_subtitle_settings
-
-    data = _load_bot_data()
-    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-    if not bot:
-        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    bot["postprocess_subtitle"] = normalize_subtitle_settings(subtitle)
-    if mode is not None:
-        bot["postprocess_mode"] = mode
-    _save_bot_data(data)
-    print(
-        f"[BOT_MODE] postprocess_subtitle 저장: bot={bot_name}, "
-        f"mode={mode or bot.get('postprocess_mode') or 'vn'}"
-    )
-
-
-def _get_postprocess_mode(bot_name: str) -> str:
-    """봇의 활성 후처리 모드: vn | bubble | subtitle. 기본 vn."""
-    if not bot_name:
-        return "vn"
-    try:
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot:
-            m = bot.get("postprocess_mode")
-            if m in ("vn", "bubble", "subtitle"):
-                return m
-    except Exception as e:
-        print(f"[BOT_MODE] postprocess_mode 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    return "vn"
-
-
-def _set_postprocess_mode(bot_name: str, mode: str):
-    """봇의 활성 후처리 모드 저장(vn | bubble | subtitle)."""
-    if not bot_name:
-        raise ValueError("봇 이름이 필요합니다.")
-    if mode not in ("vn", "bubble", "subtitle"):
-        raise ValueError(f"잘못된 postprocess_mode: {mode}")
-    data = _load_bot_data()
-    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-    if not bot:
-        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    bot["postprocess_mode"] = mode
-    _save_bot_data(data)
-    print(f"[BOT_MODE] postprocess_mode 저장: bot={bot_name} → {mode}")
-
-
-def _migrate_postprocess_vn(data: dict):
-    """config.json postprocess.vn → 각 봇의 postprocess_vn (1회)."""
-    if data.get("_postprocess_migrated"):
-        return
-    cfg_path = os.path.join(config_root(BASE_DIR), "config.json")
-    old_vn = {}
-    if os.path.isfile(cfg_path):
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            old_vn = (cfg.get("postprocess") or {}).get("vn") or {}
-        except Exception as e:
-            print(f"[BOT_MODE] config.json 로드 실패(마이그레이션): {e}")
-    if old_vn:
-        from modes.postprocess import _default_vn
-        changed = False
-        for bot in data.get("bots", []):
-            if not isinstance(bot.get("postprocess_vn"), dict):
-                merged = _default_vn()
-                merged.update(old_vn)
-                bot["postprocess_vn"] = merged
-                changed = True
-                print(f"[BOT_MODE] 마이그레이션: postprocess_vn 할당 ({bot.get('name')})")
-        if changed:
-            _save_bot_data(data)
-    data["_postprocess_migrated"] = True
-
-
-
 def build_utility_prompt(
     bot_name: str,
     char_name: str,
     settings: dict,
     visual_card_id: str = "",
+    *, input_path: str | None = None,
 ) -> str:
     """캐릭터의 유틸리티 프롬프트 문자열을 생성한다."""
     emb_value = "representation" if settings.get("emb_target") == "대표만" else "representation,sub"
-    comfy_path = bot_visual_comfy_relative_path(bot_name, char_name, visual_card_id)
+    comfy_path = input_path if input_path is not None else bot_visual_comfy_relative_path(bot_name, char_name, visual_card_id)
     return (
         f"[PATH]\n{comfy_path}\n"
         f"[FACE_CROP_TOP]\n{settings.get('face_crop_top', 1.0)}\n"
@@ -6759,7 +7297,7 @@ def build_utility_prompt(
 
 
 class BotDataPatcher:
-    """Comfy Input /soya_bot/ 폴더에 봇 데이터 패치 + 유틸리티 워크플로우 실행"""
+    """Validate bot references and run the FACE utility when requested."""
 
     def __init__(self):
         self._workflow_api = None
@@ -6769,11 +7307,10 @@ class BotDataPatcher:
         """utility_workflow_source_path에서 워크플로우를 로드한다.
         이미 API 형식이면 그대로 사용, 아니면 ComfyUI /workflow/convert로 변환.
         반환: (workflow_api_dict, error_msg)"""
-        config_path = os.path.join(config_root(BASE_DIR), "config.json")
+        config_path = str(application_config_path(BASE_DIR))
         if not os.path.isfile(config_path):
-            return None, "config.json이 없습니다."
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            return None, "settings.json이 없습니다."
+        config = read_config(config_path)
         wf_path = config.get("utility_workflow_source_path", "").strip()
         if not wf_path:
             return None, "삽화 유틸리티 워크플로우 경로가 설정되지 않았습니다."
@@ -6876,12 +7413,11 @@ class BotDataPatcher:
                 )
                 return _json_error(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
 
-            config_path = os.path.join(config_root(BASE_DIR), "config.json")
+            config_path = str(application_config_path(BASE_DIR))
             if not os.path.isfile(config_path):
-                print(f"[DIALOGUE_FACE_CROP_API] config.json 없음: {config_path}")
-                return _json_error("config.json이 없습니다.")
-            with open(config_path, "r", encoding="utf-8") as config_file:
-                config = json.load(config_file)
+                print(f"[DIALOGUE_FACE_CROP_API] settings.json 없음: {config_path}")
+                return _json_error("settings.json이 없습니다.")
+            config = read_config(config_path)
             workflow_path = str(
                 config.get("face_extract_workflow_source_path") or ""
             ).strip()
@@ -6938,180 +7474,45 @@ class BotDataPatcher:
             return _json_error(str(e), status=500)
 
     async def handle_data_patch(self, request):
-        """POST /api/bot_mode/data_patch - 선택된 봇의 캐릭터 폴더 + 대표 이미지를 soya_bot/에 복사"""
+        """Validate original bot images without staging them in Comfy input."""
         try:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
             char_name = body.get("char_name", "").strip()
-            # 다중 선택 지원: char_names(리스트)가 있으면 우선, 없으면 단일 char_name
             char_names_raw = body.get("char_names", [])
             if not isinstance(char_names_raw, list):
-                print(f"[DATA_PATCH] char_names가 리스트가 아님: {type(char_names_raw)}")
                 char_names_raw = []
-            char_names = [str(n).strip() for n in char_names_raw if str(n).strip()]
+            requested_names = [str(name).strip() for name in char_names_raw if str(name).strip()]
+            requested_names = requested_names or ([char_name] if char_name else [])
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
-
-            # config.json에서 comfy_input_dir 읽기
-            config_path = os.path.join(config_root(BASE_DIR), "config.json")
-            if not os.path.isfile(config_path):
-                return _json_error("config.json이 없습니다.")
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            comfy_input_dir = config.get("comfy_input_dir", "").strip()
-            if not comfy_input_dir:
-                return _json_error("Comfy Input 폴더 경로가 설정되지 않았습니다.")
-            if not os.path.isdir(comfy_input_dir):
-                return _json_error(f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}")
-
-            # 봇 데이터에서 해당 봇 찾기
-            data = _load_bot_data()
-            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
-            if not bot:
+            bot = next((bot for bot in _load_bot_data()["bots"] if bot["name"] == bot_name), None)
+            if bot is None:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-            bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
-            # 요청된 캐릭터명 목록: char_names(다중) 우선, 없으면 단일 char_name
-            requested_names = char_names if char_names else ([char_name] if char_name else [])
-            selected_only = len(requested_names) > 0
-
-            if selected_only:
-                # 선택 캐릭터 모드: 봇 폴더 전체는 건드리지 않고,
-                # 선택한 캐릭터 폴더만 삭제 후 재생성 (새 캐릭터 추가 시 기존 캐릭터 유지)
-                target_chars = []
-                missing = []
-                for name in requested_names:
-                    char = next((c for c in bot.get("characters", []) if c["name"] == name), None)
-                    if not char:
-                        missing.append(name)
-                        print(f"[DATA_PATCH] 캐릭터를 찾을 수 없음(스킵): {name}")
-                        continue
-                    target_chars.append(char)
-                if missing:
-                    return _json_error(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
-                if not target_chars:
-                    return _json_error("선택된 캐릭터가 없습니다.")
-                os.makedirs(bot_dst_root, exist_ok=True)
-                for char in target_chars:
-                    char_dst_dir = os.path.join(bot_dst_root, char["name"])
-                    if os.path.isdir(char_dst_dir):
-                        shutil.rmtree(char_dst_dir)
-                        print(f"[DATA_PATCH] 기존 캐릭터 폴더 삭제: {char_dst_dir}")
-            else:
-                # 전체 모드: 기존 봇 폴더 삭제 후 재생성
-                if os.path.isdir(bot_dst_root):
-                    shutil.rmtree(bot_dst_root)
-                    print(f"[DATA_PATCH] 기존 폴더 삭제: {bot_dst_root}")
-                target_chars = bot.get("characters", [])
-
-            created_dirs = []
-            copied_files = []
+            names = {char["name"] for char in bot.get("characters", [])}
+            missing = [name for name in requested_names if name not in names]
+            if missing:
+                return _json_error(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+            targets = [target for target in get_bot_visual_targets(bot_name, require_rep_images=True)
+                       if not requested_names or target["character"] in requested_names]
             skipped_files = []
-
-            for char in target_chars:
-                char_name = char["name"]
-                dst_dir = os.path.join(bot_dst_root, char_name)
-                os.makedirs(dst_dir, exist_ok=True)
-                created_dirs.append(f"soya_bot/{bot_name}/{char_name}")
-                print(f"[DATA_PATCH] 폴더 생성: {dst_dir}")
-
-                rep_images = char.get("rep_images", [])
-                for i, img_name in enumerate(rep_images):
-                    src_file = os.path.join(BOT_DIR, bot_name, char_name, img_name)
-                    if not os.path.isfile(src_file):
-                        skipped_files.append(img_name)
-                        print(f"[DATA_PATCH] 소스 파일 없음: {src_file}")
-                        continue
-
-                    # 첫 번째 이미지: representation, 이후: sub_1, sub_2
-                    ext = os.path.splitext(img_name)[1]
-                    if i == 0:
-                        dst_name = f"representation{ext}"
+            image_count = 0
+            for target in targets:
+                for image_name in target["rep_images"]:
+                    source = os.path.join(BOT_DIR, bot_name, target["character"], image_name)
+                    if os.path.isfile(source):
+                        image_count += 1
                     else:
-                        dst_name = f"sub_{i}{ext}"
-
-                    dst_file = os.path.join(dst_dir, dst_name)
-                    shutil.copy2(src_file, dst_file)
-                    copied_files.append(f"{char_name}/{dst_name}")
-                    print(f"[DATA_PATCH] 복사: {img_name} -> {dst_name}")
-
-                visual_cards, _source = effective_character_cards(char, None)
-                for profile in visual_cards[1:]:
-                    profile_id = str(profile.get("id") or "").strip()
-                    profile_rep_images = profile.get("rep_images") or []
-                    if not profile_rep_images:
-                        skipped_files.append(
-                            f"{char_name}/_visual_profiles/{profile_id}:rep_images 없음"
-                        )
-                        print(
-                            f"[DATA_PATCH] 프로필 임베딩용 대표 이미지 없음: "
-                            f"bot={bot_name!r}, character={char_name!r}, "
-                            f"profile={profile_id!r}"
-                        )
-                        continue
-                    profile_dst_dir = os.path.join(
-                        dst_dir,
-                        "_visual_profiles",
-                        profile_id,
-                    )
-                    os.makedirs(profile_dst_dir, exist_ok=True)
-                    created_dirs.append(
-                        f"soya_bot/{bot_name}/{char_name}/"
-                        f"_visual_profiles/{profile_id}"
-                    )
-                    for index, image_name in enumerate(profile_rep_images):
-                        source_file = os.path.join(
-                            BOT_DIR,
-                            bot_name,
-                            char_name,
-                            str(image_name),
-                        )
-                        if not os.path.isfile(source_file):
-                            skipped_files.append(
-                                f"{char_name}/_visual_profiles/{profile_id}/"
-                                f"{image_name}"
-                            )
-                            print(
-                                f"[DATA_PATCH] 프로필 대표 이미지 소스 없음: "
-                                f"path={source_file!r}"
-                            )
-                            continue
-                        extension = os.path.splitext(str(image_name))[1]
-                        target_name = (
-                            f"representation{extension}"
-                            if index == 0
-                            else f"sub_{index}{extension}"
-                        )
-                        target_file = os.path.join(profile_dst_dir, target_name)
-                        shutil.copy2(source_file, target_file)
-                        relative = (
-                            f"{char_name}/_visual_profiles/{profile_id}/"
-                            f"{target_name}"
-                        )
-                        copied_files.append(relative)
-                        print(
-                            f"[DATA_PATCH] 프로필 대표 이미지 복사: "
-                            f"{image_name} -> {relative}"
-                        )
-
-            msg = f"폴더 {len(created_dirs)}개 생성, 이미지 {len(copied_files)}개 복사"
+                        skipped_files.append(f"{target['character']}/{image_name}")
+            message = f"대표 이미지 {image_count}개 확인"
             if skipped_files:
-                msg += f", 스킵 {len(skipped_files)}개"
-            print(f"[DATA_PATCH] 완료: {msg}")
-            return _json_ok({
-                "message": msg,
-                "created_dirs": created_dirs,
-                "copied_files": copied_files,
-                "skipped_files": skipped_files,
-                "visual_targets": [
-                    target
-                    for target in get_bot_visual_targets(bot_name, require_rep_images=True)
-                    if not selected_only or target["character"] in requested_names
-                ],
-            })
-        except Exception as e:
-            print(f"[DATA_PATCH] 데이터 패치 실패: {e}")
+                message += f", 누락 {len(skipped_files)}개"
+            return _json_ok({"message": message, "created_dirs": [], "copied_files": [],
+                             "skipped_files": skipped_files, "visual_targets": targets})
+        except Exception as exc:
+            print(f"[DATA_PATCH] 원본 이미지 확인 실패: {exc}")
             traceback.print_exc()
-            return _json_error(str(e))
+            return _json_error(str(exc))
 
     async def handle_run_utility(self, request):
         """POST /api/bot_mode/run_utility - 단일 캐릭터 유틸리티 워크플로우 실행"""
@@ -7134,22 +7535,11 @@ class BotDataPatcher:
             return _json_error(str(e))
 
     async def handle_check_patch_files(self, request):
-        """GET /api/bot_mode/check_patch_files - 각 캐릭터의 ipadpt/pt 파일 존재 여부 확인"""
+        """Return FACE output status for each character and visual card."""
         try:
             bot_name = request.query.get("bot_name", "").strip()
-            print(f"[CHECK_PATCH] 요청: bot_name={bot_name}")
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
-
-            config_path = os.path.join(config_root(BASE_DIR), "config.json")
-            if not os.path.isfile(config_path):
-                return _json_error("config.json이 없습니다.")
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            comfy_input_dir = config.get("comfy_input_dir", "").strip()
-            print(f"[CHECK_PATCH] comfy_input_dir={comfy_input_dir}")
-            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-                return _json_error("Comfy Input 폴더 경로가 설정되지 않았습니다.")
 
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
@@ -7157,42 +7547,25 @@ class BotDataPatcher:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
 
             results = {}
+            face_targets = {
+                (target["character"], target["visual_card_id"])
+                for target in get_bot_visual_utility_paths(bot_name)
+            }
             for char in bot.get("characters", []):
                 char_name = char["name"]
-                char_dir = os.path.join(comfy_input_dir, "soya_bot", bot_name, char_name)
-                has_ipadpt = False
-                has_pt = False
-                print(f"[CHECK_PATCH] 검사: {char_dir} (exists={os.path.isdir(char_dir)})")
-                if os.path.isdir(char_dir):
-                    files = os.listdir(char_dir)
-                    print(f"[CHECK_PATCH] 파일 목록: {files}")
-                    for f in files:
-                        if f.endswith(".ipadpt"):
-                            has_ipadpt = True
-                        if f.endswith(".pt"):
-                            has_pt = True
                 card_results = {}
-                for card in char.get("visual_cards") or []:
+                cards, _source = effective_character_cards(char, None)
+                for card in cards:
                     card_id = str(card.get("id") or "").strip()
-                    if not card_id or not card.get("use_profile_embedding"):
+                    if not card_id:
                         continue
-                    card_dir = os.path.join(char_dir, "_visual_profiles", card_id)
-                    card_files = os.listdir(card_dir) if os.path.isdir(card_dir) else []
                     card_results[card_id] = {
-                        "ipadpt": any(name.endswith(".ipadpt") for name in card_files),
-                        "pt": any(name.endswith(".pt") for name in card_files),
+                        "face": (char_name, card_id) in face_targets,
                     }
-                    print(
-                        f"[CHECK_PATCH] {char_name}/{card_id}: "
-                        f"ipadpt={card_results[card_id]['ipadpt']}, "
-                        f"pt={card_results[card_id]['pt']}"
-                    )
                 results[char_name] = {
-                    "ipadpt": has_ipadpt,
-                    "pt": has_pt,
+                    "face": bool(cards) and (char_name, str(cards[0].get("id") or "").strip()) in face_targets,
                     "cards": card_results,
                 }
-                print(f"[CHECK_PATCH] {char_name}: ipadpt={has_ipadpt}, pt={has_pt}")
             return _json_ok(results)
         except Exception as e:
             print(f"[CHECK_PATCH] 확인 실패: {e}")
@@ -7206,6 +7579,8 @@ DEFAULT_ILLUST_SETTINGS = {
     "sdxl_artist_preset": "",
     "anima_quality_preset": "",
     "sdxl_quality_preset": "",
+    "anima_background_preset": "",
+    "sdxl_background_preset": "",
     "anima_negative_preset": "",
     "sdxl_negative_preset": "",
     "hrf_activate": False,
@@ -7223,7 +7598,11 @@ DEFAULT_ILLUST_SETTINGS = {
     "face_id_activate": False,
     "face_id_str": 0.55,
     "snapref_enabled": False,
-    "snapref_strength": 0.0,
+    "snapref_preprocess": "none",
+    "snapref_strength": 1.0,
+    "snapref_strength_scale": "linear",
+    "snapref_fidelity": 1.0,
+    "snapref_secondary_reference": "none",
     "snapref_mode": "char",
     "snapref_megapixels": 1.0,
     "seed": -1,
@@ -7231,10 +7610,38 @@ DEFAULT_ILLUST_SETTINGS = {
 }
 
 
+ILLUST_PROFILE_FIELDS = frozenset({"img_w", "img_h", "seed"})
+ILLUST_GENERATION_MODES = {
+    "illustration": ("illust_settings_solo", "illust_settings_group"),
+    "character_auto": ("character_auto_settings_solo", "character_auto_settings_group"),
+    "background": ("background_settings_solo", "background_settings_group"),
+}
+
+
+def resolve_illust_settings(bot: dict, profile: str = "solo", generation_mode: str = "illustration") -> dict:
+    """Keep modes independent; automatic characters share one size and seed."""
+    solo_key, group_key = ILLUST_GENERATION_MODES[generation_mode]
+    saved = bot.get(solo_key, bot.get("illust_settings", {}) if generation_mode == "illustration" else {})
+    settings = {
+        **DEFAULT_ILLUST_SETTINGS,
+        **saved,
+    }
+    if saved.get("snapref_strength_scale") != "linear" and "snapref_strength" in saved:
+        settings["snapref_strength"] = min(2.0, math.exp(float(saved["snapref_strength"])))
+    settings["snapref_strength_scale"] = "linear"
+    if profile == "group" and generation_mode != "character_auto":
+        group = bot.get(group_key, {})
+        settings.update({key: group[key] for key in ILLUST_PROFILE_FIELDS if key in group})
+    return settings
+
+
 async def handle_get_illust_settings(request):
     """GET /api/bot_mode/illust_settings - 봇의 삽화 설정 반환"""
     try:
         bot_name = request.query.get("bot_name", "").strip()
+        generation_mode = request.query.get("generation_mode", "illustration")
+        if generation_mode not in ILLUST_GENERATION_MODES:
+            return _json_error("지원하지 않는 그리기 설정 모드입니다.")
         profile = request.query.get("profile", "solo").strip()
         if profile not in ("solo", "group"):
             profile = "solo"
@@ -7244,9 +7651,7 @@ async def handle_get_illust_settings(request):
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
             return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-        key = f"illust_settings_{profile}"
-        settings = bot.get(key, bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS))
-        return _json_ok(settings)
+        return _json_ok({**resolve_illust_settings(bot, profile, generation_mode), "generation_mode": generation_mode})
     except Exception as e:
         print(f"[BOT_MODE] 삽화 설정 조회 실패: {e}")
         traceback.print_exc()
@@ -7258,24 +7663,39 @@ async def handle_update_illust_settings(request):
     try:
         body = await request.json()
         bot_name = body.get("bot_name", "").strip()
+        generation_mode = body.get("generation_mode", "illustration")
+        if generation_mode not in ILLUST_GENERATION_MODES:
+            return _json_error("지원하지 않는 그리기 설정 모드입니다.")
+        solo_key, group_key = ILLUST_GENERATION_MODES[generation_mode]
         profile = body.get("profile", "solo")
         if profile not in ("solo", "group"):
+            profile = "solo"
+        if generation_mode == "character_auto":
             profile = "solo"
         if not bot_name:
             return _json_error("봇 이름이 비어있습니다.")
         new_settings = body.get("illust_settings", {})
+        if not isinstance(new_settings, dict):
+            return _json_error("삽화 설정 형식을 확인하세요.")
         data = _load_bot_data()
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
             return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-        # 기존 설정과 병합
-        key = f"illust_settings_{profile}"
-        current = bot.get(key, bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS))
-        merged = {**DEFAULT_ILLUST_SETTINGS, **current, **new_settings}
-        bot[key] = merged
+        common = {key: value for key, value in new_settings.items() if key not in ILLUST_PROFILE_FIELDS and key != "generation_mode"}
+        per_profile = {key: value for key, value in new_settings.items() if key in ILLUST_PROFILE_FIELDS}
+        if group_key not in bot:
+            group_settings = resolve_illust_settings(bot, "group", generation_mode)
+            bot[group_key] = {key: group_settings[key] for key in ILLUST_PROFILE_FIELDS}
+        if profile == "solo" or common:
+            bot[solo_key] = {
+                **resolve_illust_settings(bot, generation_mode=generation_mode), **common,
+                **(per_profile if profile == "solo" else {}),
+            }
+        if profile == "group":
+            bot[group_key] = {**bot.get(group_key, {}), **per_profile}
         _save_bot_data(data)
-        print(f"[BOT_MODE] 삽화 설정 업데이트: {bot_name} [{profile}]")
-        return _json_ok(merged)
+        print(f"[BOT_MODE] 삽화 설정 업데이트: {bot_name} [{generation_mode}/{profile}]")
+        return _json_ok({**resolve_illust_settings(bot, profile, generation_mode), "generation_mode": generation_mode})
     except Exception as e:
         print(f"[BOT_MODE] 삽화 설정 업데이트 실패: {e}")
         traceback.print_exc()
@@ -7290,10 +7710,10 @@ async def handle_get_positive_rules(request):
             "positive_whitelist": data.get("positive_whitelist", []),
             "positive_blacklist": data.get("positive_blacklist", []),
             "recommended_positive_whitelist": list(
-                RECOMMENDED_POSITIVE_RULES["positive_whitelist"]
+                DEFAULT_POSITIVE_RULES["positive_whitelist"]
             ),
             "recommended_positive_blacklist": list(
-                RECOMMENDED_POSITIVE_RULES["positive_blacklist"]
+                DEFAULT_POSITIVE_RULES["positive_blacklist"]
             ),
         })
     except Exception as e:
@@ -7781,7 +8201,7 @@ async def run_auto_classify_face_tags(
                 "success": False,
                 "error": (
                     f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
-                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 settings.json에서 선택하세요."
                 ),
             }
 
@@ -7978,6 +8398,18 @@ async def handle_auto_classify_face_tags(request):
         bot_name = (body.get("bot") or "").strip()
         char_name = (body.get("character") or "").strip()
         visual_card_id = (body.get("visual_card_id") or "").strip()
+        if body.get("batch_refine") is True:
+            data = _load_bot_data()
+            bot = next((item for item in data.get("bots", []) if item.get("name") == bot_name), None)
+            character = next((item for item in (bot or {}).get("characters", []) if str(item.get("name") or "").casefold() == char_name.casefold()), None)
+            if character is None:
+                print(f"[BOT_MODE] 얼굴·눈 일괄 분류 대상 없음: bot={bot_name!r}, character={char_name!r}")
+                return _json_error("일괄 분류할 캐릭터를 찾을 수 없습니다.", 404)
+            try:
+                ensure_lb_extra_batch_refine_allowed(character, visual_card_id)
+            except VisualProfileValidationError as exc:
+                print(f"[BOT_MODE] 얼굴·눈 일괄 분류 제외: bot={bot_name!r}, character={char_name!r}, card={visual_card_id!r}, error={exc}")
+                return _json_error(str(exc), 409)
         result = await run_auto_classify_face_tags(
             bot_name, char_name, visual_card_id
         )
@@ -7996,6 +8428,7 @@ async def run_lb_extra_refine(
     etc_tags: list,
     visual_card_id: str = "",
     *,
+    batch_refine: bool = False,
     execution_context=None,
     queue_item_id: str = "",
 ) -> dict:
@@ -8118,6 +8551,12 @@ async def run_lb_extra_refine(
         if not char:
             return _preflight_failure(f"캐릭터를 찾을 수 없습니다: {char_name}")
 
+        if batch_refine:
+            try:
+                ensure_lb_extra_batch_refine_allowed(char, selected_card_id)
+            except VisualProfileValidationError as exc:
+                return _preflight_failure(str(exc))
+
         if selected_card_id:
             cards, _source = effective_character_cards(char, None)
             selected_card = next(
@@ -8163,7 +8602,7 @@ async def run_lb_extra_refine(
         if not supports_vision(service):
             return _preflight_failure(
                 f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
-                "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+                "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 settings.json에서 선택하세요."
             )
 
         # 프롬프트 선택 + 변수 치환
@@ -8356,6 +8795,17 @@ async def handle_lb_extra_refine(request):
         if not isinstance(visual_card_id, str):
             print(f"[BOT_MODE] lb_extra_refine visual_card_id 타입 오류: {visual_card_id!r}")
             return web.json_response({"success": False, "error": "visual_card_id는 문자열이어야 합니다."})
+        batch_refine = body.get("batch_refine") is True
+        if batch_refine:
+            data = _load_bot_data()
+            bot = next((item for item in data.get("bots", []) if item.get("name") == bot_name), None)
+            character = next((item for item in (bot or {}).get("characters", []) if item.get("name") == char_name), None)
+            if character is None:
+                return _json_error("일괄 정제할 캐릭터를 찾을 수 없습니다.", 404)
+            try:
+                ensure_lb_extra_batch_refine_allowed(character, visual_card_id.strip())
+            except VisualProfileValidationError as exc:
+                return _json_error(str(exc), 409)
         try:
             import server as _server
             queue_manager = _server.queue_manager
@@ -8371,6 +8821,7 @@ async def handle_lb_extra_refine(request):
             params={
                 "bot_name": bot_name,
                 "char_name": char_name,
+                "batch_refine": batch_refine,
                 "visual_card_id": selected_card_id,
                 "visual_card_label": str(body.get("visual_card_label") or "").strip(),
                 "visual_card_index": int(body.get("visual_card_index") or 1),

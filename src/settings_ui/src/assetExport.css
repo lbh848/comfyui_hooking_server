@@ -1,0 +1,95 @@
+.asset-export-active .workspace { height: 100dvh; display: flex; flex-direction: column; }
+.asset-export-active #asset-main { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+.asset-export-active #asset-main > div:has(> .asset-export-page) { display: flex; flex: 1; min-height: 0; }
+.asset-export-active .page-heading { flex-shrink: 0; }
+.asset-export-active .page-footer { flex-shrink: 0; padding: 8px 0; }
+.asset-export-page { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.asset-export-page > nav { flex-shrink: 0; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.asset-export-content { display: flex; flex-direction: column; gap: 18px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px; scrollbar-gutter: stable; }
+.asset-export-content > * { flex-shrink: 0; }
+.asset-export-step-heading { display: grid; gap: 6px; }
+.asset-export-step-heading h2 { margin: 0; font-size: 19px; }
+.asset-export-step-heading h2:focus { outline: none; }
+.asset-export-step-heading p { margin: 0; }
+.asset-export-character-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.asset-export-character-toolbar > .field { flex: 1 1 200px; min-width: 0; }
+.asset-export-body { display: grid; gap: 14px; padding: 18px; min-width: 0; }
+.asset-export-body > p { margin: 0; }
+.asset-export-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.asset-export-toolbar > .field { flex: 1 1 240px; min-width: 0; }
+.asset-export-help { margin: 0; padding: 0 18px 18px; }
+.asset-export-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; gap: 10px; }
+.asset-export-steps button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--muted); word-break: keep-all; }
+.asset-export-steps button[aria-current="step"] { background: var(--rose-soft); color: var(--rose-dark); border-color: var(--rose); font-weight: 700; }
+.asset-export-steps button > span { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid currentColor; border-radius: 50%; font-size: 12px; }
+.asset-export-selection { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); gap: 10px; padding: 2px; }
+.asset-export-option { display: flex; align-items: center; gap: 10px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; cursor: pointer; }
+.asset-export-option:has(input:checked) { background: var(--rose-soft); border-color: var(--rose); }
+.asset-export-option > span { overflow-wrap: anywhere; }
+.asset-export-character-label { display: grid; gap: 4px; min-width: 0; }
+.asset-export-character-label small { color: var(--muted); font-size: 11px; }
+.asset-export-batch-result { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.asset-export-batch-result .asset-export-toolbar { align-items: center; }
+.asset-export-batch-result .asset-export-toolbar > strong { overflow-wrap: anywhere; }
+.asset-export-batch-result .asset-export-toolbar > span { font-size: 12px; color: var(--muted); }
+.asset-export-batch-result .asset-export-toolbar > button { margin-left: auto; }
+.asset-export-page input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; flex-shrink: 0; accent-color: var(--rose-dark); }
+.asset-export-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; min-width: 0; }
+.asset-export-summary > .panel { min-width: 0; }
+.asset-export-pattern { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-height: 94px; overflow-wrap: anywhere; }
+.asset-export-pattern strong { color: var(--rose-dark); }
+.asset-export-output { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+.asset-export-quality { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
+.asset-export-output input[type="range"] { padding: 0; accent-color: var(--rose-dark); }
+.asset-export-quality input[type="number"] { padding: 6px 8px; text-align: right; }
+.asset-export-block > .panel-header { flex-wrap: wrap; gap: 10px; }
+.asset-export-block.is-disabled > .asset-export-body { opacity: .6; }
+.asset-export-mapping { display: grid; grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr); gap: 12px; align-items: center; }
+.asset-export-source { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.asset-export-source-name { overflow-wrap: anywhere; font-size: 13px; }
+.asset-export-preview-shortcut { width: 24px; height: 24px; }
+.asset-export-mapping input { min-width: 0; width: 100%; }
+.asset-export-import-group { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.asset-export-import-label { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.asset-export-import-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.asset-export-import-buttons .button { min-height: 30px; padding: 5px 12px; font-size: 12px; overflow-wrap: anywhere; }
+.asset-export-import-question { margin: 0; font-weight: 600; }
+.asset-export-preview-modal { width: min(1100px, calc(100vw - 32px)); }
+.asset-export-preview-modal > .modal-content { display: flex; flex-direction: column; gap: 12px; }
+.asset-export-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 12px; max-height: min(70dvh, 720px); overflow-y: auto; padding: 2px; scrollbar-gutter: stable; }
+.asset-export-preview-grid figure { display: grid; grid-template-rows: minmax(0, 1fr) auto; margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.asset-export-preview-grid img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: contain; background: #fff; }
+.asset-export-preview-grid figcaption { padding: 8px 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.asset-export-tools { flex-wrap: wrap; }
+.asset-export-count { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.asset-export-files { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.asset-export-files table { border-collapse: collapse; table-layout: fixed; width: 100%; font-size: 12px; }
+.asset-export-files th, .asset-export-files td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; overflow-wrap: anywhere; }
+.asset-export-files th { background: var(--bg); }
+.asset-export-files th:last-child { width: 50%; }
+.asset-export-footer { display: flex; align-items: center; flex-wrap: wrap; flex-shrink: 0; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--line); }
+.asset-export-footer > :last-child { margin-left: auto; }
+.asset-export-footer > span { font-size: 12px; color: var(--muted); }
+.asset-export-footer > .asset-actions { flex-wrap: wrap; }
+.asset-export-page .settings-feedback { overflow-wrap: anywhere; }
+.asset-export-page .settings-feedback ul { padding-left: 20px; margin: 8px 0; }
+@media (max-width: 760px) {
+  .asset-export-active #asset-main { padding: 12px 10px 0; }
+  .asset-export-active .page-heading { margin-bottom: 12px; gap: 8px; }
+  .asset-export-active .page-heading h1 { font-size: 21px; }
+  .asset-export-page > nav { padding: 10px; }
+  .asset-export-content { padding: 14px; gap: 14px; }
+  .asset-export-summary { grid-template-columns: minmax(0, 1fr); }
+  .asset-export-body { padding: 14px; }
+  .asset-export-steps { gap: 6px; }
+  .asset-export-steps button { flex-direction: column; gap: 6px; padding: 10px 3px; font-size: 11px; height: 100%; }
+  .asset-export-mapping { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .asset-export-mapping > svg { display: none; }
+  .asset-export-footer { padding: 12px; gap: 8px; }
+  .asset-export-footer > span { flex: 1; text-align: right; }
+  .asset-export-footer > .asset-actions { width: 100%; justify-content: flex-end; }
+}
+@media (max-height: 600px) {
+  .asset-export-active .workspace { height: auto; min-height: 100dvh; }
+  .asset-export-page { flex: none; height: 480px; }
+}

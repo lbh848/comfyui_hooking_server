@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app_paths import config_root
+from json_store import write_json_atomic
 
 import datetime
 import json
@@ -19,21 +20,12 @@ def _timestamp() -> str:
 
 
 def _write_json_atomic(path: Path, value: dict, *, label: str) -> None:
-    part = path.with_name(f"{path.name}.part")
-    payload = (
-        json.dumps(value, ensure_ascii=False, indent=2) + os.linesep
-    ).encode("utf-8")
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with part.open("wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(part, path)
+        write_json_atomic(path, value)
     except Exception as exc:
         print(
             f"[COMFY_INSTALL][KEY] {label} 원자적 저장 실패: "
-            f"path={path}, part={part}, error={exc}"
+            f"path={path}, error={exc}"
         )
         traceback.print_exc()
         raise CredentialStoreError(f"{label} 저장 실패: {exc}") from exc
@@ -163,32 +155,43 @@ def resolve_lora_manager_settings_path(
             "설치된 ComfyUI-Lora-Manager를 찾을 수 없습니다. 먼저 ComfyUI를 설치하거나 업데이트하세요."
         )
 
-    portable_path = node_root / "settings.json"
-    if portable_path.is_file():
-        portable_settings = _load_json_object(
-            portable_path,
-            label="LoRA Manager 휴대용 설정",
-        )
-        if portable_settings.get("use_portable_settings") is True:
-            print(
-                "[COMFY_INSTALL][KEY] LoRA Manager 휴대용 설정 사용: "
-                f"{portable_path}"
-            )
-            return portable_path
-
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if not local_app_data:
-        print("[COMFY_INSTALL][KEY] LOCALAPPDATA가 없어 LoRA Manager 설정 경로를 찾지 못했습니다.")
-        raise CredentialStoreError(
-            "LOCALAPPDATA가 없어 LoRA Manager 설정 경로를 찾을 수 없습니다."
-        )
-    settings_path = (
-        Path(local_app_data).resolve()
-        / "ComfyUI-LoRA-Manager"
-        / "settings.json"
-    )
-    print(f"[COMFY_INSTALL][KEY] LoRA Manager 사용자 설정 경로: {settings_path}")
+    settings_path = node_root / "settings.json"
+    if not settings_path.resolve().is_relative_to(root):
+        raise CredentialStoreError("프로젝트 외부로 연결된 LoRA Manager 설정에는 저장할 수 없습니다.")
     return settings_path
+
+
+def configure_lora_manager(comfy_root: str | os.PathLike[str], civitai_key: str | None = None) -> Path | None:
+    """Keep the embedded manager's settings, library, and caches installation-local."""
+    root = Path(comfy_root).resolve()
+    if not (root / "custom_nodes" / "comfyui-lora-manager").is_dir():
+        return None
+    path = resolve_lora_manager_settings_path(root)
+    settings = _load_json_object(path, label="LoRA Manager 설정")
+    models = root / "models"
+    folders = {
+        "loras": [(models / "loras").as_posix()],
+        "checkpoints": [(models / "checkpoints").as_posix()],
+        "unet": [(models / "diffusion_models").as_posix(), (models / "unet").as_posix()],
+        "embeddings": [(models / "embeddings").as_posix()],
+    }
+    managed = {
+        "folder_paths": folders, "extra_folder_paths": {},
+        "default_lora_root": folders["loras"][0], "default_checkpoint_root": folders["checkpoints"][0],
+        "default_unet_root": folders["unet"][0], "default_embedding_root": folders["embeddings"][0],
+        "recipes_path": (models / "loras" / "recipes").as_posix(),
+    }
+    libraries = settings.get("libraries")
+    libraries = dict(libraries) if isinstance(libraries, dict) else {}
+    previous = libraries.get("comfyui")
+    libraries["comfyui"] = {**(previous if isinstance(previous, dict) else {}), **managed}
+    updated = {**settings, **managed, "libraries": libraries, "active_library": "comfyui", "use_portable_settings": True}
+    if civitai_key and civitai_key.strip():
+        updated["civitai_api_key"] = civitai_key.strip()
+    if updated != settings:
+        _backup_json(path, root / ".installer-state" / "backups" / "lora-manager", filename_prefix="settings_before_local_paths")
+        _write_json_atomic(path, updated, label="LoRA Manager 전용 설정")
+    return path
 
 
 def save_lora_manager_civitai_key(
@@ -207,6 +210,7 @@ def save_lora_manager_civitai_key(
         raise CredentialStoreError("교체할 Civitai API 키가 비어 있습니다.")
 
     settings_path = resolve_lora_manager_settings_path(comfy_root)
+    configure_lora_manager(comfy_root)
     settings = _load_json_object(settings_path, label="LoRA Manager 설정")
     backup_path = _backup_json(
         settings_path,

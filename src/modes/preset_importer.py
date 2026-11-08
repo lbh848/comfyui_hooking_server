@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from app_paths import data_root
+from preset_catalog import normalize_preset_name, preset_catalog_only
 
 import base64
 import copy
@@ -456,7 +457,7 @@ def _normalize_target_name(name: str) -> str:
     return name.replace("/", "-")
 
 
-def analyze_document(filename: str, document: Any) -> dict:
+def analyze_document(filename: str, document: Any, *, merge_composition: bool = False) -> dict:
     """SDStudio 세션 JSON을 쓰기 없이 분석하고 편집 가능한 초안을 반환한다."""
     if not isinstance(document, dict):
         print(f"[PRESET_IMPORT] 분석 거부: 루트 type={type(document).__name__}")
@@ -957,6 +958,17 @@ def analyze_document(filename: str, document: Any) -> dict:
                     f"전체 프롬프트 항목이 {MAX_TOTAL_ITEMS}개를 초과합니다."
                 )
 
+    if merge_composition:
+        for item in items:
+            item["target_name"] = normalize_preset_name(item["target_name"])
+            item["allowed_categories"] = list(dict.fromkeys(
+                "expressions" if category == "composition_presets" else category
+                for category in item["allowed_categories"]
+            ))
+            for fragment in item["fragments"]:
+                if fragment["category"] == "composition_presets":
+                    fragment["category"] = "expressions"
+
     fragment_count = sum(len(item["fragments"]) for item in items)
     llm_fragment_count = sum(
         1 for item in items for fragment in item["fragments"]
@@ -982,7 +994,7 @@ def analyze_document(filename: str, document: Any) -> dict:
             "nai_step": 1.05,
             "llm_batch_fragment_limit": MAX_CLASSIFY_FRAGMENTS,
         },
-        "categories": list(IMPORT_CATEGORIES),
+        "categories": [category for category in IMPORT_CATEGORIES if not merge_composition or category != "composition_presets"],
         "groups": groups,
         "items": items,
         "warnings": warnings,
@@ -1146,11 +1158,11 @@ Category meanings:
 - character_negative_presets: character-specific negative traits.
 - unassigned: genuinely ambiguous content that needs human review.
 
-For each item, use only its allowed_categories. Return every provided fragment_id exactly once. Never add, remove, merge, split, translate, normalize, or rewrite fragments. Classify the converted `text`, using `source_nai` only as syntax/provenance context. Output JSON only with this shape:
+For each item, use only its allowed_categories. If composition_presets is absent, expressions includes both expression and composition. Return every provided fragment_id exactly once. Never add, remove, merge, split, translate, normalize, or rewrite fragments. Classify the converted `text`, using `source_nai` only as syntax/provenance context. Output JSON only with this shape:
 {"items":[{"item_id":"...","assignments":[{"fragment_id":"...","category":"..."}]}]}"""
     user = (
-        "다음 SDStudio 프롬프트 조각을 문맥에 따라 분류하세요. 원문은 바꾸지 말고 "
-        "ID와 카테고리만 반환하세요.\n\n입력 데이터:\n"
+        "Classify the following SDStudio prompt fragments in context. Preserve their text "
+        "and return only IDs and categories.\n\nInput data:\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )
     return [
@@ -1544,19 +1556,19 @@ def validate_draft(
     return result
 
 
-def _load_manifest() -> dict:
-    if not os.path.isfile(MANIFEST_FILE):
-        print(f"[PRESET_IMPORT] 기존 매니페스트 없음, 새로 생성: path={MANIFEST_FILE}")
+def _load_manifest(manifest_file: str = MANIFEST_FILE) -> dict:
+    if not os.path.isfile(manifest_file):
+        print(f"[PRESET_IMPORT] 기존 매니페스트 없음, 새로 생성: path={manifest_file}")
         return {"version": 1, "imports": []}
     try:
-        with open(MANIFEST_FILE, "r", encoding="utf-8") as handle:
+        with open(manifest_file, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except Exception as exc:
-        print(f"[PRESET_IMPORT] 매니페스트 로드 실패: path={MANIFEST_FILE}, error={exc}")
+        print(f"[PRESET_IMPORT] 매니페스트 로드 실패: path={manifest_file}, error={exc}")
         traceback.print_exc()
         raise PresetImportError("기존 프리셋 임포트 매니페스트를 읽지 못했습니다.") from exc
     if not isinstance(data, dict) or not isinstance(data.get("imports"), list):
-        print(f"[PRESET_IMPORT] 매니페스트 구조 오류: path={MANIFEST_FILE}, data={data!r}")
+        print(f"[PRESET_IMPORT] 매니페스트 구조 오류: path={manifest_file}, data={data!r}")
         raise PresetImportError("기존 프리셋 임포트 매니페스트 구조가 올바르지 않습니다.")
     return data
 
@@ -1683,50 +1695,56 @@ def _write_json_temp(path: str, data: dict) -> str:
         raise
 
 
-def _backup_existing_files(paths: list[str]) -> dict[str, str | None]:
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    stamp = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+def _backup_existing_files(paths: list[str], backup_dir: str = BACKUP_DIR) -> dict[str, str | None]:
+    from data_backups import BackupPolicy, backup_json_file, backup_policy
+    from pathlib import Path
     backups: dict[str, str | None] = {}
     for path in paths:
-        if not os.path.isfile(path):
-            print(f"[PRESET_IMPORT] 백업할 기존 파일 없음: path={path}")
-            backups[path] = None
-            continue
-        stem, extension = os.path.splitext(os.path.basename(path))
-        backup_path = os.path.join(
-            BACKUP_DIR,
-            f"preset_import_{stem}_{stamp}_{uuid.uuid4().hex[:8]}{extension or '.json'}",
-        )
+        prefix = f"preset_import_{Path(path).stem}_"
+        policy = backup_policy(path) or BackupPolicy(Path(backup_dir), prefix, prefix + "*.json")
         try:
-            shutil.copy2(path, backup_path)
+            backup = backup_json_file(path, policy)
         except Exception as exc:
-            print(
-                "[PRESET_IMPORT] 저장 전 백업 실패, 커밋 중단: "
-                f"source={path}, backup={backup_path}, error={exc}"
-            )
-            traceback.print_exc()
-            raise PresetImportError(f"저장 전 백업에 실패했습니다: {os.path.basename(path)}") from exc
-        print(f"[PRESET_IMPORT] 저장 전 백업 완료: {backup_path}")
-        backups[path] = backup_path
+            raise PresetImportError(f"?? ? ??? ??????: {os.path.basename(path)}") from exc
+        backups[path] = str(backup) if backup else None
     return backups
+
+
+def _document_changed(path: str, document: dict) -> bool:
+    from data_backups import content_digest
+    from pathlib import Path
+    return content_digest(Path(path).read_bytes()) != content_digest(
+        json.dumps(document, ensure_ascii=False, allow_nan=False).encode("utf-8"))
 
 
 def _persist_transaction(
     active_tags: dict,
     hidden_tags: dict,
     manifest: dict | None = None,
+    *,
+    storage_dir: str | None = None,
+    additional_documents: dict[str, dict] | None = None,
 ) -> list[str]:
-    paths = [TAGS_FILE, HIDDEN_TAGS_FILE]
+    tags_file = os.path.join(storage_dir, "tags.json") if storage_dir else TAGS_FILE
+    hidden_tags_file = os.path.join(storage_dir, "hidden_tags.json") if storage_dir else HIDDEN_TAGS_FILE
+    manifest_file = os.path.join(storage_dir, "preset_import_manifests.json") if storage_dir else MANIFEST_FILE
+    documents = {tags_file: preset_catalog_only(active_tags), hidden_tags_file: preset_catalog_only(hidden_tags)}
     if manifest is not None:
-        paths.append(MANIFEST_FILE)
-    backups = _backup_existing_files(paths)
+        documents[manifest_file] = manifest
+    if additional_documents:
+        if documents.keys() & additional_documents.keys():
+            raise PresetImportError("추가 저장 파일이 기존 프리셋 파일과 겹칩니다.")
+        documents.update(additional_documents)
+    # Do not manufacture histories for unchanged catalogs or companion files.
+    documents = {path: document for path, document in documents.items()
+                 if not os.path.isfile(path) or _document_changed(path, document)}
+    paths = list(documents)
+    backups = _backup_existing_files(paths, os.path.join(storage_dir, "backup") if storage_dir else BACKUP_DIR)
     temporary: dict[str, str] = {}
     replaced: list[str] = []
     try:
-        temporary[TAGS_FILE] = _write_json_temp(TAGS_FILE, active_tags)
-        temporary[HIDDEN_TAGS_FILE] = _write_json_temp(HIDDEN_TAGS_FILE, hidden_tags)
-        if manifest is not None:
-            temporary[MANIFEST_FILE] = _write_json_temp(MANIFEST_FILE, manifest)
+        for path, document in documents.items():
+            temporary[path] = _write_json_temp(path, document)
         for path in paths:
             os.replace(temporary[path], path)
             replaced.append(path)
@@ -1785,6 +1803,7 @@ def managed_values_equal(category: str, left: Any, right: Any) -> bool:
 
 def transfer_managed_presets(
     presets: Any, active_tags: dict, hidden_tags: dict, *, commit: bool = False,
+    storage_dir: str | None = None,
 ) -> dict:
     """네이티브 프리셋을 순서대로 검토하고, 선택한 항목만 기존 트랜잭션으로 저장한다."""
     from .asset_mode import PRESET_MGMT_CATEGORIES
@@ -1872,7 +1891,7 @@ def transfer_managed_presets(
         rows.append(row)
     backups = []
     if commit and changed:
-        backups = _persist_transaction(stores["active"], stores["hidden"])
+        backups = _persist_transaction(stores["active"], stores["hidden"], storage_dir=storage_dir)
     result = {"success": True, "items": rows, "saved_count": changed if commit else 0,
               "ready_count": changed, "error_count": sum(row["outcome"] == "error" for row in rows),
               "skipped_count": sum(row["outcome"] == "skipped" for row in rows), "backups": backups}
@@ -1887,6 +1906,8 @@ def commit_draft(
     resolutions: Any,
     active_tags: dict,
     hidden_tags: dict,
+    *,
+    storage_dir: str | None = None,
 ) -> dict:
     validation = validate_draft(draft, active_tags, hidden_tags)
     if not validation["success"]:
@@ -2001,7 +2022,7 @@ def commit_draft(
         })
 
     session = get_analysis_session(draft["import_id"])
-    manifest = _load_manifest()
+    manifest = _load_manifest(os.path.join(storage_dir, "preset_import_manifests.json") if storage_dir else MANIFEST_FILE)
     manifest_id = uuid.uuid4().hex
     draft_by_id = {
         item["id"]: item for item in draft.get("items", [])
@@ -2062,7 +2083,7 @@ def commit_draft(
         "targets": targets,
     }
     manifest["imports"].append(manifest_entry)
-    backup_paths = _persist_transaction(new_active, new_hidden, manifest)
+    backup_paths = _persist_transaction(new_active, new_hidden, manifest, storage_dir=storage_dir)
     with _SESSION_LOCK:
         session["committed"] = True
         session["manifest_id"] = manifest_id

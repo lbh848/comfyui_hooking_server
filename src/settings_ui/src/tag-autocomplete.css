@@ -1,0 +1,14 @@
+.tag-autocomplete { min-width: 0; }
+.tag-autocomplete-results { position: fixed; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow: hidden; box-shadow: 0 5px 24px #895d7a20; font-size: 12px; }
+/* Reuse the tooltip layer; navigation/header and native dialogs remain above it. */
+.tag-autocomplete-results { z-index: 20; }
+.tag-autocomplete-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 10px; color: var(--secondary); font-size: 12px; }
+.tag-autocomplete-heading .icon-button { width: 26px; height: 26px; }
+.tag-autocomplete-list { position: relative; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.tag-autocomplete-option { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 9px 12px; text-align: left; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink); }
+.tag-autocomplete-option[aria-selected="true"], .tag-autocomplete-option:hover { background: var(--rose-soft); }
+.tag-autocomplete-option strong { font-size: 12px; overflow-wrap: anywhere; }
+.tag-autocomplete-option span { font-size: 11px; line-height: 1.65; color: var(--muted); overflow-wrap: anywhere; }
+.tag-autocomplete-results .tag-autocomplete-status, .tag-autocomplete-results .tag-autocomplete-error { flex: 0 0 auto; margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.tag-autocomplete-results .tag-autocomplete-error { color: var(--danger); }
+.tag-autocomplete-results button:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }

@@ -3883,7 +3883,7 @@
                         <div class="card-meta">${info.bot_name ? `<span class="bot-badge">${escapeHtml(info.bot_name)}</span> ` : ''}${info.gen_method ? `<span class="gen-method-badge">${escapeHtml(info.gen_method)}</span> ` : ''}${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
                         <div class="card-actions">
                             <button class="regen-btn" onclick="regenerate('${escapeAttr(b.name)}', this)"
-                                    ${b.is_animated ? 'disabled title="영상 백업에는 재생성을 사용할 수 없습니다"' : (b.has_prompt ? '' : 'disabled title="프롬프트 없음"')}>
+                                    ${b.is_animated ? 'disabled title="영상 백업에는 재생성을 사용할 수 없습니다"' : (b.has_prompt ? 'title="새 시드로 다시 생성합니다"' : 'disabled title="프롬프트 없음"')}>
                                 🔄 재생성
                             </button>
                             <button class="edit-prompt-btn" onclick="event.stopPropagation(); openPromptModal(this)"
@@ -8131,21 +8131,12 @@
         }
 
         // ─── 재생성 ───
+        // 재생성은 서버가 원본과 다른 시드를 뽑아 생성한다. 원본 백업은 그대로 둔다.
         async function regenerate(name, btn) {
-            // [SEED] 블록 감지 → 시드 변경 여부 선택 모달
-            const promptData = promptDataMap.get(name) || {};
-            const positive = promptData.enhanced_positive || promptData.positive || '';
-            const negative = promptData.negative || '';
-            const seedMatch = positive.match(/\[SEED\]\n(-?\d+)/);
-            if (seedMatch) {
-                openSeedRegenModal(name, btn, positive, negative, seedMatch[1]);
-                return;
-            }
-
             await doRegenerate(name, btn);
         }
 
-        // 실제 재생성 (원본 프롬프트 그대로)
+        // 실제 재생성 (새 시드로 생성)
         async function doRegenerate(name, btn) {
             const originalText = btn.innerHTML;
             btn.disabled = true;
@@ -8172,76 +8163,6 @@
                 btn.innerHTML = originalText;
                 hideTopProgress();
             }
-        }
-
-        // 시드 변경 재생성 (수정된 positive로 즉시 생성)
-        async function doRegenerateWithModifiedSeed(name, btn, positive, negative) {
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span>';
-            showTopProgress();
-
-            try {
-                const data = await fetchJSON('/api/reschedule_with_modified_prompt', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name, positive: positive, negative: negative })
-                });
-
-                if (data.error) {
-                    alert('재생성 실패: ' + data.error);
-                    return;
-                }
-
-                showToast(data.message || '시드 변경 재생성을 큐에 등록했습니다', 'info');
-            } catch (e) {
-                alert('재생성 실패: ' + e.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-                hideTopProgress();
-            }
-        }
-
-        // ─── 시드 선택 재생성 모달 ───
-        let seedRegenState = null;
-
-        function openSeedRegenModal(name, btn, positive, negative, currentSeed) {
-            seedRegenState = { name, btn, positive, negative, currentSeed, newSeed: null };
-            document.getElementById('seed-regen-current').textContent = currentSeed;
-            rollNewSeed();
-            document.getElementById('seed-regen-modal').classList.add('visible');
-        }
-
-        function closeSeedRegenModal() {
-            document.getElementById('seed-regen-modal').classList.remove('visible');
-            seedRegenState = null;
-        }
-
-        function rollNewSeed() {
-            if (!seedRegenState) return;
-            const ns = Math.floor(Math.random() * 4294967295);
-            seedRegenState.newSeed = ns;
-            document.getElementById('seed-regen-new').textContent = ns;
-        }
-
-        async function seedRegenWithNewSeed() {
-            if (!seedRegenState) return;
-            const { name, btn, positive, negative, newSeed } = seedRegenState;
-            if (newSeed == null) {
-                showToast('새 시드가 없습니다', 'warning');
-                return;
-            }
-            const newPositive = positive.replace(/\[SEED\]\n-?\d+/, '[SEED]\n' + newSeed);
-            closeSeedRegenModal();
-            await doRegenerateWithModifiedSeed(name, btn, newPositive, negative);
-        }
-
-        async function seedRegenAsIs() {
-            if (!seedRegenState) return;
-            const { name, btn } = seedRegenState;
-            closeSeedRegenModal();
-            await doRegenerate(name, btn);
         }
 
         // ─── 재전송 예약 ───
@@ -9204,6 +9125,8 @@
                 visualProfileIds: {},
             };
             llmEditModalState = openingState;
+            const responseLanguage = document.getElementById('llm-edit-response-language');
+            responseLanguage.disabled = true;
             const maskToggle = document.getElementById('llm-edit-allow-mask-edit');
             let hasMask = false;
             try {
@@ -9251,6 +9174,19 @@
                 renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
             } else {
                 resetIllustrationAutoFeedbackUi();
+            }
+
+            try {
+                const result = await fetchJSON('/api/llm_edit_prompt_template');
+                if (!result.success) throw new Error(result.error || '답변 언어를 불러오지 못했습니다.');
+                if (llmEditModalState !== openingState) return;
+                responseLanguage.value = result.data.response_language || 'en';
+                responseLanguage.dataset.savedValue = responseLanguage.value;
+                responseLanguage.disabled = false;
+            } catch (error) {
+                console.error('[EASY_EDIT] 답변 언어 로드 실패:', error);
+                showToast('답변 언어 로드 실패: ' + error.message, 'error');
+                return;
             }
 
             if (fmt === 'v3') {
@@ -9626,6 +9562,10 @@
                 return;
             }
             if (!currentModalBackupName || llmEditInFlight) return;
+            if (document.getElementById('llm-edit-response-language').disabled) {
+                showToast('답변 언어를 불러오거나 저장하는 중입니다. 잠시 후 다시 시도해주세요.', 'info');
+                return;
+            }
             const sourceBackupName = currentModalBackupName;
             const directionInput = document.getElementById('llm-edit-direction-input');
             const direction = String(directionInput?.value || '').trim();
@@ -9740,6 +9680,10 @@
         async function llmEditPrompt() {
             if (!currentModalBackupName) return;
             if (llmEditInFlight) return;
+            if (document.getElementById('llm-edit-response-language').disabled) {
+                showToast('답변 언어를 불러오거나 저장하는 중입니다. 잠시 후 다시 시도해주세요.', 'info');
+                return;
+            }
             const positive = document.getElementById('modal-positive').value;
             const negative = document.getElementById('modal-negative').value;
             const direction = (document.getElementById('llm-edit-direction-input').value || '').trim();
@@ -9977,32 +9921,51 @@
             showToast('글로벌을 커스텀으로 복사했습니다 (저장 필요)', 'info');
         }
 
-        async function _saveLlmEditTemplate() {
-            _llmTplSyncCurrent();
-            const st = window._llmTplState;
-            const useCustom = document.getElementById('llm-tpl-use').checked;
-            const templates = {
-                system: st.customs.system || '',
-                system_chansub: st.customs.system_chansub || '',
-                user_v3: st.customs.user_v3 || '',
-                user_v1: st.customs.user_v1 || '',
-                user_chansub: st.customs.user_chansub || '',
-            };
+        async function _saveLlmEditTemplate(responseLanguage) {
+            const languageSelect = document.getElementById('llm-edit-response-language');
+            let body;
+            if (responseLanguage !== undefined) {
+                languageSelect.disabled = true;
+                body = { response_language: responseLanguage };
+            } else {
+                _llmTplSyncCurrent();
+                const st = window._llmTplState;
+                body = {
+                    use_custom: document.getElementById('llm-tpl-use').checked,
+                    templates: {
+                        system: st.customs.system || '',
+                        system_chansub: st.customs.system_chansub || '',
+                        user_v3: st.customs.user_v3 || '',
+                        user_v1: st.customs.user_v1 || '',
+                        user_chansub: st.customs.user_chansub || '',
+                    },
+                };
+            }
             try {
                 const resp = await fetch('/api/llm_edit_prompt_template', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ use_custom: useCustom, templates })
+                    body: JSON.stringify(body)
                 });
                 const result = await resp.json();
-                if (!result.success) {
-                    alert('보조 프롬프트 저장 실패: ' + (result.error || '알 수 없는 오류'));
-                    return;
+                if (!resp.ok || !result.success) throw new Error(result.error || '알 수 없는 오류');
+                if (responseLanguage !== undefined) {
+                    languageSelect.dataset.savedValue = responseLanguage;
+                    showToast('답변 언어 저장 완료', 'success');
+                } else {
+                    showToast('보조 프롬프트 저장 완료', 'success');
+                    document.getElementById('llm-edit-template-overlay').remove();
                 }
-                showToast('보조 프롬프트 저장 완료', 'success');
-                document.getElementById('llm-edit-template-overlay').remove();
             } catch (e) {
-                alert('보조 프롬프트 저장 실패: ' + e.message);
+                console.error('[EASY_EDIT] 설정 저장 실패:', { body, error: e });
+                if (responseLanguage !== undefined) {
+                    languageSelect.value = languageSelect.dataset.savedValue || 'en';
+                    showToast('답변 언어 저장 실패: ' + e.message, 'error');
+                } else {
+                    alert('보조 프롬프트 저장 실패: ' + e.message);
+                }
+            } finally {
+                if (responseLanguage !== undefined) languageSelect.disabled = false;
             }
         }
 
@@ -10455,7 +10418,7 @@
             { key: 'illustration', label: '삽화', description: '일반 삽화 생성 요청', modalSupported: true },
             { key: 'restore_regenerate', label: '재생성 / 수동 그리기', description: '삽화 재생성, 수동 그리기, 워크플로우 테스트', modalSupported: true },
             { key: 'asset_generation', label: '에셋 생성', description: '에셋 이미지 생성', modalSupported: true },
-            { key: 'qwen_edit', label: 'EDIT', description: 'Qwen Edit 및 ANIMA Inpainting', modalSupported: true },
+            { key: 'qwen_edit', label: 'EDIT', description: 'ANIMA Inpainting', modalSupported: true },
             { key: 'tag_analysis', label: '태그 분석', description: 'Comfy 워크플로우 기반 이미지 태그 분석', modalSupported: false },
             { key: 'asset_lora_training', label: '에셋 LoRA', description: '에셋 LoRA 학습', modalSupported: true },
             { key: 'bot_lora_training', label: '봇 LoRA', description: '봇 캐릭터 LoRA 학습', modalSupported: true },
@@ -10782,7 +10745,7 @@
             const cudaNumber = source.cuda_device === null || source.cuda_device === '' || source.cuda_device === undefined
                 ? null
                 : Number.parseInt(source.cuda_device, 10);
-            const vramMode = ['auto', 'highvram', 'normalvram', 'lowvram', 'novram'].includes(source.vram_mode)
+            const vramMode = ['auto', 'highvram', 'lowvram', 'novram'].includes(source.vram_mode)
                 ? source.vram_mode
                 : 'auto';
             return {
@@ -11733,7 +11696,7 @@
         let comfyInstallerPollTimer = null;
         let comfyInstallerStatusBusy = false;
         let comfyInstallerPreflightLoaded = false;
-        let comfyInstallerLibrary = { releases: [], user_files: [] };
+        let comfyInstallerLibrary = { releases: [], workflow_files: [] };
         let comfyInstallerIntegrityReport = { release_version: '', items: [], counts: {} };
         let comfyInstallerE2ECatalog = { release_version: '', items: [] };
         let comfyInstallerLatestDiagnosticId = '';
@@ -11937,17 +11900,17 @@
                     <input type="checkbox" data-item-id="${escapeHtml(item.id)}" onchange="comfyInstallerUpdateSelectionSummary()">
                     <span><strong>${escapeHtml(item.name || item.filename || item.id)}</strong><small>모델 ${Number(item.model_count || 0)}개 · ${comfyInstallerFormatBytes(item.model_bytes || 0)}</small></span>
                 </label>`).join('') : '<div class="comfy-workflow-empty">선택한 배포 버전에 워크플로우가 없습니다.</div>';
-            const userFiles = comfyInstallerLibrary.user_files || [];
-            userList.innerHTML = userFiles.length ? userFiles.map(file => `
+            const workflowFiles = comfyInstallerLibrary.workflow_files || [];
+            userList.innerHTML = workflowFiles.length ? workflowFiles.map(file => `
                 <div class="comfy-workflow-user-file"><strong>${escapeHtml(file.name)}</strong><small>${comfyInstallerFormatBytes(file.size || 0)}</small></div>`).join('')
-                : '<div class="comfy-workflow-empty">사용자 사본이 없습니다.</div>';
+                : '<div class="comfy-workflow-empty">설치된 관리 워크플로우가 없습니다.</div>';
             comfyInstallerUpdateSelectionSummary();
         }
 
         async function comfyInstallerLoadWorkflowLibrary(preferredRelease = '') {
             try {
                 const data = await fetchJSON('/api/comfy-installer/workflow-library');
-                comfyInstallerLibrary = data.library || { releases: [], user_files: [] };
+                comfyInstallerLibrary = data.library || { releases: [], workflow_files: [] };
                 comfyInstallerRenderWorkflowLibrary(preferredRelease);
             } catch (error) {
                 console.error('[COMFY_INSTALL] 워크플로우 라이브러리 조회 실패:', error);
@@ -12344,7 +12307,7 @@
                     body: JSON.stringify({ upload_id: uploaded.upload_id, workflow_key: workflowKeyInput.value }),
                 });
                 workflowKeyInput.value = '';
-                comfyInstallerLibrary = unpacked.library || { releases: [], user_files: [] };
+                comfyInstallerLibrary = unpacked.library || { releases: [], workflow_files: [] };
                 const release = unpacked.unpacked?.release_version || '';
                 comfyInstallerRenderWorkflowLibrary(release);
                 if (uploadNote) uploadNote.textContent = `${release} 풀기 완료 · ${(unpacked.unpacked?.items || []).length}개 워크플로우`;
@@ -12805,7 +12768,7 @@
                 ? '대상 노드를 mode 0으로 활성화합니다.'
                 : '대상 노드를 MODEL 연결이 유지되는 bypass(mode 4)로 비활성화합니다.';
             if (!window.confirm(
-                `SOYA_USER의 PatchSageAttention 노드를 일괄 ${actionLabel}할까요?\n\n` +
+                `관리 워크플로우의 PatchSageAttention 노드를 일괄 ${actionLabel}할까요?\n\n` +
                 `${modeDescription}\n변경되는 워크플로우는 backups 폴더에 먼저 백업합니다.`
             )) return;
 
@@ -12837,7 +12800,7 @@
                             (backupName ? ` · 백업 ${backupName}` : ' · 이미 요청 상태');
                 }
                 if (matchedNodes === 0) {
-                    showToast('SOYA_USER에서 PatchSageAttention 노드를 찾지 못했습니다', 'warning');
+                    showToast('관리 워크플로우에서 PatchSageAttention 노드를 찾지 못했습니다', 'warning');
                 } else if (changedNodes === 0) {
                     showToast(`PatchSageAttention ${matchedNodes}개가 이미 모두 ${actionLabel} 상태입니다`, 'success');
                 } else {
@@ -14773,7 +14736,7 @@
             if (!modalWorkflowCatalog.length) {
                 const empty = document.createElement('div');
                 empty.className = 'comfy-workflow-empty';
-                empty.textContent = 'SOYA_USER 폴더에 동기화할 워크플로우 파일이 없습니다.';
+                empty.textContent = '관리 워크플로우 폴더에 동기화할 워크플로우 파일이 없습니다.';
                 container.append(empty);
             } else if (!filtered.length) {
                 const empty = document.createElement('div');
@@ -14860,7 +14823,7 @@
                 showToast('Modal에 동기화할 워크플로우를 선택하세요', 'warning');
                 return;
             }
-            if (!window.confirm(`선택한 ${workflowIds.length}개 SOYA_USER 워크플로우와 현재 로컬에서 참조하는 모델·LoRA 파일을 사용자 Modal 계정에 직접 업로드할까요? 앱과 Custom Node는 재배포하지 않으며, GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
+            if (!window.confirm(`선택한 ${workflowIds.length}개 관리 워크플로우와 현재 로컬에서 참조하는 모델·LoRA 파일을 사용자 Modal 계정에 직접 업로드할까요? 앱과 Custom Node는 재배포하지 않으며, GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
             const button = document.getElementById('modal-installer-start-btn');
             if (button) button.disabled = true;
             let started = false;
@@ -14898,7 +14861,7 @@
             modalRemoteWorkflowQueryState = 'loading';
             modalRemoteWorkflowFilter = 'all';
             modalRenderWorkflowCatalog();
-            if (status) status.textContent = '로컬 SOYA_USER와 Modal Volume의 SHA-256을 비교하고 있습니다.';
+            if (status) status.textContent = '로컬 관리 워크플로우와 Modal Volume의 SHA-256을 비교하고 있습니다.';
             try {
                 const data = await fetchJSON('/api/modal/workflows/remote');
                 modalWorkflowCatalog = Array.isArray(data.workflows) ? data.workflows : [];
@@ -15387,7 +15350,7 @@
             document.getElementById('setting-workflow-base-dir').value =
                 currentConfig.workflow_base_dir || pathParts.baseDir;
             document.getElementById('setting-workflow-path').value = workflowPath;
-            for (const profile of ['v1', 'v3', 'v3_anima']) {
+            for (const profile of ['v3', 'v3_anima']) {
                 const profilePath = illustrationPaths[profile]
                     || (profile === initialLocalProfile ? workflowPath : '');
                 const profileParts = splitWorkflowPath(profilePath);
@@ -15592,16 +15555,7 @@
             document.getElementById('setting-anima-only-asset-workflow-filename').value = animaOnlyAssetSplit.filename;
             document.getElementById('setting-anima-only-asset-workflow-source-path').value = animaOnlyAssetPath;
 
-            // QWEN_EDIT 에셋 편집 모드
-            const qwenEditPath = currentConfig.qwen_edit_workflow_source_path || '';
-            const qwenEditSplit = splitWorkflowPath(qwenEditPath);
-            document.getElementById('setting-qwen-edit-workflow-filename').value = qwenEditSplit.filename;
-            document.getElementById('setting-qwen-edit-workflow-source-path').value = qwenEditPath;
-
-            // 전역 EDIT 툴 및 ANIMA Inpainting 워크플로우
-            const assetEditTool = currentConfig.asset_edit_tool || 'qwen';
-            document.getElementById('setting-asset-edit-tool').value = assetEditTool;
-            onAssetEditToolChange(assetEditTool);
+            // EDIT 툴 및 ANIMA Inpainting 워크플로우
             const animaInpaintingPath =
                 currentConfig.anima_inpainting_workflow_source_path || '';
             const animaInpaintingSplit = splitWorkflowPath(animaInpaintingPath);
@@ -15773,7 +15727,7 @@
 
         // 워크플로우 경로 업데이트
         function updateWorkflowPath() {
-            for (const profile of ['v1', 'v3', 'v3_anima']) {
+            for (const profile of ['v3', 'v3_anima']) {
                 updateIllustrationWorkflowPath(profile);
             }
             // 베이스 경로 변경 시 에셋/로라/유틸리티 경로도 함께 갱신
@@ -15781,7 +15735,6 @@
             updateAssetWorkflowPath();
             updateAnimaAssetWorkflowPath();
             updateAnimaOnlyAssetWorkflowPath();
-            updateQwenEditWorkflowPath();
             updateAnimaInpaintingWorkflowPath();
             updateTagAnalysisWorkflowPath();
             updateAssetTagAnalysisWorkflowPath();
@@ -15827,7 +15780,7 @@
 
         function stripManagedLoraPath(path) {
             return String(path || '').trim().replace(
-                /[\\/]SOYA_CHAR_LORA(?:[\\/]SOYA_(?:BOT|INSTANCE|STYLE)_LORA)?$/i,
+                /[\\/]SOYA_CHAR_LORA(?:[\\/]SOYA_(?:ASSET|BOT|INSTANCE|STYLE)_LORA)?$/i,
                 ''
             );
         }
@@ -16690,9 +16643,7 @@
                 asset_workflow_source_path: 'ILXL 에셋 생성 워크플로우',
                 anima_asset_workflow_source_path: 'ANIMA+ILXL 에셋 생성 워크플로우',
                 anima_only_asset_workflow_source_path: 'ONLY ANIMA 에셋 생성 워크플로우',
-                qwen_edit_workflow_source_path: 'QWEN_EDIT 워크플로우',
                 anima_inpainting_workflow_source_path: 'ANIMA Inpainting 워크플로우',
-                asset_edit_tool: '전역 EDIT 툴',
                 asset_workflow_type: '에셋 워크플로우 타입',
                 character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
                 character_maker_rag_autostart: '캐릭터 메이커 RAG 자동 시작',
@@ -17111,9 +17062,7 @@
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 anima_asset_workflow_source_path: document.getElementById('setting-anima-asset-workflow-source-path').value,
                 anima_only_asset_workflow_source_path: document.getElementById('setting-anima-only-asset-workflow-source-path').value,
-                qwen_edit_workflow_source_path: document.getElementById('setting-qwen-edit-workflow-source-path').value,
                 anima_inpainting_workflow_source_path: document.getElementById('setting-anima-inpainting-workflow-source-path').value,
-                asset_edit_tool: document.getElementById('setting-asset-edit-tool').value,
                 asset_workflow_type: document.getElementById('setting-workflow-type-select').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
@@ -17135,7 +17084,7 @@
                     sdxl: document.getElementById('setting-style-lora-workflow-sdxl-source-path').value
                 },
                 face_extract_workflow_source_path: document.getElementById('setting-face-extract-workflow-source-path').value,
-                lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA'),
+                lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_ASSET_LORA'),
                 bot_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_BOT_LORA'),
                 instance_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_INSTANCE_LORA'),
                 style_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_STYLE_LORA'),
@@ -17254,7 +17203,7 @@
         }
 
         function updateIllustrationWorkflowPath(profile) {
-            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            const normalized = ['v3', 'v3_anima'].includes(profile) ? profile : null;
             if (!normalized) {
                 console.error('[ILLUST] 로컬 워크플로우 경로 갱신 프로필 오류:', profile);
                 return;
@@ -17279,7 +17228,7 @@
         }
 
         async function onIllustrationWorkflowFilenameInput(profile, value) {
-            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            const normalized = ['v3', 'v3_anima'].includes(profile) ? profile : null;
             if (!normalized) {
                 console.error('[ILLUST] 워크플로우 자동완성 프로필 오류:', profile);
                 return;
@@ -17302,7 +17251,7 @@
         }
 
         function selectIllustrationWorkflowFile(profile, fullPath, filename) {
-            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            const normalized = ['v3', 'v3_anima'].includes(profile) ? profile : null;
             if (!normalized) {
                 console.error('[ILLUST] 워크플로우 파일 선택 프로필 오류:', profile);
                 return;
@@ -17379,8 +17328,6 @@
                         selectAnimaAssetWorkflowFile(path, filename);
                     } else if (list.id === 'anima-only-asset-workflow-autocomplete') {
                         selectAnimaOnlyAssetWorkflowFile(path, filename);
-                    } else if (list.id === 'qwen-edit-workflow-autocomplete') {
-                        selectQwenEditWorkflowFile(path, filename);
                     } else if (list.id === 'anima-inpainting-workflow-autocomplete') {
                         selectAnimaInpaintingWorkflowFile(path, filename);
                     } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
@@ -17464,7 +17411,6 @@
                 closePromptModal();
                 closeSettingsModal();
                 closeQueueModal();
-                closeSeedRegenModal();
                 closeRepBatchModal();
             }
         });
@@ -20882,6 +20828,7 @@
             { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소·조명)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_npc_generation', label: 'NPC 생성 노드', kind: 'JSON · NPC 캐릭터 카드 생성', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_plan',  label: '삽화·만화 PLAN',               kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2',       label: '삽화·만화 DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
@@ -21601,8 +21548,8 @@
             }
         }
 
-        const ILLUSTRATION_WORKFLOW_TYPES = new Set(['v1', 'v3', 'v3_anima', 'chansub', 'chansub_v3_anima']);
-        const ILLUSTRATION_LOCAL_PROFILES = ['v1', 'v3', 'v3_anima'];
+        const ILLUSTRATION_WORKFLOW_TYPES = new Set(['v3', 'v3_anima', 'chansub', 'chansub_v3_anima']);
+        const ILLUSTRATION_LOCAL_PROFILES = ['v3', 'v3_anima'];
 
         function normalizeIllustrationWorkflowType(value) {
             const normalized = String(value || '').trim().toLowerCase();
@@ -21620,7 +21567,7 @@
 
         function illustrationPromptFormatForType(type) {
             const normalized = normalizeIllustrationWorkflowType(type);
-            if (normalized === 'v1') return 'v1';
+
             if (normalized === 'chansub') return 'chansub';
             return 'v3';
         }
@@ -21631,7 +21578,7 @@
                     || currentConfig?.illustration_workflow_type
             );
             const chansubFamily = document.getElementById('setting-chansub-workflow-type')?.value === 'sdxl' ? 'sdxl' : 'anima';
-            if (normalized === 'v1') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: false, chansub: false, v1: true };
+
             if (normalized === 'v3') return { anima: true, sdxl: true, ipadapter: true, localAdvanced: true, chansub: false, v1: false };
             if (normalized === 'v3_anima') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: true, chansub: false, v1: false };
             if (normalized === 'chansub') return { anima: chansubFamily === 'anima', sdxl: chansubFamily === 'sdxl', ipadapter: false, localAdvanced: false, chansub: true, v1: false };
@@ -21662,7 +21609,7 @@
             if (!workflowType) {
                 const provider = String(config.illustration_provider || 'comfy').trim().toLowerCase();
                 const format = String(config.illustration_context_toggles?.prompt_format || 'v3').trim().toLowerCase();
-                workflowType = provider === 'chansub' ? 'chansub' : (format === 'v1' ? 'v1' : 'v3');
+                workflowType = provider === 'chansub' ? 'chansub' : 'v3';
             }
             workflowType = normalizeIllustrationWorkflowType(workflowType);
             const select = document.getElementById('setting-illustration-workflow-type');
@@ -21731,7 +21678,7 @@
 
             updateChansubAdvancedOptions();
             _applyPromptFormatChansubLock();
-            applyIllustSettingsV1Lock();
+            applyIllustImageSizeLock();
             loadRestorePromptFiles();
         }
 
@@ -21866,11 +21813,9 @@
                         || currentConfig?.illustration_workflow_type
                         || data.illustration_workflow_type
                 );
-                const requiredFamilies = selectedType === 'v1'
-                    ? ['v1']
-                    : (selectedType === 'chansub'
-                        ? ['chansub']
-                        : (selectedType === 'chansub_v3_anima' ? ['v3', 'chansub'] : ['v3']));
+                const requiredFamilies = selectedType === 'chansub'
+                    ? ['chansub']
+                    : (selectedType === 'chansub_v3_anima' ? ['v3', 'chansub'] : ['v3']);
                 const registry = data.restore_compatibility || {};
                 const currentValue = select.value || currentConfig?.restore_prompt_file || '';
                 while (select.options.length > 1) select.remove(1);
@@ -21930,36 +21875,17 @@
         }
 
         function normalizeAssetWorkflowType(value) {
-            const normalized = String(value || '').trim().toLowerCase();
-            if (normalized === 'regular') return 'ilxl';
-            if (normalized === 'anima') return 'anima_ilxl';
-            if (['ilxl', 'anima_ilxl', 'anima_only'].includes(normalized)) return normalized;
-            if (normalized) console.error('[ASSET] 알 수 없는 에셋 워크플로우 타입:', value);
-            return 'ilxl';
+            return ComfyAssetPrompt.normalizeAssetWorkflowType(value);
         }
 
         function getAssetWorkflowCapabilities(type = currentConfig?.asset_workflow_type) {
-            const normalized = normalizeAssetWorkflowType(type);
-            return {
-                type: normalized,
-                ilxl: normalized === 'ilxl' || normalized === 'anima_ilxl',
-                anima: normalized === 'anima_ilxl' || normalized === 'anima_only',
-                dual: normalized === 'anima_ilxl',
-                pose: normalized === 'ilxl',
-                ipadapter: normalized !== 'anima_only',
-                faceLora: normalized !== 'ilxl',
-                seed: normalized !== 'ilxl',
-            };
+            return ComfyAssetPrompt.getAssetWorkflowCapabilities(type);
         }
 
         function filterAssetLorasForCapabilities(items, capabilities = getAssetWorkflowCapabilities()) {
-            return (Array.isArray(items) ? items : []).filter(item => {
-                const base = String(item?.BASE || 'anima').trim().toLowerCase();
-                return (base === 'sdxl' || base === 'ilxl') ? capabilities.ilxl : capabilities.anima;
-            });
+            return ComfyAssetPrompt.filterAssetLorasForCapabilities(items, capabilities);
         }
 
-        // 에셋 워크플로우 타입 변경
         function onWorkflowTypeChange(type) {
             const normalized = normalizeAssetWorkflowType(type);
             const typeSelect = document.getElementById('setting-workflow-type-select');
@@ -22051,66 +21977,6 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-anima-only-asset-workflow-filename').value;
             document.getElementById('setting-anima-only-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
-        }
-
-        // QWEN_EDIT 워크플로우 자동완성
-        let qwenEditWorkflowAutocompleteTimeout;
-        async function onQwenEditWorkflowFilenameInput(value, updatePath) {
-            if (updatePath) updateQwenEditWorkflowPath();
-            const list = document.getElementById('qwen-edit-workflow-autocomplete');
-            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
-            clearTimeout(qwenEditWorkflowAutocompleteTimeout);
-            qwenEditWorkflowAutocompleteTimeout = setTimeout(async () => {
-                try {
-                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
-                    const data = await fetchJSON(`/api/workflow_files?${params}`);
-                    renderAutocompleteItems(data.files, list);
-                } catch (e) {
-                    console.error('[QWEN_EDIT] 워크플로우 파일 검색 실패:', e);
-                    list.classList.remove('visible');
-                }
-            }, 300);
-        }
-
-        function selectQwenEditWorkflowFile(fullPath, filename) {
-            document.getElementById('setting-qwen-edit-workflow-filename').value = filename;
-            document.getElementById('setting-qwen-edit-workflow-source-path').value = fullPath;
-            document.getElementById('qwen-edit-workflow-autocomplete').classList.remove('visible');
-        }
-
-        function updateQwenEditWorkflowPath() {
-            const baseDir = document.getElementById('setting-workflow-base-dir').value;
-            const filename = document.getElementById('setting-qwen-edit-workflow-filename').value;
-            document.getElementById('setting-qwen-edit-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
-        }
-
-        function onAssetEditToolChange(value) {
-            const normalized = value === 'anima_inpainting' ? value : 'qwen';
-            const select = document.getElementById('setting-asset-edit-tool');
-            if (select && select.value !== normalized) select.value = normalized;
-            if (value && value !== normalized) {
-                console.error('[EDIT_TOOL] 지원하지 않는 전역 EDIT 툴:', value);
-            }
-            // 에셋 워크플로우 카드와 동일하게 활성/비활성 토글
-            const qwenCard = document.getElementById('setting-qwen-edit-tool-card');
-            const qwenInput = document.getElementById('setting-qwen-edit-workflow-filename');
-            const qwenStatus = document.getElementById('setting-qwen-edit-tool-status');
-            const animaCard = document.getElementById('setting-anima-inpainting-tool-card');
-            const animaInput = document.getElementById('setting-anima-inpainting-workflow-filename');
-            const animaStatus = document.getElementById('setting-anima-inpainting-tool-status');
-            const states = [
-                [qwenCard, qwenInput, qwenStatus, normalized === 'qwen'],
-                [animaCard, animaInput, animaStatus, normalized === 'anima_inpainting'],
-            ];
-            states.forEach(([card, input, status, active]) => {
-                card?.classList.toggle('active', active);
-                card?.classList.toggle('inactive', !active);
-                if (input) input.disabled = !active;
-                if (status) status.textContent = active ? '현재 사용' : '비활성';
-            });
-            document.getElementById('qwen-edit-workflow-autocomplete')?.classList.remove('visible');
-            document.getElementById('anima-inpainting-workflow-autocomplete')?.classList.remove('visible');
-            if (currentConfig) currentConfig.asset_edit_tool = normalized;
         }
 
         // ANIMA Inpainting 워크플로우 자동완성
@@ -28138,14 +28004,7 @@
         }
 
         function validateLoraProjectName(name) {
-            const trimmed = String(name || '').trim();
-            if (!trimmed) return 'LoRA 프로젝트명을 입력하세요';
-            const invalid = [...new Set([...trimmed].filter(char => !/[\p{L}\p{N} _\-.]/u.test(char)))];
-            if (invalid.length > 0) {
-                return `LoRA 프로젝트명에 사용할 수 없는 문자: ${invalid.join(' ')}. 허용 문자: 한글/영문/숫자, 공백, _, -, .`;
-            }
-            if (trimmed === '.' || trimmed === '..') return "LoRA 프로젝트명으로 '.' 또는 '..'을 사용할 수 없습니다";
-            return '';
+            return ComfyBotBatch.getStorageNameError(String(name || '').trim(), 'LoRA 프로젝트명');
         }
 
         function setLoraProjectNameFieldError(inputId, errorId, message) {
@@ -28318,7 +28177,7 @@
                 if (!tcRaw) return;
                 try {
                     const cfg = JSON.parse(tcRaw);
-                    cfg.lora_save_path = document.getElementById('dup-target-character').value + '/Lora/' + (document.getElementById('dup-target-entry').value.trim() || '?');
+                    cfg.lora_save_path = 'SOYA_ASSET_LORA/' + document.getElementById('dup-target-character').value + '/Lora/' + (document.getElementById('dup-target-entry').value.trim() || '?');
                     tc.value = JSON.stringify(cfg, null, 2);
                 } catch {}
             };
@@ -28395,7 +28254,7 @@
 
             // lora_save_path를 대상 캐릭터/항목명에 맞게 재생성
             if (trainingConfig) {
-                trainingConfig.lora_save_path = targetCharacter + '/Lora/' + targetEntry;
+                trainingConfig.lora_save_path = 'SOYA_ASSET_LORA/' + targetCharacter + '/Lora/' + targetEntry;
             }
 
             try {
@@ -28757,8 +28616,7 @@
                         }
                     }
                     // lora_save_path 자동 생성 (SOYA_CHAR_LORA 접두사 제외: 워크플로우가 base_path와 조합하므로)
-                    const savedPath = cfg.lora_save_path || '';
-                    document.getElementById('lora-cfg-save-path').textContent = savedPath || (loraCurrentCharacter + '/Lora/' + loraCurrentEntry);
+                    document.getElementById('lora-cfg-save-path').textContent = 'SOYA_ASSET_LORA/' + loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
             } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
         }
@@ -28778,7 +28636,7 @@
                 resolution: parseInt(document.getElementById('lora-cfg-resolution').value) || 1024,
                 dim: parseInt(document.getElementById('lora-cfg-dim').value) || 32,
                 alpha: parseInt(document.getElementById('lora-cfg-alpha').value) || 16,
-                lora_save_path: document.getElementById('lora-cfg-save-path').textContent.trim() || (loraCurrentCharacter + '/Lora/' + loraCurrentEntry),
+                lora_save_path: document.getElementById('lora-cfg-save-path').textContent.trim() || ('SOYA_ASSET_LORA/' + loraCurrentCharacter + '/Lora/' + loraCurrentEntry),
             };
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
@@ -30958,13 +30816,17 @@
                 chipList.innerHTML = tags.length
                     ? tags.map((tag, index) => `
                         <span class="cm-tag-chip">
-                            <span title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>
+                            <span>${escapeHtml(tag)}</span>
                             <button type="button" onclick="cmRemoveEditablePresetTag('${field}', ${index})" aria-label="태그 삭제">×</button>
                         </span>`).join('')
                     : '<span class="cm-hint">태그가 비어 있습니다. 직접 추가할 수 있습니다.</span>';
+                // showName + 공용 툴팁: 네이티브 title(브라우저 기본 호버) 대신
+                // 태그명 헤더와 설명을 함께 띄운다.
                 chipList.querySelectorAll('.cm-tag-chip').forEach((chip, index) => {
-                    _attachTagChipTooltip(chip, tags[index]);
+                    _attachTagChipTooltip(chip, tags[index], '', null, { showName: true });
                 });
+                // 첫 호버에서도 즉시 뜨도록 설명을 미리 캐시에 채운다.
+                _prefetchTagDescriptions(tags);
             }
             const textarea = card.querySelector('[data-text]');
             if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
@@ -31559,7 +31421,7 @@
             const legend = document.getElementById('cm-workflow-legend');
             if (legend) {
                 legend.innerHTML = illustrationMode
-                    ? '<strong>삽화용 봇 설정:</strong> 현재 설정의 삽화 프로필을 사용하며, V1·챈섭에서 지원하지 않는 로컬 고급 옵션은 잠깁니다.'
+                    ? '<strong>삽화용 봇 설정:</strong> 현재 설정의 삽화 프로필을 사용하며, 챈섭에서 지원하지 않는 로컬 고급 옵션은 잠깁니다.'
                     : '<strong>에셋 모드:</strong> 현재 설정의 에셋 프로필을 사용하며, 모델 계열에 맞지 않는 옵션은 잠깁니다.';
             }
             wall.querySelectorAll('[data-cm-local-advanced]').forEach(container => {
@@ -31640,7 +31502,7 @@
             if (chipList) {
                 chipList.innerHTML = tags.map((tag, index) => `
                     <span class="cm-tag-chip">
-                        <span title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>
+                        <span>${escapeHtml(tag)}</span>
                         <button type="button" onclick="cmRemoveTag('${field}', ${index})" aria-label="태그 삭제">×</button>
                     </span>`).join('');
                 if (!tags.length) {
@@ -31648,9 +31510,13 @@
                 }
                 // 칩 hover 설명 툴팁 (에셋 생성과 동일: _lookupTagDescription → #ac-tooltip).
                 // innerHTML로 생성한 칩은 이벤트가 없으므로 렌더 직후 바인딩한다.
+                // showName: 잘린 칩의 전체 태그명도 툴팁에서 확인 가능.
+                // 네이티브 title 대신 공용 툴팁만 쓴다(브라우저 기본 호버 방지).
                 chipList.querySelectorAll('.cm-tag-chip').forEach((chip, index) => {
-                    _attachTagChipTooltip(chip, tags[index]);
+                    _attachTagChipTooltip(chip, tags[index], '', null, { showName: true });
                 });
+                // 첫 호버에서도 즉시 뜨도록 설명을 미리 캐시에 채운다.
+                _prefetchTagDescriptions(tags);
             }
             const textarea = card.querySelector('[data-text]');
             if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
@@ -33054,6 +32920,7 @@
         const INDEPENDENT_SCROLL_CONTAINER_SELECTOR = [
             '#tab-bot-content.active > .independent-scroll-container',
             '#tab-illustration-prompt-content.active > .independent-scroll-container',
+            '#tab-comfy-emotion-content.active > .independent-scroll-container',
             '#tab-asset-content.active > .independent-scroll-container',
             '#tab-asset-upload-content.active > .independent-scroll-container',
             '#tab-lora-content.active > #lora-asset-mode > .independent-scroll-container',
@@ -33304,6 +33171,10 @@
                 document.getElementById('tab-illustration-prompt-content').classList.add('active');
                 openIllustLogModal();
                 scheduleIndependentScrollHeightSync();
+            } else if (name === 'comfy-emotion') {
+                document.getElementById('tab-comfy-emotion-content').classList.add('active');
+                scheduleIndependentScrollHeightSync();
+                await initComfyEmotionTab();
             } else if (name === 'asset') {
                 document.getElementById('tab-asset-content').classList.add('active');
                 scheduleIndependentScrollHeightSync();
@@ -41140,7 +41011,7 @@
                 return;
             }
             const nameEl = document.getElementById('active-bot-float-name');
-            const visibleTab = document.querySelector('#tab-backup-content.active, #tab-illustration-prompt-content.active');
+            const visibleTab = document.querySelector('#tab-backup-content.active, #tab-illustration-prompt-content.active, #tab-comfy-emotion-content.active');
             if (visibleTab && botCurrentBot) {
                 if (nameEl) nameEl.textContent = botCurrentBot;
                 float.style.display = 'flex';
@@ -41691,7 +41562,7 @@
                     eye_tags: '',
                     face_loras: [],
                     face_tags: '',
-                    gender_tag: '',
+                    gender_tag: state.data.profiles[0]?.render_overrides?.gender_tag || '1girl',
                     image_name_tag: '',
                     loras: [],
                     rep_images: [],
@@ -41959,56 +41830,18 @@
         }
 
         function _visualGuideTargetIdentity(character, profileId) {
-            return `${String(character || '').toLocaleLowerCase()}\u0000${String(profileId || '')}`;
+            return ComfyVisualGuide.identity(character, profileId);
         }
 
         function _collectVisualGuideTargets(focusCharacter = '', focusProfileId = '') {
             const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
-            if (!bot) {
-                console.error('[VISUAL_GUIDE] 대상 수집 실패: 현재 봇을 찾을 수 없습니다', {botCurrentBot});
-                return [];
-            }
+            if (!bot) return [];
             const focusIdentity = _visualGuideTargetIdentity(focusCharacter, focusProfileId);
-            const targets = [];
-            (bot.characters || []).forEach(rootCharacter => {
-                const state = _visualCardState(rootCharacter.name);
-                if (!state) {
-                    console.error('[VISUAL_GUIDE] 대상 수집 중 카드 상태 누락', {
-                        bot: botCurrentBot,
-                        character: rootCharacter.name,
-                    });
-                    return;
-                }
-                (state.data.profiles || []).forEach((profile, profileIndex) => {
-                    const overrides = profile.render_overrides || {};
-                    const repImages = Array.isArray(overrides.rep_images)
-                        ? overrides.rep_images.map(value => String(value || '').trim()).filter(Boolean)
-                        : [];
-                    const repFilename = repImages[0] || '';
-                    const identity = _visualGuideTargetIdentity(rootCharacter.name, profile.id);
-                    const aliases = Array.isArray(profile.aliases) ? [...profile.aliases] : [];
-                    const currentGuide = String(profile.selection_guide || '').trim();
-                    const currentVisualContext = String(profile.visual_context || '').trim();
-                    targets.push({
-                        identity,
-                        character: rootCharacter.name,
-                        profileId: String(profile.id || ''),
-                        profileLabel: String(profile.label || profile.id || `카드 ${profileIndex + 1}`),
-                        profileIndex,
-                        repFilename,
-                        imageUrl: repFilename
-                            ? `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(rootCharacter.name)}/${encodeURIComponent(repFilename)}`
-                            : '',
-                        currentAliases: aliases,
-                        currentGuide,
-                        currentVisualContext,
-                        selected: !aliases.length || !currentGuide || !currentVisualContext || identity === focusIdentity,
-                        focused: identity === focusIdentity,
-                        suggestion: null,
-                    });
-                });
+            return (bot.characters || []).flatMap(character => {
+                const state = _visualCardState(character.name);
+                return (state?.data.profiles || []).map((profile, index) =>
+                    ComfyVisualGuide.target(botCurrentBot, character.name, profile, index, focusIdentity));
             });
-            return targets;
         }
 
         async function openVisualGuideGeneratorModal(focusCharacter = '', focusProfileId = '') {
@@ -42173,18 +42006,7 @@
 
         function _visualGuideVisibleTargets() {
             if (!_visualGuideModalState) return [];
-            const query = String(_visualGuideModalState.search || '').trim().toLocaleLowerCase();
-            if (!query) return _visualGuideModalState.targets;
-            return _visualGuideModalState.targets.filter(target => {
-                const haystack = [
-                    target.character,
-                    target.profileLabel,
-                    target.profileId,
-                    target.repFilename,
-                    ...target.currentAliases,
-                ].join(' ').toLocaleLowerCase();
-                return haystack.includes(query);
-            });
+            return _visualGuideModalState.targets.filter(target => ComfyVisualGuide.matches(target, _visualGuideModalState.search));
         }
 
         function _visualGuideUpdateControls() {
@@ -42401,56 +42223,15 @@
                 if (!visibleSet.has(target.identity)) return;
                 if (mode === 'all') target.selected = true;
                 else if (mode === 'none') target.selected = false;
-                else if (mode === 'missing') target.selected = !target.currentAliases.length || !target.currentGuide || !target.currentVisualContext;
+                else if (mode === 'missing') target.selected = ComfyVisualGuide.missing(target);
                 else console.error('[VISUAL_GUIDE] 알 수 없는 선택 모드', {mode});
             });
             _renderVisualGuideRows();
         }
 
         function _visualGuideMergeSuggestions(suggestions) {
-            const state = _visualGuideModalState;
-            if (!state || !Array.isArray(suggestions)) {
-                console.error('[VISUAL_GUIDE] 실시간 제안 반영 대상 오류', {
-                    hasState: !!state,
-                    suggestions,
-                });
-                return 0;
-            }
-            const targetByIdentity = new Map(
-                state.targets.map(target => [target.identity, target])
-            );
-            let applied = 0;
-            suggestions.forEach(suggestion => {
-                const identity = _visualGuideTargetIdentity(
-                    suggestion?.character,
-                    suggestion?.profile_id,
-                );
-                const target = targetByIdentity.get(identity);
-                if (!target) {
-                    console.error('[VISUAL_GUIDE] 서버 제안에 해당하는 현재 카드 누락', {
-                        character: suggestion?.character,
-                        profileId: suggestion?.profile_id,
-                    });
-                    return;
-                }
-                target.suggestion = {
-                    aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : [],
-                    selection_guide: String(suggestion.selection_guide || ''),
-                    selection_guide_english: String(suggestion.selection_guide_english || ''),
-                    evidence: String(suggestion.evidence || ''),
-                    visual_context: String(suggestion.visual_context || ''),
-                    visual_context_english: String(suggestion.visual_context_english || ''),
-                    visual_context_status: String(suggestion.visual_context_status || ''),
-                    visual_context_error: String(suggestion.visual_context_error || ''),
-                    visual_context_image: String(suggestion.visual_context_image || ''),
-                    confidence: ['high','medium','low'].includes(suggestion.confidence)
-                        ? suggestion.confidence
-                        : 'low',
-                };
-                if (target.suggestion.confidence === 'low') target.selected = false;
-                applied += 1;
-            });
-            return applied;
+            if (!_visualGuideModalState || !Array.isArray(suggestions)) return 0;
+            return ComfyVisualGuide.merge(_visualGuideModalState.targets, suggestions);
         }
 
         function _handleVisualGuideQueueProgress(data) {
@@ -42634,19 +42415,7 @@
                     body: JSON.stringify({
                         bot_name: state.botName,
                         overwrite,
-                        items: selected.map(target => ({
-                            character: target.character,
-                            profile_id: target.profileId,
-                            aliases: target.suggestion.aliases || [],
-                            selection_guide: String(target.suggestion.selection_guide || '').trim(),
-                            selection_guide_english: String(target.suggestion.selection_guide_english || '').trim(),
-                            ...(target.suggestion.visual_context_status === 'ok'
-                                ? {
-                                    visual_context: String(target.suggestion.visual_context || '').trim(),
-                                    visual_context_english: String(target.suggestion.visual_context_english || '').trim(),
-                                }
-                                : {}),
-                        })),
+                        items: ComfyVisualGuide.metadataItems(selected),
                     }),
                 });
                 const result = await response.json();
@@ -42724,7 +42493,7 @@
                 }
                 const groups = grouped.data.groups;
                 const gender = String(profile.render_overrides?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
-                const withoutGender = values => (values || []).filter(item => String(item?.tag || '').toLowerCase() !== gender);
+                const withoutGender = values => (values || []).filter(item => !_isCharGenderTag(item?.tag, gender));
                 return {
                     name: charName,
                     appearance: withoutGender(groups['외모/신체']),
@@ -42755,7 +42524,7 @@
                 const repImages = JSON.parse(JSON.stringify(resolved.rep_images || []));
                 const original = await _loadVisualCardRefineOriginal(charName, draft, repImages);
                 const gender = String(draft.render_overrides?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
-                const appearance = (draft.appearance || []).filter(item => String(item?.tag || '').toLowerCase() !== gender);
+                const appearance = (draft.appearance || []).filter(item => !_isCharGenderTag(item?.tag, gender));
 
                 _visualCardFocusSession = {
                     charName,
@@ -42837,7 +42606,7 @@
                             style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
-                            ${['1girl','1boy','1male'].map(g =>
+                            ${['1girl','1boy','1male','animal','1girl, furry','1boy, furry','futanari','monster','monster girl'].map(g =>
                                 `<option value="${g}" ${char.gender_tag === g ? 'selected' : ''}>${g}</option>`
                             ).join('')}
                         </select>
@@ -43459,7 +43228,7 @@
                     }
                     const groups = groupResult.data.groups;
                     const genderTag = _getCharGenderTag(char.name);
-                    const appearance = (groups['외모/신체'] || []).filter(t => (t.tag || '').toLowerCase() !== genderTag.toLowerCase());
+                    const appearance = (groups['외모/신체'] || []).filter(t => !_isCharGenderTag(t.tag, genderTag));
                     origResults.push({
                         name: char.name,
                         appearance,
@@ -43496,7 +43265,7 @@
                             const gt = _getCharGenderTag(orig.name).toLowerCase();
                             return {
                                 ...saved,
-                                appearance: saved.appearance.filter(t => (t.tag || '').toLowerCase() !== gt),
+                                appearance: saved.appearance.filter(t => !_isCharGenderTag(t.tag, gt)),
                                 promptMissing: orig.promptMissing || false
                             };
                         }
@@ -44350,7 +44119,7 @@
             const tag = _lbExtraOriginal[ci][group][ti];
             if (group === 'appearance') {
                 const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
-                if ((tag.tag || '').toLowerCase() === gt) {
+                if (_isCharGenderTag(tag.tag, gt)) {
                     showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
                     return;
                 }
@@ -44429,7 +44198,7 @@
 
             for (const tag of values) {
                 const normalized = tag.toLowerCase();
-                if (genderTag && normalized === genderTag) {
+                if (genderTag && _isCharGenderTag(normalized, genderTag)) {
                     fixedGender += 1;
                     continue;
                 }
@@ -44521,7 +44290,7 @@
             if (srcArr !== dstArr) {
                 if (dstGrp === 'appearance') {
                     const genderTag = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
-                    if ((moved.tag || '').toLowerCase() === genderTag) {
+                    if (_isCharGenderTag(moved.tag, genderTag)) {
                         console.info('[LB_EXTRA] 고정 성별 태그 이동 건너뜀', {
                             srcCi, srcGrp, srcIdx, dstCi, dstGrp, tag: moved.tag
                         });
@@ -44696,7 +44465,7 @@
                         const tag = _lbExtraOriginal[src.ci].uncategorized[src.ti];
                         if (dstGrp === 'appearance') {
                             const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
-                            if ((tag.tag || '').toLowerCase() === gt) {
+                            if (_isCharGenderTag(tag.tag, gt)) {
                                 showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
                                 return;
                             }
@@ -44955,7 +44724,7 @@
             const out = [];
             for (const t of (arr || [])) {
                 const s = (typeof t === 'string' ? t.trim() : '').toLowerCase();
-                if (!s || s === gt || seen.has(s)) continue;
+                if (!s || _isCharGenderTag(s, gt) || seen.has(s)) continue;
                 seen.add(s);
                 out.push({ tag: s, desc: '' });
             }
@@ -45111,22 +44880,22 @@
             _lbExtraBatchCancelled = false;
             _lbExtraBatchAbort = controller;
             let success = 0, failed = 0;
+            let completed = 0;
             const pendingUpdates = [];
 
             const logEl = () => document.getElementById('lb-batch-log');
             const logLine = (text) => { const el = logEl(); if (el) { el.innerHTML += escHtml(text) + '<br>'; el.scrollTop = el.scrollHeight; } };
 
-            for (let p = 0; p < total; p++) {
-                if (_lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
-                const target = targets[p];
+            await ComfyBotBatch.runConcurrent(targets, async (target, p) => {
+                if (_lbExtraBatchCancelled) return;
                 const ci = target.ci;
                 const targetLabel = `${target.character} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
                 const cur = document.getElementById('lb-batch-current');
                 const cnt = document.getElementById('lb-batch-count');
                 const bar = document.getElementById('lb-batch-bar');
                 if (cur) cur.textContent = `${targetLabel} (${p + 1}/${total})`;
-                if (cnt) cnt.textContent = `${p} / ${total}`;
-                if (bar) bar.style.width = `${(p / total) * 100}%`;
+                if (cnt) cnt.textContent = `${completed} / ${total}`;
+                if (bar) bar.style.width = `${(completed / total) * 100}%`;
 
                 try {
                     const cardState = _visualCardState(target.character);
@@ -45176,15 +44945,19 @@
                         logLine(`✓ ${targetLabel}: appearance ${refinedAppearance.length} / outfit ${refinedOutfit.length} · 저장 대기`);
                     }
                 } catch (e) {
-                    if (e.name === 'AbortError' || _lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
+                    if (e.name === 'AbortError' || _lbExtraBatchCancelled) return;
                     failed++;
                     logLine(`✗ ${targetLabel}: ${e.message}`);
                     console.error('[LB_EXTRA_BATCH] 실패:', {character: target.character, visualCardId: target.visualCardId}, e);
                 }
 
+                completed++;
+                if (cnt) cnt.textContent = `${completed} / ${total}`;
+                if (bar) bar.style.width = `${(completed / total) * 100}%`;
                 const sum = document.getElementById('lb-batch-summary');
                 if (sum) sum.textContent = `성공 ${success} · 실패 ${failed}`;
-            }
+            }, {signal: controller.signal});
+            if (_lbExtraBatchCancelled) logLine('— 사용자 중단 —');
 
             const finishedCancelled = _lbExtraBatchCancelled;
             _lbExtraBatchAbort = null;
@@ -45798,7 +45571,7 @@
                         if (!tag) return;
                         if (dstGrp === 'appearance') {
                             const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
-                            if ((tag.tag || '').toLowerCase() === gt) {
+                            if (_isCharGenderTag(tag.tag, gt)) {
                                 showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
                                 return;
                             }
@@ -45833,7 +45606,13 @@
             }
         }
 
-        // 캐릭터 gender_tag (1girl/1boy/1male) 조회 - lb extra appearance 맨 앞 고정
+        function _isCharGenderTag(tag, genderTag) {
+            const value = String(tag || '').trim().toLowerCase();
+            const gender = String(genderTag || '').trim().toLowerCase();
+            return value === gender || gender.split(',').some(part => part.trim() === value);
+        }
+
+        // 캐릭터 gender_tag 조회 - lb extra appearance 맨 앞 고정
         function _getCharGenderTag(name) {
             if (_visualCardFocusSession && _visualCardFocusSession.charName === name) {
                 const cardGender = _visualCardFocusSession.profile?.render_overrides?.gender_tag;
@@ -45860,7 +45639,7 @@
                         // 저장 직렬화에는 UI 전용 플래그(promptMissing)를 제외한 순수 분류 필드만.
                         return {
                             name: c.name,
-                            appearance: (c.appearance || []).filter(t => (t.tag || '').toLowerCase() !== gt),
+                            appearance: (c.appearance || []).filter(t => !_isCharGenderTag(t.tag, gt)),
                             uncategorized: c.uncategorized || [],
                             outfit: c.outfit || []
                         };
@@ -45941,7 +45720,7 @@
             }
             for (const char of _lbExtraEdited) {
                 const gt = _getCharGenderTag(char.name);
-                const appearanceTags = char.appearance.map(t => t.tag).filter(t => t.toLowerCase() !== gt.toLowerCase());
+                const appearanceTags = char.appearance.map(t => t.tag).filter(t => !_isCharGenderTag(t, gt));
                 const appearanceStr = [gt, ...appearanceTags].filter(Boolean).join(', ');
                 output += `### ${char.name}\n`;
                 output += `-Name\n${char.name}\n`;
@@ -50314,19 +50093,16 @@
                     const slot = _visualCardSlots[char.name] || 0;
                     const profile = _visualCardProfile(char.name);
                     const info = slot > 0 && profile ? rootInfo?.cards?.[profile.id] : rootInfo;
-                    if (info && info.ipadpt && info.pt) {
+                    if (info?.face) {
                         if (dotCircle) dotCircle.style.background = '#22c55e';
                         if (dotLabel) dotLabel.textContent = '패치됨';
                         dot.style.color = '#22c55e';
                     } else {
                         if (dotCircle) dotCircle.style.background = '#ef4444';
                         dot.style.color = '#ef4444';
-                        const missing = [];
-                        if (!info || !info.ipadpt) missing.push('ipadpt');
-                        if (!info || !info.pt) missing.push('pt');
-                        if (dotLabel) dotLabel.textContent = `패치 안됨 (${missing.join(', ')})`;
+                        if (dotLabel) dotLabel.textContent = '패치 안됨 (FACE 이미지 없음)';
                     }
-                    console.log(`[CHECK_PATCH] ${char.name} [${slot + 1}]: ipadpt=${info?.ipadpt}, pt=${info?.pt}`);
+                    console.log(`[CHECK_PATCH] ${char.name} [${slot + 1}]: face=${info?.face}`);
                 });
             } catch (e) {
                 console.error('[BOT] 패치 파일 확인 실패:', e);
@@ -50779,29 +50555,9 @@
 
         // ─── 봇 CRUD ──────────────────────────────
         // 봇/캐릭터 이름은 LoRA 경로에서도 변환 없이 유지되는 문자만 허용한다.
-        const _BOT_STORAGE_NAME_RE = /^[A-Za-z0-9_.-]+$/;
         const _BOT_STORAGE_NAME_ALLOWED_TEXT = '영문 대소문자, 숫자, 밑줄(_), 하이픈(-), 마침표(.)';
-        const _BOT_WINDOWS_RESERVED_NAMES = new Set([
-            'CON', 'PRN', 'AUX', 'NUL',
-            ...Array.from({length: 9}, (_, i) => `COM${i + 1}`),
-            ...Array.from({length: 9}, (_, i) => `LPT${i + 1}`)
-        ]);
-
-        function getBotStorageNameError(value, label = '이름') {
-            if (typeof value !== 'string') return `${label}은(는) 문자열이어야 합니다.`;
-            if (!value) return `${label}을(를) 입력하세요.`;
-            if (!_BOT_STORAGE_NAME_RE.test(value)) {
-                const invalid = [...new Set(Array.from(value).filter(ch => !/[A-Za-z0-9_.-]/.test(ch)))];
-                const descriptions = invalid.map(ch => ch === ' ' ? '공백' : JSON.stringify(ch));
-                return `${label}에 사용할 수 없는 문자가 있습니다: ${descriptions.join(', ') || '허용되지 않은 문자'}. 사용 가능: ${_BOT_STORAGE_NAME_ALLOWED_TEXT}.`;
-            }
-            if (value === '.' || value === '..' || value.endsWith('.')) {
-                return `${label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다.`;
-            }
-            if (_BOT_WINDOWS_RESERVED_NAMES.has(value.split('.', 1)[0].toUpperCase())) {
-                return `${label}에 Windows 예약 이름 "${value}"을(를) 사용할 수 없습니다.`;
-            }
-            return '';
+        function getBotStorageNameError(value, label) {
+            return ComfyBotBatch.getStorageNameError(value, label);
         }
 
         function closeBotNameModal() {
@@ -51347,58 +51103,11 @@
         }
 
         function botBatchApplyRules(filename) {
-            let result = filename;
-            const rules = window._botBatchRules || [];
-            for (const step of rules) {
-                if (!step.action) continue;
-                try {
-                    switch (step.action) {
-                        case 'split_by': {
-                            const sep = step.separator || '_';
-                            const parts = result.split(sep).filter(p => p !== '');
-                            const take = step.take;
-                            if (typeof take === 'number') {
-                                result = take < 0 ? (parts[parts.length + take] || '') : (parts[take] || '');
-                            } else if (typeof take === 'string' && take.includes(':')) {
-                                const [startStr, endStr] = take.split(':').map(s => s.trim());
-                                const s = startStr ? parseInt(startStr) - 1 : 0;
-                                const e = endStr ? parseInt(endStr) : parts.length;
-                                result = parts.slice(Math.max(0, s), Math.min(parts.length, e)).join(sep);
-                            } else {
-                                result = parts[0] || '';
-                            }
-                            break;
-                        }
-                        case 'strip_suffix': {
-                            const re = new RegExp(step.pattern + '$');
-                            result = result.replace(re, '');
-                            break;
-                        }
-                        case 'strip_prefix': {
-                            const re = new RegExp('^' + step.pattern);
-                            result = result.replace(re, '');
-                            break;
-                        }
-                        case 'replace': {
-                            if (step.from) result = result.replaceAll(step.from, step.to || '');
-                            break;
-                        }
-                        case 'strip': {
-                            result = result.trim();
-                            break;
-                        }
-                    }
-                } catch (e) {
-                    console.warn('[BOT-BATCH] 규칙 적용 오류:', step.action, e);
-                }
-            }
-            return result.trim();
+            return ComfyBotBatch.applyRules(filename, window._botBatchRules || []);
         }
 
         async function botBatchFileSha256(file) {
-            const data = await file.arrayBuffer();
-            const digest = await crypto.subtle.digest('SHA-256', data);
-            return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+            return ComfyBotBatch.fileSha256(file);
         }
 
         async function botBatchHandleFiles(files) {
@@ -51432,10 +51141,13 @@
             const names = new Set();
             const details = [];
             for (const [sourceIndex, fn] of filenames.entries()) {
-                const name = botBatchApplyRules(fn);
+                let name = '';
+                let ruleError = '';
+                try { name = botBatchApplyRules(fn); }
+                catch (error) { ruleError = `추출 규칙을 확인하세요: ${error.message || String(error)}`; }
                 const isExisting = existing.has(name);
                 // 기존 캐릭터에는 이미지만 추가하므로 신규 생성용 이름 규칙을 적용하지 않는다.
-                const validationError = isExisting ? '' : getBotStorageNameError(name, '캐릭터 이름');
+                const validationError = ruleError || (isExisting ? '' : getBotStorageNameError(name, '캐릭터 이름'));
                 if (!validationError) {
                     names.add(name);
                 }
@@ -51607,118 +51319,28 @@
                 return;
             }
 
-            let duplicateSkipped = details.filter(d => d.action === 'unchanged').length;
-            const uploadEntries = details
-                .filter(d => d.action === 'added' || d.action === 'replaced')
-                .map(detail => ({detail, item: fileMap[detail.sourceIndex]}));
-            const totalSteps = names.length + uploadEntries.length;
-            let currentStep = 0;
             const progEl = document.getElementById('bot-batch-progress');
-            if (progEl) {
-                progEl.style.display = '';
-                progEl.textContent = `처리 0/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`;
-            }
-            const setStatus = (text) => { if (progEl) progEl.textContent = text; };
+            if (progEl) progEl.style.display = '';
             const confirmBtn = document.getElementById('bot-batch-confirm-btn');
-            if (confirmBtn) {
-                confirmBtn.disabled = true;
-                confirmBtn.style.opacity = '0.5';
-                confirmBtn.style.cursor = 'not-allowed';
-            }
-
-            // 1) 새 캐릭터를 한 요청으로 생성해 bot.json도 한 번만 저장한다.
-            let added = 0;
-            const failedNames = new Set();
-            if (names.length) {
-                setStatus(`캐릭터 ${names.length}개 일괄 추가 중…`);
-                try {
-                    const resp = await fetch('/api/bot_mode/action', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_names: names})
-                    });
-                    const data = await resp.json();
-                    if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-                    added = (data.added || []).length;
-                    (data.errors || []).forEach(item => {
-                        failedNames.add(item.character);
-                        console.error('[BOT] 캐릭터 추가 실패:', item);
-                    });
-                } catch (e) {
-                    names.forEach(name => failedNames.add(name));
-                    console.error('[BOT] 캐릭터 일괄 추가 실패:', e);
-                }
-                currentStep += names.length;
-            }
-
-            // 2) 이미지 업로드 (파일명에서 추출한 캐릭터명에 맞춰 업로드)
-            let uploaded = 0;
-            let replaced = 0;
-            let uploadFailed = 0;
-            const uploadGroups = new Map();
-            for (const entry of uploadEntries) {
-                const {detail, item} = entry;
-                if (!item) {
-                    uploadFailed++;
-                    console.error(`[BOT] 이미지 "${detail.filename}" 업로드 실패: 선택 파일을 찾을 수 없습니다.`);
-                    continue;
-                }
-                if (failedNames.has(detail.name)) {
-                    uploadFailed++;
-                    currentStep++;
-                    console.error('[BOT] 캐릭터 생성 실패로 이미지 업로드 건너뜀:', {character: detail.name, filename: item.name});
-                    continue;
-                }
-                const targetName = detail.existingFilename || detail.filename;
-                const groupKey = `${detail.name}\u0000${targetName.toLowerCase()}`;
-                if (!uploadGroups.has(groupKey)) uploadGroups.set(groupKey, []);
-                uploadGroups.get(groupKey).push(entry);
-            }
-            const groups = Array.from(uploadGroups.values());
-            const hardwareConcurrency = Number(globalThis.navigator?.hardwareConcurrency) || 8;
-            const uploadConcurrency = Math.min(
-                groups.length,
-                Math.max(2, Math.min(8, hardwareConcurrency))
-            );
-            let nextGroupIndex = 0;
-            const uploadOne = async ({detail, item}) => {
-                const fd = new FormData();
-                fd.append('file', item.file);
-                fd.append('bot', botCurrentBot);
-                fd.append('character', detail.name);
-                fd.append('preflight_id', preflightId);
-                fd.append('preflight_index', String(detail.preflightIndex));
-                try {
-                    const resp = await fetch('/api/bot_mode/upload', {method: 'POST', body: fd});
-                    const data = await resp.json();
-                    if (!resp.ok || data.error) {
-                        uploadFailed++;
-                        console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, data.error || `HTTP ${resp.status}`);
-                    } else if (data.action === 'unchanged' || data.duplicate === true) {
-                        // 서버에서 파일 변경을 감지해 중복으로 판정한 경우만 추가한다.
-                        duplicateSkipped++;
-                    } else if (data.action === 'replaced') {
-                        replaced++;
-                    } else {
-                        uploaded++;
-                    }
-                } catch (e) {
-                    uploadFailed++;
-                    console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, e);
-                } finally {
-                    currentStep++;
-                    setStatus(`이미지 병렬 업로드 ${currentStep}/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`);
-                }
-            };
-            const uploadWorker = async () => {
-                while (true) {
-                    const groupIndex = nextGroupIndex++;
-                    if (groupIndex >= groups.length) return;
-                    // 같은 최종 파일을 여러 번 교체하는 항목은 선택 순서를 유지한다.
-                    for (const entry of groups[groupIndex]) await uploadOne(entry);
-                }
-            };
-            await Promise.all(Array.from({length: uploadConcurrency}, () => uploadWorker()));
+            if (confirmBtn) confirmBtn.disabled = true;
+            const result = await ComfyBotBatch.importCharacters({
+                botName: botCurrentBot,
+                names,
+                entries: details.map(detail => ({...detail, file: fileMap[detail.sourceIndex].file})),
+                preflightId,
+                request: async (path, body) => {
+                    const multipart = body instanceof FormData;
+                    const response = await fetch('/api/' + path, {method: 'POST',
+                        headers: multipart ? {} : {'Content-Type': 'application/json'},
+                        body: multipart ? body : JSON.stringify(body)});
+                    const data = await response.json();
+                    if (!response.ok || data.error) throw new Error(data.error || ('HTTP ' + response.status));
+                    return data;
+                },
+                onProgress: message => { if (progEl) progEl.textContent = message; }
+            });
+            const {added, uploaded, replaced, skipped: duplicateSkipped} = result;
+            result.errors.forEach(message => console.error('[BOT-BATCH]', message));
 
             // 최신 botData 다시 로드
             try {
@@ -51731,13 +51353,12 @@
             document.getElementById('bot-batch-add-modal').style.display = 'none';
             renderBotCharacters();
             const resultParts = [`캐릭터 ${added}개 추가`];
-            if (failedNames.size) resultParts.push(`캐릭터 ${failedNames.size}개 실패`);
             if (uploaded) resultParts.push(`이미지 ${uploaded}장 추가`);
             if (replaced) resultParts.push(`${replaced}장 교체`);
             if (duplicateSkipped) resultParts.push(`동일 이미지 ${duplicateSkipped}장 건너뜀`);
-            if (uploadFailed) resultParts.push(`${uploadFailed}장 실패`);
-            if (!uploaded && !replaced && !duplicateSkipped && !uploadFailed) resultParts.push('이미지 변경 없음');
-            showToast(resultParts.join(', '), uploadFailed || failedNames.size ? 'error' : 'success');
+            if (result.errors.length) resultParts.push(`실패 ${result.errors.length}건: ${result.errors.join('; ')}`);
+            if (!uploaded && !replaced && !duplicateSkipped && !result.errors.length) resultParts.push('이미지 변경 없음');
+            showToast(resultParts.join(', '), result.errors.length ? 'error' : 'success');
         }
 
         async function removeBotCharacter(charName) {
@@ -51873,38 +51494,12 @@
         let _repBatchDraftSeq = 0;
 
         function _repBatchProfilesFromState(charName) {
-            const state = _visualCardState(charName);
-            return (state?.data?.profiles || []).map((profile, index) => {
-                const reps = Array.isArray(profile?.render_overrides?.rep_images)
-                    ? profile.render_overrides.rep_images : [];
-                return {
-                    clientKey: `saved:${profile.id}`,
-                    profileId: profile.id,
-                    profileLabel: profile.label || `카드 ${index + 1}`,
-                    rep0: reps[0] || '',
-                    isNew: false,
-                    useOwnSearch: false,
-                    ownSearch: '',
-                    manualTarget: '',
-                    removePending: false,
-                    _target: ''
-                };
-            });
+            return ComfyRepBatch.profilesFromState(_visualCardState(charName)?.data?.profiles || []);
         }
 
         // 이름을 색상 선택에만 사용하는 고정 해시. 실제 난수를 쓰지 않아 다시 열어도 같은 색이다.
         function _repBatchCharacterPalette(charName) {
-            let hash = 2166136261;
-            for (const char of String(charName || '').normalize('NFKC')) {
-                hash ^= char.codePointAt(0);
-                hash = Math.imul(hash, 16777619);
-            }
-            const hue = (hash >>> 0) % 360;
-            return {
-                background: `hsla(${hue},65%,70%,0.06)`,
-                header: `hsla(${hue},65%,65%,0.12)`,
-                border: `hsla(${hue},55%,60%,0.22)`
-            };
+            return ComfyRepBatch.characterPalette(charName);
         }
 
         async function openRepBatchModal() {
@@ -51959,17 +51554,8 @@
         }
 
         // 동시성 제한 실행 헬퍼 (캐릭터 다수 시 서버 부하 완화)
-        async function _repBatchRunLimited(tasks, limit) {
-            const queue = tasks.slice();
-            const n = Math.max(1, Math.min(limit || 8, queue.length || 1));
-            async function worker() {
-                while (queue.length) {
-                    const t = queue.shift();
-                    if (!t) break;
-                    try { await t(); } catch (e) { /* 개별 에러는 task 내부에서 처리 */ }
-                }
-            }
-            await Promise.all(Array.from({length: n}, () => worker()));
+        function _repBatchRunLimited(tasks, limit) {
+            return ComfyRepBatch.runLimited(tasks, limit);
         }
 
         function _repBatchBuildOverlay(rowIndex = null, profileIndex = null) {
@@ -52230,7 +51816,7 @@
                 addButton.style.cursor = canAdd ? 'pointer' : 'not-allowed';
                 return;
             }
-            const cardsExpanded = rowEl.querySelector('[data-role="rep-batch-cards"]')?.open !== false;
+            const cardsExpanded = rowEl.querySelector('[data-role="rep-batch-cards"]')?.open === true;
             rowEl.innerHTML =
                 '<details data-role="rep-batch-cards"' + (cardsExpanded ? ' open' : '') + '>' +
                 '<summary class="rep-batch-card-header" title="카드 접기·펼치기" aria-label="' + escAttr(row.charName) + ' 카드 접기·펼치기" style="background:' + palette.header + ';border-color:' + palette.border + ';">' +
@@ -52247,42 +51833,12 @@
 
         // 표시 순서 계산. 핵심 불변량: rep0(메인 대표)이 존재하면 항상 맨 앞.
         function _repBatchComputeDisplay(row, profile, search, limit = 10) {
-            const all = row.baseOrder.slice();
-            let ordered;
-            if (profile.rep0) {
-                const rep0Obj = all.find(im => im.filename === profile.rep0);
-                const rest = all.filter(im => im.filename !== profile.rep0);
-                ordered = rep0Obj ? [rep0Obj].concat(rest) : rest;
-            } else {
-                ordered = all;
-            }
-            if (search) {
-                const matched = ordered.filter(im => (im.filename || '').toLowerCase().includes(search));
-                if (matched.length === 0) return _repBatchCapTen(ordered, row, profile, limit); // 일치 없으면 원래 순서 유지
-                const matchedSet = new Set(matched.map(im => im.filename));
-                const unmatched = ordered.filter(im => !matchedSet.has(im.filename));
-                let result;
-                if (profile.rep0) {
-                    const rep0Obj = ordered.find(im => im.filename === profile.rep0);
-                    const matchedNoRep0 = matched.filter(im => im.filename !== profile.rep0);
-                    const unmatchedNoRep0 = unmatched.filter(im => im.filename !== profile.rep0);
-                    result = (rep0Obj ? [rep0Obj] : []).concat(matchedNoRep0).concat(unmatchedNoRep0);
-                } else {
-                    result = matched.concat(unmatched);
-                }
-                return _repBatchCapTen(result, row, profile, limit);
-            }
-            return _repBatchCapTen(ordered, row, profile, limit);
+            return ComfyRepBatch.computeDisplay(row, profile, search, limit);
         }
 
         // 기본 최대 10개, 전체 이미지 창은 전체 개수. 대표와 수동 후보를 맨 앞에 유지한다.
         function _repBatchCapTen(arr, row, profile, limit = 10) {
-            const forcedNames = [profile.rep0, profile.manualTarget].filter(Boolean);
-            const forced = forcedNames
-                .map(filename => row.baseOrder.find(im => im.filename === filename))
-                .filter((image, index, values) => image && values.findIndex(item => item?.filename === image.filename) === index);
-            const forcedSet = new Set(forced.map(image => image.filename));
-            return forced.concat(arr.filter(image => !forcedSet.has(image.filename))).slice(0, limit);
+            return ComfyRepBatch.capTen(arr, row, profile, limit);
         }
 
         function _repBatchAddDraftProfile(rowIndex) {
@@ -52404,19 +51960,12 @@
         // 이 행에서 메인 대표로 지정할 대상 파일명.
         // 검색어가 있고 매칭이 있으면 첫 매칭 이미지, 그 외(매칭 없음/검색어 없음)는 첫 이미지.
         function _repBatchTarget(row, search) {
-            if (!row || !row.baseOrder || row.baseOrder.length === 0) return '';
-            if (search) {
-                const m = row.baseOrder.find(im => (im.filename || '').toLowerCase().includes(search));
-                if (m) return m.filename;
-            }
-            return (row.baseOrder[0] && row.baseOrder[0].filename) || '';
+            return ComfyRepBatch.target(row, search);
         }
 
         // 사용자가 썸네일 버튼으로 고른 후보가 있으면 검색 기반 자동 후보보다 우선한다.
         function _repBatchResolvedTarget(row, profile, search) {
-            const manual = String(profile?.manualTarget || '');
-            if (manual && row?.baseOrder?.some(image => image.filename === manual)) return manual;
-            return _repBatchTarget(row, search);
+            return ComfyRepBatch.resolvedTarget(row, profile, search);
         }
 
         // 적용 버튼 활성화: 한 개 이상의 '적용 대상' 프로필이 있을 때.
@@ -52445,70 +51994,7 @@
             const searchEl = document.getElementById('rep-batch-search');
             const commonSearch = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const mode = _repBatchMode();
-            const items = [];
-            const skipProtected = [];
-            const skipNoImage = [];
-            const duplicateGroups = [];
-            _repBatchRowData.forEach(row => {
-                if (!row.loaded || row.error) {
-                    (row.profiles || []).forEach(profile => skipNoImage.push(`${row.charName}/${profile.profileLabel}`));
-                    return;
-                }
-                // 보호되어 유지되는 대표도 포함해 적용 후의 상태를 비교한다.
-                const finalReps = row.profiles.map(profile =>
-                    profile.removePending || profile.isNew ? '' : profile.rep0
-                );
-                row.profiles.forEach((profile, profileIndex) => {
-                    if (profile.removePending) {
-                        items.push({
-                            char_name: row.charName,
-                            visual_card_id: profile.profileId,
-                            remove_profile: true
-                        });
-                        return;
-                    }
-                    if (!row.baseOrder || row.baseOrder.length === 0) {
-                        skipNoImage.push(`${row.charName}/${profile.profileLabel}`);
-                        return;
-                    }
-                    if (!profile.isNew && mode === 'protect' && profile.rep0 && !profile.manualTarget) {
-                        skipProtected.push(`${row.charName}/${profile.profileLabel}`);
-                        return;
-                    }
-                    const search = profile.useOwnSearch
-                        ? String(profile.ownSearch || '').trim().toLowerCase() : commonSearch;
-                    const target = _repBatchResolvedTarget(row, profile, search);
-                    if (!target) {
-                        skipNoImage.push(`${row.charName}/${profile.profileLabel}`);
-                        return;
-                    }
-                    const item = {
-                        char_name: row.charName,
-                        visual_card_id: profile.profileId,
-                        filename: target,
-                        manual_override: !!profile.manualTarget
-                    };
-                    if (profile.isNew) {
-                        item.create_profile = true;
-                        item.profile_label = profile.profileLabel;
-                    }
-                    items.push(item);
-                    finalReps[profileIndex] = target;
-                });
-                // 같은 파일명이라도 캐릭터 폴더가 다르면 별개의 이미지다.
-                const cardsByImage = new Map();
-                finalReps.forEach((filename, profileIndex) => {
-                    if (!filename) return;
-                    if (!cardsByImage.has(filename)) cardsByImage.set(filename, []);
-                    const profile = row.profiles[profileIndex];
-                    cardsByImage.get(filename).push(`[${profileIndex + 1}] ${profile.profileLabel}`);
-                });
-                cardsByImage.forEach((cards, filename) => {
-                    if (cards.length > 1) {
-                        duplicateGroups.push(`캐릭터: ${row.charName}\n이미지: ${filename}\n중복 카드: ${cards.join(', ')}`);
-                    }
-                });
-            });
+            const {items, skipProtected, skipNoImage, duplicateGroups} = ComfyRepBatch.plan(_repBatchRowData, commonSearch, mode);
             if (items.length === 0) { showToast('적용할 프로필 변경이 없습니다', 'error'); return; }
             if (duplicateGroups.length > 0 && !confirm(
                 '같은 대표 이미지가 여러 카드에 중복 설정됩니다.\n\n' +
@@ -53528,7 +53014,7 @@
                     document.getElementById('illust-face-lora-upscale').value = s.face_lora_upscale_size || '';
                     updateIllustToggles();
                     updateChansubAdvancedOptions();
-                    applyIllustSettingsV1Lock();
+                    applyIllustImageSizeLock();
                     // 프리셋 태그 렌더링
                     renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets');
                     renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets');
@@ -53542,47 +53028,16 @@
             }
         }
 
-        // V1 포맷일 때 삽화 프롬프트 설정 패널에서 ANIMA 품질/부정 프리셋만 편집 가능,
-        // 나머지 컨트롤은 회색 비활성. data-v1-locked 마커로 본 함수가 잠근 것만 해제해
-        // 다른 잠금 로직(chansub/HRF 종속 등)은 건드리지 않는다.
-        function applyIllustSettingsV1Lock() {
-            const block = document.getElementById('illust-prompt-settings-block');
-            if (!block) return;
-            const isV1 = normalizeIllustrationWorkflowType(
-                document.getElementById('setting-illustration-workflow-type')?.value
-                    || currentConfig?.illustration_workflow_type
-            ) === 'v1';
-            const ALLOWED = new Set(['illust-anima-quality-preset', 'illust-anima-negative-preset']);
-            block.querySelectorAll('input, select').forEach(ctrl => {
-                if (ctrl.id && ALLOWED.has(ctrl.id)) {
-                    if (ctrl.dataset.v1Locked) { ctrl.disabled = false; delete ctrl.dataset.v1Locked; }
-                    return;
-                }
-                if (isV1) {
-                    if (!ctrl.disabled) { ctrl.dataset.v1Locked = 'true'; ctrl.disabled = true; }
-                } else if (ctrl.dataset.v1Locked) {
-                    ctrl.disabled = false;
-                    delete ctrl.dataset.v1Locked;
-                }
-            });
-            block.querySelectorAll('.illust-workflow-option').forEach(group => {
-                const controls = Array.from(group.querySelectorAll('input, select'));
-                const v1Disabled = isV1 && controls.length > 0 && controls.every(
-                    ctrl => !ctrl.id || !ALLOWED.has(ctrl.id)
-                );
-                group.classList.toggle('v1-disabled', v1Disabled);
-            });
-            // V1 잠금 해제 직후 현재 프로필의 ILXL/ANIMA/챈섭 기능 잠금을 다시 적용한다.
-            // V1 → ONLY ANIMA/챈섭 전환에서도 지원하지 않는 컨트롤은 회색으로 유지된다.
-            if (!isV1) updateChansubAdvancedOptions();
+        function applyIllustImageSizeLock() {
+            updateChansubAdvancedOptions();
             const manga = ['manga', 'manga_both'].includes(_illustrationContextToggles.illustration_output_mode);
             for (const id of ['illust-img-w', 'illust-img-h']) {
                 const control = document.getElementById(id);
-                if (control) control.disabled = isV1 || manga;
+                if (control) control.disabled = manga;
             }
             const imageSize = document.getElementById('illust-image-size');
             if (imageSize) {
-                imageSize.classList.toggle('illust-capability-unavailable', isV1 || manga);
+                imageSize.classList.toggle('illust-capability-unavailable', manga);
                 imageSize.title = manga ? '만화는 컷마다 약 0.75MP로 크기를 자동 설정합니다.' : '';
             }
         }
@@ -55297,8 +54752,11 @@
                     {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '원본 에셋 장수는 에셋 선택 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}, {value: 'manga_both', label: '만화 삽화 + 원본 에셋 (준비 중)', disabled: true}, {value: 'manga', label: '만화 삽화 (준비 중)', disabled: true}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'genre', label: '장르', type: 'select', placeholder: 'Enter a genre, era, or world setting', help: '장르를 선택하거나 Custom에서 직접 입력하세요. 배경 묘사에 영향을 미칩니다.', options: [{value: '', label: 'Not specified'}, 'Medieval fantasy', 'Modern', 'Modern fantasy', 'Cyberpunk', 'Steampunk', 'Sci-fi / Space', 'Wuxia', 'Eastern fantasy', 'Historical', 'Post-apocalyptic'], onchange: 'onIllustrationContextToggleChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: '켜면 NSFW 및 물리 접촉 지침을 추가하고, 끄면 제외합니다. 호환성 지침은 항상 적용됩니다.'},
+                    {key: 'profile_context_translate', label: '프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)', type: 'toggle', help: '켜면 다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.'},
                     {key: 'outfit_enabled', label: 'OUTFIT 복장·헤어 추적', type: 'toggle', help: '켜면 복장·헤어를 미리 추적합니다. 끄면 원문·이전 문맥·프로필을 보고 후속 LLM이 현재 상태를 판단합니다.'},
                     {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소·조명 추적', type: 'toggle', help: '켜면 시간·장소·조명을 미리 추적하고 DETAIL이 해당 조건을 이어받습니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
+                    {key: 'npc_generation_enabled', label: '미등록 인물 자동 생성', type: 'toggle', help: '대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다.'},
+                    {key: 'npc_lifetime', label: '미사용 수명 (회)', type: 'number', min: 1, step: 1, help: '같은 봇에서 삽화를 이 횟수만큼 연속 생성하는 동안 등장하지 않으면 자동 생성 캐릭터를 삭제합니다. 다시 등장하면 수명이 초기화됩니다. 모든 봇의 기존·신규 자동 생성 캐릭터에 적용됩니다.'},
                     {key: 'call2_plan_enabled', label: 'PLAN 시각 계획', type: 'toggle', help: '켜면 장면·만화 컷을 미리 계획합니다. 끄면 DETAIL이 원문에서 직접 계획합니다.'},
                     {key: 'visual_correction_enabled', label: '비주얼 교정', type: 'toggle', help: '생성 이미지를 검사하고 필요하면 다시 그린 뒤, 원본과 모든 교정본 중 LLM이 최종 결과를 선택합니다. 인물 복제·신체 붕괴 방지를 최우선으로 비교합니다.'},
                     {key: 'visual_correction_max_redraws', label: '최대 교정 횟수', type: 'number', min: 0, step: 1, dependsOn: ['visual_correction_enabled'], help: '이미지 한 장당 다시 그릴 수 있는 최대 횟수입니다. PASS 또는 한도 도달 시 교정을 마치고, 교정본이 있으면 원본을 포함한 모든 후보에서 결과를 선택합니다. 0은 검사·재생성·선택을 모두 생략합니다.'},
@@ -55406,7 +54864,7 @@
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
                         help: '선택한 삽화 워크플로우 버전에 맞는 RAW 프롬프트 구조가 자동으로 적용됩니다.',
                         options: [
-                            {value: 'v1', label: 'V1 — 선택 워크플로우의 V1 처리'},
+
                             {value: 'v3', label: 'V3 — 선택 워크플로우의 V3 처리'},
                             {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
                         ],
@@ -55430,7 +54888,10 @@
                 const optionLabel = typeof option === 'object' ? option.label : option;
                 const selected = String(value) === String(optionValue) ? 'selected' : '';
                 const disabled = typeof option === 'object' && option.disabled ? 'disabled' : '';
-                return `<option value="${escapeHtml(String(optionValue))}" ${selected} ${disabled}>${escapeHtml(String(optionLabel))}</option>`;
+                // Hidden options keep the saved value representable while staying
+                // out of the visible dropdown (moved to another tab).
+                const hidden = typeof option === 'object' && option.hidden ? 'hidden' : '';
+                return `<option value="${escapeHtml(String(optionValue))}" ${selected} ${disabled} ${hidden}>${escapeHtml(String(optionLabel))}</option>`;
             }).join('');
         }
 
@@ -55531,7 +54992,9 @@
                     ['KEYVIS', ['key_visual', 'keyvis_in_detail_enabled', 'minimal_background_description']],
                     ['MULTI-CHAR-MASK', ['multi_char_mask_enabled', 'multi_char_mask_inline_enabled', 'single_char_mask_enabled', 'single_char_mask_skip_enabled', 'single_char_mask_skip_area_percent']],
                 ];
-                content = group.fields.filter(field => !field.key.startsWith('visual_correction_') && !fieldsets.some(([, keys]) => keys.includes(field.key)))
+                // 합성 삽화 모드는 감정 삽화 탭이 소유하므로 이 탭에서는 출력 모드 행을 숨긴다.
+                const compositeOutput = ['composite', 'composite_both'].includes(_illustrationContextToggles.illustration_output_mode);
+                content = group.fields.filter(field => !field.key.startsWith('visual_correction_') && !fieldsets.some(([, keys]) => keys.includes(field.key)) && !(compositeOutput && field.key === 'illustration_output_mode'))
                     .map(field => _renderIllustrationContextField(field)).join('') + fieldsets.map(([title, keys]) => `
                     <fieldset class="illust-settings-fieldset">
                         <legend>${title}</legend>
@@ -55833,8 +55296,8 @@
         function onIllustrationOutputModeChange(select) {
             const mode = select?.value || 'illustration';
             _illustrationContextToggles['illustration_output_mode'] = mode;
-            _illustrationContextToggles['illustration_enabled'] = ['illustration', 'both', 'manga', 'manga_both'].includes(mode);
-            _illustrationContextToggles['original_asset_enabled'] = ['original_asset', 'both', 'manga_both'].includes(mode);
+            _illustrationContextToggles['illustration_enabled'] = ['illustration', 'both', 'manga', 'manga_both', 'composite', 'composite_both'].includes(mode);
+            _illustrationContextToggles['original_asset_enabled'] = ['original_asset', 'both', 'manga_both', 'composite_both'].includes(mode);
             updateIllustrationContextOptionLocks();
         }
 
@@ -55847,7 +55310,7 @@
             const outputMode = _illustrationContextToggles.illustration_output_mode || 'illustration';
             body.querySelectorAll('[data-illust-selection-mode]').forEach(group => {
                 const enabled = (group.dataset.illustSelectionMode === 'manga'
-                    ? ['manga', 'manga_both'] : ['illustration', 'both']).includes(outputMode);
+                    ? ['manga', 'manga_both'] : ['illustration', 'both', 'composite', 'composite_both']).includes(outputMode);
                 group.disabled = !enabled;
                 group.classList.toggle('is-locked', !enabled);
                 group.setAttribute('aria-disabled', String(!enabled));
@@ -55890,7 +55353,7 @@
             });
             _applyPromptFormatChansubLock();
             _applyCall3PromptModeLock();
-            applyIllustSettingsV1Lock();
+            applyIllustImageSizeLock();
             renderIllustrationNodePreview();
         }
 
@@ -55995,7 +55458,10 @@
             for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
                 const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
                 if (!el) {
-                    console.error('[ILLUST_CONTEXT] 저장할 설정 컨트롤을 찾지 못함:', field.key);
+                    // 합성 삽화 모드에서는 출력 모드 행이 숨겨지지만 기존 저장값을 유지한다.
+                    if (field.key !== 'illustration_output_mode') {
+                        console.error('[ILLUST_CONTEXT] 저장할 설정 컨트롤을 찾지 못함:', field.key);
+                    }
                     continue;
                 }
                 if (field.key === 'genre' && el.value === '__custom__') {
@@ -56045,7 +55511,7 @@
                         else if (el.value !== String(value ?? '')) el.value = String(value ?? '');
                     }
                     updateIllustrationContextOptionLocks();
-                    applyIllustSettingsV1Lock();
+                    applyIllustImageSizeLock();
                     setIllustrationContextStatus(autoSave ? '자동 저장 완료' : '저장 완료');
                     if (!autoSave) showToast(savedPostprocess ? '생성 설정과 현재 봇의 합성 설정 저장 완료' : '삽화 생성 설정 저장 완료', 'success');
                 }
@@ -56065,6 +55531,134 @@
             if (saved && _illustrationSettingsDirty && _illustrationSettingsSaveTimer === null) {
                 await saveIllustrationContextToggles(true);
             }
+        }
+
+        // ═══ Comfy 공방 감정 삽화 ═══
+        // 합성 삽화 전용 탭. 출력 모드와 DETAIL 합성 삽화 지침은 이 탭이 소유하며,
+        // 나머지 파이프라인 설정은 삽화 프롬프트 설정 탭의 값을 그대로 공유한다.
+        let _comfyEmotionToggles = null;
+        let _comfyEmotionPromptLoaded = false;
+
+        function _setComfyEmotionStatus(id, message, state = '') {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = message;
+            el.classList.toggle('is-success', state === 'success');
+            el.classList.toggle('is-error', state === 'error');
+        }
+
+        function _renderComfyEmotionOutputMode() {
+            const select = document.getElementById('ce-output-mode');
+            const note = document.getElementById('ce-output-note');
+            if (!select) return;
+            const mode = String(_comfyEmotionToggles?.illustration_output_mode || '');
+            const composite = mode === 'composite' || mode === 'composite_both';
+            select.value = composite ? mode : '';
+            if (note) {
+                note.textContent = composite
+                    ? '현재 합성 삽화 모드가 활성화되어 있습니다. 변경하면 즉시 저장됩니다.'
+                    : `현재 출력 모드는 일반 삽화(${mode || 'illustration'})입니다. 합성 삽화를 사용하려면 위에서 선택하세요.`;
+            }
+        }
+
+        async function loadComfyEmotionToggles(force = false) {
+            if (_comfyEmotionToggles && !force) {
+                _renderComfyEmotionOutputMode();
+                return;
+            }
+            _setComfyEmotionStatus('ce-output-status', '불러오는 중...');
+            try {
+                const res = await fetch('/api/illustration_context/toggles');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                _comfyEmotionToggles = data.toggles || {};
+                _renderComfyEmotionOutputMode();
+                _setComfyEmotionStatus('ce-output-status', '불러옴', 'success');
+            } catch (e) {
+                console.error('[COMFY_EMOTION] 설정 로드 실패:', e);
+                _setComfyEmotionStatus('ce-output-status', '로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function onComfyEmotionOutputModeChange(select) {
+            const value = select?.value || '';
+            const mode = value || 'illustration';
+            const toggles = {...(_comfyEmotionToggles || _illustrationContextToggles || {})};
+            toggles.illustration_output_mode = mode;
+            toggles.illustration_enabled = ['illustration', 'both', 'composite', 'composite_both'].includes(mode);
+            toggles.original_asset_enabled = ['original_asset', 'both', 'composite_both'].includes(mode);
+            _setComfyEmotionStatus('ce-output-status', '저장 중...');
+            select.disabled = true;
+            try {
+                const res = await fetch('/api/illustration_context/toggles', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({toggles}),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                _comfyEmotionToggles = data.toggles || toggles;
+                _illustrationContextToggles = {..._illustrationContextToggles, ..._comfyEmotionToggles};
+                _renderComfyEmotionOutputMode();
+                // 이미 렌더링된 일반 설정 탭의 셀렉트도 같은 값으로 맞춘다.
+                const general = document.querySelector(
+                    '#illust-tab-content-toggles [data-illust-toggle="illustration_output_mode"]');
+                if (general) general.value = mode;
+                _setComfyEmotionStatus('ce-output-status', '저장 완료', 'success');
+                showToast('합성 삽화 출력 모드를 저장했습니다.', 'success');
+            } catch (e) {
+                console.error('[COMFY_EMOTION] 설정 저장 실패:', e);
+                _setComfyEmotionStatus('ce-output-status', '저장 실패: ' + (e.message || e), 'error');
+                showToast('출력 모드 저장 실패: ' + (e.message || e), 'error');
+                _renderComfyEmotionOutputMode();
+            } finally {
+                select.disabled = false;
+            }
+        }
+
+        async function loadComfyEmotionPrompt(force = false) {
+            if (_comfyEmotionPromptLoaded && !force) return;
+            const editor = document.getElementById('lighbd-prompt-composite_detail');
+            if (!editor) return;
+            _setComfyEmotionStatus('ce-prompt-status', '불러오는 중...');
+            try {
+                const res = await fetch('/api/illustration_context/prompts');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                editor.value = data.composite_detail || '';
+                _comfyEmotionPromptLoaded = true;
+                _setComfyEmotionStatus('ce-prompt-status', '불러옴', 'success');
+            } catch (e) {
+                console.error('[COMFY_EMOTION] 지침 로드 실패:', e);
+                _setComfyEmotionStatus('ce-prompt-status', '로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveComfyEmotionPrompt() {
+            const editor = document.getElementById('lighbd-prompt-composite_detail');
+            if (!editor) return;
+            _setComfyEmotionStatus('ce-prompt-status', '저장 중...');
+            try {
+                const res = await fetch('/api/illustration_context/prompts', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({composite_detail: editor.value}),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                _comfyEmotionPromptLoaded = true;
+                const savedCount = Array.isArray(data.saved) ? data.saved.length : 0;
+                _setComfyEmotionStatus('ce-prompt-status', `저장 완료 · ${savedCount}개`, 'success');
+                showToast('DETAIL 합성 삽화 지침을 저장했습니다.', 'success');
+            } catch (e) {
+                console.error('[COMFY_EMOTION] 지침 저장 실패:', e);
+                _setComfyEmotionStatus('ce-prompt-status', '저장 실패: ' + (e.message || e), 'error');
+                showToast('지침 저장 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function initComfyEmotionTab() {
+            // 일반 설정 탭에서 출력 모드가 바뀌었을 수 있으므로 진입할 때마다 새로 읽는다.
+            // 지침 편집분은 탭 전환으로 사라지지 않도록 최초 1회만 불러온다.
+            await Promise.all([loadComfyEmotionToggles(true), loadComfyEmotionPrompt()]);
         }
 
         function illustLogPage(delta) {
@@ -56176,15 +55770,6 @@
 
         // ─── 단어 기반 규칙 ────────────────────────────────────
         let _wrRules = [];
-        const WORD_REPLACEMENT_DEFAULT_RULES = Object.freeze([
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }),
-            Object.freeze({ type: 'replace', source: 'red ears', target: 'ears', single_character_only: false }),
-        ]);
 
         // exclude(예외 단어) 리스트 ↔ 쉼표 문자열 변환. UI는 한 칸에 쉼표로 여러
         // 개를 입력하지만, 데이터 모델은 리스트로 단일 소스를 유지해 백엔드로
@@ -56199,28 +55784,6 @@
 
         function createWordReplacementRuleId() {
             return Math.random().toString(36).substr(2, 8);
-        }
-
-        function wordReplacementDefaultIdentity(rule) {
-            const type = String(rule?.type || 'replace').trim().toLowerCase();
-            const trigger = String(rule?.trigger || '').trim().toLowerCase();
-            if (type === 'remove') {
-                const pattern = String(rule?.pattern || '').trim().toLowerCase();
-                return JSON.stringify([type, trigger, pattern, Boolean(rule?.remove_trigger)]);
-            }
-            if (type === 'char_eye_replace') {
-                const target = String(rule?.target || '').trim().toLowerCase();
-                return JSON.stringify([type, trigger, target]);
-            }
-            if (type === 'replace') {
-                // replace 타입을 source/target 으로 식별해, 기본값에 포함된
-                // replace 규칙(red ears → ears)만 정확히 교체하고 사용자가 만든
-                // 다른 replace 규칙이 '공용 기본 적용'에서 덮어쓰기되지 않게 한다.
-                const source = String(rule?.source || '').trim().toLowerCase();
-                const target = String(rule?.target || '').trim().toLowerCase();
-                return JSON.stringify([type, source, target]);
-            }
-            return '';
         }
 
         async function openWordReplacementsModal() {
@@ -56265,8 +55828,6 @@
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">
                             <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
                                 <button onclick="addWordReplacementRule()" style="background:#6A1B9A; color:#fff; border:none; padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">+ 규칙 추가</button>
-                                <button onclick="setWordReplacementDefaults()" title="1인 전용 조건이 켜진 공용 기본 규칙 6개를 1~6번에 배치합니다. 저장 전까지 파일에는 반영되지 않습니다."
-                                    style="background:rgba(106,27,154,0.1); color:#b77bd3; border:1px solid rgba(156,39,176,0.35); padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">규칙 기본값 세팅하기</button>
                             </div>
                             <span id="wr-rule-count" style="padding:4px 9px; background:var(--surface2); border:1px solid var(--border); border-radius:999px; color:var(--text2); font-size:0.72rem; white-space:nowrap;"></span>
                         </div>
@@ -56298,32 +55859,6 @@
                 card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
                 card?.querySelector('input')?.focus();
             });
-        }
-
-        function setWordReplacementDefaults() {
-            syncWordReplacementFromDom();
-            const defaultRules = WORD_REPLACEMENT_DEFAULT_RULES.map(rule => ({
-                type: 'replace',
-                remove_trigger: false,
-                remove_weight: false,
-                word: '',
-                source: '',
-                target: '',
-                enabled: true,
-                exclude: [],
-                ...rule,
-                id: createWordReplacementRuleId(),
-            }));
-            const defaultIdentities = new Set(
-                defaultRules.map(wordReplacementDefaultIdentity)
-            );
-            const remainingRules = _wrRules.filter(rule => (
-                !defaultIdentities.has(wordReplacementDefaultIdentity(rule))
-            ));
-            _wrRules = [...defaultRules, ...remainingRules];
-            renderWordReplacementList();
-            document.getElementById('wr-rules-list')?.scrollTo({ top: 0, behavior: 'smooth' });
-            showToast('1인 전용 공용 기본 규칙 6개를 1~6번에 세팅했습니다. 저장해야 실제 반영됩니다.', 'success');
         }
 
         function removeWordReplacementRule(id) {
@@ -59925,6 +59460,17 @@
             return desc;
         }
 
+        // 칩 렌더 직후 태그 설명을 백그라운드로 미리 조회해 캐시를 채운다.
+        // 첫 호버에서도 툴팁이 즉시 뜨도록 하기 위한 것으로,
+        // _lookupTagDescription 이 캐시(null 포함)로 중복 조회를 막으므로
+        // 렌더링마다 호출해도 네트워크 요청은 태그별 최초 1회만 발생한다.
+        // 요청 폭주를 막으려 순차 체인으로 조회한다(캐시 히트는 즉시 스킵).
+        function _prefetchTagDescriptions(tags) {
+            const list = (Array.isArray(tags) ? tags : [tags]).filter(Boolean);
+            if (!list.length) return;
+            list.reduce((chain, tag) => chain.then(() => _lookupTagDescription(tag)), Promise.resolve());
+        }
+
         // ──────────────────────────────────────────────────────────────────
         // 태그칩 설명 호버 툴팁(#ac-tooltip) 숨김 — 공용 헬퍼
         // ──────────────────────────────────────────────────────────────────
@@ -59946,31 +59492,65 @@
             if (tooltip) tooltip.style.display = 'none';
         }
 
-        function _attachTagChipTooltip(chip, tagName, preloadedDesc, gateFn) {
+        function _attachTagChipTooltip(chip, tagName, preloadedDesc, gateFn, opts = {}) {
             if (!chip || !tagName) return;
             // 주의: mouseenter/mouseleave 기반이다. 칩이 DOM 에서 제거될 때는
             //   mouseleave 가 발생하지 않아 툴팁이 남을 수 있다.
             //   따라서 칩을 파괴/재생성하는 경로(삭제·재렌더)에서는
             //   반드시 _hideTagChipTooltip() 을 직접 호출해야 한다. (위 헬퍼 주석 참고)
-            chip.addEventListener('mouseenter', async () => {
+            // 반응성: 브라우저 네이티브 title 툴팁(약 0.5~1초 지연)과 달리
+            //   표시 지연을 짧게(기본 90ms) 잡아 즉각 뜨는 느낌을 유지하되,
+            //   칩들을 빠르게 스칠 때마다 툴팁이 깜빡이는 건 방지한다.
+            const showDelay = Number.isFinite(opts.delayMs) ? opts.delayMs : 90;
+            let showTimer = null;
+            chip.addEventListener('mouseenter', () => {
                 // gateFn(예: "설명" 토글)이 닫혀 있으면 툴팁을 띄우지 않는다
                 if (gateFn && !gateFn()) return;
-                const tooltip = document.getElementById('ac-tooltip');
-                if (!tooltip) return;
-                // API(최신 형식, 소속 경로 포함)를 우선 조회하고, 실패 시 preloadedDesc로 폴백.
-                // 원본/편집본 칩 모두 동일한 설명 형식이 표시되도록 함.
-                const preloaded = (typeof preloadedDesc === 'string') ? preloadedDesc.trim() : '';
-                const desc = (await _lookupTagDescription(tagName)) || preloaded;
-                if (!desc) return;
-                // 마우스가 이미 칩을 벗어났을 수도 있음 — 칩이 여전히 hover인지 확인
-                if ((gateFn && !gateFn()) || !chip.matches(':hover')) return;
-                tooltip.textContent = desc;
-                tooltip.style.display = 'block';
-                const rect = chip.getBoundingClientRect();
-                tooltip.style.left = rect.left + 'px';
-                tooltip.style.top = (rect.bottom + 4) + 'px';
+                clearTimeout(showTimer);
+                showTimer = setTimeout(async () => {
+                    showTimer = null;
+                    const tooltip = document.getElementById('ac-tooltip');
+                    if (!tooltip) return;
+                    // API(최신 형식, 소속 경로 포함)를 우선 조회하고, 실패 시 preloadedDesc로 폴백.
+                    // 원본/편집본 칩 모두 동일한 설명 형식이 표시되도록 함.
+                    const preloaded = (typeof preloadedDesc === 'string') ? preloadedDesc.trim() : '';
+                    const desc = (await _lookupTagDescription(tagName)) || preloaded;
+                    // 마우스가 이미 칩을 벗어났거나 칩이 재렌더로 사라졌을 수 있음 — 확인
+                    if ((gateFn && !gateFn()) || !chip.isConnected || !chip.matches(':hover')) return;
+                    if (!desc && !opts.showName) return;
+                    // 툴팁 내용 구성: showName 이면 태그명 헤더 + 설명, 아니면 기존처럼 설명만.
+                    // 칩 텍스트가 잘려 있을 때도 전체 태그명·뜻을 확인할 수 있게 한다.
+                    tooltip.replaceChildren();
+                    if (opts.showName) {
+                        const nameEl = document.createElement('div');
+                        nameEl.className = 'ac-tip-name';
+                        nameEl.textContent = tagName;
+                        tooltip.appendChild(nameEl);
+                    }
+                    if (desc) {
+                        const descEl = document.createElement('div');
+                        descEl.className = 'ac-tip-desc';
+                        descEl.textContent = desc;
+                        tooltip.appendChild(descEl);
+                    }
+                    tooltip.style.display = 'block';
+                    // 위치: 칩 기준 아래쪽 우선, 화면 밖으로 나가면 좌우/위아래로 보정.
+                    // (우측 편집 영역 칩이 화면 오른쪽 끝에 붙어 있어도 툴팁이 잘리지 않게.)
+                    const rect = chip.getBoundingClientRect();
+                    const tipWidth = tooltip.offsetWidth;
+                    const tipHeight = tooltip.offsetHeight;
+                    let left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - tipWidth - 8));
+                    let top = rect.bottom + 6;
+                    if (top + tipHeight > window.innerHeight - 8) {
+                        top = Math.max(8, rect.top - tipHeight - 6);
+                    }
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                }, showDelay);
             });
             chip.addEventListener('mouseleave', () => {
+                clearTimeout(showTimer);
+                showTimer = null;
                 _hideTagChipTooltip();
             });
         }
@@ -63352,7 +62932,7 @@
             if (src === 'bot') return 'SOYA_CHAR_LORA\\SOYA_BOT_LORA\\' + l.lora_path;
             if (src === 'instance') return 'SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\' + l.lora_path;
             if (src === 'style') return 'SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\' + l.lora_path;
-            return 'SOYA_CHAR_LORA\\' + l.lora_path;
+            return 'SOYA_CHAR_LORA\\SOYA_ASSET_LORA\\' + l.lora_path;
         }
 
         function renderAssetLoraList() {
@@ -64959,7 +64539,7 @@
                                 </div>
                                 <div class="qwen-brush-cursor" id="au-qwen-brush-cursor"></div>
                             </div>
-                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역과 합성 아이템 영역을 합쳐 선택된 EDIT 툴의 latent 샘플링 마스크로 전달합니다. 마우스 휠 버튼 드래그로 화면을 이동할 수 있습니다.</div>
+                            <div class="qwen-mask-help">마우스 휠 버튼 드래그로 화면을 이동할 수 있습니다.</div>
                         </section>
                         <section class="qwen-prompt-pane">
                             <div class="qwen-field">
@@ -65009,7 +64589,7 @@
                                 </div>
                                 <div class="qwen-field">
                                     <label for="au-qwen-denoise">Denoise</label>
-                                    <input type="number" id="au-qwen-denoise" min="0" max="1" step="0.05" value="1">
+                                    <input type="number" id="au-qwen-denoise" min="0" max="1" step="0.05" value="0.6">
                                 </div>
                             </div>
                         </section>
@@ -67024,14 +66604,8 @@
                 );
                 return;
             }
-            const editTool =
-                currentConfig?.asset_edit_tool === 'anima_inpainting'
-                    ? 'anima_inpainting'
-                    : 'qwen';
-            const editToolLabel =
-                editTool === 'anima_inpainting'
-                    ? 'ANIMA Inpainting'
-                    : 'QWEN Edit';
+            const editTool = 'anima_inpainting';
+            const editToolLabel = 'ANIMA Inpainting';
             const modal = auEnsureQwenEditModal();
             const canvas = modal.querySelector('#au-qwen-mask-canvas');
             const image = modal.querySelector('#au-qwen-source-image');
@@ -67071,12 +66645,9 @@
             modal.querySelector('#au-qwen-mask-grow').value = '8';
             modal.querySelector('#au-qwen-mask-blur').value = '4';
             modal.querySelector('#au-qwen-seed').value = '-1';
-            modal.querySelector('#au-qwen-steps').value =
-                editTool === 'anima_inpainting' ? '30' : '6';
-            modal.querySelector('#au-qwen-cfg').value =
-                editTool === 'anima_inpainting' ? '4' : '1';
-            modal.querySelector('#au-qwen-denoise').value =
-                editTool === 'anima_inpainting' ? '0.8' : '1';
+            modal.querySelector('#au-qwen-steps').value = '30';
+            modal.querySelector('#au-qwen-cfg').value = '4';
+            modal.querySelector('#au-qwen-denoise').value = '0.6';
             modal.querySelector('#au-qwen-translate-status').textContent =
                 'LLM 큐에서 번역한 뒤 아래 칸을 채웁니다.';
             modal.querySelector('#au-qwen-run-status').textContent =
@@ -67245,28 +66816,25 @@
                         `${item.name || '합성 아이템'} 이미지가 준비되지 않았습니다`,
                     );
                 }
+                // 합성 아이템은 원본에만 얹는다. 마스크까지 넣으면 인페인팅이
+                // 그 영역을 다시 생성하면서 아이템을 지워버린다.
                 const rotation = (Number(item.rotation) || 0) * Math.PI / 180;
-                for (const context of [sourceContext, maskContext]) {
-                    context.save();
-                    context.translate(item.x, item.y);
-                    context.rotate(rotation);
-                    context.drawImage(
-                        item.image,
-                        -item.width / 2,
-                        -item.height / 2,
-                        item.width,
-                        item.height,
-                    );
-                    context.restore();
-                }
+                sourceContext.save();
+                sourceContext.translate(item.x, item.y);
+                sourceContext.rotate(rotation);
+                sourceContext.drawImage(
+                    item.image,
+                    -item.width / 2,
+                    -item.height / 2,
+                    item.width,
+                    item.height,
+                );
+                sourceContext.restore();
             }
             if (!auQwenMaskHasPixels(maskCanvas)) {
-                console.error(
-                    '[QWEN_COMPOSITE] 통합 마스크가 비어 있습니다. '
-                    + '합성 아이템이 이미지 밖에 있는지 확인하세요.',
-                );
+                console.error('[QWEN_COMPOSITE] 편집 마스크가 비어 있습니다.');
                 throw new Error(
-                    '통합 마스크가 비어 있습니다. 합성 아이템을 이미지 안으로 이동하세요',
+                    '편집 마스크가 비어 있습니다. 편집할 영역을 파란색으로 칠하세요',
                 );
             }
             const [sourceBlob, maskBlob] = await Promise.all([
@@ -67307,14 +66875,8 @@
                 modal.querySelector('#au-qwen-negative-prompt').focus();
                 return;
             }
-            if (
-                !auQwenMaskHasPixels(state.canvas)
-                && !(state.compositeItems || []).length
-            ) {
-                showToast(
-                    '편집 마스크를 그리거나 합성 아이템을 추가하세요',
-                    'error',
-                );
+            if (!auQwenMaskHasPixels(state.canvas)) {
+                showToast('편집할 영역을 마스크로 칠하세요', 'error');
                 return;
             }
 
@@ -67335,6 +66897,7 @@
                 form.append('outfit', state.outfit);
                 form.append('expression', state.expression);
                 form.append('filename', state.filename);
+                form.append('edit_tool', state.editTool);
                 form.append('edit_prompt', editPrompt);
                 form.append('edit_prompt_original', originalPrompt || editPrompt);
                 form.append('negative_prompt', negativePrompt);
@@ -67387,12 +66950,7 @@
 
         function handleQwenEditWsEvent(eventType, data) {
             const payload = data || {};
-            const toolLabel =
-                payload.edit_tool === 'anima_inpainting'
-                    ? 'ANIMA Inpainting'
-                    : payload.edit_tool === 'qwen'
-                        ? 'QWEN Edit'
-                        : 'EDIT 툴';
+            const toolLabel = payload.edit_tool ? 'ANIMA Inpainting' : 'EDIT 툴';
             if (eventType === 'qwen_edit_started') {
                 showToast(
                     `${toolLabel} 시작: ${payload.source_filename || ''}`,
@@ -69110,7 +68668,9 @@
             const container = document.getElementById('asset-queue-container');
             if (!container) { console.error('[QUEUE] renderAssetQueueUI: asset-queue-container 요소 없음'); return; }
             const processing = assetQueue.find(q => q.status === 'processing');
-            const pending = assetQueue.filter(q => q.status === 'pending');
+            const pending = assetQueue.filter(q => q.status === 'pending' || q.status === 'waiting');
+            const history = _queueHistoryItems(assetQueue);
+            const failedCount = history.filter(item => item.status === 'failed').length;
             const hasActive = processing || pending.length > 0;
             const wallTab = document.getElementById('asset-queue-wall-tab');
             const wallTabCount = document.getElementById('queue-wall-tab-count');
@@ -69120,10 +68680,10 @@
                 });
             } else {
                 const activeCount = pending.length + (processing ? 1 : 0);
-                wallTabCount.textContent = hasActive ? String(activeCount) : '✓';
+                wallTabCount.textContent = failedCount ? `!${failedCount}` : hasActive ? String(activeCount) : '✓';
                 const wallTabLabel = hasActive
                     ? `작업 큐 펼치기, 처리 또는 대기 ${activeCount}개`
-                    : '작업 큐 펼치기, 모든 작업 완료';
+                    : failedCount ? `작업 큐 펼치기, 실패 ${failedCount}개` : '작업 큐 펼치기, 모든 작업 완료';
                 wallTab.setAttribute('aria-label', wallTabLabel);
                 wallTab.title = wallTabLabel;
             }
@@ -69211,7 +68771,7 @@
                 bar.classList.add('all-done');
                 if (assetQueue.length > 0) {
                     const cancelledCount = assetQueue.filter(q => q.status === 'cancelled').length;
-                    barLabel.textContent = cancelledCount === assetQueue.length ? '취소됨' : '완료';
+                    barLabel.textContent = failedCount ? `실패 ${failedCount}개 · 최근 작업 확인` : cancelledCount === assetQueue.length ? '취소됨' : '완료';
                     barLabel.title = '';
                     barProgressText.textContent = '';
                     barProgressBar.style.width = '100%';
@@ -69225,12 +68785,18 @@
             const panelBody = document.getElementById('asset-queue-panel-body');
             if (!panelBody) { console.error('[QUEUE] renderAssetQueueUI: asset-queue-panel-body 요소 없음'); return; }
             panelBody.innerHTML = '';
+            if (history.length) {
+                const heading = document.createElement('div');
+                heading.className = 'queue-history-heading';
+                heading.textContent = '최근 작업 · 최대 10개';
+                panelBody.appendChild(heading);
+            }
             // 배치 그룹핑: 동일 batch_id 항목을 1줄 요약(대량 항목 DOM 폭주 방지).
             const rendered = new Set();
-            assetQueue.forEach(item => {
+            [...history, ...assetQueue.filter(item => !_queueItemFinished(item))].forEach(item => {
                 if (rendered.has(item.id)) return;
-                if (item.batch_id) {
-                    const grp = assetQueue.filter(i => i.batch_id === item.batch_id);
+                if (item.batch_id && !_queueItemFinished(item)) {
+                    const grp = assetQueue.filter(i => i.batch_id === item.batch_id && !_queueItemFinished(i));
                     grp.forEach(g => rendered.add(g.id));
                     const total = item.batch_total || grp.length;
                     const pend = grp.filter(i => i.status === 'pending').length;
@@ -69264,6 +68830,8 @@
                     let icon = '';
                     let statusText = '';
                     switch (item.status) {
+                        case 'waiting':
+                            statusText = '슬롯 대기';
                         case 'pending':
                             icon = ts.icon; break;
                         case 'processing':
@@ -69273,7 +68841,7 @@
                         case 'completed':
                             icon = '✔'; break;
                         case 'failed':
-                            icon = '✘'; statusText = item.errorMsg || '실패'; break;
+                            icon = '✘'; statusText = '실패'; break;
                         case 'cancelled':
                             icon = '■'; statusText = '취소'; break;
                     }
@@ -69339,6 +68907,9 @@
                         (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
                         '<div class="item-status">' + statusText + phaseHint + '</div>' +
                         actionBtn;
+                    if (item.status === 'failed') {
+                        row.appendChild(_renderQueueError(item));
+                    }
                     const _itemLblEl = row.querySelector('.item-label');
                     if (_itemLblEl) _itemLblEl.title = item.label || '';
                     panelBody.appendChild(row);
@@ -69353,7 +68924,7 @@
                 panelTitle.textContent = '처리 중 (' + (pending.length + (processing ? 1 : 0)) + '개)';
             } else {
                 panelSpinner.style.display = 'none';
-                panelTitle.textContent = '완료됨';
+                panelTitle.textContent = failedCount ? `실패 ${failedCount}개` : '완료됨';
             }
         }
 
@@ -69463,7 +69034,7 @@
 
             if (!char || !outfit || !expr || !app) {
                 const missing = [!char && '캐릭터', !app && '외형', !outfit && '의상', !expr && '표정'].filter(Boolean).join(', ');
-                showToast(missing + '을(를) 선택해야 이미지를 생성할 수 있습니다', 'warning');
+                showToast(missing + '을(를) 선택해야 이미지를 생성할 수 있습니다', 'warning', 3000);
                 return;
             }
 
@@ -69878,6 +69449,9 @@
                         type: item.type || '',
                         label: item.label || '',
                         status: item.status,
+                        error: item.error || '',
+                        created_at: item.created_at,
+                        completed_at: item.completed_at,
                         progress: item.progress || 0,
                         progress_detail: item.progress_detail || {},
                         subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
@@ -69887,7 +69461,6 @@
                         batch_label: item.batch_label || null,
                         batch_index: item.batch_index || null,
                         batch_total: item.batch_total || null,
-                        _completedLocalTs: null,
                     }));
                     queueModalData.forEach(_expandActiveQueueSubtasks);
                     updateQueueBadge();
@@ -70069,7 +69642,8 @@
                 empty.style.cssText = 'text-align:center;color:var(--text2);padding:40px 0;font-size:0.9rem;';
                 empty.textContent = '대기 중인 작업이 없습니다';
             }
-            const items = queueModalData;
+            const history = _queueHistoryItems(queueModalData);
+            const items = queueModalData.filter(item => !_queueItemFinished(item));
             // 큐가 완전히 비어 있어도 6개 lane 구조를 항상 보여준다.
             // 각 lane은 빈 상태에서 "대기 중인 작업 없음" 표시를 자체 처리한다.
             empty.style.display = 'none';
@@ -70077,6 +69651,24 @@
             body.appendChild(empty);
             if (pauseBanner) body.appendChild(pauseBanner);
             if (waitBanner) body.appendChild(waitBanner);
+            const historySection = document.createElement('section');
+            historySection.className = 'queue-history';
+            historySection.innerHTML = `<h3>최근 작업 <span>최대 10개 · 최신순</span></h3>`;
+            if (!history.length) {
+                const emptyHistory = document.createElement('p');
+                emptyHistory.className = 'queue-lane-empty';
+                emptyHistory.textContent = '아직 작업 기록이 없습니다';
+                historySection.appendChild(emptyHistory);
+            }
+            history.forEach(item => {
+                historySection.appendChild(_renderQueueItemRow(item, queueModalData.indexOf(item), false));
+                if (_queueSubtasksExpanded.has(item.id) && Array.isArray(item.subtasks)) {
+                    item.subtasks.forEach(subtask => historySection.appendChild(
+                        _renderQueueSubtaskRow(subtask, _queueItemArea(item))
+                    ));
+                }
+            });
+            body.appendChild(historySection);
             try {
                 const lanes = document.createElement('div');
                 lanes.className = 'queue-lanes';
@@ -70204,6 +69796,7 @@
                 + (item.status === 'processing' ? ' processing' : '')
                 + (item.status === 'waiting' ? ' waiting' : '')
                 + (item.status === 'completed' ? ' completed' : '')
+                + (item.status === 'failed' ? ' failed' : '')
                 + (indent ? ' indented' : '');
             el.dataset.queueModalIdx = idx;
             el.dataset.queueItemId = item.id;
@@ -70301,7 +69894,7 @@
                 ? `<span class="qm-subtask-toggle" onclick="queueModalToggleSubtasks('${escapeHtml(item.id)}')">${subtasksExpanded ? '▼' : '▶'} ${escapeHtml(labelTxt)}</span>`
                 : escapeHtml(labelTxt);
             let completedLabel = item.status === 'completed' ? '✓'
-                : item.status === 'failed' ? '✗'
+                : item.status === 'failed' ? '✗ 실패'
                 : item.status === 'cancelled' ? '—'
                 : '';
             if (!isProcessing && subtaskSummary) {
@@ -70317,6 +69910,9 @@
                     ${isPending || isComfyWaiting ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
                 </span>
             `;
+            if (item.status === 'failed') {
+                el.appendChild(_renderQueueError(item));
+            }
             const labelEl = el.querySelector('.qm-label');
             if (labelEl) labelEl.title = item.label || '';
             if (isPending) {
@@ -70349,7 +69945,31 @@
             `;
             const labelEl = el.querySelector('.qm-label');
             if (labelEl) labelEl.title = subtask.label || '하위 작업';
+            if (status === 'failed') el.appendChild(_renderQueueError(subtask));
             return el;
+        }
+
+        const _queueErrorState = new Map();
+        function _renderQueueError(item) {
+            const key = String(item.id);
+            if (!_queueErrorState.has(key)) _queueErrorState.set(key, { collapsed: false, scrollTop: 0 });
+            const state = _queueErrorState.get(key);
+            const details = document.createElement('details');
+            details.className = 'queue-item-error';
+            details.open = !state.collapsed;
+            const summary = document.createElement('summary');
+            summary.textContent = '실패 이유';
+            const message = document.createElement('pre');
+            message.tabIndex = 0;
+            message.setAttribute('aria-label', `${item.label || '작업'} 실패 이유`);
+            message.textContent = item.error || item.errorMsg || '실패 이유가 전달되지 않았습니다.';
+            details.append(summary, message);
+            details.addEventListener('toggle', () => {
+                if (details.isConnected) state.collapsed = !details.open;
+            });
+            message.addEventListener('scroll', () => { state.scrollTop = message.scrollTop; });
+            requestAnimationFrame(() => { if (details.isConnected) message.scrollTop = state.scrollTop; });
+            return details;
         }
 
         const _queueBatchExpanded = new Set();
@@ -70395,19 +70015,14 @@
             } catch (e) { showToast(`배치 취소 실패: ${e.message || e}`, 'error'); }
         }
 
-        // 완료/실패 항목 3초 후 자동 제거
-        let _queueAutoRemoveTimers = {};
-        function queueModalAutoRemoveCompleted() {
-            const now = Date.now();
-            queueModalData = queueModalData.filter(item => {
-                if (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled') {
-                    const elapsed = item._completedLocalTs ? now - item._completedLocalTs : 999999;
-                    if (elapsed < 3000) return true; // 3초 유지
-                    delete _queueAutoRemoveTimers[item.id];
-                    return false;
-                }
-                return true;
-            });
+        function _queueItemFinished(item) {
+            return ['completed', 'failed', 'cancelled'].includes(item.status);
+        }
+
+        function _queueHistoryItems(items) {
+            return items.filter(_queueItemFinished)
+                .sort((a, b) => (b.completed_at || b.created_at || 0) - (a.completed_at || a.created_at || 0))
+                .slice(0, 10);
         }
 
         // 드래그 앤 드롭 (pending 항목끼리만)
@@ -70553,9 +70168,17 @@
             const badge = document.getElementById('queue-badge');
             if (badge) badge.style.background = queuePaused ? 'var(--warning, #e8a33d)' : 'var(--accent)';
         }
-        function queueModalClearCompleted() {
-            queueModalData = queueModalData.filter(i => i.status === 'pending' || i.status === 'processing');
-            renderQueueModal();
+        async function queueModalClearCompleted() {
+            try {
+                for (const item of _queueHistoryItems(queueModalData)) {
+                    await removeQueueItemBackend(item.id);
+                }
+                const data = await fetchJSON('/api/queue/status');
+                handleQueueUpdated(data);
+                renderQueueModal();
+            } catch (e) {
+                showToast(`완료 정리 실패: ${e.message || e}`, 'error');
+            }
         }
 
         // ─── 통합 큐 WebSocket 핸들러 ────────────────────────
@@ -70577,6 +70200,8 @@
                 startTime: item.started_at ? item.started_at * 1000 : null,
                 endTime: item.completed_at ? item.completed_at * 1000 : null,
                 errorMsg: item.error || '',
+                created_at: item.created_at,
+                completed_at: item.completed_at,
                 autoHideAt: null,
                 batch_id: item.batch_id || null,
                 batch_label: item.batch_label || null,
@@ -70585,13 +70210,16 @@
             }));
 
             // failed 큐 항목 → 토스트 알림 (ComfyUI 미실행 등 조용한 실패 방지).
-            // 항목은 실패 후 약 2초 뒤 서버에서 프룬되므로 이 창 안에 알림을 띄운다.
+            // 최근 작업 기록과 별개로 항목별 1회 즉시 알린다.
             const _nowFail = Date.now();
             _queueFailRecentMsgs = _queueFailRecentMsgs.filter(r => _nowFail - r.ts < QUEUE_FAIL_TOAST_RECENT_MS);
             data.items.forEach(item => {
                 if (!item || item.status !== 'failed') return;
                 if (_queueFailToastedIds.has(item.id)) return; // 항목별 1회 알림
                 _queueFailToastedIds.add(item.id);
+                setAssetQueuePanelExpanded(true);
+                const queueBody = document.getElementById('queue-modal-body');
+                if (queueBody) queueBody.scrollTop = 0;
                 // 비동기 재생성은 하이브리드 폴백이 끝난 뒤 전용 WS 이벤트로
                 // 최종 실패를 알린다. 첫 공급자 실패를 중간 오류로 띄우지 않는다.
                 if (item.params?.regeneration_request_id) return;
@@ -70602,6 +70230,10 @@
             });
             // 사라진 항목 id는 정리 (세션 장기화 시 Set 무한 증가 방지)
             const _liveQueueIds = new Set(data.items.map(i => i && i.id));
+            data.items.forEach(item => (item.subtasks || []).forEach(subtask => _liveQueueIds.add(subtask.id)));
+            for (const id of _queueErrorState.keys()) {
+                if (!_liveQueueIds.has(id)) _queueErrorState.delete(id);
+            }
             for (const _id of Array.from(_queueFailToastedIds)) {
                 if (!_liveQueueIds.has(_id)) _queueFailToastedIds.delete(_id);
             }
@@ -70621,6 +70253,9 @@
                 type: item.type || '',
                 label: item.label || '',
                 status: item.status,
+                error: item.error || '',
+                created_at: item.created_at,
+                completed_at: item.completed_at,
                 progress: item.progress || 0,
                 progress_detail: item.progress_detail || {},
                 subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
@@ -70630,12 +70265,8 @@
                 batch_label: item.batch_label || null,
                 batch_index: item.batch_index || null,
                 batch_total: item.batch_total || null,
-                _completedLocalTs: (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled')
-                    ? (prevStatus[item.id] !== item.status ? Date.now() : (queueModalData.find(q => q.id === item.id)?._completedLocalTs || Date.now()))
-                    : null,
             }));
             queueModalData.forEach(_expandActiveQueueSubtasks);
-            queueModalAutoRemoveCompleted();
             updateQueueBadge();
             // 삽화 대기 상태 동기화
             const wasWaiting = queueIllustWaiting;
@@ -70651,7 +70282,8 @@
             // 인스턴스 LoRA 관련 큐 완료 시 그리드 자동 갱신
             const instanceTypes = ['instance_lora_training', 'instance_lora_analysis'];
             const instanceCompleted = data.items.some(i =>
-                instanceTypes.includes(i.type) && (i.status === 'completed' || i.status === 'failed')
+                    instanceTypes.includes(i.type) && (i.status === 'completed' || i.status === 'failed')
+                    && prevStatus[i.id] !== i.status
             );
             if (instanceCompleted && typeof loadInstanceLoraGrid === 'function') {
                 loadInstanceLoraGrid();
@@ -75370,201 +75002,16 @@
         }
 
         // ─── 에셋 공통 프롬프트 빌드 (단일·일괄·오토매치·캐릭터 메이커 공통) ───
-        function _resolveAssetPromptSlotTags(slot) {
-            const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
-            // 활성화된 LoRA 중 현재 에셋 프로필과 호환되는 BASE만 병합한다.
-            const triggerSrc = filterAssetLorasForCapabilities([
-                ...(slot.lora_enabled ? (slot.lora_list || []) : []),
-                ...(slot.style_lora_enabled ? (slot.style_lora_list || []) : []),
-            ], capabilities);
-            const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const artistTags = Array.isArray(slot.raw_artist_tags)
-                ? slot.raw_artist_tags
-                : ((slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || []);
-            const animaArtistTags = Array.isArray(slot.raw_anima_artist_tags)
-                ? slot.raw_anima_artist_tags
-                : ((slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || []);
-            const qTags = Array.isArray(slot.raw_quality_tags)
-                ? slot.raw_quality_tags
-                : ((slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || []);
-            const cTags = Array.isArray(slot.raw_composition_tags)
-                ? slot.raw_composition_tags
-                : ((slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || []);
-            const appTags = Array.isArray(slot.raw_appearance_tags)
-                ? slot.raw_appearance_tags
-                : ((slot.appearance && assetTags.appearances?.[slot.appearance]) || []);
-            const exprTags = Array.isArray(slot.raw_expression_tags)
-                ? slot.raw_expression_tags
-                : ((slot.expression && assetTags.expressions?.[slot.expression]) || []);
-            const outfitTags = Array.isArray(slot.raw_outfit_tags)
-                ? slot.raw_outfit_tags
-                : ((slot.outfit && assetTags.outfits?.[slot.outfit]) || []);
-            const naturalLanguage = slot.natural_language_preset
-                ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
-                : (slot.natural_language || '');
-            const cnTags = Array.isArray(slot.raw_character_negative_tags)
-                ? slot.raw_character_negative_tags
-                : ((slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || []);
-            const nTags = Array.isArray(slot.raw_negative_tags)
-                ? slot.raw_negative_tags
-                : ((slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || []);
-            const animaQTags = Array.isArray(slot.raw_anima_quality_tags)
-                ? slot.raw_anima_quality_tags
-                : ((slot.anima_quality_preset && assetTags.quality_presets?.[slot.anima_quality_preset]) || []);
-            const animaNTags = Array.isArray(slot.raw_anima_negative_tags)
-                ? slot.raw_anima_negative_tags
-                : ((slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || []);
-            return { loraTriggerWords, animaLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
-        }
-
         async function buildAssetPromptData(slot) {
-            if (!assetTags) return null;
-            const t = _resolveAssetPromptSlotTags(slot);
-            const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
-            const isAnima = capabilities.anima;
-            const isDual = capabilities.dual;
-            const poseEnabled = capabilities.pose && (slot.pose_enabled || false);
-
-            let positiveTags = '';
-            if (isAnima) {
-                const animaQuality = t.animaQTags.filter(v => v.trim());
-                const animaArtist = t.animaArtistTags.filter(v => v.trim());
-                const sdxlQuality = t.qTags.filter(v => v.trim());
-                const sdxlArtist = t.artistTags.filter(v => v.trim());
-                const section1Rest = [
-                    ...(t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : []),
-                    ...t.animaArtistTags, ...t.animaQTags,
-                    ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
-                    ...(t.naturalLanguage ? [t.naturalLanguage] : []),
-                ].filter(v => typeof v === 'string' && v.trim());
-                const section2Rest = [
-                    ...(t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : []),
-                    ...t.artistTags, ...t.qTags,
-                    ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
-                ].filter(v => typeof v === 'string' && v.trim());
-                positiveTags = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
-                    + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
-                    + '\n[ANIMA]\n' + section1Rest.join(', ')
-                    + (isDual ? '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
-                        + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
-                        + '\n[SDXL]\n' + section2Rest.join(', ') : '')
-                    + '\n[CHAR_LIST]\nasset_mode';
-            } else {
-                positiveTags = [
-                    ...(t.loraTriggerWords ? [t.loraTriggerWords] : []),
-                    ...t.artistTags, ...t.qTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
-                    ...(t.naturalLanguage ? [t.naturalLanguage] : []),
-                ].filter(v => typeof v === 'string' && v.trim()).join(', ');
-            }
-
-            let positiveFull = positiveTags;
-            if (capabilities.anima) {
-                positiveFull += '\n[SNAPREF]\n' + JSON.stringify({
-                    enabled: !!slot.snapref_enabled, strength: slot.snapref_strength ?? 0,
-                    mode: slot.snapref_mode || 'char', megapixels: slot.snapref_megapixels ?? 1,
-                    dir: slot.snapref_enabled ? (slot.snapref_dir || '') : '',
-                });
-            }
-            positiveFull += `\n[FACE_ID_ACTIVATE]\n${capabilities.ipadapter && slot.ref_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength || 0.55}`;
-            positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
-            positiveFull += `\n[STYLE_ACTIVATE]\n${capabilities.ipadapter && slot.style_ref_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
-            positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
-            // FACE_CROP (ANIMA only)
-            if (isAnima) {
-                positiveFull += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
-                positiveFull += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
-            }
-            const compatibleRegularLoras = filterAssetLorasForCapabilities(slot.lora_list, capabilities);
-            const compatibleStyleLoras = filterAssetLorasForCapabilities(slot.style_lora_list, capabilities);
-            const loraActive = slot.lora_enabled && compatibleRegularLoras.length > 0;
-            const styleLoraActive = slot.style_lora_enabled && compatibleStyleLoras.length > 0;
-            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            if (isAnima) {
-                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
-            } else {
-                // ILXL: 스타일 LoRA를 LORA_DATA에 합쳐서 단일 로더 처리 (둘 중 하나만 ON이어도 활성화)
-                const mergedActive = loraActive || styleLoraActive;
-                positiveFull += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
-            }
-            // Face LoRA (ANIMA only)
-            if (isAnima) {
-                const compatibleFaceLoras = filterAssetLorasForCapabilities(slot.face_lora_list, capabilities);
-                const faceLoraActive = slot.face_lora_enabled && compatibleFaceLoras.length > 0;
-                const slotFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
-                positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: compatibleFaceLoras.map(l => {
-                        const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
-                        if (slotFaceLoraUpscale) item.UPSCALE_SIZE = slotFaceLoraUpscale;
-                        return item;
-                    })})}`;
-                } else {
-                    positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
-                }
-                // CHAR_FACE_TAG_INFORM
-                const faceLoraList = compatibleFaceLoras;
-                const batchFaceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
-            }
-            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
-            // ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
-            if (isAnima) {
-                positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            }
-            positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
-            if (poseEnabled && slot.pose_id) {
-                try {
-                    const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(slot.pose_id)}`);
-                    const poseResult = await resp.json();
-                    const poseJson = poseResult.keypoints || poseResult;
-                    positiveFull += `\n[POSE_DATA]\n${JSON.stringify(poseJson)}`;
-                } catch (e) {
-                    positiveFull += `\n[POSE_DATA]\n(포즈 데이터 로드 실패: ${slot.pose_id})`;
-                }
-            } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
-            }
-            positiveFull += `\n[HRF_ACTIVATE]\n${capabilities.ilxl && slot.hrf_sdxl ? 'true' : 'false'}`;
-            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
-            positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
-            positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
-            positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
-            positiveFull += `\n[IMG_W]\n${slot.img_w || 700}`;
-            positiveFull += `\n[IMG_H]\n${slot.img_h || 1024}`;
-            if (isAnima) {
-                positiveFull += `\n[ANIMA_FD_ACTIVATE]\n${slot.anima_fd_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
-            }
-            positiveFull += `\n[FD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_fd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[HD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_hd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[ED_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_ed_enabled ? 'true' : 'false'}`;
-            if (isAnima) {
-                positiveFull += `\n[SEED]\n${slot.seed ?? -1}`;
-            }
-            positiveFull += '\n[END]';
-
-            let negative;
-            if (isAnima) {
-                const animaNegParts = [...t.cnTags, ...t.animaNTags].filter(v => v.trim());
-                const sdxlNegParts = [...t.cnTags, ...t.nTags].filter(v => v.trim());
-                // ANIMA-only 워크플로도 이 구분자를 ANIMA 부정 프롬프트의 끝 표식으로 사용한다.
-                negative = animaNegParts.join(', ') + '\n[SDXL]\n'
-                    + (isDual ? sdxlNegParts.join(', ') : '');
-            } else {
-                negative = [...t.cnTags, ...t.nTags].filter(v => v.trim()).join(', ');
-            }
-
-            return { positive: positiveFull, negative, positiveLength: positiveTags.length };
+            return ComfyAssetPrompt.buildAssetPromptData(
+                {...slot, asset_workflow_type: slot.asset_workflow_type || currentConfig?.asset_workflow_type},
+                assetTags,
+                async id => {
+                    const response = await fetch(`/api/pose_mode/poses/${encodeURIComponent(id)}`);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    return response.json();
+                }, resolveLoraPath,
+            );
         }
 
         async function renderAssetPromptPreview(slot, positiveElement, negativeElement) {
@@ -75852,25 +75299,7 @@
         // ─── 체인 공유 (Export / Import) ─────────────────────
         // ═══════════════════════════════════════════════════════
 
-        function migrateBatchChainFields(c) {
-            if (c.hrf_enabled !== undefined && c.hrf_sdxl === undefined) {
-                c.hrf_sdxl = !!c.hrf_enabled;
-                c.hrf_anima = !!c.hrf_enabled;
-                delete c.hrf_enabled;
-                if (c.hrf_mode === 'anima') { c.hrf_sdxl = false; c.hrf_anima = true; }
-                else if (c.hrf_mode === 'sdxl') { c.hrf_sdxl = true; c.hrf_anima = false; }
-                delete c.hrf_mode;
-            }
-            if (c.fd_enabled !== undefined && c.sdxl_fd_enabled === undefined) {
-                c.sdxl_fd_enabled = !!c.fd_enabled;
-                c.sdxl_hd_enabled = !!c.hd_enabled;
-                c.sdxl_ed_enabled = !!c.ed_enabled;
-                c.anima_fd_enabled = false;
-                c.anima_hd_enabled = false;
-                c.anima_ed_enabled = false;
-                delete c.fd_enabled; delete c.hd_enabled; delete c.ed_enabled;
-            }
-        }
+        function migrateBatchChainFields(c) { ComfyAssetPrompt.migrateBatchChainFields(c); }
 
         async function openAppendChainModal() {
             // 이미 열려있으면 중복 방지

@@ -86,24 +86,25 @@ def _parse_description(desc: str) -> dict:
             'angle_kws': angle_kws, 'plain_kws': plain_kws}
 
 
-def load_all_csv():
+def load_all_csv(directory: str | os.PathLike | None = None):
     """auto_complete/ 폴더의 모든 CSV를 로드하여 메모리에 캐시."""
     global _tags, _loaded
     _tags = []
+    directory = os.fspath(directory) if directory is not None else AUTOCOMPLETE_DIR
 
-    if not os.path.isdir(AUTOCOMPLETE_DIR):
-        print(f"[AUTOCOMPLETE] CSV 폴더 없음: {AUTOCOMPLETE_DIR}")
+    if not os.path.isdir(directory):
+        print(f"[AUTOCOMPLETE] CSV 폴더 없음: {directory}")
         _loaded = True
         return
 
     # for_anima 제외, 설명 형식 우선 + 크기 큰 순 정렬
     files = []
-    for f in os.listdir(AUTOCOMPLETE_DIR):
+    for f in os.listdir(directory):
         if not f.lower().endswith(".csv"):
             continue
         if "for_anima" in f.lower():
             continue
-        fpath = os.path.join(AUTOCOMPLETE_DIR, f)
+        fpath = os.path.join(directory, f)
         priority = _csv_priority(f)
         if priority != 0:
             try:

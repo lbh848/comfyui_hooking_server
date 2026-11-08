@@ -5,10 +5,11 @@ from modes import illustration_quality_inspection as quality
 from modes.illustration_prompt_assembly import input_variables, prompt_join, symbolic_prompts, variable
 
 
-def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
+def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", workshop="illustration"):
     # The caller supplies a read-only settings snapshot. Generation inputs remain
     # named placeholders; no session, history or LLM access is needed here.
-    prompts = pipeline.load_prompt_files() if prompts is None else prompts
+    prompts = pipeline.load_prompt_files(workshop) if prompts is None else prompts
+    prompts_path = "prompts/lighbd_emotion/" if pipeline.normalize_workshop(workshop) == "emotion" else "prompts/lighbd/"
     toggles = pipeline.merged_toggles(toggles if toggles is not None else {
         "focus": "_input_", "direction": "_input_", "speak_emotions": "_input_",
         "genre": "_input_",
@@ -19,6 +20,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
     toggles = pipeline.merged_toggles(saved_toggles, for_generation=True)
     illustration = toggles["illustration_enabled"]
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
+    composite = toggles["illustration_output_mode"] in ("composite", "composite_both")
     if manga:
         toggles.update(key_visual=False, speak_enabled=False, supplement=True)
     mask = illustration and pipeline.should_enable_multi_char_layout(toggles, provider)
@@ -28,6 +30,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
         "character": not manga, "manga_character": manga, "profile": None,
         "call1": illustration and toggles["outfit_enabled"],
         "time_place": illustration and toggles["time_place_enabled"],
+        "npc_generation": illustration and toggles["npc_generation_enabled"],
         "plan": illustration and not manga and toggles["call2_plan_enabled"],
         "manga_plan": manga and toggles["call2_plan_enabled"],
         "detail": illustration,
@@ -55,7 +58,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
     def prompt_part(key, label, editor_group, *, rendered=None, condition=""):
         content = rendered if rendered is not None else prompts[key]
         return part(label, content, "지침 편집 > " + editor_group + " > " + label, condition=condition,
-                    path="prompts/lighbd/" + pipeline.PROMPT_FILES[key])
+                    path=prompts_path + pipeline.PROMPT_FILES[key])
 
     def stage(key, title, purpose, outputs, system_parts, messages, *, condition="", notes="", variants=None, user_parts=None):
         messages = pipeline._normalize_messages(messages)
@@ -108,7 +111,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
                   shared_parts + [explicit_part, prompt_part("manga_select" if manga_selection else "call2_select", "만화 사건 선택 지침" if manga_selection else "통합 장면 선택 지침", "MANGA-CHARACTER-RESOLVE" if manga_selection else "CHARACTER-RESOLVE"),
                                   prompt_part("character_resolve", "등장인물 판단 지침", "CHARACTER-RESOLVE")],
                   builders.resolution_messages(False, names, {}, "", "_input_", "_input_", "_input_", prompts["character_resolve"],
-                      selection=builders.selection_messages(prompts, role_context, names, "_input_" if selection_toggles["character_limit"] == 1 else None, "_input_", selection_toggles, {}, "_input_", ""), anchors=["C001", "C002"]),
+                      selection=builders.selection_messages(prompts, role_context, "_input_", selection_toggles, {}, "_input_", ""), anchors=["C001", "C002"], npc_generation_enabled=toggles["npc_generation_enabled"]),
                   condition="만화 삽화 또는 만화 삽화 + 원본 에셋" if manga_selection else "일반 삽화·원본 에셋 모드",
                   notes=("등장인물·요약할 사건·페이지 삽입 위치만 고릅니다. 컷 구성과 대본은 PLAN ON이면 계획자가, OFF이면 DETAIL이 준비합니다. " if manga_selection else "")
                   + "CURRENT에서 전체 등장인물과 요청 장면을 선택합니다. 과거 문맥·저장 상태는 장면 이해에만 사용합니다. 이미지당 최대 캐릭터가 1명이면 CURRENT의 등록 봇 캐릭터(사용자 페르소나 제외)를 우선하고, 해당 참여자가 없을 때만 전체 CURRENT 인물에서 고릅니다. LoRA 유무는 선택 우선순위에 영향을 주지 않습니다. 프로필 판정 결과는 받지 않습니다."
@@ -130,6 +133,12 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
               builders.time_place_messages(prompts, names, {}, "_input_", "_input_", slots=[0, 1], slotted="_input_", segment_slots={"C001": 0}, toggles=toggles),
               condition="TIME & PLACE 설정 ON",
               notes="OFF이면 후속 LLM이 원문·이전 문맥에서 시간·장소·조명을 판단합니다. OUTFIT과 병렬입니다. time은 넓은 시간대, place는 구체적인 공간, lighting은 그 공간에 도달하는 광원과 조명 상태를 설명합니다. 각 항목은 변경된 SLOT에서만 출력하고 서버가 이전 값을 이어받습니다. 후속 단계는 이 조명 조건 안에서 구도를 정합니다. 근거가 없으면 unknown이며 복장·헤어를 출력하지 않습니다. TIME & PLACE 노드 상세에서 채워진 표를 봅니다.")
+        stage("npc_generation", "NPC 생성 노드", "미등록 등장인물의 성별·외모·복장·얼굴·눈과 대표 이미지를 생성하고 캐릭터 카드로 등록합니다.",
+              ["성별 드롭다운 선택값·외모·복장·얼굴·눈 태그", "대표 이미지·등록된 캐릭터 카드"],
+              [prompt_part("npc_generation", "NPC 캐릭터 카드 생성 지침", "NPC 생성 노드"), genre_part],
+              builders.npc_generation_messages(prompts, [{"name": "_input_", "aliases": ["_input_"], "description": "_input_", "anchors": ["C001"]}], "_input_", "_input_", toggles),
+              condition="NPC 생성 노드 ON · 미등록 등장인물이 있을 때",
+              notes=f"대화에 등장한 미등록 인물의 외모와 복장을 정합니다. 이 작업은 STEP 2에서 OUTFIT·TIME & PLACE와 함께 진행합니다. 그리기 설정 > 캐릭터 자동 생성 모드로 대표 이미지를 만들고 삽화용 봇 설정 > 캐릭터에 등록합니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다. 같은 봇에서 삽화를 {toggles['npc_lifetime']}회 연속 생성하는 동안 등장하지 않으면 삭제하고, 다시 등장하면 수명이 초기화됩니다. 수명은 생성 설정 > 파이프라인 > NPC 생성에서 변경할 수 있습니다.")
         for plan_key, manga_planning in (("plan", False), ("manga_plan", True)):
             plan_toggles = pipeline.merged_toggles(
                 {**saved_toggles, "illustration_output_mode": "manga" if manga_planning else "illustration"},
@@ -151,13 +160,13 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
                 "dialogue": [{"speaker": "_input_", "text": "_input_",
                               "x": .05, "y": .05, "width": .25, "height": .15}],
             }]} for scene in batch]
-        detail_system = prompt_join("\n\n", (part for part in (role_context, explicit, prompts["manga_detail" if manga else "call2_detail"]) if part))
+        detail_system = prompt_join("\n\n", (part for part in (role_context, explicit, prompts["composite_detail" if composite else "manga_detail" if manga else "call2_detail"]) if part))
         detail_inputs = dict(past_text="_input_", segmented="_input_", toggles=toggles,
                              prior_status=prior_status, prior_time_place=prior_time_place, registered_names=names,
                              plan_profiles=[], tracking=tracking, time_place=time_place, segment_slots={"C001": 0})
-        stage("detail", "DETAIL-MANGA · 만화 페이지 작성" if manga else "DETAIL · 이미지 태그 작성", "각 장면에 배정된 원문·프로필·상태로 이미지 태그를 작성합니다.",
+        stage("detail", "DETAIL 합성 삽화 · 배경·캐릭터·가로 위치 작성" if composite else "DETAIL-MANGA · 만화 페이지 작성" if manga else "DETAIL · 이미지 태그 작성", "각 장면에 배정된 원문·프로필·상태로 이미지 태그를 작성합니다.",
               ["카메라·장면 태그", "캐릭터별 긍정 태그", "보충 묘사 태그"],
-              shared_parts + [explicit_part, prompt_part("manga_detail" if manga else "call2_detail", "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL-MANGA" if manga else "DETAIL")],
+              shared_parts + [explicit_part, prompt_part("composite_detail" if composite else "manga_detail" if manga else "call2_detail", "합성 삽화 묘사 지침" if composite else "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL 합성 삽화" if composite else "DETAIL-MANGA" if manga else "DETAIL")],
               builders.detail_messages(detail_system, batch, [], **detail_inputs),
               notes="위 블록을 순서대로 줄바꿈 두 개로 연결해 SYSTEM 메시지 하나를 만듭니다. KEYVIS 작업 지침(call2_job)과 공통 묘사 규칙(call2_common)은 DETAIL에 포함하지 않습니다. PLAN과 DETAIL 요청 수가 같으면 1:1로 연결합니다. 다르면 각 DETAIL에 배정된 장면의 PLAN이 모두 끝나는 즉시 전달합니다. PLAN OFF에서는 DETAIL 병렬 설정으로 CHARACTER-RESOLVE 선택 장면을 분배합니다. 생략한 상태·계획은 필드를 채우지 않고 원문·이전 문맥으로 DETAIL이 판단합니다.")
         detail_stage = stages[-1]
@@ -300,6 +309,15 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
         "call3": toggles["call3_prompt_mode"],
     }
     for entry in stages:
+        if composite and entry["key"] == "detail":
+            variant = next(value for value in entry["variants"] if value["key"] == ("keyvis" if keyvis_inline else "separate"))
+            entry.update({key: variant[key] for key in ("messages", "input_variables")})
+            entry.update(outputs=["장면별 배경", "캐릭터별 개별 이미지", "캐릭터 가로 중심 위치"],
+                         notes="기존 DETAIL과 같은 장면·프로필·상태 입력을 사용합니다. TIME & PLACE를 배경 추적에 재사용하며, 별도 생성에 맞춰 정밀한 접촉을 줄입니다. 대표 이미지도 같은 레이어 형식으로 작성합니다.")
+            entry.pop("variants", None)
+        if composite and entry["key"] == "assemble":
+            entry.update(title="최종 조립 · 합성 삽화", purpose="캐릭터 높이를 배경에 꽉 맞추고 가로 중심 위치에 배치합니다.",
+                         outputs=["완성 합성 삽화"], notes="POST PROCESS 설정과 무관하게 항상 실행합니다. DUAL_VAE 캐릭터의 투명 여백을 제외하고 비율을 유지해 배경 높이로 확대·축소합니다. 켜진 대사 후처리와 백업을 한 번 적용합니다.")
         if manga and entry["key"] == "detail":
             if mask_inline:
                 variant = next(value for value in entry["variants"] if value["key"] == "inline")
@@ -324,9 +342,9 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy"):
         "stages": stages,
         "flow": [
             {"label": "출력 모드에 맞는 등장인물·사건 선택 → 프로필", "keys": ["character", "manga_character", "profile"]},
-            {"label": "켜진 상태 추적 단계 병렬", "keys": ["call1", "time_place"]},
+            {"label": "STEP 2 · 상태 추적·NPC 생성 병렬", "keys": ["call1", "time_place", "npc_generation"]},
             {"label": "출력 모드에 맞는 시각 계획 · PLAN 설정 ON", "keys": ["plan", "manga_plan"]},
-            {"label": "컷별 DETAIL·대사 렌더 → 개별 생성·페이지 합성" if manga else "DETAIL·대표 이미지 묘사 · 준비 완료 후 POST PROCESS", "keys": ["detail"] if manga else ["detail", "keyvis", "call3"]},
+            {"label": "DETAIL 합성 삽화 → 배경·캐릭터별 생성 → 최종 조립" if composite else "컷별 DETAIL·대사 렌더 → 개별 생성·페이지 합성" if manga else "DETAIL·대표 이미지 묘사 · 준비 완료 후 POST PROCESS", "keys": ["detail"] if manga else ["detail", "keyvis", "call3"]},
             {"label": "준비된 장면별 인물 영역 배치", "keys": ["mask"]},
             {"label": "출력 템플릿 조립 → LoRA·품질 태그 반영 → 이미지 생성", "keys": ["assemble"]},
             {"label": "이미지 검사·교정 반복 → 원본·교정본 중 최종 선택", "keys": ["visual_correction", "visual_selection"]},

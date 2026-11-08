@@ -5,13 +5,13 @@ AssetToolMode - 에셋툴 (스마트 에셋 툴)
 """
 
 from app_paths import data_root
+from workflow_cache import copy_workflow_to_cache
 
 import asyncio
 import copy
 import hashlib
 import json
 import os
-import shutil
 import time
 import uuid
 from PIL import Image
@@ -138,7 +138,7 @@ class AssetToolMode:
         dest = os.path.join(MODE_WORKFLOW_DIR, os.path.basename(src))
         os.makedirs(MODE_WORKFLOW_DIR, exist_ok=True)
         print(f"[ASSET_TOOL] 워크플로우 복사 ({slot_label}): src='{src}' -> dest='{dest}'")
-        shutil.copy2(src, dest)
+        copy_workflow_to_cache(src, dest)
 
         try:
             with open(dest, "r", encoding="utf-8") as f:
@@ -333,7 +333,9 @@ class AssetToolMode:
             return {"success": False, "error": f"이미지 변환 오류: {e}"}
 
         import sys as _sys
-        _main_mod = _sys.modules.get('__main__')
+        # The settings worker imports server; __main__ is internal_lora_runtime.
+        # The standalone launcher still runs server itself as __main__.
+        _main_mod = _sys.modules.get('server') or _sys.modules.get('__main__')
         execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         if execution_target in REMOTE_COMFY_TARGETS:
             provider_label = (
@@ -467,6 +469,7 @@ class AssetToolMode:
         wait_for_real_comfy = getattr(_main_mod, 'wait_for_real_comfy')
         count_ksampler_total_steps = getattr(_main_mod, 'count_ksampler_total_steps')
         text_outputs = getattr(_main_mod, 'text_outputs')
+        fetch_real_history = getattr(_main_mod, 'fetch_real_history', None)
         aiohttp = getattr(_main_mod, 'aiohttp')
         import copy as _copy
 
@@ -492,6 +495,7 @@ class AssetToolMode:
         workflow = _copy.deepcopy(api_workflow)
 
         image_injected = False
+        history_nodes = {}
         for nid, ninfo in workflow.items():
             if not isinstance(ninfo, dict):
                 continue
@@ -503,11 +507,26 @@ class AssetToolMode:
                 image_injected = True
             # SoyaTextSender 노드의 server_url을 현재 서버로 보정
             if class_type.startswith("SoyaTextSender"):
+                inputs = ninfo.get("inputs", {})
+                if callable(fetch_real_history) and inputs.get("node_title") == "WD_TAG_TEXT" and "text" in inputs:
+                    # Older SoyaTextSender nodes always POST to port 8189. The
+                    # internal worker uses an authenticated, dynamically assigned
+                    # port, so collect this prompt's tags from ComfyUI history.
+                    preview_id = f"tag_analysis_text_{nid}"
+                    while preview_id in workflow or preview_id in history_nodes:
+                        preview_id += "_"
+                    history_nodes[preview_id] = {
+                        "class_type": "PreviewAny",
+                        "inputs": {"source": _copy.deepcopy(inputs["text"])},
+                        "_meta": {"title": "WD_TAG_TEXT"},
+                    }
                 server_url = ninfo.get("inputs", {}).get("server_url", "")
                 if not server_url or "8189" not in server_url:
-                    PORT = getattr(_sys.modules.get('__main__'), 'PORT', 8189)
+                    PORT = getattr(_main_mod, 'PORT', 8189)
                     ninfo["inputs"]["server_url"] = f"http://127.0.0.1:{PORT}/api/text_output"
                     print(f"[ASSET_TOOL] SoyaTextSender server_url 보정 ({slot_label}): -> http://127.0.0.1:{PORT}/api/text_output")
+
+        workflow.update(history_nodes)
 
         if not image_injected:
             print(f"[ASSET_TOOL] 오류 ({slot_label}): '분석이미지로드' 노드를 찾지 못했습니다")
@@ -580,7 +599,26 @@ class AssetToolMode:
         target_key = "WD_TAG_TEXT"
         print(f"[ASSET_TOOL] text_outputs keys at poll start ({slot_label}): {list(text_outputs.keys())}, id={id(text_outputs)}")
         while elapsed < poll_timeout:
-            entry = text_outputs.get(target_key)
+            if history_nodes:
+                try:
+                    history = await fetch_real_history(real_prompt_id, port=REAL_COMFY_PORT)
+                except Exception as exc:
+                    return {"success": False, "error": f"태그 분석 결과({slot_label}) 조회 실패: {exc}"}
+                outputs = (history.get(real_prompt_id) or {}).get("outputs", {})
+                for node_id in history_nodes:
+                    texts = (outputs.get(node_id) or {}).get("text", [])
+                    if isinstance(texts, str):
+                        texts = [texts]
+                    for text in texts:
+                        if isinstance(text, str):
+                            analyzed_tags.extend(t.strip() for t in text.replace("\n", ",").split(",") if t.strip())
+                # A completed history entry with empty tags should trigger the
+                # fallback workflow immediately (for example, no detected face).
+                if real_prompt_id in history:
+                    if not analyzed_tags:
+                        return {"success": False, "error": f"태그 분석 결과({slot_label})의 태그가 비어 있습니다"}
+                    break
+            entry = text_outputs.get(target_key) if not history_nodes else None
             print(f"[ASSET_TOOL] poll ({slot_label}): target_key='{target_key}', entry={'FOUND' if entry else 'NONE'}, keys={list(text_outputs.keys())}")
             if entry:
                 ts = entry.get("timestamp", "")

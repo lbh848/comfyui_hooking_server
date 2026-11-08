@@ -1,0 +1,17 @@
+{
+  "bots": [],
+  "positive_whitelist": [
+    "* expressions",
+    "* eyes",
+    "* pupils",
+    "* mouth",
+    "tears",
+    "happy",
+    "sad",
+    "smile",
+    "* expression"
+  ],
+  "positive_blacklist": [],
+  "system_prompt_presets": {},
+  "files": {}
+}

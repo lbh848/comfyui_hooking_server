@@ -1876,6 +1876,27 @@ class CharacterMakerService:
             "dropped": dropped,
         }
 
+    async def suggest_asset_values(self, character: str, values: dict, message: str, history: list, *, image_path: str | None = None) -> dict:
+        """Use the configured editor and logs without mutating the legacy singleton session."""
+        fields = _normalize_fields({field: values.get(f"raw_{field}_tags", []) for field in EDITABLE_FIELDS})
+        session = {
+            "fields": fields, "natural_language": values.get("natural_language", ""),
+            "world_context": f"Character: {character}", "settings": {},
+            "locks": dict.fromkeys(LOCKABLE_FIELDS, False), "chat": history,
+        }
+        images, manifest = None, []
+        if image_path:
+            encoded = self._encode_vision_image(image_path)
+            if encoded is None:
+                raise CharacterMakerError("피드백할 이미지를 읽지 못했습니다. 다시 생성하세요.")
+            images = [encoded]
+            manifest = [{"role": "CURRENT", "description": "선택한 캐릭터 버전의 생성 이미지"}]
+        messages = self._revision_messages(session, message, rag_enabled=False, image_manifest=manifest)
+        return await self._call_revision_llm(
+            "character_maker_feedback" if images else "character_maker_draft",
+            messages, images, require_queries=False, call_label="에셋 캐릭터 메이커",
+        )
+
     async def revise(self, session_id: str, payload: Any) -> dict[str, Any]:
         async with self.operation_lock(session_id):
             return await self._revise_locked(session_id, payload)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app_paths import data_root
+from lora_paths import lora_artifact_destination
 
 import asyncio
 import datetime
@@ -241,11 +242,11 @@ def normalize_remote_model_separators(workflow: dict[str, Any]) -> int:
     """워크플로우의 모델 참조에서 역슬래시를 슬래시로 바꾼다 (원격 실행 전용).
 
     배포 워크플로우는 Windows 에서 작성돼 하위 폴더 모델 이름이
-    ``v19\\Qwen-Rapid-AIO-NSFW-v19.safetensors`` 처럼 역슬래시로 들어 있다.
+    ``v19\\model.safetensors`` 처럼 역슬래시로 들어 있다.
     Windows 로컬 ComfyUI 에서는 그대로 맞지만, **워커는 언제나 Linux** 라
-    ``v19/Qwen-...`` 로 나열되어 제출이 거부된다:
+    ``v19/model.safetensors`` 로 나열되어 제출이 거부된다:
 
-        ckpt_name: 'v19\\Qwen-...' not in ['v19/Qwen-...']   (HTTP 400)
+        ckpt_name: 'v19\\model.safetensors' not in ['v19/model.safetensors']   (HTTP 400)
 
     즉 이건 macOS 문제가 아니다 — **Windows 사용자가 Modal 로 돌려도 똑같이 막힌다.**
     모델 확장자로 끝나는 문자열만 바꾸므로 프롬프트 같은 일반 텍스트는 건드리지 않는다.
@@ -4360,16 +4361,6 @@ class ModalService:
 
         if not artifacts:
             return []
-        local_root_raw = str(config.get("lora_load_path") or "").strip()
-        if not local_root_raw:
-            print("[MODAL_SYNC] LoRA 결과 저장 실패: lora_load_path 설정이 비어 있습니다.")
-            raise ValueError("Modal LoRA 결과를 저장할 로컬 LoRA 경로가 비어 있습니다.")
-        local_root = Path(local_root_raw).resolve()
-        scoped_keys = {
-            "SOYA_BOT_LORA": "bot_lora_load_path",
-            "SOYA_INSTANCE_LORA": "instance_lora_load_path",
-            "SOYA_STYLE_LORA": "style_lora_load_path",
-        }
         stored: list[dict[str, Any]] = []
         for item in artifacts:
             source = Path(str(item.get("path") or ""))
@@ -4380,17 +4371,7 @@ class ModalService:
             if relative.is_absolute() or not relative.parts or ".." in relative.parts:
                 print(f"[MODAL_SYNC] 안전하지 않은 LoRA 결과 상대 경로: {relative!s}")
                 raise ValueError(f"안전하지 않은 Modal LoRA 결과 경로입니다: {relative!s}")
-            scoped_key = scoped_keys.get(relative.parts[0])
-            scoped_raw = str(config.get(scoped_key) or "").strip() if scoped_key else ""
-            destination_root = Path(scoped_raw).resolve() if scoped_raw else local_root
-            parts = relative.parts[1:] if scoped_raw else relative.parts
-            target = destination_root.joinpath(*parts).resolve()
-            if destination_root != target and destination_root not in target.parents:
-                print(
-                    "[MODAL_SYNC] LoRA 결과 저장 경로 거부: 로컬 LoRA 루트 밖입니다. "
-                    f"root={local_root}, target={target}"
-                )
-                raise ValueError(f"로컬 LoRA 폴더 밖에는 결과를 저장할 수 없습니다: {target}")
+            target = lora_artifact_destination(config, relative.as_posix())
 
             final_target = target
             status = "stored"

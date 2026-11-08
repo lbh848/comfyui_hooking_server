@@ -1,0 +1,520 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "asset-anima",
+      "name": "공방-애니마",
+      "config": {
+        "asset_workflow_type": "anima_only",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl"
+        }
+      },
+      "workflows": {
+        "anima_only": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.15
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 12,
+              "cfg": 5,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.2
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 12,
+              "cfg": 5,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 12,
+              "cfg": 5,
+              "sampler_name": "dpmpp_2m_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 25,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.6,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_base_slider_step800.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_context_detailer_base10.safetensors",
+                  "str": 0.5,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset-anima-ilxl",
+      "name": "공방-애니마_IL 혼합",
+      "config": {
+        "asset_workflow_type": "anima_ilxl",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl"
+        }
+      },
+      "workflows": {
+        "anima_ilxl": {
+          "fields": {
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 12,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ILXL_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 10,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "ILXL_CHECKPOINT": "featherFall_v50f.fp16.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.7,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4-29B.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "dmd2_sdxl_4step_lora.safetensors",
+                  "str": 1,
+                  "BASE": "sdxl",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "asset_workflow_type": "anima_only",
+        "asset_workflow_source_paths": {
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA_V4.json",
+          "anima_ilxl": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA+ILXL_V4.json"
+        }
+      },
+      "workflows": {
+        "anima_only": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 12,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "FAST",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.9,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.6,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_base_slider_step800.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_context_detailer_base10.safetensors",
+                  "str": 0.5,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        },
+        "anima_ilxl": {
+          "fields": {
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 32,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ILXL_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ILXL_CHECKPOINT": "rinAnim8drawIllustrious_v31.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        }
+      },
+      "id": "3155236a262743808ba449a275800b36",
+      "name": "공방-고속 애니마 8GB"
+    },
+    {
+      "config": {
+        "asset_workflow_type": "anima_only",
+        "asset_workflow_source_paths": {
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_ANIMA_V4_투명배경.json",
+          "anima_ilxl": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA+ILXL_V4.json"
+        }
+      },
+      "workflows": {
+        "anima_ilxl": {
+          "fields": {
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 32,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ILXL_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ILXL_CHECKPOINT": "rinAnim8drawIllustrious_v31.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "anima_only": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 12,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.15
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 12,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.1
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 12,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 12,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 26,
+              "cfg": 4,
+              "sampler_name": "dpmpp_sde_gpu",
+              "scheduler": "linear_quadratic",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "anima_rgba_lora.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.6,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "46554b2ff97f46ba83e990b8d75e5392",
+      "name": "공방-애니마 투명배경"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import os
 import json
 import shutil
 import traceback
+import re
 from PIL import Image
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
@@ -25,6 +26,20 @@ BOT_LORA_MANAGE_FILE = os.path.join(data_root(BASE_DIR), "asset_data", "bot_lora
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 TEST_DIR_NAME = "_test"
+
+
+def training_save_path(bot_name: str, project_name: str, char_name: str, visual_card_id: str, training_config: dict) -> str:
+    """Shared output path for training submission and prompt preview."""
+    def safe(name):
+        return re.sub(r'[\\/*?:"<>|]', '_', name).strip() or "unnamed"
+    default = f"SOYA_BOT_LORA/{safe(bot_name)}/Lora/{safe(project_name)}/{safe(char_name)}"
+    path = (training_config.get("lora_save_path") or default).replace("\\", "/").rstrip("/")
+    parts = path.split("/")
+    if parts[-1] != safe(char_name) or (safe(project_name) == safe(char_name) and parts[-2:] != [safe(project_name), safe(char_name)]):
+        path += "/" + safe(char_name)
+    if visual_card_id:
+        path += "/_visual_profiles/" + safe(visual_card_id)
+    return path
 
 
 def _safe_dirname(name: str) -> str:
@@ -1373,69 +1388,15 @@ def add_bot_char_test_images(
     sources: list,
     visual_card_id: str = "",
 ) -> dict:
-    """에셋에서 캐릭터별 테스트 이미지 추가"""
-    from modes.asset_mode import ASSET_DIR, AssetMode
+    """Import character test images using the asset LoRA prompt rules."""
+    from modes.lora_mode import add_project_images
 
-    t_dir = _bot_char_test_dir(
-        bot_name, project_name, char_name, visual_card_id
+    project = _get_project_config(_load_bot_lora_manage(), bot_name, project_name) or {}
+    profile = project.get("training_config", {}).get("profile", "anima")
+    return add_project_images(
+        "", _bot_char_test_dir(bot_name, project_name, char_name, visual_card_id),
+        sources, test_profile=profile,
     )
-    os.makedirs(t_dir, exist_ok=True)
-
-    added = []
-    skipped = []
-    for src in sources:
-        outfit = src.get("outfit", "")
-        expression = src.get("expression", "")
-        filename = src.get("filename", "")
-        src_char = src.get("character", "")
-        src_char_dir = os.path.join(ASSET_DIR, AssetMode._safe_dirname(src_char)) if src_char else ""
-
-        if not outfit or not expression or not filename or not src_char:
-            print(f"[BOT_LORA] 캐릭터 테스트 이미지 추가: 필수 값 누락 - {src}")
-            skipped.append({"filename": filename, "reason": "필수 값 누락"})
-            continue
-
-        src_path = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), filename)
-        if not os.path.isfile(src_path):
-            print(f"[BOT_LORA] 캐릭터 테스트 이미지 원본 없음: {src_path}")
-            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
-            continue
-
-        dest_name = filename
-        dest_path = os.path.join(t_dir, dest_name)
-        if os.path.exists(dest_path):
-            import time
-            base, ext = os.path.splitext(filename)
-            dest_name = f"{int(time.time())}_{base}{ext}"
-            dest_path = os.path.join(t_dir, dest_name)
-
-        try:
-            shutil.copy2(src_path, dest_path)
-            base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), f"{base}_prompt.json")
-            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
-            if os.path.isfile(prompt_src):
-                with open(prompt_src, "r", encoding="utf-8") as f:
-                    pdata = json.load(f)
-                positive = pdata.get("positive", "")
-                marker = "[FACE_ID_ACTIVATE]"
-                if marker in positive:
-                    pdata["positive"] = positive.split(marker)[0].strip()
-                pdata["original_positive"] = pdata["positive"]
-                pdata["original_negative"] = pdata.get("negative", "")
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump(pdata, f, ensure_ascii=False, indent=2)
-            else:
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
-            added.append(dest_name)
-            print(f"[BOT_LORA] 캐릭터 테스트 이미지 추가: {dest_path}")
-        except Exception as e:
-            print(f"[BOT_LORA] 캐릭터 테스트 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
-            traceback.print_exc()
-            skipped.append({"filename": filename, "reason": str(e)})
-
-    return {"success": True, "added": added, "skipped": skipped}
 
 
 def copy_project_test_to_char(
@@ -1814,66 +1775,12 @@ def list_bot_test_images(bot_name: str, project_name: str) -> list:
 
 
 def add_bot_test_images(bot_name: str, project_name: str, sources: list) -> dict:
-    from modes.asset_mode import ASSET_DIR, AssetMode
+    """Import common test images using the asset LoRA prompt rules."""
+    from modes.lora_mode import add_project_images
 
-    t_dir = _bot_test_dir(bot_name, project_name)
-    os.makedirs(t_dir, exist_ok=True)
-
-    added = []
-    skipped = []
-    for src in sources:
-        outfit = src.get("outfit", "")
-        expression = src.get("expression", "")
-        filename = src.get("filename", "")
-        src_char = src.get("character", "")
-        src_char_dir = os.path.join(ASSET_DIR, AssetMode._safe_dirname(src_char)) if src_char else ""
-
-        if not outfit or not expression or not filename or not src_char:
-            print(f"[BOT_LORA] 테스트 이미지 추가: 필수 값 누락 - {src}")
-            skipped.append({"filename": filename, "reason": "필수 값 누락"})
-            continue
-
-        src_path = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), filename)
-        if not os.path.isfile(src_path):
-            print(f"[BOT_LORA] 테스트 이미지 원본 없음: {src_path}")
-            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
-            continue
-
-        dest_name = filename
-        dest_path = os.path.join(t_dir, dest_name)
-        if os.path.exists(dest_path):
-            import time
-            base, ext = os.path.splitext(filename)
-            dest_name = f"{int(time.time())}_{base}{ext}"
-            dest_path = os.path.join(t_dir, dest_name)
-
-        try:
-            shutil.copy2(src_path, dest_path)
-            base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), f"{base}_prompt.json")
-            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
-            if os.path.isfile(prompt_src):
-                with open(prompt_src, "r", encoding="utf-8") as f:
-                    pdata = json.load(f)
-                positive = pdata.get("positive", "")
-                marker = "[FACE_ID_ACTIVATE]"
-                if marker in positive:
-                    pdata["positive"] = positive.split(marker)[0].strip()
-                pdata["original_positive"] = pdata["positive"]
-                pdata["original_negative"] = pdata.get("negative", "")
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump(pdata, f, ensure_ascii=False, indent=2)
-            else:
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
-            added.append(dest_name)
-            print(f"[BOT_LORA] 테스트 이미지 추가: {dest_path}")
-        except Exception as e:
-            print(f"[BOT_LORA] 테스트 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
-            traceback.print_exc()
-            skipped.append({"filename": filename, "reason": str(e)})
-
-    return {"success": True, "added": added, "skipped": skipped}
+    project = _get_project_config(_load_bot_lora_manage(), bot_name, project_name) or {}
+    profile = project.get("training_config", {}).get("profile", "anima")
+    return add_project_images("", _bot_test_dir(bot_name, project_name), sources, test_profile=profile)
 
 
 def get_bot_test_image_path(bot_name: str, project_name: str, filename: str) -> str | None:
@@ -1960,6 +1867,7 @@ def list_bot_char_available_images(
     bot_name: str,
     char_name: str,
     visual_card_id: str = "",
+    *, include_details: bool = True,
 ) -> list:
     """봇 캐릭터 원본 폴더에서 사용 가능한 이미지 목록 반환"""
     char_dir = _bot_char_dir(bot_name, char_name)
@@ -1986,7 +1894,7 @@ def list_bot_char_available_images(
         if ext not in IMAGE_EXTENSIONS:
             continue
         fpath = os.path.join(char_dir, fname)
-        img_data = _load_image_with_prompt(fpath, char_dir, fname)
+        img_data = _load_image_with_prompt(fpath, char_dir, fname) if include_details else {"filename": fname}
         if img_data:
             img_data["source"] = "rep"
             img_data["is_profile_representative"] = fname in profile_reps
@@ -2009,7 +1917,7 @@ def list_bot_char_available_images(
     if os.path.isfile(face_path):
         face_data = _load_image_with_prompt(
             face_path, face_dir, "_face_image.webp"
-        )
+        ) if include_details else {"filename": "_face_image.webp"}
         if face_data:
             face_data["source"] = "face"
             face_data["is_profile_representative"] = False
@@ -2787,6 +2695,7 @@ def export_bot_training_images(
     comfy_input_dir: str,
     folder_name: str = "soya_lora",
     visual_card_id: str = "",
+    image_filenames: list[str] | None = None,
 ) -> dict:
     """프로젝트 폴더의 학습 이미지를 Comfy Input 폴더로 복사"""
     proj_char_dir = _bot_project_training_dir(
@@ -2802,6 +2711,12 @@ def export_bot_training_images(
         if ext not in IMAGE_EXTENSIONS:
             continue
         image_files.append(os.path.join(proj_char_dir, fname))
+
+    if image_filenames is not None:
+        available = {os.path.basename(path): path for path in image_files}
+        if any(name not in available for name in image_filenames):
+            return {"success": False, "error": "학습 이미지 목록이 변경되었습니다. 다시 시도하세요."}
+        image_files = [available[name] for name in image_filenames]
 
     if not image_files:
         print(f"[BOT_LORA_EXPORT] 학습 이미지 없음: {bot_name}/{char_name}")

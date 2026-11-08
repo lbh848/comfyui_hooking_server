@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from app_paths import config_root, data_root
+from lora_paths import lora_artifact_destination
 
 import asyncio
 import base64
@@ -4623,6 +4624,11 @@ class VastService:
         return {
             "manifest_bytes": manifest_path.read_bytes(),
             "script_bytes": script_path.read_bytes(),
+            "illustration_v2_files": {
+                "illustration_v2_nodes.py": (self.project_root / "comfy_installer/illustration_v2_nodes.py").read_bytes(),
+                **{f"illustration_v2/{file.name}": file.read_bytes()
+                   for file in (self.project_root / "comfy_installer/resources/illustration_v2").iterdir() if file.is_file()},
+            },
             "env_json": env_json,
             "local_nodes": local_nodes,
         }
@@ -4673,6 +4679,10 @@ class VastService:
             fh.write(payload["script_bytes"].decode("utf-8"))
         with sftp.open("/opt/soya/extra_nodes.json", "w") as fh:
             fh.write(payload["env_json"])
+        ssh.exec_command("mkdir -p /opt/soya/illustration_v2")
+        for name, data in payload["illustration_v2_files"].items():
+            with sftp.open("/opt/soya/" + name, "wb") as fh:
+                fh.write(data)
         stdin, stdout, stderr = ssh.exec_command(
             'SOYA_MODAL_IMAGE_CUSTOM_NODES="$(cat /opt/soya/extra_nodes.json)" '
             "python /opt/soya/image_install.py"
@@ -5379,12 +5389,6 @@ class VastService:
             print("[VAST_DOWNLOAD][ERROR] 다운로드할 LoRA artifact가 없습니다.")
             raise ValueError("다운로드할 Vast LoRA artifact가 없습니다.")
         config = self._get_config()
-        local_root_raw = str(config.get("lora_load_path") or "").strip()
-        if not local_root_raw:
-            print("[VAST_DOWNLOAD][ERROR] lora_load_path 설정이 비어 있습니다.")
-            raise ValueError("Vast LoRA를 저장할 경로가 설정되지 않았습니다.")
-        local_root = Path(local_root_raw).resolve()
-        local_root.mkdir(parents=True, exist_ok=True)
         stored: list[dict[str, Any]] = []
         remote_delete_queued: list[str] = []
 
@@ -5404,9 +5408,7 @@ class VastService:
                 str(artifact.get("relative_path") or ""), "LoRA artifact"
             )
             relative = Path(*relative_raw.split("/"))
-            target = (local_root / relative).resolve()
-            if local_root != target and local_root not in target.parents:
-                raise ValueError(f"안전하지 않은 Vast LoRA 로컬 경로: {target}")
+            target = lora_artifact_destination(config, relative.as_posix())
             remote_path = posixpath.normpath(
                 str(artifact.get("remote_path") or "").replace("\\", "/")
             )

@@ -18,6 +18,7 @@ from typing import Callable
 
 from .configurator import backup_current_config
 from .operations import CommandError, run_command
+from update_policy import replace_distribution_files, validate_release_storage
 
 
 class HookingServerUpdateError(RuntimeError):
@@ -790,6 +791,11 @@ def update_hooking_server_main(
                 "후킹 서버 origin이 공식 배포 저장소와 다릅니다: "
                 f"actual={origin}"
             )
+        run_command(["git", "fetch", "origin", HOOKING_BRANCH], cwd=root,
+                    cancel_event=cancel_event, log=log, timeout=900)
+        remote = f"origin/{HOOKING_BRANCH}"
+        validate_release_storage(root, remote)
+        replace_distribution_files(root, "HEAD", remote)
         changes = run_command(
             ["git", "status", "--porcelain", "--untracked-files=no"],
             cwd=root,
@@ -816,7 +822,7 @@ def update_hooking_server_main(
         quarantine = _prepare_untracked_quarantine(root, log=log)
         try:
             run_command(
-                ["git", "pull", "--ff-only", "origin", HOOKING_BRANCH],
+                ["git", "merge", "--ff-only", remote],
                 cwd=root,
                 cancel_event=cancel_event,
                 log=log,
@@ -852,6 +858,7 @@ def update_hooking_server_main(
                 ) from update_exc
             raise
         _restore_untracked_quarantine(root, quarantine, log=log)
+        replace_distribution_files(root, remote, "HEAD")
         after = _git_value(root, "rev-parse", "HEAD").lower()
         if log:
             if before == after:

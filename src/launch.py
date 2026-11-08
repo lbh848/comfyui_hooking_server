@@ -1,13 +1,17 @@
 """Shared launcher; application-specific frontends will use these entry points."""
 from __future__ import annotations
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 import argparse
 import os
 import runpy
 import socket
 import webbrowser
 
-from app_paths import SOURCE_DIR, initialize_layout
+from app_paths import SOURCE_DIR
 
 
 APPS = ("illustration", "asset", "video")
@@ -37,7 +41,6 @@ def main() -> None:
         if os.environ.get("NO_BROWSER", "").lower() not in {"1", "true", "yes", "on"}:
             webbrowser.open(url)
         return
-    initialize_layout()
     runpy.run_path(str(SOURCE_DIR / "server.py"), run_name="__main__")
 
 

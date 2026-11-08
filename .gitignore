@@ -30,6 +30,7 @@ current_mode_workflow/
 !/src/auto_complete/CC-BY-SA-4.0.txt
 CLAUDE.md
 AGENTS.md
+/Agent.md
 # 에이전트 스킬 정의 (로컬 전용)
 .agents/
 
@@ -53,6 +54,8 @@ updater_config.json
 
 # Distribution patches (외부 드라이브 배포)
 chain_presets/
+!/src/presets/chain_presets/
+!/src/presets/chain_presets/*.json
 /src/customprompt/enhance_outfit_prompt_v4_storage/
 /src/customprompt/test_program/
 patch_data.zip
@@ -78,6 +81,9 @@ fonts/
 
 # 임시 작업/검증 산출물 (스크립트 추출물, 스크린샷 등)
 .work/
+
+# 런처 빌드 잔여물 (build_launcher.ps1의 이전 exe 백업 등 로컬 전용)
+/output/
 
 # 배포 실행기가 내려받는 프로젝트 전용 uv 바이너리
 .tools/
@@ -120,3 +126,10 @@ vast_ssh_key.pub
 /src/vast_model_sources.json
 
 /src/dist/
+
+# React settings frontend: dependencies and reproducible build output.
+/src/settings_ui/node_modules/
+/src/settings_ui/dist/
+/src/settings_ui/output/
+
+.playwright-cli/

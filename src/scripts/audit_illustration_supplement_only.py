@@ -32,7 +32,8 @@ async def run(args: argparse.Namespace) -> int:
     if await wardrobe._main_async(setup) != 0:
         raise RuntimeError("Isolated runtime setup failed")
     import server
-    config = wardrobe._read_json(wardrobe.PROJECT_ROOT / "config.json")
+    from configuration import config_path, read_config
+    config = read_config(config_path(wardrobe.PROJECT_ROOT))
     runtime = server._capture_illustration_runtime_snapshot(config)
     wardrobe._write_json(run_dir / "request.json", descriptor)
     results = []

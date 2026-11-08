@@ -80,7 +80,7 @@ def cpu_launch_args(
         return args
     # These are Comfy CLI options, not prompt/context keyword inference.
     incompatible = {
-        "--cpu", "--gpu-only", "--highvram", "--normalvram", "--lowvram", "--novram",
+        "--cpu", "--gpu-only", "--highvram", "--lowvram", "--novram",
         "--cuda-device", "--default-device", "--directml", "--fast",
         "--enable-dynamic-vram", "--use-sage-attention", "--use-flash-attention",
         "--use-ck-attention", "--async-offload",

@@ -1,0 +1,42 @@
+.external-connection-page { display: grid; gap: 20px; }
+.external-connection-body { display: grid; gap: 16px; padding: 22px; }
+.external-connection-body p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.external-connection-body .external-connection-error { color: var(--danger); }
+.external-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.external-connection-url { font-family: ui-monospace, monospace; min-width: 0; }
+.external-connection-status { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 10px; font-weight: 550; white-space: nowrap; color: var(--muted); }
+.external-connection-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.external-connection-status.connected { color: var(--green); }
+.external-connection-status.pending { color: var(--rose-dark); }
+.external-connection-status.error { color: var(--danger); }
+.nav-item > .external-connection-status { margin-left: auto; }
+.nav-item > .external-connection-status + .active-dot { display: none; }
+.external-connection-page .share-guide { padding: 22px; font-size: 12px; line-height: 1.8; }
+.external-connection-page .sg-title { margin: 0; font-size: 16px; }
+.external-connection-page .sg-desc, .external-connection-page .sg-sub { color: var(--muted); }
+.external-connection-page .sg-section { margin-top: 22px; padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--lavender); }
+.external-connection-page .sg-section-head, .external-connection-page .sg-step { display: flex; align-items: flex-start; gap: 12px; }
+.external-connection-page .sg-section-head > div:last-child, .external-connection-page .sg-step > div:last-child { flex: 1; min-width: 0; }
+.external-connection-page .sg-num, .external-connection-page .sg-step-idx { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 7px; background: var(--rose-soft); color: var(--rose-dark); font-weight: 650; }
+.external-connection-page h4 { font-size: 14px; margin: 0; }
+.external-connection-page h5, .external-connection-page h6 { font-size: 12px; margin: 0; }
+.external-connection-page .sg-sub { margin: 3px 0 0; }
+.external-connection-page .sg-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 14px; }
+.external-connection-page .sg-tag { display: inline-block; padding: 2px 8px; margin-bottom: 8px; border-radius: 5px; background: var(--rose-soft); color: var(--rose-dark); font-size: 10px; }
+.external-connection-page .sg-link { color: var(--rose-dark); text-decoration: underline; overflow-wrap: anywhere; }
+.external-connection-page .sg-notice { margin-top: 12px; color: var(--muted); }
+.external-connection-page .sg-step { margin-top: 20px; }
+.external-connection-page .sg-step p { margin: 5px 0 10px; }
+.external-connection-page .sg-field, .external-connection-page .sg-path { display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid var(--line); background: var(--panel); padding: 10px 14px; border-radius: 6px; }
+.external-connection-page .sg-field .lab { color: var(--muted); }
+.external-connection-page .sg-field .val { overflow-wrap: anywhere; min-width: 0; font-family: ui-monospace, monospace; }
+.external-connection-page .sg-wf-label { display: block; margin: 12px 0 6px; }
+.external-connection-page .sg-wf { width: 100%; min-height: 180px; resize: vertical; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.6; }
+.external-connection-page .sg-img { display: block; max-width: 100%; height: auto; margin: 18px auto 0; border: 1px solid var(--line); border-radius: 8px; }
+.external-connection-page .sg-checklist { display: grid; gap: 6px; margin-top: 18px; color: var(--green); }
+@media (max-width: 760px) {
+  .external-connection-body, .external-connection-page .share-guide { padding: 16px; }
+  .external-connection-page .sg-section { padding: 12px; }
+  .external-connection-page .sg-step { gap: 8px; }
+  .external-connection-actions .button { flex: 1 1 auto; justify-content: center; }
+}

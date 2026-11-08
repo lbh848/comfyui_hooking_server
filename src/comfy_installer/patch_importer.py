@@ -867,8 +867,6 @@ class PatchImporter:
                     json_paths["bot"],
                     default={
                         "bots": [],
-                        "positive_whitelist": [],
-                        "positive_blacklist": [],
                         "system_prompt_presets": {},
                     },
                 )

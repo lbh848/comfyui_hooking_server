@@ -7,8 +7,8 @@ POSITIVE/NEGATIVE로 만든다. HTTP 요청 외형만 NAI API 형식이다.
 
 from __future__ import annotations
 
-from modes.illust_prompt_builder import filter_anonymous_fragment_negative_conflicts
 from modes.word_rules import apply_flat_insert_rules
+from preset_catalog import resolve_preset_tags
 
 
 def _as_tags(value) -> list[str]:
@@ -39,21 +39,16 @@ def _get_workflow_type(settings: dict) -> str:
 
 def _get_quality_tags(tags: dict, settings: dict) -> list[str]:
     """현재 챈섭 워크플로우와 프리셋에 해당하는 품질 태그를 반환한다."""
-    quality_presets = tags.get("quality_presets", {}) or {}
     workflow_type = _get_workflow_type(settings)
     quality_name = settings.get(f"{workflow_type}_quality_preset", "")
-    if quality_name and quality_name in quality_presets:
-        return _as_tags(quality_presets.get(quality_name, []))
-    quality_key = "anima_quality" if workflow_type == "anima" else "quality"
-    return _as_tags(tags.get(quality_key, []))
+    return _as_tags(resolve_preset_tags(tags, "quality_presets", quality_name))
 
 
 def _get_artist_tags(tags: dict, settings: dict) -> list[str]:
     """현재 챈섭 워크플로우와 프리셋에 해당하는 아티스트 태그를 반환한다."""
-    artist_presets = tags.get("artist_presets", {}) or {}
     workflow_type = _get_workflow_type(settings)
     artist_name = settings.get(f"{workflow_type}_artist_preset", "")
-    return _as_tags(artist_presets.get(artist_name, []))
+    return _as_tags(resolve_preset_tags(tags, "artist_presets", artist_name))
 
 
 class ChansubPromptBuilder:
@@ -73,10 +68,12 @@ class ChansubPromptBuilder:
         quality_tags = _get_quality_tags(tags, settings)
 
         scene_supplement = supplement if workflow_type == "anima" else ""
+        background_tags = resolve_preset_tags(tags, "background_presets", settings.get(f"{workflow_type}_background_preset", ""))
 
         positive = _join_parts(
             ", ".join(artist_tags),
             ", ".join(quality_tags),
+            ", ".join(background_tags),
             setup,
             char,
             scene_supplement,
@@ -87,21 +84,11 @@ class ChansubPromptBuilder:
     def build_negative_prompt(
         tags: dict,
         settings: dict,
-        *,
-        allow_anonymous_fragment: bool = False,
     ) -> str:
-        negative_presets = tags.get("negative_presets", {}) or {}
         workflow_type = _get_workflow_type(settings)
         preset_name = settings.get(f"{workflow_type}_negative_preset", "")
-        if preset_name and preset_name in negative_presets:
-            negative_tags = _as_tags(negative_presets.get(preset_name, []))
-        else:
-            negative_key = "anima_negative" if workflow_type == "anima" else "negative"
-            negative_tags = _as_tags(tags.get(negative_key, []))
-        return ", ".join(filter_anonymous_fragment_negative_conflicts(
-            negative_tags,
-            allow_anonymous_fragment,
-        ))
+        negative_tags = _as_tags(resolve_preset_tags(tags, "negative_presets", preset_name))
+        return ", ".join(negative_tags)
 
     def build(
         self,
@@ -111,8 +98,6 @@ class ChansubPromptBuilder:
         tags: dict,
         settings: dict,
         insert_rules: list[dict] | None = None,
-        *,
-        allow_anonymous_fragment: bool = False,
     ) -> dict:
         artist_tags = _get_artist_tags(tags, settings)
         quality_tags = _get_quality_tags(tags, settings)
@@ -128,7 +113,6 @@ class ChansubPromptBuilder:
             "negative": self.build_negative_prompt(
                 tags,
                 settings,
-                allow_anonymous_fragment=allow_anonymous_fragment,
             ),
             "width": int(settings.get("img_w", 756) or 756),
             "height": int(settings.get("img_h", 756) or 756),
@@ -136,48 +120,3 @@ class ChansubPromptBuilder:
             "quality_tag_count": len(quality_tags) + inserted_tag_count,
             "applied_insert_rules": applied_insert_rules,
         }
-
-
-def build_v1_prompt(
-    setup: str,
-    char: str,
-    supplement: str,
-    tags: dict,
-    settings: dict,
-    *,
-    allow_anonymous_fragment: bool = False,
-) -> dict:
-    """V1(ILXL/UPSCALE 스타일) 포맷 조립.
-
-    ANIMA 품질/부정 프리셋만 소비하고 LoRA·아티스트·SDXL 분기는 없는 단순 조립.
-    구조:
-      [Positive]
-      {ANIMA 품질 태그}, {setup}, {char}, {supplement},
-      [ILXL]
-      {setup}, {char},
-      [Negative]
-      {ANIMA 부정 태그}
-    """
-    v1_settings = dict(settings or {})
-    v1_settings["chansub_workflow_type"] = "anima"  # ANIMA 프리셋 강제
-    quality_tags = _get_quality_tags(tags, v1_settings)
-    negative = ChansubPromptBuilder.build_negative_prompt(
-        tags,
-        v1_settings,
-        allow_anonymous_fragment=allow_anonymous_fragment,
-    )
-
-    positive_section = _join_parts(", ".join(quality_tags), setup, char, supplement)
-    ilxl_section = _join_parts(setup, char)
-    positive = (
-        f"[Positive]\n{positive_section}\n\n"
-        f"[ILXL]\n{ilxl_section}"
-    )
-    return {
-        "positive": positive,
-        "negative": negative,
-        "width": int(settings.get("img_w", 756) or 756),
-        "height": int(settings.get("img_h", 756) or 756),
-        "quality_tag_start": 0,
-        "quality_tag_count": 0,
-    }

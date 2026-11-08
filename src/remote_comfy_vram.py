@@ -9,7 +9,6 @@ DEFAULT_REMOTE_COMFY_VRAM_MODE = "highvram"
 REMOTE_COMFY_VRAM_MODES = (
     "auto",
     "highvram",
-    "normalvram",
     "lowvram",
     "novram",
 )
@@ -18,6 +17,8 @@ SUPPORTED_REMOTE_COMFY_VRAM_MODES = frozenset(REMOTE_COMFY_VRAM_MODES)
 
 def normalize_remote_comfy_vram_mode(value: Any, field: str) -> str:
     normalized = str(value or DEFAULT_REMOTE_COMFY_VRAM_MODE).strip().lower()
+    if normalized == "normalvram":
+        normalized = "auto"
     if normalized not in SUPPORTED_REMOTE_COMFY_VRAM_MODES:
         allowed = ", ".join(REMOTE_COMFY_VRAM_MODES)
         raise ValueError(f"{field}는 다음 중 하나여야 합니다: {allowed}")

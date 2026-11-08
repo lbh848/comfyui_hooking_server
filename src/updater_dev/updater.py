@@ -7,6 +7,11 @@ import json
 import shutil
 import threading
 import sys
+from pathlib import Path
+
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from update_policy import replace_distribution_files, validate_release_storage
 
 
 class GitAutoUpdater:
@@ -272,6 +277,9 @@ class GitAutoUpdater:
             args, cwd=cwd, capture_output=True, text=True, timeout=timeout, errors="replace"
         )
 
+    def _replace_distribution_files(self, path, source, other_source):
+        replace_distribution_files(Path(path), source, other_source)
+
     def _do_update(self, data):
         name = data["name"] or os.path.basename(data["path"]) or "Program"
         path = data["path"]
@@ -300,10 +308,19 @@ class GitAutoUpdater:
                     self._git(["git", "remote", "set-url", "origin", url], path)
                     self._thread_log(f"[{name}] 원격 URL 갱신됨")
 
+                # Discard only distribution edits after the new release is available.
+                remote = f"origin/{branch}"
+                r = self._git(["git", "fetch", "origin", branch], path)
+                if r.returncode != 0:
+                    raise RuntimeError((r.stderr or r.stdout).strip())
+                validate_release_storage(Path(path), remote)
+                self._replace_distribution_files(path, "HEAD", remote)
+
                 # git pull
                 self._thread_log(f"[{name}] git pull origin {branch} ...")
-                r = self._git(["git", "pull", "origin", branch], path)
+                r = self._git(["git", "merge", "--ff-only", remote], path)
                 if r.returncode == 0:
+                    self._replace_distribution_files(path, remote, "HEAD")
                     if "Already up to date" in r.stdout:
                         self._thread_log(f"[{name}] 이미 최신 상태입니다.")
                     else:

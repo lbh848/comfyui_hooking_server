@@ -1,0 +1,11 @@
+Create reusable illustration character cards for exactly the supplied NPC candidates.
+Read CURRENT and earlier context semantically. Preserve every source-established identity, species, gender, age presentation, appearance, clothing and distinctive feature. Fill unspecified visual details with a coherent design appropriate to the story and genre. Never change an established identity to match a registered character. Each candidate is one independent character; do not invent extra people or merge different candidates.
+
+Use concise English image tags for appearance, default_outfit, face_tags and eye_tags. Appearance contains stable physical features, hair, fur, feathers or scales; default_outfit contains the clothing and accessories. Face tags describe stable facial features; eye tags describe the eyes. Keep transient actions, framing, lighting and expressions out of these reusable fields. Describe the design briefly in visual_context.
+
+Choose gender_tag from the supplied dropdown values only. Use animal for a non-anthropomorphic animal, regardless of its biological sex: a male cat is animal, never 1male or 1boy. Preserve its actual species and anatomy in appearance and face_tags. Do not turn an ordinary animal into a human, a person with animal ears, or an anthropomorphic character. An animal without source-established clothing or accessories must have an empty default_outfit array; do not invent clothing, collars or human nudity tags to fill it.
+
+For human characters, use 1girl for female presentation, 1boy for boy/young-man presentation, or 1male for adult male presentation. The supplied furry, futanari, monster and monster girl options are available when the source establishes that identity; furry options describe anthropomorphic characters, not ordinary animals. Use narrative evidence first; infer a coherent choice only if unspecified. Do not emit a new dropdown value.
+
+Return one JSON object, with exactly one entry for each requested name, copied verbatim:
+{"characters":[{"name":"exact candidate name","gender_tag":"1girl","appearance":["long black hair","slender build"],"default_outfit":["blue coat","white shirt"],"face_tags":["oval face","long black hair"],"eye_tags":["brown eyes"],"visual_context":"A concise English description of this character's reusable visual design."}]}

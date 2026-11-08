@@ -1,6 +1,7 @@
 """Bot LoRA feedback training through the existing training and LLM queues."""
 
 from app_paths import data_root
+from lora_paths import bot_lora_load_path
 
 import asyncio
 import base64
@@ -222,7 +223,7 @@ async def run_feedback(manager, item):
     max_rounds = params.get("max_rounds", 3)
     analyze_only = params.get("action") == "analyze"
     config = manager.get_config()
-    load_path = config.get("bot_lora_load_path") or str(Path(config.get("lora_load_path", "")) / "SOYA_BOT_LORA")
+    load_path = bot_lora_load_path(config)
     completed, errors = [], []
     training_item = None
     try:

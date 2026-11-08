@@ -126,7 +126,7 @@ class ResumableDownloader:
         self,
         target: Path,
         expected_size: int,
-        expected_sha256: str,
+        expected_sha256: str | None,
         cancel_event: Event,
         progress: ProgressCallback | None,
     ) -> DownloadResult | None:
@@ -149,7 +149,7 @@ class ResumableDownloader:
             },
         )
         actual_hash = sha256_file(target, cancel_event)
-        if actual_hash != expected_sha256:
+        if expected_sha256 is not None and actual_hash != expected_sha256:
             self._move_invalid(
                 target,
                 f"SHA-256 불일치 expected={expected_sha256}, actual={actual_hash}",
@@ -163,18 +163,18 @@ class ResumableDownloader:
         url: str,
         target: str | os.PathLike[str],
         expected_size: int,
-        expected_sha256: str,
+        expected_sha256: str | None,
         headers: Mapping[str, str] | None = None,
         cancel_event: Event | None = None,
         progress: ProgressCallback | None = None,
     ) -> DownloadResult:
         target_path = Path(target).resolve()
         cancel = cancel_event or Event()
-        expected_hash = expected_sha256.lower()
+        expected_hash = expected_sha256.lower() if expected_sha256 is not None else None
         safe_url = redact_url(url)
         if expected_size <= 0:
             raise DownloadError(f"예상 파일 크기가 유효하지 않습니다: {expected_size}")
-        if len(expected_hash) != 64:
+        if expected_hash is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
             raise DownloadError("예상 SHA-256 형식이 유효하지 않습니다.")
 
         try:
@@ -353,7 +353,7 @@ class ResumableDownloader:
                         },
                     )
                     actual_hash = sha256_file(part_path, cancel)
-                    if actual_hash != expected_hash:
+                    if expected_hash is not None and actual_hash != expected_hash:
                         self._move_invalid(
                             part_path,
                             "다운로드 SHA-256 불일치: "

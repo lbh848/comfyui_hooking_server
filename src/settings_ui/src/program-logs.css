@@ -1,0 +1,18 @@
+.program-logs-panel { min-width: 0; }
+.program-logs-panel .panel-header h2 { display: flex; align-items: center; gap: 8px; }
+.program-logs-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding: 18px; }
+.program-logs-toolbar .field { min-width: 180px; }
+.program-log-follow { display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 7px 11px; border: 1px solid var(--control-border); border-radius: 7px; background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 550; white-space: nowrap; }
+.program-log-follow[data-enabled="true"] { border-color: #d8b4c6; background: var(--rose-soft); color: var(--rose-dark); }
+.program-logs-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.program-logs-state { padding: 0 18px 12px; font-size: 12px; color: var(--muted); }
+.program-log-console { margin: 0 18px 18px; padding: 16px; height: max(360px, calc(100dvh - 340px)); overflow: auto; overflow-anchor: none; background: #15151a; color: #e5e5ea; border: 1px solid var(--line); border-radius: 7px; font: 12px/20px Consolas, "Cascadia Mono", ui-monospace, monospace; white-space: pre; tab-size: 4; }
+.program-log-scroll-area { position: relative; }
+.program-log-lines { position: absolute; left: 0; margin: 0; padding: 0; font: inherit; line-height: 20px; white-space: pre; }
+.program-log-error-link { display: inline-block; margin-left: 10px; color: inherit; text-decoration: underline; font-size: 12px; }
+@media (max-width: 640px) {
+  .program-logs-toolbar { padding: 12px; }
+  .program-logs-toolbar .field { flex: 1 1 100%; min-width: 0; }
+  .program-logs-actions { margin-left: 0; }
+  .program-log-console { margin: 0 12px 12px; padding: 10px; }
+}

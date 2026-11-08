@@ -313,7 +313,7 @@ def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
     return [line for index, line in enumerate(lines) if index in keep]
 
 
-def _log_lighbd_history(record: dict) -> None:
+def _log_lighbd_history(record: dict, *, history_path=None) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
     일반 호출 최근 300개와 다중 분리 호출 최근 100개를 유지하며 사람 평가
     사례에 연결된 레코드는 회전 한도와 무관하게 보존한다.
@@ -327,19 +327,20 @@ def _log_lighbd_history(record: dict) -> None:
             f"output_len={len(str(record.get('output') or ''))}"
         )
         return
+    history_path = os.fspath(history_path or LIGHBD_HISTORY_PATH)
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(history_path), exist_ok=True)
         history_backup_dir = os.path.join(
-            os.path.dirname(LIGHBD_HISTORY_PATH),
+            os.path.dirname(history_path),
             "backups",
         )
         os.makedirs(history_backup_dir, exist_ok=True)
-        backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
+        backup_path = os.path.join(history_backup_dir, os.path.basename(history_path) + ".bak")
 
         existing_lines = []
-        if os.path.exists(LIGHBD_HISTORY_PATH):
+        if os.path.exists(history_path):
             try:
-                with open(LIGHBD_HISTORY_PATH, "r", encoding="utf-8") as f:
+                with open(history_path, "r", encoding="utf-8") as f:
                     existing_lines = f.readlines()
                 # 백업
                 with open(backup_path, "w", encoding="utf-8") as bf:
@@ -359,7 +360,7 @@ def _log_lighbd_history(record: dict) -> None:
         existing_lines.append(line)
         existing_lines = _trim_lighbd_history_lines(existing_lines)
 
-        with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as f:
+        with open(history_path, "w", encoding="utf-8") as f:
             f.writelines(existing_lines)
     except Exception as e:
         print(f"[LIGHBD] history 쓰기 실패: {e}")
@@ -451,6 +452,7 @@ def _log_manual_parallel_race(event: dict) -> None:
             "output": str(attempt.get("text") or ""),
             **{key: attempt[key] for key in (
                 "reasoning_tokens", "reasoning_chars", "reasoning_text",
+                "reasoning_tokens_estimated", "tokens_estimated",
             ) if key in attempt},
             "completion_tokens": int(attempt.get("completion_tokens") or 0),
             "prompt_tokens": int(attempt.get("prompt_tokens") or 0),
@@ -587,17 +589,18 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
         return 0
 
 
-def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX) -> list:
+def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX, *, history_path=None, strict: bool = False) -> list:
     """보존된 일반/다중 분리 히스토리를 오래된 → 최신 순(ts 기준)으로 반환한다.
 
     파일 append 순서가 항상 시간순은 아니므로(동시 호출·같은 초 기록 등),
     ts 기준 stable 정렬로 확정한다. 같은 초 내에서는 append 순서(=발생 순서)가
     유지된다. 프론트는 이 결과를 reverse 해 최신 → 오래된 순으로 표시한다.
     """
-    if not os.path.exists(LIGHBD_HISTORY_PATH):
+    history_path = history_path or LIGHBD_HISTORY_PATH
+    if not os.path.exists(history_path):
         return []
     try:
-        with open(LIGHBD_HISTORY_PATH, "r", encoding="utf-8") as f:
+        with open(history_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         records = []
         for ln in lines:
@@ -614,6 +617,8 @@ def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX) -> list:
         return records[-limit:]
     except Exception as e:
         print(f"[LIGHBD] history 읽기 실패: {e}")
+        if strict:
+            raise
         return []
 
 

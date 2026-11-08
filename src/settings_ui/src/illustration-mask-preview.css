@@ -1,0 +1,11 @@
+.illust-mask-image { position: relative; isolation: isolate; min-width: 0; background: #020617; border-radius: 6px; overflow: hidden; }
+.illust-mask-image > button { display: block; position: relative; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.illust-mask-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.illust-mask-image .illust-mask-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.illust-mask-image > .field-help { display: block; padding: 16px; color: #cbd5e1; }
+.illust-mask-controls, .illust-mask-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; font-size: 11px; }
+.illust-mask-controls label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.illust-mask-controls input[type="checkbox"] { width: 14px; height: 14px; min-height: 0; flex: 0 0 14px; padding: 0; margin: 0; accent-color: var(--rose); }
+.illust-mask-controls input:focus-visible { outline: 2px solid var(--rose); outline-offset: 3px; }
+.illust-mask-legend > span { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.illust-mask-legend i { width: 8px; height: 8px; flex-shrink: 0; border-radius: 2px; }

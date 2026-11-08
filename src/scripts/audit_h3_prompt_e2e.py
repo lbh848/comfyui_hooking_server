@@ -23,7 +23,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app_paths import config_root, install_root
+from app_paths import config_root
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -653,7 +653,8 @@ def _select_cases(case_ids: list[str]) -> list[AuditCase]:
 
 
 async def _main_async(args: argparse.Namespace) -> int:
-    config = _read_json(config_root(PROJECT_ROOT) / "config.json")
+    from configuration import config_path, read_config
+    config = read_config(config_root(PROJECT_ROOT) / "settings.json")
     keys = _read_json(config_root(PROJECT_ROOT) / "key" / "llm_keys.json")
 
     # Keep all LLM configuration and concurrency changes process-local. Prevent the
@@ -693,7 +694,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     output_path = (
         Path(args.output).resolve()
         if args.output
-        else install_root(PROJECT_ROOT)
+        else PROJECT_ROOT
         / ".work"
         / "h3_prompt_e2e"
         / f"audit_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"

@@ -1016,7 +1016,6 @@ E2E_PROFILE_BY_BINDING = {
     "anima_only_asset_workflow_source_path": (
         E2E_PROFILE_REFERENCE_DIRECTORY
     ),
-    "qwen_edit_workflow_source_path": E2E_PROFILE_IMAGE_EDIT,
     "anima_inpainting_workflow_source_path": E2E_PROFILE_IMAGE_EDIT,
     "tag_analysis_workflow_source_path": E2E_PROFILE_FACE_TAG,
     "asset_tag_analysis_workflow_source_path": E2E_PROFILE_STANDARD,
@@ -1031,6 +1030,12 @@ E2E_PROFILE_BY_BINDING = {
     ),
     "style_lora_training_workflow_source_paths.sdxl": (
         E2E_PROFILE_TRAINING_SDXL
+    ),
+    "workflow_pack_extra_paths.lora_training_anima_v2": (
+        E2E_PROFILE_TRAINING_ANIMA
+    ),
+    "workflow_pack_extra_paths.style_lora_training_anima_v2": (
+        E2E_PROFILE_TRAINING_ANIMA
     ),
     "face_extract_workflow_source_path": E2E_PROFILE_EMBED_FILTER,
     "debug_workflow_source_path": E2E_PROFILE_STANDARD,
@@ -1102,7 +1107,7 @@ def make_e2e_prompt(
             inputs["height"] = sample_height
         if "batch_size" in inputs and isinstance(inputs["batch_size"], int):
             inputs["batch_size"] = 1
-        if class_type == "md_soya_InstantReferenceLoRA":
+        if class_type in {"md_soya_InstantReferenceLoRA", "md_soya_AnimaReferenceLoRAV2"}:
             inputs["preview_enable"] = False
         if class_type == "SoyaFirstSampler_mdsoya":
             inputs["mask_location"] = "comfy-installer-e2e/region-mask"

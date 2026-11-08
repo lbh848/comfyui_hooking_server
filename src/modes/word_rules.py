@@ -4,10 +4,72 @@ RAW 프롬프트의 섹션 구조를 유지하면서 다음 범위에 규칙을 
 
 - NAME: 치환 규칙만 적용
 - SPEAK: 구조화된 각 발화 줄의 ``NAME:`` 부분에만 치환 규칙 적용
-- SETUP/CHAR/SUPPLEMENT: 치환, 제거, 가중치 조정 규칙 적용
+- SETUP/CHAR/SUPPLEMENT: LLM 가중치 클램프 후 치환, 제거, 가중치 조정 규칙 적용
 """
 
+import math
 import re
+
+
+DEFAULT_WEIGHT_CLAMP_RULE = {
+    "id": "weight_clamp", "type": "weight_clamp", "enabled": True, "clamp_value": 1.1,
+}
+
+
+# Shared defaults for bots that have not saved their own matching rules.
+DEFAULT_WORD_RULES = [
+    dict(DEFAULT_WEIGHT_CLAMP_RULE),
+    {"id": "default_safe", "type": "replace", "enabled": True, "source": "safe", "target": "", "single_character_only": False},
+    {"id": "default_closed_eyes_eyes", "type": "remove", "enabled": True, "trigger": "closed eyes", "pattern": "* eyes", "remove_trigger": False, "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_closed_eyes_pupils", "type": "remove", "enabled": True, "trigger": "closed eyes", "pattern": "* pupils", "remove_trigger": False, "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_eyes_closed_eyes", "type": "remove", "enabled": True, "trigger": "eyes closed", "pattern": "* eyes", "remove_trigger": False, "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_eyes_closed_pupils", "type": "remove", "enabled": True, "trigger": "eyes closed", "pattern": "* pupils", "remove_trigger": False, "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_eyes_closed_override", "type": "char_eye_replace", "enabled": True, "trigger": "eyes closed", "target": "closed eyes", "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_closed_eyes_override", "type": "char_eye_replace", "enabled": True, "trigger": "closed eyes", "target": "closed eyes", "single_character_only": True, "exclude": ["half-closed eyes"]},
+    {"id": "default_red_ears", "type": "replace", "enabled": True, "source": "red ears", "target": "ears", "single_character_only": False},
+]
+
+
+def normalize_word_rules(rules: list[dict], *, fallback_rules: list[dict] | None = None) -> list[dict]:
+    """Keep one immutable clamp identity first, preserving its saved controls."""
+    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+        raise ValueError("단어 기반 규칙 목록을 확인하세요.")
+
+    def is_clamp(rule):
+        return rule.get("type") == "weight_clamp" or rule.get("id") == "weight_clamp"
+
+    fallback = next((rule for rule in (fallback_rules or []) if is_clamp(rule)), DEFAULT_WEIGHT_CLAMP_RULE)
+    clamp = next((rule for rule in rules if is_clamp(rule)), fallback)
+    enabled = clamp.get("enabled", True)
+    value = clamp.get("clamp_value", DEFAULT_WEIGHT_CLAMP_RULE["clamp_value"])
+    if not isinstance(enabled, bool):
+        raise ValueError("가중치 클램프 사용 여부를 확인하세요.")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0.1 <= value <= 5:
+        raise ValueError("클램프 수치는 0.1~5 사이의 숫자로 입력하세요.")
+    return [
+        {**DEFAULT_WEIGHT_CLAMP_RULE, "enabled": enabled, "clamp_value": float(value)},
+        *(rule for rule in rules if not is_clamp(rule)),
+    ]
+
+
+def clamp_weights(prompt: str, clamp_value: float) -> str:
+    """Limit explicit prompt weights while preserving their sign."""
+    def replacer(match):
+        weight = float(match.group(1))
+        if abs(weight) > clamp_value:
+            clamped = math.copysign(clamp_value, weight)
+            return f":{clamped})"
+        return match.group(0)
+
+    return re.sub(r':(-?\d+(?:\.\d+)?)\)', replacer, prompt)
+
+
+def apply_weight_clamp(prompt: str, rules: list[dict]) -> str:
+    """Clamp only an unassembled LLM prompt, before user rules and settings."""
+    clamp_rule = next((rule for rule in rules if rule.get("type") == "weight_clamp"), None)
+    if not clamp_rule or clamp_rule.get("enabled") is False:
+        return prompt
+    return clamp_weights(prompt, clamp_rule["clamp_value"])
 
 
 _SECTION_MARKER_RE = re.compile(r"^\[([A-Za-z][A-Za-z0-9_]*)\]", re.IGNORECASE | re.MULTILINE)
@@ -288,7 +350,7 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             continue
 
         rule_type = (rule.get("type") or "replace").strip().lower()
-        if rule_type in {"insert", _CHARACTER_ALIAS_RULE_TYPE} or rule_type in _CHAR_TAG_OVERRIDE_MAP:
+        if rule_type in {"weight_clamp", "insert", _CHARACTER_ALIAS_RULE_TYPE} or rule_type in _CHAR_TAG_OVERRIDE_MAP:
             # 삽입/캐릭터 찾기/캐릭터 태그 타입은 각자의 전용 단계에서만 동작.
             continue
         if rule_type == "remove":
@@ -587,8 +649,11 @@ def apply_insert_rules(positive: str, rules: list[dict]) -> tuple[str, int]:
 
 
 def _apply_rules_to_single_prompt(text: str, rules: list[dict]) -> tuple[str, int]:
-    transformed, _unused_negative, applied = apply_prompt_rules(text, "", rules)
-    return transformed, applied
+    # This path receives LLM sections before parse_sections adds card tags and
+    # before the builders merge drawing settings. User weight rules run after it.
+    clamped = apply_weight_clamp(text, rules)
+    transformed, _unused_negative, applied = apply_prompt_rules(clamped, "", rules)
+    return transformed, applied + int(clamped != text)
 
 
 def apply_speak_name_replacements(speak_text: str, rules: list[dict]) -> tuple[str, int]:

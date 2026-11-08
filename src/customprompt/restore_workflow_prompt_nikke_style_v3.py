@@ -148,13 +148,10 @@ def _build_v2_prompt() -> dict:
 async def run() -> dict:
     config = {}
     try:
-        config_path = os.path.join(CONFIG_DIR, "config.json")
-        config_path = os.path.normpath(config_path)
-        if os.path.isfile(config_path):
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
+        from configuration import read_config
+        config = read_config(os.path.join(CONFIG_DIR, "settings.json"))
     except Exception as e:
-        print(f"[RESTORE_V3] config.json 로드 실패: {e}")
+        print(f"[RESTORE_V3] settings.json 로드 실패: {e}")
 
     # 모듈 ON/OFF 대신 프롬프트 입력 형식(prompt_format) 값으로 분기.
     # v1 → ILXL/UPSCALE 통과용, v3(기본) → 삽화 빌드본.

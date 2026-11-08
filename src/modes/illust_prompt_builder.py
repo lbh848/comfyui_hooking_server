@@ -19,47 +19,8 @@ from collections import deque
 import time
 
 from modes.word_rules import apply_insert_rules_to_quality_parts
-
-
-_ANONYMOUS_FRAGMENT_NEGATIVE_CONFLICTS = frozenset({
-    "extra person",
-})
-FIRST_PASS_SINGLE_V5_PRESET = "배포_1차 싱글 V5"
-
-
-def allows_anonymous_fragment_negative_relaxation(
-    bot: dict | None,
-    requested: bool,
-) -> bool:
-    """Scope the relaxation to the approved First-Pass Single V5 contract."""
-    return (
-        bool(requested)
-        and isinstance(bot, dict)
-        and str(bot.get("system_prompt_preset") or "").strip()
-        == FIRST_PASS_SINGLE_V5_PRESET
-    )
-
-
-def filter_anonymous_fragment_negative_conflicts(
-    values,
-    enabled: bool,
-) -> list[str]:
-    """Drop only preset negatives that directly contradict an approved fragment pose."""
-    source = values if isinstance(values, list) else []
-    normalized = [str(value).strip() for value in source if str(value).strip()]
-    if not enabled:
-        return normalized
-    filtered = [
-        value
-        for value in normalized
-        if value.casefold() not in _ANONYMOUS_FRAGMENT_NEGATIVE_CONFLICTS
-    ]
-    removed = [value for value in normalized if value not in filtered]
-    print(
-        "[ILLUST:PROMPT] 익명 상호작용 조각과 충돌하는 프리셋 음성 태그 제외: "
-        f"removed={removed}, kept={len(filtered)}"
-    )
-    return filtered
+from preset_catalog import resolve_preset_tags
+from lora_paths import ASSET_LORA_FOLDER
 
 
 # ─── 로깅 ──────────────────────────────────────────────────
@@ -117,7 +78,7 @@ def sync_multi_char_shared_tags(positive: str) -> str:
 def log_illust_build(raw_positive: str, word_replaced_raw: str,
                      sections: dict, detected: list,
                      word_replaced: dict, final_positive: str, final_negative: str,
-                     context: str = ""):
+                     context: str = "", submitted_prompt: dict | None = None):
     """삽화 프롬프트 생성 로그 기록."""
     log_entry = {
         "timestamp": time.time(),
@@ -133,6 +94,7 @@ def log_illust_build(raw_positive: str, word_replaced_raw: str,
         "detected_characters": detected,
         "final_positive": final_positive,
         "final_negative": final_negative,
+        "submitted_prompt": submitted_prompt,
     }
     _illust_build_logs.append(log_entry)
     print(f"[ILLUST_LOG] 생성 로그 기록: detected={detected}, "
@@ -244,7 +206,7 @@ class IllustPromptBuilder:
             return char_section
 
         # 1. Name에서 후보 이름 추출 (쉼표 분리)
-        raw_names = [n.strip() for n in name_section.split(",") if n.strip()]
+        raw_names = [n.strip().strip('\"“”').strip() for n in name_section.split(",") if n.strip()]
         if not raw_names:
             return char_section
 
@@ -675,7 +637,7 @@ class IllustPromptBuilder:
         }
         detected = []
         for raw in raw_names:
-            raw_key = raw.casefold()
+            raw_key = raw.strip('\"“”').strip().casefold()
             match = canonical_by_key.get(raw_key) or alias_map.get(raw_key)
             if match and match not in detected:
                 detected.append(match)
@@ -808,7 +770,7 @@ class IllustPromptBuilder:
     def _resolve_lora_path(lora: dict) -> str:
         """source에 따라 lora_path에 올바른 접두사를 적용한다.
 
-        - asset: SOYA_CHAR_LORA\\<lora_path>
+        - asset: SOYA_CHAR_LORA\\SOYA_ASSET_LORA\\<lora_path>
         - bot:    SOYA_CHAR_LORA\\SOYA_BOT_LORA\\<lora_path>
         - instance: SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\<lora_path>
         - style:  SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\<lora_path>
@@ -819,6 +781,10 @@ class IllustPromptBuilder:
         """
         source = lora.get("source", "asset")
         raw = lora.get("lora_path", "")
+
+        # The V6 resource library already returns a path relative to models/loras.
+        if source == "library":
+            return raw
 
         # 봇 LoRA: 파일명만 저장된 구버전 호환
         if source == "bot":
@@ -852,7 +818,7 @@ class IllustPromptBuilder:
             return f"SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\{raw}"
 
         # asset
-        return f"SOYA_CHAR_LORA\\{raw}"
+        return f"SOYA_CHAR_LORA\\{ASSET_LORA_FOLDER}\\{raw}"
 
     def build_positive_prompt(
         self,
@@ -994,27 +960,20 @@ class IllustPromptBuilder:
                     })
 
         # ─── 아티스트 프리셋 태그 ───
-        artist_presets = tags.get("artist_presets", {})
         anima_artist_preset_name = settings.get("anima_artist_preset", "")
         sdxl_artist_preset_name = settings.get("sdxl_artist_preset", "")
 
-        anima_artist_tags = artist_presets.get(anima_artist_preset_name, [])
-        sdxl_artist_tags = artist_presets.get(sdxl_artist_preset_name, [])
+        anima_artist_tags = resolve_preset_tags(tags, "artist_presets", anima_artist_preset_name)
+        sdxl_artist_tags = resolve_preset_tags(tags, "artist_presets", sdxl_artist_preset_name)
 
-        # ─── 품질 태그 (프리셋 우선, 없으면 직접 태그) ───
-        quality_presets = tags.get("quality_presets", {})
+        # Only the selected quality presets contribute tags.
         anima_quality_preset_name = settings.get("anima_quality_preset", "")
         sdxl_quality_preset_name = settings.get("sdxl_quality_preset", "")
 
-        if anima_quality_preset_name and anima_quality_preset_name in quality_presets:
-            anima_quality_tags = quality_presets[anima_quality_preset_name]
-        else:
-            anima_quality_tags = tags.get("anima_quality", [])
-
-        if sdxl_quality_preset_name and sdxl_quality_preset_name in quality_presets:
-            quality_tags = quality_presets[sdxl_quality_preset_name]
-        else:
-            quality_tags = tags.get("quality", [])
+        anima_quality_tags = resolve_preset_tags(tags, "quality_presets", anima_quality_preset_name)
+        quality_tags = resolve_preset_tags(tags, "quality_presets", sdxl_quality_preset_name)
+        anima_background_tags = resolve_preset_tags(tags, "background_presets", settings.get("anima_background_preset", ""))
+        sdxl_background_tags = resolve_preset_tags(tags, "background_presets", settings.get("sdxl_background_preset", ""))
 
         # ─── ANIMA 품질 파트 (품질 태그만) ───
         anima_quality_parts = []
@@ -1065,8 +1024,10 @@ class IllustPromptBuilder:
                                       multi_char_context.get("char_inform") or []))
         for char_name in detected_chars:
             char_data = next((c for c in characters if c["name"] == char_name), {})
-            person_type = re.fullmatch(r"(?:1)?(girl|boy|other)",
-                                      self._top_level_tag_core(char_data.get("gender_tag", "")))
+            person_type = next((
+                match for tag in self._split_top_level_tags(char_data.get("gender_tag", ""))
+                if (match := re.fullmatch(r"(?:1)?(girl|boy|other)", self._top_level_tag_core(tag)))
+            ), None)
             if person_type:
                 person_types[char_name] = person_type.group(1)
                 continue
@@ -1120,9 +1081,9 @@ class IllustPromptBuilder:
         anima_quality_parts, sdxl_quality_parts, applied_insert_rules = (
             apply_insert_rules_to_quality_parts(
                 anima_quality_parts,
-                anima_trigger_clean + anima_artist_parts + anima_content_core,
+                anima_trigger_clean + anima_artist_parts + anima_background_tags + anima_content_core,
                 sdxl_quality_parts,
-                sdxl_trigger_clean + sdxl_artist_parts + sdxl_content_core,
+                sdxl_trigger_clean + sdxl_artist_parts + sdxl_background_tags + sdxl_content_core,
                 insert_rules or [],
             )
         )
@@ -1133,14 +1094,11 @@ class IllustPromptBuilder:
             )
 
         # Prepare a complete whole-image prompt before any later mask skip.
-        # Replace count tags from all assembled parts (including local counts)
-        # with one aggregate. Its person types also replace redundant standalone
-        # girl/boy/other tags; preserve phrases that merely contain those words.
+        # Normalize only generated scene counts. Selected presets and LoRA
+        # triggers are user inputs and must never be rewritten here.
         if whole_count_tags and len(person_types) == len(detected_chars):
             removed_counts = []
-            for parts in (anima_trigger_clean, sdxl_trigger_clean, anima_artist_parts,
-                          sdxl_artist_parts, anima_quality_parts, sdxl_quality_parts,
-                          anima_content_core, sdxl_content_core):
+            for parts in (anima_content_core, sdxl_content_core):
                 for index, value in enumerate(parts):
                     cleaned_segments = []
                     for segment in value.split("|"):
@@ -1158,6 +1116,9 @@ class IllustPromptBuilder:
             sdxl_content_core.insert(0, ", ".join(whole_count_tags))
             print(f"[ILLUST_COUNT] 전체용 인원수 조립: characters={detected_chars!r}, "
                   f"counts={whole_count_tags!r}, replaced={removed_counts!r}")
+
+        anima_content_core[:0] = [t.strip() for t in anima_background_tags if t.strip()]
+        sdxl_content_core[:0] = [t.strip() for t in sdxl_background_tags if t.strip()]
 
         # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
         anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
@@ -1311,6 +1272,7 @@ class IllustPromptBuilder:
                 # CALL2의 setup/char/supplement가 서로 섞여 있어도 마스크 LLM이
                 # 의미 기준으로 분리한 배경만 setup 위치에 넣는다. 원문을 다시
                 # 더하면 캐릭터 복장/자세가 전역으로 새므로 사용하지 않는다.
+                background_prompt = ", ".join([*anima_background_tags, background_prompt])
                 shared_before.append(background_prompt)
                 shared_after = []
                 char_trigger_list = [
@@ -1386,7 +1348,12 @@ class IllustPromptBuilder:
         positive += "\n" + json.dumps(multi_payload, ensure_ascii=False)
         positive += "\n[SNAPREF]\n" + json.dumps({
             "enabled": bool(settings.get("snapref_enabled", False)),
-            "strength": settings.get("snapref_strength", 0.0),
+            "preprocess": settings.get("snapref_preprocess", "none"),
+            "strength": settings.get("snapref_strength", 1.0),
+            "strength_scale": "linear",
+            "fidelity": settings.get("snapref_fidelity", 1.0),
+            "secondary_reference": settings.get("snapref_secondary_reference", "none"),
+            "model": "snapref_v2a_pre2.safetensors",
             "mode": settings.get("snapref_mode", "char"),
             "megapixels": settings.get("snapref_megapixels", 1.0),
         }, ensure_ascii=False)
@@ -1449,8 +1416,7 @@ class IllustPromptBuilder:
 
     @staticmethod
     def build_negative_prompt(tags: dict, settings: dict = None,
-                              detected_chars: list = None, bot: dict = None,
-                              *, allow_anonymous_fragment: bool = False) -> str:
+                              detected_chars: list = None, bot: dict = None) -> str:
         """최종 부정 프롬프트 빌드.
 
         ANIMA/SDXL의 이미지 부정 프리셋만 조립한다.
@@ -1459,27 +1425,17 @@ class IllustPromptBuilder:
         """
         if settings is None:
             settings = {}
-        negative_presets = tags.get("negative_presets", {})
-
         # ANIMA 부정: ANIMA 부정 프리셋
         anima_neg_preset_name = settings.get("anima_negative_preset", "")
-        anima_n_tags = negative_presets.get(anima_neg_preset_name, tags.get("anima_negative", []))
+        anima_n_tags = resolve_preset_tags(tags, "negative_presets", anima_neg_preset_name)
 
-        anima_neg_parts = filter_anonymous_fragment_negative_conflicts(
-            anima_n_tags,
-            allow_anonymous_fragment,
-        )
         # SDXL 부정: SDXL 부정 프리셋
         sdxl_neg_preset_name = settings.get("sdxl_negative_preset", "")
-        sdxl_n_tags = negative_presets.get(sdxl_neg_preset_name, tags.get("negative", []))
+        sdxl_n_tags = resolve_preset_tags(tags, "negative_presets", sdxl_neg_preset_name)
 
-        sdxl_neg_parts = filter_anonymous_fragment_negative_conflicts(
-            sdxl_n_tags,
-            allow_anonymous_fragment,
-        )
-        negative = ", ".join(anima_neg_parts)
+        negative = ", ".join(anima_n_tags)
         negative += "\n[SDXL]"
-        negative += "\n" + ", ".join(sdxl_neg_parts)
+        negative += "\n" + ", ".join(sdxl_n_tags)
 
         return negative
 
@@ -1499,6 +1455,9 @@ class IllustPromptBuilder:
                 character for character in (characters or [])
                 if str(character.get("name") or "") == str(char_name)
             ), {})
+            if (char_data.get("_npc_pending")
+                    or char_data.get("npc_face_source") == "representative_mask_tracking"):
+                continue
             profile_id = str(char_data.get("_visual_profile_id") or "").strip()
             use_profile_embedding = bool(
                 char_data.get("_use_profile_embedding")
@@ -1628,7 +1587,8 @@ class IllustPromptBuilder:
             gender_tag = char_data.get("gender_tag", "")
             if gender_tag:
                 face_tag_list = [t.strip() for t in face_tags.split(",") if t.strip()]
-                face_tag_list = [t for t in face_tag_list if t != gender_tag]
+                gender_tags = {t.strip().casefold() for t in gender_tag.split(",") if t.strip()}
+                face_tag_list = [t for t in face_tag_list if t.casefold() not in gender_tags]
                 face_tags = gender_tag + ", " + ", ".join(face_tag_list) if face_tag_list else gender_tag
 
             items.append({
@@ -1659,6 +1619,8 @@ class IllustPromptBuilder:
                 character for character in (characters or [])
                 if str(character.get("name") or "") == str(char_name)
             ), {})
+            if char_data.get("_npc_pending"):
+                continue
             profile_id = str(char_data.get("_visual_profile_id") or "").strip()
             use_profile_embedding = bool(
                 char_data.get("_use_profile_embedding")
@@ -1673,6 +1635,15 @@ class IllustPromptBuilder:
                 ipa_path = f"soya_bot/{bot_name}/{char_name}/cache.ipadpt"
             items.append({
                 "ipa_path": ipa_path,
+                "snapref_path": (f"soya_bot/{bot_name}/{char_name}/_visual_profiles/{profile_id}"
+                                 if profile_id and not char_data.get("_visual_profile_is_primary", False)
+                                 else f"soya_bot/{bot_name}/{char_name}"),
+                # The bot project owns these files; SnapRef reads them directly and
+                # never needs the data-patched input folder.
+                "snapref_images": [
+                    str(image).strip() for image in (char_data.get("rep_images") or [])
+                    if isinstance(image, str) and image.strip()
+                ],
                 "str": face_id_str,
                 "CHAR": char_name
             })

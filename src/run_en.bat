@@ -10,7 +10,7 @@ set "TEMP=%CD%\.tools\tmp"
 set "TMP=%CD%\.tools\tmp"
 chcp 65001 >nul 2>&1
 set "PYTHONUTF8=1"
-set "PYTHONIOENCODING=utf-8"
+set "PYTHONIOENCODING=utf-8:backslashreplace"
 
 :: Reject duplicate launches before setup or Python startup callbacks can run.
 powershell -NoProfile -Command "$client = [Net.Sockets.TcpClient]::new(); try { if ($client.ConnectAsync('127.0.0.1', 8189).Wait(300)) { exit 0 }; exit 1 } catch { exit 1 } finally { $client.Dispose() }"
@@ -62,9 +62,9 @@ if errorlevel 1 (
     goto :end
 )
 
-:: Windows GPU 가속: onnxruntime-directml 은 pyproject.toml 에 선언되어
-:: uv sync 로 함께 설치됨(DirectML = NVIDIA/AMD/Intel 공통 GPU, 없으면 자동 CPU 폴백).
-:: 별도 runtime 설치 분기는 의존성 충돌(onnxruntime vs -directml)을 유발해 제거.
+:: Windows GPU acceleration: pyproject.toml declares onnxruntime-directml.
+:: uv sync installs it for NVIDIA/AMD/Intel GPUs, with automatic CPU fallback.
+:: Avoid separate runtime installation to prevent onnxruntime package conflicts.
 
 echo [4/7] Checking project-local video tools...
 "%UV_EXE%" run --no-sync python ensure_video_tools.py

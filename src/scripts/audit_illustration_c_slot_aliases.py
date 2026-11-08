@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from app_paths import config_root, data_root, install_root
+from app_paths import config_root, data_root
 
 
 async def main():
@@ -21,7 +21,7 @@ async def main():
     import illustration_flow
     from audit_illustration_wardrobe_e2e import _load_llm_runtime
 
-    directory = install_root(ROOT) / ".work/c_slot_aliases" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    directory = ROOT / ".work/c_slot_aliases" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     directory.mkdir(parents=True, exist_ok=False)
     def save(name, value):
         (directory / name).write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
@@ -42,7 +42,8 @@ async def main():
     save("recorded_input.json", {"source_execution_id": selection["execution_id"], "source_call1_id": call1["execution_id"], "target_slotted": slotted})
     save("select_input.json", {"messages": messages, "mapping": mapping})
 
-    config = json.loads((config_root(ROOT) / "config.json").read_text(encoding="utf-8"))
+    from configuration import config_path, read_config
+    config = read_config(config_root(ROOT) / "settings.json")
     keys = json.loads((config_root(ROOT) / "key/llm_keys.json").read_text(encoding="utf-8"))
     llm_service.LOG_DIR = str(directory / "llm_logs")
     llm_service.HISTORY_PATH = str(directory / "llm_logs/llm_history.jsonl")

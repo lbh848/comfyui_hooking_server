@@ -1,10 +1,15 @@
 """
 AssetMode - 에셋 생성 모드
 
-외모/복장/표정은 전역 관리, 캐릭터는 조합만 참조.
+외모/복장/표정 프리셋은 전역 관리, 캐릭터는 기본값과 적용값을 보관.
 """
 
 from app_paths import data_root
+from preset_catalog import load_builtin_presets, preset_catalog_only, resolve_preset_tags
+from json_store import write_json_atomic
+from workflow_cache import copy_workflow_to_cache
+from asset_character_presets import AssetCharacterPresets
+from pathlib import Path
 
 import asyncio
 import json
@@ -61,7 +66,7 @@ PRESET_MGMT_CATEGORIES = [
     "appearances", "outfits", "expressions",
     "quality_presets", "composition_presets",
     "negative_presets", "character_negative_presets",
-    "artist_presets", "natural_language_presets",
+    "artist_presets", "background_presets", "natural_language_presets",
 ]
 # 숨김 관리에서는 일반 프리셋 외에 캐릭터 정의도 활성/숨김 간 이동할 수 있다.
 # 캐릭터는 일반 태그 프리셋 편집기와 데이터 구조가 다르므로 생성/수정 대상인
@@ -101,10 +106,6 @@ DEFAULT_POSE_DATA = {
 }
 
 DEFAULT_TAGS = {
-    "quality": ["masterpiece, best quality"],
-    "composition": [],
-    "negative": ["lowres, bad anatomy, bad hands"],
-    "character_negative": [],
     "appearances": {},
     "outfits": {},
     "expressions": {},
@@ -114,9 +115,8 @@ DEFAULT_TAGS = {
     "negative_presets": {},
     "character_negative_presets": {},
     "artist_presets": {},          # { "name": ["tag1", "tag2"] }
+    "background_presets": {},
     "natural_language_presets": {},  # { "name": "긴 텍스트" }
-    "anima_quality": [],
-    "anima_negative": [],
 }
 
 
@@ -149,14 +149,14 @@ _TRACE_FIELD_MAP = {
 }
 
 
-def _collect_prompt_files() -> list:
+def _collect_prompt_files(asset_dir: str = ASSET_DIR) -> list:
     """asset/ 트리의 모든 *_prompt.json 을 (char, outfit, expr, expr_dir, fname, path) 튜플로 수집.
     순회 1회만 수행하여 total 카운트/스캔 중복 순회를 제거한다."""
     files = []
-    if not os.path.isdir(ASSET_DIR):
+    if not os.path.isdir(asset_dir):
         return files
-    for char_name in os.listdir(ASSET_DIR):
-        char_dir = os.path.join(ASSET_DIR, char_name)
+    for char_name in os.listdir(asset_dir):
+        char_dir = os.path.join(asset_dir, char_name)
         if not os.path.isdir(char_dir):
             continue
         for outfit_name in os.listdir(char_dir):
@@ -197,7 +197,7 @@ def _match_one_prompt(args) -> Optional[dict]:
             match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
             if match_count == 0:
                 match_count = 1
-    elif category in ("quality_presets", "composition_presets", "artist_presets"):
+    elif category in ("quality_presets", "composition_presets", "artist_presets", "background_presets"):
         positive = prompt_data.get("positive", "")
         match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
     elif category in ("negative_presets", "character_negative_presets"):
@@ -270,6 +270,8 @@ class AssetMode:
         self._asset_hash: str = ""
         self._tags: dict = copy.deepcopy(DEFAULT_TAGS)
         self._tags_loaded: bool = False
+        self.character_presets = AssetCharacterPresets(TAGS_FILE)
+        self._tags_file_stamp = None
         self._is_generating: bool = False
         self._lock = asyncio.Lock()
         self._export_video_session_lock = threading.RLock()
@@ -307,12 +309,15 @@ class AssetMode:
         if os.path.isfile(TAGS_FILE):
             try:
                 with open(TAGS_FILE, "r", encoding="utf-8") as f:
-                    self._tags = json.load(f)
+                    stored_tags = json.load(f)
+                self._tags = preset_catalog_only(stored_tags)
                 self._migrate_if_needed()
                 for k, v in DEFAULT_TAGS.items():
                     if k not in self._tags:
                         self._tags[k] = copy.deepcopy(v)
                 self._tags_loaded = True
+                if stored_tags.keys() != self._tags.keys():
+                    self.save_tags()
                 self._log("tags_loaded", {"characters": len(self._tags.get("characters", {}))})
             except Exception as e:
                 self._log("tags_load_error", {"error": str(e)})
@@ -321,6 +326,17 @@ class AssetMode:
         else:
             self._tags = copy.deepcopy(DEFAULT_TAGS)
             self._tags_loaded = True
+        self._tags_file_stamp = self._current_tags_file_stamp()
+        if "업로드이미지" in self._tags.get("characters", {}):
+            self.ensure_upload_character()
+
+    @staticmethod
+    def _current_tags_file_stamp():
+        try:
+            stat = os.stat(TAGS_FILE)
+            return (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            return None
 
     def _migrate_if_needed(self):
         """옛날 구조(캐릭터 하위 appearance/outfits/expressions 딕셔너리) → 새 구조로 변환."""
@@ -359,16 +375,30 @@ class AssetMode:
         if not self._tags_loaded:
             print("[ASSET_MODE] WARNING: save_tags() called before load_tags(). Skipping to prevent data loss.")
             return
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        with open(TAGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._tags, f, indent=2, ensure_ascii=False)
+        self._tags = preset_catalog_only(self._tags)
+        write_json_atomic(Path(TAGS_FILE), self._tags)
+        self._tags_file_stamp = self._current_tags_file_stamp()
+
+    def get_local_tags(self) -> dict:
+        if self._tags_loaded and self._tags_file_stamp != self._current_tags_file_stamp():
+            self.load_tags()
+        return copy.deepcopy(preset_catalog_only(self._tags))
 
     def get_tags(self) -> dict:
-        return copy.deepcopy(self._tags)
+        tags = self.get_local_tags()
+        scopes = {}
+        builtin = load_builtin_presets()
+        builtin["characters"] = self.character_presets.builtin()
+        for category in set(builtin) | set(tags):
+            presets, local = builtin.get(category, {}), tags.get(category, {})
+            scopes[category] = {**dict.fromkeys(presets, "builtin"), **dict.fromkeys(local, "local")}
+            tags[category] = {**presets, **local}
+        tags["preset_scopes"] = scopes
+        return tags
 
     # ─── 전역 외모 관리 ──────────────────────────────────
     def list_appearances(self) -> list[str]:
-        return list(self._tags.get("appearances", {}).keys())
+        return list(self.get_tags().get("appearances", {}).keys())
 
     def add_appearance(self, name: str) -> dict:
         if not name.strip():
@@ -423,7 +453,7 @@ class AssetMode:
 
     # ─── 전역 복장 관리 ──────────────────────────────────
     def list_outfits(self) -> list[str]:
-        return list(self._tags.get("outfits", {}).keys())
+        return list(self.get_tags().get("outfits", {}).keys())
 
     def add_outfit(self, name: str) -> dict:
         if not name.strip():
@@ -478,7 +508,7 @@ class AssetMode:
 
     # ─── 전역 표정 관리 ──────────────────────────────────
     def list_expressions(self) -> list[str]:
-        return list(self._tags.get("expressions", {}).keys())
+        return list(self.get_tags().get("expressions", {}).keys())
 
     def add_expression(self, name: str) -> dict:
         if not name.strip():
@@ -531,69 +561,7 @@ class AssetMode:
         self.save_tags()
         return {"success": True}
 
-    # ─── 공통 품질/구도/부정 태그 관리 ──────────────────────
-    def add_quality_tag(self, value: str) -> dict:
-        if value.strip() in [t.strip() for t in self._tags["quality"]]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        self._tags["quality"].append(value)
-        self.save_tags()
-        return {"success": True}
-
-    def remove_quality_tag(self, index: int) -> dict:
-        if index < 0 or index >= len(self._tags["quality"]):
-            return {"success": False, "error": "잘못된 인덱스"}
-        self._tags["quality"].pop(index)
-        self.save_tags()
-        return {"success": True}
-
-    def add_composition_tag(self, value: str) -> dict:
-        tags = self._tags.setdefault("composition", [])
-        if value.strip() in [t.strip() for t in tags]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        tags.append(value)
-        self.save_tags()
-        return {"success": True}
-
-    def remove_composition_tag(self, index: int) -> dict:
-        tags = self._tags.get("composition", [])
-        if index < 0 or index >= len(tags):
-            return {"success": False, "error": "잘못된 인덱스"}
-        tags.pop(index)
-        self.save_tags()
-        return {"success": True}
-
-    def add_negative_tag(self, value: str) -> dict:
-        if value.strip() in [t.strip() for t in self._tags["negative"]]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        self._tags["negative"].append(value)
-        self.save_tags()
-        return {"success": True}
-
-    def remove_negative_tag(self, index: int) -> dict:
-        if index < 0 or index >= len(self._tags["negative"]):
-            return {"success": False, "error": "잘못된 인덱스"}
-        self._tags["negative"].pop(index)
-        self.save_tags()
-        return {"success": True}
-
     # ─── 태그 순서 변경 ──────────────────────────────────
-    def reorder_global_tags(self, category: str, order: list[int] = None, tags: list[str] = None) -> dict:
-        # tags 파라미터로 직접 순서가 지정된 태그 리스트를 받음
-        if tags is not None:
-            self._tags[category] = [t for t in tags if t]
-            self.save_tags()
-            return {"success": True}
-        # 기존 인덱스 방식 (fallback)
-        current = self._tags.get(category, [])
-        if not order or len(order) != len(current):
-            return {"success": False, "error": "순서 길이 불일치"}
-        try:
-            self._tags[category] = [current[i] for i in order]
-        except (IndexError, TypeError):
-            return {"success": False, "error": "잘못된 인덱스"}
-        self.save_tags()
-        return {"success": True}
-
     def reorder_sub_tags(self, sub: str, name: str, order: list[int]) -> dict:
         """sub: appearances / outfits / expressions"""
         group = self._tags.get(sub, {})
@@ -611,7 +579,7 @@ class AssetMode:
 
     # ─── 품질 프리셋 ──────────────────────────────────────
     def get_quality_presets(self) -> dict:
-        return copy.deepcopy(self._tags.get("quality_presets", {}))
+        return self.get_tags().get("quality_presets", {})
 
     def save_quality_preset(self, name: str, tags: list[str]) -> dict:
         if not name.strip():
@@ -630,7 +598,7 @@ class AssetMode:
 
     # ─── 구도 프리셋 ──────────────────────────────────────
     def get_composition_presets(self) -> dict:
-        return copy.deepcopy(self._tags.get("composition_presets", {}))
+        return self.get_tags().get("composition_presets", {})
 
     def save_composition_preset(self, name: str, tags: list[str]) -> dict:
         if not name.strip():
@@ -649,7 +617,7 @@ class AssetMode:
 
     # ─── 부정 프리셋 ──────────────────────────────────────
     def get_negative_presets(self) -> dict:
-        return copy.deepcopy(self._tags.get("negative_presets", {}))
+        return self.get_tags().get("negative_presets", {})
 
     def save_negative_preset(self, name: str, tags: list[str]) -> dict:
         if not name.strip():
@@ -667,23 +635,10 @@ class AssetMode:
         return {"success": True}
 
     # ─── 캐릭터 부정 태그 ──────────────────────────────────
-    def add_character_negative_tag(self, value: str) -> dict:
-        if value.strip() in [t.strip() for t in self._tags.get("character_negative", [])]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        self._tags.setdefault("character_negative", []).append(value)
-        self.save_tags()
-        return {"success": True}
 
-    def remove_character_negative_tag(self, index: int) -> dict:
-        tags = self._tags.get("character_negative", [])
-        if index < 0 or index >= len(tags):
-            return {"success": False, "error": "잘못된 인덱스"}
-        tags.pop(index)
-        self.save_tags()
-        return {"success": True}
 
     def get_character_negative_presets(self) -> dict:
-        return copy.deepcopy(self._tags.get("character_negative_presets", {}))
+        return self.get_tags().get("character_negative_presets", {})
 
     def save_character_negative_preset(self, name: str, tags: list[str]) -> dict:
         if not name.strip():
@@ -700,57 +655,23 @@ class AssetMode:
         self.save_tags()
         return {"success": True}
 
-    # ─── ANIMA 품질 태그 ──────────────────────────────────
-    def add_anima_quality_tag(self, value: str) -> dict:
-        if value.strip() in [t.strip() for t in self._tags.get("anima_quality", [])]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        self._tags.setdefault("anima_quality", []).append(value)
-        self.save_tags()
-        return {"success": True}
-
-    def remove_anima_quality_tag(self, index: int) -> dict:
-        tags = self._tags.get("anima_quality", [])
-        if index < 0 or index >= len(tags):
-            return {"success": False, "error": "잘못된 인덱스"}
-        tags.pop(index)
-        self.save_tags()
-        return {"success": True}
-
-    # ─── ANIMA 부정 태그 ──────────────────────────────────
-    def add_anima_negative_tag(self, value: str) -> dict:
-        if value.strip() in [t.strip() for t in self._tags.get("anima_negative", [])]:
-            return {"success": False, "error": "이미 존재하는 태그"}
-        self._tags.setdefault("anima_negative", []).append(value)
-        self.save_tags()
-        return {"success": True}
-
-    def remove_anima_negative_tag(self, index: int) -> dict:
-        tags = self._tags.get("anima_negative", [])
-        if index < 0 or index >= len(tags):
-            return {"success": False, "error": "잘못된 인덱스"}
-        tags.pop(index)
-        self.save_tags()
-        return {"success": True}
-
-    # ─── 캐릭터 관리 (조합 참조만) ─────────────────────────
+    # ─── 캐릭터 관리 ─────────────────────────
     def add_character(self, name: str) -> dict:
-        if name in self._tags["characters"]:
-            return {"success": False, "error": "이미 존재하는 캐릭터"}
-        self._tags["characters"][name] = {
-            "appearance": "",
-            "outfit": "",
-            "expression": "",
-        }
-        self.save_tags()
+        try:
+            self.character_presets.change({"action": "create", "name": name})
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        self.load_tags()
         self._log("character_added", {"name": name})
         return {"success": True}
 
-    def remove_character(self, name: str) -> dict:
-        if name not in self._tags["characters"]:
-            return {"success": False, "error": "존재하지 않는 캐릭터"}
-        del self._tags["characters"][name]
-        self.save_tags()
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(name))
+    def remove_character(self, name: str, builtin_unlock_token=None) -> dict:
+        try:
+            char_dir = self._asset_delete_path(name)
+            self.character_presets.change({"action": "delete", "name": name, "builtin_unlock_token": builtin_unlock_token})
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        self.load_tags()
         if os.path.isdir(char_dir):
             shutil.rmtree(char_dir)
         # lora_manage.json에서도 해당 캐릭터 제거
@@ -767,18 +688,11 @@ class AssetMode:
         return {"success": True}
 
     def duplicate_character(self, source_name: str, new_name: str) -> dict:
-        if source_name not in self._tags["characters"]:
-            return {"success": False, "error": "존재하지 않는 캐릭터"}
-        if new_name in self._tags["characters"]:
-            return {"success": False, "error": "이미 존재하는 캐릭터"}
-        src = self._tags["characters"][source_name]
-        self._tags["characters"][new_name] = {
-            "appearance": src.get("appearance", ""),
-            "outfit": src.get("outfit", ""),
-            "expression": src.get("expression", ""),
-            "group": src.get("group", ""),
-        }
-        self.save_tags()
+        try:
+            self.character_presets.change({"action": "duplicate", "source": source_name, "name": new_name})
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        self.load_tags()
         # 에셋 폴더 전체 복사
         src_dir = os.path.join(ASSET_DIR, self._safe_dirname(source_name))
         new_dir = os.path.join(ASSET_DIR, self._safe_dirname(new_name))
@@ -794,28 +708,19 @@ class AssetMode:
 
     def update_character(self, name: str, appearance: Optional[str] = None,
                          outfit: Optional[str] = None, expression: Optional[str] = None,
-                         group: Optional[str] = None) -> dict:
-        if name not in self._tags["characters"]:
-            print(f"[ASSET] 캐릭터 수정 실패: 존재하지 않는 캐릭터 name={name!r}, group={group!r}")
-            return {"success": False, "error": "존재하지 않는 캐릭터"}
-        character = self._tags["characters"][name]
-        previous = character.copy()
+                         group: Optional[str] = None, settings: Optional[dict] = None,
+                         builtin_unlock_token=None) -> dict:
+        fields = {key: value for key, value in (("appearance", appearance), ("outfit", outfit),
+                  ("expression", expression), ("group", group), ("settings", settings)) if value is not None}
         try:
-            for key, value in (("appearance", appearance), ("outfit", outfit),
-                               ("expression", expression), ("group", group)):
-                if value is not None:
-                    character[key] = value.strip() if key == "group" else value
-            self.save_tags()
-        except Exception:
-            character.clear()
-            character.update(previous)
-            print(f"[ASSET] 캐릭터 수정 저장 실패: name={name!r}, group={group!r}")
-            traceback.print_exc()
-            raise
+            self.character_presets.change({"action": "save", "name": name, "fields": fields, "builtin_unlock_token": builtin_unlock_token})
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        self.load_tags()
         return {"success": True}
 
     def list_characters(self) -> list[str]:
-        return list(self._tags.get("characters", {}).keys())
+        return list(self.get_tags().get("characters", {}).keys())
 
     def get_characters_representative(self) -> dict[str, dict]:
         """각 캐릭터의 첫 번째 대표이미지 정보를 반환.
@@ -957,11 +862,23 @@ class AssetMode:
         return {"success": True}
 
     def ensure_upload_character(self):
-        """업로드이미지 캐릭터가 tags.json에 없으면 자동 등록."""
+        """Keep the upload storage character hidden without changing its image paths."""
+        self.get_local_tags()
         chars = self._tags.setdefault("characters", {})
-        if "업로드이미지" not in chars:
-            chars["업로드이미지"] = {"appearance": "", "outfit": "", "expression": ""}
-            self.save_tags()
+        hidden = self.load_hidden_tags()
+        hidden_chars = hidden.setdefault("characters", {})
+        if "업로드이미지" in hidden_chars:
+            # An older upload handler may have registered the same character again.
+            if "업로드이미지" in chars:
+                del chars["업로드이미지"]
+                self.save_tags()
+        elif "업로드이미지" in chars:
+            result = self.hide_preset("characters", "업로드이미지")
+            if not result.get("success"):
+                raise ValueError(result.get("error", "업로드이미지 숨김 처리 실패"))
+        else:
+            hidden_chars["업로드이미지"] = {"appearance": "", "outfit": "", "expression": ""}
+            self.save_hidden_tags(hidden)
 
     def get_character(self, name: str) -> dict:
         return copy.deepcopy(self._tags.get("characters", {}).get(name, {}))
@@ -983,7 +900,7 @@ class AssetMode:
         return {"success": True}
 
     def get_artist_presets(self) -> dict:
-        return self._tags.get("artist_presets", {})
+        return self.get_tags().get("artist_presets", {})
 
     # ─── 자연어 프리셋 ────────────────────────────────────
     def save_natural_language_preset(self, name: str, text: str) -> dict:
@@ -1002,11 +919,11 @@ class AssetMode:
         return {"success": True}
 
     def get_natural_language_presets(self) -> dict:
-        return self._tags.get("natural_language_presets", {})
+        return self.get_tags().get("natural_language_presets", {})
 
     # ─── 범용 프리셋 태그 편집 ──────────────────────────────
     VALID_PRESET_TYPES = (
-        "artist_presets", "quality_presets", "negative_presets",
+        "artist_presets", "background_presets", "quality_presets", "negative_presets",
         "composition_presets", "character_negative_presets",
     )
 
@@ -1112,24 +1029,33 @@ class AssetMode:
         snapref_strength: float = 0.0,
         snapref_mode: str = "char",
         snapref_megapixels: float = 1.0,
+        quality_preset: str = "",
+        composition_preset: str = "",
+        negative_preset: str = "",
+        character_negative_preset: str = "",
+        anima_quality_preset: str = "",
+        anima_negative_preset: str = "",
+        background_preset: str = "",
     ) -> tuple[str, str]:
+        tags = self.get_tags()
         asset_workflow_type = workflow_profiles.normalize_asset_workflow_type(
             asset_workflow_type
         )
         capabilities = workflow_profiles.asset_capabilities(asset_workflow_type)
         is_anima = capabilities["anima"]
         is_dual = capabilities["dual"]
-        q_tags = self._tags.get("quality", [])
-        c_tags = self._tags.get("composition", [])
-        app_tags = self._tags.get("appearances", {}).get(appearance, [])
-        outfit_tags = self._tags.get("outfits", {}).get(outfit, [])
-        expr_tags = self._tags.get("expressions", {}).get(expression, [])
-        n_tags = self._tags.get("negative", [])
-        cn_tags = self._tags.get("character_negative", [])
-        artist_tags = self._tags.get("artist_presets", {}).get(artist_preset, [])
-        anima_artist_tags = self._tags.get("artist_presets", {}).get(anima_artist_preset, [])
-        anima_q_tags = self._tags.get("anima_quality", [])
-        anima_n_tags = self._tags.get("anima_negative", [])
+        q_tags = resolve_preset_tags(tags, "quality_presets", quality_preset)
+        c_tags = resolve_preset_tags(tags, "composition_presets", composition_preset)
+        app_tags = tags.get("appearances", {}).get(appearance, [])
+        outfit_tags = tags.get("outfits", {}).get(outfit, [])
+        expr_tags = tags.get("expressions", {}).get(expression, [])
+        background_tags = resolve_preset_tags(tags, "background_presets", background_preset)
+        n_tags = resolve_preset_tags(tags, "negative_presets", negative_preset)
+        cn_tags = resolve_preset_tags(tags, "character_negative_presets", character_negative_preset)
+        artist_tags = resolve_preset_tags(tags, "artist_presets", artist_preset)
+        anima_artist_tags = resolve_preset_tags(tags, "artist_presets", anima_artist_preset)
+        anima_q_tags = resolve_preset_tags(tags, "quality_presets", anima_quality_preset)
+        anima_n_tags = resolve_preset_tags(tags, "negative_presets", anima_negative_preset)
 
         if is_anima:
             # ANIMA 계열: ANIMA 블럭을 만들고, dual 프로필만 ILXL 블럭을 덧붙인다.
@@ -1163,6 +1089,7 @@ class AssetMode:
             for t in outfit_tags:
                 if t.strip():
                     section1_rest.append(t.strip())
+            section1_rest.extend(t.strip() for t in background_tags if t.strip())
             # 자연어
             if natural_language.strip():
                 section1_rest.append(natural_language.strip())
@@ -1192,6 +1119,7 @@ class AssetMode:
             for t in outfit_tags:
                 if t.strip():
                     section2_rest.append(t.strip())
+            section2_rest.extend(t.strip() for t in background_tags if t.strip())
 
             positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
             positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
@@ -1232,6 +1160,7 @@ class AssetMode:
             for t in outfit_tags:
                 if t.strip():
                     positive_parts.append(t.strip())
+            positive_parts.extend(t.strip() for t in background_tags if t.strip())
             # 8. natural language text
             if natural_language.strip():
                 positive_parts.append(natural_language.strip())
@@ -1447,7 +1376,7 @@ class AssetMode:
 
         os.makedirs(MODE_WORKFLOW_DIR, exist_ok=True)
         dest = os.path.join(MODE_WORKFLOW_DIR, os.path.basename(src))
-        shutil.copy2(src, dest)
+        copy_workflow_to_cache(src, dest)
         self._log("workflow_copied", {"src": src, "dest": dest})
 
         try:
@@ -2003,6 +1932,9 @@ class AssetMode:
         snapref_strength: float = 0.0,
         snapref_mode: str = "char",
         snapref_megapixels: float = 1.0,
+        preset_selections: dict | None = None,
+        model_preset: dict | None = None,
+        progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -2034,6 +1966,9 @@ class AssetMode:
                     snapref_strength,
                     snapref_mode,
                     snapref_megapixels,
+                    preset_selections,
+                    model_preset,
+                    progress_callback,
                 )
             finally:
                 self._is_generating = False
@@ -2090,17 +2025,19 @@ class AssetMode:
         snapref_strength: float = 0.0,
         snapref_mode: str = "char",
         snapref_megapixels: float = 1.0,
+        preset_selections: dict | None = None,
+        model_preset: dict | None = None,
+        progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
-        if storage_group == "character_maker" and str(
-            storage_session or ""
-        ) != CHARACTER_MAKER_SINGLE_SESSION_ID:
+        if (storage_group == "character_maker"
+                and str(storage_session or "") != CHARACTER_MAKER_SINGLE_SESSION_ID
+                and not re.fullmatch(r"asset-[0-9a-f]{64}", str(storage_session or ""))):
             error_msg = (
-                f"캐릭터 메이커 단일 영속 세션 ID가 유효하지 않음: {storage_session!r} "
-                f"(예상: {CHARACTER_MAKER_SINGLE_SESSION_ID!r})"
+                f"캐릭터 메이커 저장 세션 ID가 유효하지 않음: {storage_session!r}"
             )
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
@@ -2122,6 +2059,8 @@ class AssetMode:
             workflow_profiles.ASSET_ANIMA_ILXL: self.anima_workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ONLY: self.anima_only_workflow_source_path,
         }[asset_workflow_type]
+        if model_preset:
+            selected_workflow_path = model_preset["config"]["asset_workflow_source_paths"][asset_workflow_type]
         if not selected_workflow_path and asset_workflow_type != workflow_profiles.ASSET_ILXL:
             error_msg = f"{asset_workflow_type} 에셋 워크플로우 소스 경로가 비어 있음"
             print(f"[ASSET] {error_msg}")
@@ -2147,6 +2086,11 @@ class AssetMode:
                 error_msg = "워크플로우 준비 실패 (소스 경로 및 mode_workflow 폴더 모두 탐색 실패)"
                 print(f"[ASSET] {error_msg}")
                 return {"success": False, "error": error_msg}
+
+            if model_preset:
+                from illustration_json import update_workflow_json_settings
+                prepared_api_workflow = update_workflow_json_settings(
+                    prepared_api_workflow, model_preset["workflows"][asset_workflow_type]["fields"])
 
             pose_data = None
             if pose_enabled and pose_id:
@@ -2192,19 +2136,34 @@ class AssetMode:
                     snapref_strength=snapref_strength,
                     snapref_mode=snapref_mode,
                     snapref_megapixels=snapref_megapixels,
+                    **{key: (preset_selections or {}).get(key, "") for key in (
+                        "quality_preset", "composition_preset", "negative_preset",
+                        "character_negative_preset", "anima_quality_preset", "anima_negative_preset", "background_preset",
+                    )},
                 )
             if not positive:
                 return {"success": False, "error": "프롬프트가 비어있음"}
 
-            # 큐에서 준비한 실제 참조 경로를 미리보기 프롬프트에도 반영한다.
-            # FACE_ID_DIR는 IPAdapter 전용으로 보존한다.
+            # Embed original references into JSON at the shared generation boundary.
             effective_snapref = bool(snapref_enabled and workflow_profiles.asset_capabilities(asset_workflow_type)["anima"])
             if snapref_enabled and not effective_snapref:
                 print(f"[ASSET] {asset_workflow_type}에서 지원하지 않는 Ref 이미지 옵션 무시")
-            if effective_snapref and not snapref_dir:
+            from illustration_json import is_illustration_json_workflow
+            json_workflow = is_illustration_json_workflow(prepared_api_workflow)
+            if positive.lstrip().startswith("{") and not json_workflow:
+                return {"success": False, "error": "JSON 에셋 워크플로우를 설치하고 선택해 주세요."}
+            if json_workflow:
+                from asset_json import prepare_asset_prompt
+                positive = prepare_asset_prompt(
+                    positive, negative, snapref_enabled=effective_snapref, snapref_dir=snapref_dir,
+                    snapref_strength=snapref_strength, snapref_mode=snapref_mode,
+                    snapref_megapixels=snapref_megapixels,
+                    reference_job=preset_selections,
+                )
+            if not json_workflow and effective_snapref and not snapref_dir:
                 print(f"[ASSET] Ref 이미지 생성 실패: 참조 경로 없음, character={character!r}")
                 return {"success": False, "error": "Ref 이미지를 선택해 주세요."}
-            if effective_snapref or "[SNAPREF]" in positive or "[SNAPREF_ENABLED]" in positive:
+            if not json_workflow and (effective_snapref or "[SNAPREF]" in positive or "[SNAPREF_ENABLED]" in positive):
                 from modes.llm_prompt_edit import parse_blocks, _replace_or_insert_block
 
                 blocks = parse_blocks(positive)
@@ -2299,6 +2258,8 @@ class AssetMode:
 
             if self.submit_workflow_func:
                 async def _on_progress(value, max_value):
+                    if progress_callback:
+                        await progress_callback(value, max_value)
                     if self.notify_frontend_func:
                         await self.notify_frontend_func("asset_generation_progress", {
                             "value": value, "max": max_value,
@@ -2308,6 +2269,8 @@ class AssetMode:
                 submit_kwargs = {"progress_callback": _on_progress}
                 if modal_input_paths:
                     submit_kwargs["input_paths"] = modal_input_paths
+                # Measure each image independently, after the application queue wait.
+                generation_started = time.perf_counter()
                 img_bytes, error = await self.submit_workflow_func(
                     workflow,
                     **submit_kwargs,
@@ -2395,6 +2358,8 @@ class AssetMode:
                 with open(filepath, "wb") as f:
                     f.write(img_bytes)
 
+            generation_time = round(time.perf_counter() - generation_started, 3)
+            created_at = time.time()
             prompt_record_path = os.path.join(save_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
             try:
                 with open(prompt_record_path, "w", encoding="utf-8") as f:
@@ -2408,6 +2373,8 @@ class AssetMode:
                         "storage_group": storage_group,
                         "storage_outfit": storage_outfit,
                         "stable_model_reuse": stable_model_reuse,
+                        "generation_time": generation_time,
+                        "created_at": created_at,
                     }, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[ASSET] 프롬프트 기록 저장 실패: {prompt_record_path} ({e})")
@@ -2439,6 +2406,7 @@ class AssetMode:
                     "filename": filename,
                     "storage_group": storage_group,
                     "storage_outfit": storage_outfit,
+                    "generation_time": generation_time,
                 })
 
             result = {
@@ -2449,6 +2417,7 @@ class AssetMode:
                 "expression": expression,
                 "storage_group": storage_group,
                 "storage_outfit": storage_outfit,
+                "generation_time": generation_time,
             }
             if storage_group == "character_maker":
                 result["local_path"] = filepath
@@ -3024,6 +2993,9 @@ class AssetMode:
                 "video_width": prompt_data.get("video_width") or 0,
                 "video_height": prompt_data.get("video_height") or 0,
                 "file_size_bytes": os.path.getsize(fpath),
+                "created_at": prompt_data.get("created_at"),
+                "generation_time": prompt_data.get("generation_time"),
+                "mtime": os.path.getmtime(fpath),
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}
@@ -3392,14 +3364,25 @@ class AssetMode:
             return path
         return None
 
+    def _asset_delete_path(self, *names: str) -> Path:
+        """Resolve deletion targets without allowing parent paths or linked directories."""
+        if any(not isinstance(name, str) or not name.strip() for name in names):
+            raise ValueError("삭제할 에셋 폴더를 선택하세요.")
+        parts = [self._safe_dirname(name) for name in names]
+        if any(part in {".", ".."} for part in parts):
+            raise ValueError("삭제할 에셋 폴더 경로가 올바르지 않습니다.")
+        root = Path(ASSET_DIR).resolve()
+        target = root.joinpath(*parts)
+        if target.resolve() != target or not target.is_relative_to(root):
+            raise ValueError("삭제할 에셋 폴더 경로가 올바르지 않습니다.")
+        return target
+
     def delete_combination(self, character: str, outfit: str, expression: str) -> dict:
         """복장×표정 조합 전체(모든 이미지)를 삭제."""
-        img_dir = os.path.join(
-            ASSET_DIR,
-            self._safe_dirname(character),
-            self._safe_dirname(outfit),
-            self._safe_dirname(expression),
-        )
+        try:
+            img_dir = self._asset_delete_path(character, outfit, expression)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         if not os.path.isdir(img_dir):
             return {"success": False, "error": "존재하지 않는 조합"}
         shutil.rmtree(img_dir)
@@ -5293,9 +5276,7 @@ class AssetMode:
 
     def save_hidden_tags(self, data: dict):
         """hidden_tags.json 저장"""
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        with open(HIDDEN_TAGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        write_json_atomic(Path(HIDDEN_TAGS_FILE), data)
 
     def get_hidden_tags(self) -> dict:
         """프리셋매니징용: hidden_tags + 활성 tags 병합 반환"""
@@ -5502,19 +5483,10 @@ class AssetMode:
 
     # ─── 프리셋매니징: 추가 / 수정 ─────────────────────────
     def _parse_managed_preset_value(self, category: str, tags_text: str):
-        """관리 화면 입력값을 저장 형식으로 변환한다. 실패 시 (None, error)를 반환한다."""
+        """Parse editor content into its storage format, including empty presets."""
         if category == "natural_language_presets":
-            text = (tags_text or "").strip()
-            if not text:
-                print("[ASSET_MODE] save_managed_preset: 텍스트가 비어있음")
-                return None, "텍스트를 입력해주세요."
-            return text, None
-
-        tags = self._split_tags_preserving_parens(tags_text or "")
-        if not tags:
-            print("[ASSET_MODE] save_managed_preset: 태그가 비어있음")
-            return None, "태그를 입력해주세요."
-        return tags, None
+            return (tags_text or "").strip(), None
+        return self._split_tags_preserving_parens(tags_text or ""), None
 
     def save_managed_preset(
         self,
@@ -5690,7 +5662,7 @@ class AssetMode:
             return v if isinstance(v, list) else [v]
         return None
 
-    def trace_preset_assets(self, category: str, name: str) -> dict:
+    def trace_preset_assets(self, category: str, name: str, *, asset_dir: str = ASSET_DIR) -> dict:
         """프리셋이 사용된 에셋 이미지를 추적 (스레드풀 병렬 스캔)."""
         if category not in PRESET_MGMT_CATEGORIES:
             print(f"[ASSET_MODE] trace_preset_assets: 지원하지 않는 카테고리 '{category}'")
@@ -5702,7 +5674,7 @@ class AssetMode:
             return {"success": False, "error": f"'{name}'을(를) 찾을 수 없습니다."}
 
         # 파일 목록 1회 수집
-        files = _collect_prompt_files()
+        files = _collect_prompt_files(asset_dir)
         if not files:
             print(f"[ASSET_MODE] trace_preset_assets: asset/ 디렉토리 없음 또는 프롬프트 파일 없음")
             return {"success": True, "results": [], "preset_tags": preset_tags}
@@ -5808,9 +5780,6 @@ class AssetMode:
             "workflow_loaded": self._asset_api_workflow is not None,
             "is_generating": self._is_generating,
             "character_count": len(self._tags.get("characters", {})),
-            "quality_tags": self._tags.get("quality", []),
-            "composition_tags": self._tags.get("composition", []),
-            "negative_tags": self._tags.get("negative", []),
             "quality_presets": self._tags.get("quality_presets", {}),
             "composition_presets": self._tags.get("composition_presets", {}),
         }

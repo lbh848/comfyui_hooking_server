@@ -7,7 +7,7 @@ which only the camera prefix of the RAW ``[SETUP]`` line is changed to
 same isolated history, logs, workflow cache, and usage-accounting environment;
 the camera-pair audit's renderer supplies and verifies the real Comfy seed.
 
-All outputs are written below a new ``.work/illustration_camera_only`` run
+All outputs are written below a new ``src/.work/illustration_camera_only`` run
 directory unless ``--output-dir`` selects another new directory.  Importing
 this module makes no external calls.  Running with ``--check-only`` makes no
 LLM or image call; a normal run makes six local Comfy image calls and no LLM
@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-from app_paths import config_root, install_root
+from app_paths import config_root
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -45,7 +45,7 @@ import audit_illustration_wardrobe_e2e as wardrobe  # noqa: E402
 
 
 DEFAULT_SOURCE = (
-    install_root(PROJECT_ROOT)
+    PROJECT_ROOT
     / ".work"
     / "illustration_camera_pair"
     / "20260905_235635_496617"
@@ -386,7 +386,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     run_dir = (
         Path(args.output_dir).resolve()
         if args.output_dir
-        else install_root(PROJECT_ROOT) / ".work" / "illustration_camera_only" / timestamp
+        else PROJECT_ROOT / ".work" / "illustration_camera_only" / timestamp
     )
     setup_args = argparse.Namespace(
         output_dir=str(run_dir),
@@ -433,7 +433,8 @@ async def _main_async(args: argparse.Namespace) -> int:
 
     import server
 
-    config = wardrobe._read_json(config_root(PROJECT_ROOT) / "config.json")
+    from configuration import config_path, read_config
+    config = read_config(config_root(PROJECT_ROOT) / "settings.json")
     runtime = server._capture_illustration_runtime_snapshot(config)
     configured_target = wardrobe._configured_execution_target(config)
     prerequisites = {

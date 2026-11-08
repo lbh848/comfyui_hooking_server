@@ -1,0 +1,15 @@
+.work-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.work-queue-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.work-queue-row { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); padding: 12px 0; }
+.work-queue-row > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.work-queue-row p { color: var(--muted); font-size: 11px; margin: 4px 0; }
+.work-queue-row progress { width: 100%; accent-color: var(--rose); }
+.work-queue-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; font-size: 14px; }
+.work-queue-heading span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.work-queue-row.failed { align-items: flex-start; }
+.work-queue-error { margin-top: 8px; border: 1px solid var(--rose); border-radius: 8px; overflow: hidden; color: var(--rose); }
+.work-queue-error summary { padding: 8px 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.work-queue-error pre { max-height: 180px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 10px; border-top: 1px solid var(--line); font: inherit; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-queue-error summary:focus-visible, .work-queue-error pre:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+@media (max-width: 760px) { .work-queue-row { flex-wrap: wrap; } }
+@media (max-width: 480px) { .work-queue-content { padding: 14px; } .work-queue-row.failed > div { flex-basis: 100%; } }

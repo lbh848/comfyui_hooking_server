@@ -324,7 +324,7 @@ def should_skip_solo_region_mask(layout: object, settings: dict | None = None) -
         print("[MULTI_CHAR:MASK] 만화의 컷별 인물 영역 유지")
         return False
     settings = settings or {}
-    if not settings.get("single_char_mask_skip_enabled", True):
+    if not settings.get("single_char_mask_skip_enabled", False):
         print("[MULTI_CHAR:MASK] 면적 기준 OFF: 1인 영역의 마스크 유지")
         return False
     region = regions[0]

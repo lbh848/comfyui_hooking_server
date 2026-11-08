@@ -2967,6 +2967,27 @@
         .queue-modal-item.waiting { opacity:0.7; border-color:var(--text3); border-style:dashed; }
         .queue-modal-item.completed { opacity:0.5; }
         .queue-modal-item.failed { border-color:var(--danger, #ef4444); }
+        .queue-modal-item.failed,
+        .asset-queue-item.item-failed { flex-wrap:wrap; }
+        .queue-item-error {
+            flex-basis:100%; min-width:0; margin:2px 0 0; overflow:hidden;
+            color:var(--danger, #ef4444); font-size:0.76rem; line-height:1.5;
+            border:1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, transparent);
+            border-radius:6px;
+        }
+        .queue-item-error summary { padding:6px 8px; cursor:pointer; font-weight:600; }
+        .queue-item-error pre {
+            max-height:180px; overflow:auto; overscroll-behavior:contain;
+            margin:0; padding:8px; border-top:1px solid var(--border); font:inherit;
+            white-space:pre-wrap; overflow-wrap:anywhere;
+        }
+        .queue-item-error summary:focus-visible,
+        .queue-item-error pre:focus-visible { outline:2px solid var(--danger, #ef4444); outline-offset:-2px; }
+        .queue-history { margin-bottom:16px; }
+        .queue-history h3,
+        .queue-history-heading { margin:0; padding:8px 4px; font-size:0.82rem; color:var(--text); }
+        .queue-history h3 span { margin-left:8px; color:var(--text3); font-size:0.7rem; font-weight:400; }
+        .queue-history .qm-label { min-width:0; white-space:normal; overflow-wrap:anywhere; }
         .queue-modal-item.queue-modal-subtask {
             margin-left:28px; padding:7px 10px; background:var(--surface1);
         }
@@ -9634,6 +9655,9 @@
         .tab-group--manage .tab-group-label {
             color: #a391c2;
         }
+        .tab-group--emotion .tab-group-label {
+            color: #d8a36b;
+        }
         .tab-btn {
             position: relative;
             display: inline-flex;
@@ -9748,6 +9772,155 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         #tab-batch-content.active { display: flex; flex-direction: column; min-height: calc(100vh - 60px); }
+
+        /* ─── Comfy 공방 감정 삽화 ─── */
+        .independent-scroll-container.ce-workspace {
+            padding: 22px 24px 104px;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior-y: contain;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+        .ce-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .ce-brand-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            border: 1px solid rgba(216, 163, 107, 0.45);
+            border-radius: 12px;
+            background: linear-gradient(145deg, rgba(216, 163, 107, 0.22), rgba(216, 163, 107, 0.06));
+            color: #f0c28f;
+            font-size: 1.1rem;
+            font-weight: 800;
+        }
+        .ce-header-copy { min-width: 0; }
+        .ce-title {
+            margin: 0;
+            color: var(--text);
+            font-size: 1.12rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+        .ce-subtitle {
+            margin: 4px 0 0;
+            color: var(--text2);
+            font-size: 0.78rem;
+            line-height: 1.55;
+        }
+        .ce-body {
+            display: grid;
+            gap: 16px;
+            max-width: 1180px;
+        }
+        .ce-card {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+            padding: 16px 18px;
+        }
+        .ce-card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .ce-card-head h3 {
+            margin: 0;
+            color: var(--text);
+            font-size: 0.92rem;
+            font-weight: 700;
+        }
+        .ce-card-head p {
+            margin: 5px 0 0;
+            color: var(--text2);
+            font-size: 0.75rem;
+            line-height: 1.6;
+        }
+        .ce-field {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .ce-field label {
+            color: var(--text2);
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+        .ce-field select {
+            min-width: 230px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.8rem;
+        }
+        .ce-hint {
+            margin: 8px 0 0;
+            color: var(--text2);
+            font-size: 0.72rem;
+            line-height: 1.55;
+        }
+        .ce-status {
+            flex: 0 0 auto;
+            color: var(--text2);
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+        .ce-status.is-success { color: #4de2ae; }
+        .ce-status.is-error { color: #ff7b7b; }
+        .ce-prompt-editor {
+            width: 100%;
+            min-height: 360px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.74rem;
+            line-height: 1.6;
+            resize: vertical;
+        }
+        .ce-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .ce-actions .ce-hint { flex: 1 1 220px; margin: 0; }
+        .ce-button {
+            min-height: 32px;
+            padding: 6px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.78rem;
+            cursor: pointer;
+        }
+        .ce-button:hover { border-color: var(--accent); }
+        .ce-button--primary {
+            border-color: rgba(77, 226, 174, 0.5);
+            background: rgba(77, 226, 174, 0.14);
+            color: #d9fff1;
+            font-weight: 700;
+        }
+        .ce-button:disabled { opacity: 0.55; cursor: progress; }
 
         /* ─── 에셋 모드 ─── */
         .asset-container {
@@ -11042,7 +11215,8 @@
             font-weight: 650;
         }
         .qwen-field textarea,
-        .qwen-field input {
+        .qwen-field input,
+        .qwen-field select {
             width: 100%;
             box-sizing: border-box;
             border: 1px solid var(--border);
@@ -13794,18 +13968,31 @@
             display: none;
             position: fixed;
             background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 6px 10px;
-            font-size: 0.78rem;
+            border: 1px solid color-mix(in srgb, var(--border) 60%, var(--accent));
+            border-radius: 8px;
+            padding: 7px 11px;
+            font-size: 0.72rem;
             white-space: normal;
             word-break: break-word;
             max-width: 300px;
             z-index: 450;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            box-shadow: 0 8px 22px rgba(0,0,0,0.42);
             color: var(--text);
-            line-height: 1.4;
+            line-height: 1.45;
             pointer-events: none;
+            animation: ac-tip-in 0.13s ease-out;
+        }
+        .ac-tooltip .ac-tip-name {
+            color: var(--accent);
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-bottom: 2px;
+            word-break: break-all;
+        }
+        .ac-tooltip .ac-tip-desc { color: var(--text); }
+        @keyframes ac-tip-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: none; }
         }
 
         /* ─── "?" 호버 툴팁 (라벨 설명용, 공용) ─── */

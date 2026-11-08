@@ -1,4 +1,4 @@
-"""Update shipped files while retaining local edits and untracked runtime data."""
+"""Update shipped files, retaining local edits except replaceable distribution data."""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,8 @@ from pathlib import Path, PurePosixPath
 import shutil
 import traceback
 import uuid
+
+from update_policy import is_distribution_file, is_user_data
 
 INVENTORY = ".soya-app-files.json"
 
@@ -27,7 +29,7 @@ def inventory(payload: Path) -> None:
     files = {
         file.relative_to(payload).as_posix(): digest(file)
         for file in sorted(payload.rglob("*"))
-        if file.is_file() and file.name != INVENTORY
+        if file.is_file() and file.name != INVENTORY and not is_user_data(file.relative_to(payload).as_posix())
     }
     write_json(payload / INVENTORY, files)
 
@@ -53,8 +55,10 @@ def update(payload: Path, destination: Path) -> list[str]:
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
     incoming = json.loads((payload / INVENTORY).read_text(encoding="utf-8"))
+    incoming = {name: digest for name, digest in incoming.items() if not is_user_data(name)}
     state = safe_target(destination, INVENTORY)
     previous = json.loads(state.read_text(encoding="utf-8")) if state.is_file() else {}
+    previous = {name: digest for name, digest in previous.items() if not is_user_data(name)}
     backup = destination / "data" / "backups" / "app_updates" / uuid.uuid4().hex
     conflicts = []
     for name in sorted(set(previous) | set(incoming)):
@@ -72,7 +76,7 @@ def update(payload: Path, destination: Path) -> list[str]:
         if current is not None and current == incoming.get(name):
             continue
         locally_changed = target.exists() and (current is None or current != previous.get(name))
-        if locally_changed:
+        if locally_changed and not is_distribution_file(name):
             conflicts.append(name)
             print(f"[APP_UPDATE] Local change preserved: {name}")
             if name in incoming:
@@ -80,7 +84,7 @@ def update(payload: Path, destination: Path) -> list[str]:
                 alternate.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, alternate)
             continue
-        if target.is_file():
+        if target.is_file() and not is_distribution_file(name):
             saved = safe_target(destination, (backup / "previous" / name).relative_to(destination).as_posix())
             saved.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(target, saved)

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from app_paths import config_root, data_root
+from configuration import config_path, read_config
 
 import datetime
 import copy
@@ -28,7 +29,7 @@ import traceback
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(config_root(BASE_DIR), "config.json")
+CONFIG_PATH = str(config_path(BASE_DIR))
 BOT_DATA_PATH = os.path.join(data_root(BASE_DIR), "asset_data", "bot.json")
 LOG_PREFIX = "[RESTORE_LLM]"
 
@@ -217,7 +218,7 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
         else "The dialogue array must be empty."
     )
     return (
-        "You create a structured anime illustration scene for an image-generation pipeline.\n"
+        "You create a structured scene description for an image that follows the user's request.\n"
         "The highest priority is complete preservation of every supplied appearance and "
         "outfit detail for each character. Compose the scene around these references. "
         "Only the owner's explicit exclusions authorize removing a conflicting source trait; "
@@ -534,7 +535,7 @@ async def run(
     postprocess_mode: str = "vn",
     character_tags: dict[str, dict] | None = None,
 ) -> dict:
-    config = _read_json(CONFIG_PATH) or {}
+    config = read_config(CONFIG_PATH)
     bot_name = str(config.get("bot_selected") or "").strip()
     if not bot_name:
         print(f"{LOG_PREFIX} bot_selected가 없어 실행할 수 없습니다")

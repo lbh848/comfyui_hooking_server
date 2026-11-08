@@ -12,6 +12,7 @@ Style LoRA(그림체 로라) 매니징 모듈
 """
 
 from app_paths import data_root
+from lora_training_steps import training_step_settings
 
 import datetime
 import hashlib
@@ -24,6 +25,7 @@ import time
 import traceback
 from aiohttp import web
 from modes.lora_name_validation import validate_lora_project_name
+from image_name_search import matches_image_name
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STYLE_LORA_DIR = os.path.join(data_root(BASE_DIR), "style_lora_data")
@@ -262,7 +264,7 @@ def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict 
     return {"success": True}
 
 
-def get_project_detail(project_id: str) -> dict:
+def get_project_detail(project_id: str, *, include_prompts: bool = True) -> dict:
     data = _load_data()
     project_id = _safe_dirname(project_id)
     project = data.get("projects", {}).get(project_id)
@@ -273,7 +275,7 @@ def get_project_detail(project_id: str) -> dict:
     # None means absent; omit read failures so the UI can retain its last value.
     prompts = {}
     missing_count = 0
-    for filename in project.get("images", []):
+    for filename in project.get("images", []) if include_prompts else []:
         prompt_path = os.path.join(_project_dir(project_id), os.path.splitext(filename)[0] + "_prompt.json")
         if not os.path.isfile(prompt_path):
             prompts[filename] = None
@@ -303,6 +305,29 @@ def get_project_detail(project_id: str) -> dict:
             "created_at": project.get("created_at", ""),
         },
     }
+
+
+def get_image_page(project_id: str, offset: int = 0, limit: int = 24, *, test: bool = False, search: str = "") -> dict:
+    """Read captions only for the visible page; the full filename index stays cheap."""
+    detail = get_project_detail(project_id, include_prompts=False)
+    if not detail.get("success"):
+        return detail
+    filenames = detail["data"]["test_images" if test else "images"]
+    if search.strip():
+        filenames = [filename for filename in filenames if matches_image_name(filename, search)]
+    offset = max(0, offset)
+    limit = max(1, min(limit, 24))
+    read_prompt = get_test_image_prompt if test else get_image_prompt
+    rows = []
+    for filename in filenames[offset:offset + limit]:
+        prompt_path = (_test_prompt_path(project_id, filename) if test else
+                       os.path.join(_project_dir(project_id), os.path.splitext(filename)[0] + "_prompt.json"))
+        result = read_prompt(project_id, filename) if os.path.isfile(prompt_path) else {"success": True, "data": {}}
+        if not result.get("success"):
+            return result
+        rows.append({**(result.get("data") or {}), "filename": filename})
+    return {"success": True, "images": rows, "total": len(filenames), "offset": offset,
+            "has_more": offset + len(rows) < len(filenames)}
 
 
 def update_project(project_id: str, trigger: str = None, description: str = None) -> dict:
@@ -816,6 +841,7 @@ def _merged_profile_settings(stored: dict) -> dict:
     except (TypeError, ValueError):
         pass
     merged["upscale"] = bool(merged.get("upscale"))
+    merged.update(training_step_settings(merged, default_mode="total", default_step=125))
     return merged
 
 

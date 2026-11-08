@@ -204,20 +204,21 @@ def farthest_point_sampling(emb: np.ndarray, k: int):
 _job = {}
 
 
-def get_job_status() -> dict:
-    if not _job:
+def get_job_status(project: str = "", job_id: str = "") -> dict:
+    if not _job or (project and _job.get("project") != project) or (job_id and _job.get("id") != job_id):
         return {"status": "idle", "stage": "", "total": 0, "done": 0}
     return dict(_job)
 
 
 def start_filter_job(project: str, mode: str, count: int) -> dict:
     """필터링 잡 시작. 단일 슬롯. 성공 시 {success, job_id}."""
-    if _job.get("status") == "running":
+    if _job.get("status") in ("running", "applying"):
         return {"success": False,
                 "error": "이미 필터링 작업이 실행 중입니다. 완료 후 다시 시도하세요."}
 
     from modes import style_lora_mode
-    detail = style_lora_mode.get_project_detail(project)
+    # Selection needs filenames, not thousands of caption files on the event loop.
+    detail = style_lora_mode.get_project_detail(project, include_prompts=False)
     if not detail.get("success"):
         return {"success": False, "error": detail.get("error", "프로젝트 조회 실패")}
     all_files = detail["data"].get("images", [])
@@ -253,7 +254,7 @@ def start_filter_job(project: str, mode: str, count: int) -> dict:
     print(f"{log_prefix} 잡 시작: project={project} mode={mode} "
           f"count={count} total={total}")
     asyncio.create_task(_run_job(job_id, project, mode, count, all_files))
-    return {"success": True, "job_id": job_id}
+    return {"success": True, "job_id": job_id, **get_job_status()}
 
 
 async def _run_job(job_id, project, mode, count, all_files):
@@ -317,9 +318,34 @@ async def _run_job(job_id, project, mode, count, all_files):
         _job["error"] = f"{type(e).__name__}: {e}"
 
 
-def cancel_filter_job() -> dict:
+async def apply_filter_job(project: str, job_id: str) -> dict:
+    """Apply only this project's completed selection, without blocking status requests."""
+    if not project or not job_id or get_job_status(project, job_id).get("status") != "done":
+        return {"success": False, "error": "적용할 필터링 결과를 다시 확인하세요."}
+    from modes import style_lora_mode
+    _job["status"] = "applying"
+    _job["stage"] = "applying"
+    try:
+        current = await asyncio.to_thread(style_lora_mode.list_images, project)
+        expected = set(_job["selected"]) | set(_job["to_delete"])
+        if set(current) != expected:
+            raise ValueError("이미지 목록이 변경되었습니다. 필터링을 다시 실행하세요.")
+        result = (await asyncio.to_thread(style_lora_mode.delete_images_bulk, project, _job["to_delete"])
+                  if _job["to_delete"] else {"success": True, "deleted": 0, "failed": []})
+        if not result.get("success") or result.get("failed"):
+            raise RuntimeError(result.get("error") or f"이미지 {len(result['failed'])}장 정리에 실패했습니다. 목록을 새로고침하세요.")
+        _job["status"] = "applied"
+        _job["stage"] = "applied"
+        return {"success": True, **get_job_status(project, job_id)}
+    except Exception as exc:
+        _job["status"] = "error"
+        _job["error"] = str(exc)
+        return {"success": False, "error": str(exc)}
+
+
+def cancel_filter_job(project: str = "", job_id: str = "") -> dict:
     """실행 중인 필터링 잡에 중지 요청. 실제 중단은 현재 배치가 끝난 시점(수 초 내)."""
-    if _job.get("status") == "running":
+    if get_job_status(project, job_id).get("status") == "running":
         _cancel.set()
         print(f"{log_prefix} 중지 요청 수신 (현재 배치 완료 후 중단)")
         return {"success": True, "message": "중지 요청됨 (현재 배치 완료 후 중단)"}

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ WORKFLOW_MODE_BYPASS = 4
 
 
 class WorkflowNodeModeError(RuntimeError):
-    """SOYA_USER 워크플로우 노드 모드 일괄 변경 실패."""
+    """관리 워크플로우 노드 모드 일괄 변경 실패."""
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,15 @@ def _sha256(path: Path) -> str:
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     temporary = path.with_name(f"{path.name}.part-{uuid.uuid4().hex[:8]}")
+    original_mode = path.stat().st_mode if path.exists() else None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with temporary.open("xb") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        if original_mode is not None:
+            path.chmod(original_mode | stat.S_IWUSR)
         os.replace(temporary, path)
     except Exception:
         print(
@@ -80,6 +84,9 @@ def _write_bytes_atomic(path: Path, payload: bytes) -> None:
                 )
                 traceback.print_exc()
         raise
+    finally:
+        if original_mode is not None and path.exists():
+            path.chmod(original_mode)
 
 
 def _serialize_workflow(value: dict[str, Any], original: str) -> bytes:
@@ -100,6 +107,12 @@ def _serialize_workflow(value: dict[str, Any], original: str) -> bytes:
     if original.endswith(("\n", "\r")):
         rendered += newline
     return rendered.encode("utf-8")
+
+
+def write_workflow_json(path: Path, value: dict[str, Any]) -> None:
+    """Save a managed workflow while preserving formatting and file protection."""
+    original = path.read_bytes().decode("utf-8-sig")
+    _write_bytes_atomic(path, _serialize_workflow(value, original))
 
 
 def _prepare_workflow(
@@ -124,7 +137,8 @@ def _prepare_workflow(
         matched_nodes = 0
         changed_nodes = 0
         for node in _iter_workflow_nodes(workflow):
-            if node.get("type") != PATCH_SAGE_ATTENTION_NODE_TYPE:
+            node_type = str(node.get("type") or "")
+            if node_type != PATCH_SAGE_ATTENTION_NODE_TYPE and not node_type.startswith("SoyaPathchSageAttentionKJV2_"):
                 continue
             matched_nodes += 1
             effective_mode = node.get("mode", WORKFLOW_MODE_ACTIVE)
@@ -251,8 +265,10 @@ def set_patch_sage_attention_enabled(
     workflow_root: str | os.PathLike[str],
     backup_root: str | os.PathLike[str],
     enabled: bool,
+    workflow_files: tuple[Path, ...] | None = None,
+    backup_enabled: bool = True,
 ) -> dict[str, Any]:
-    """SOYA_USER 전체의 Patch Sage Attention KJ 모드를 일괄 변경한다."""
+    """지정한 워크플로우의 Patch Sage Attention KJ 모드를 변경한다."""
 
     if not isinstance(enabled, bool):
         print(
@@ -268,15 +284,15 @@ def set_patch_sage_attention_enabled(
 
     if not root.is_dir():
         print(
-            "[COMFY_INSTALL][WORKFLOW_MODE] SOYA_USER 폴더 없음: "
+            "[COMFY_INSTALL][WORKFLOW_MODE] 워크플로우 폴더 없음: "
             f"root={root}, action={action}"
         )
         raise WorkflowNodeModeError(
-            f"SOYA_USER 워크플로우 폴더가 없습니다: {root}"
+            f"워크플로우 폴더가 없습니다: {root}"
         )
 
     workflow_files = sorted(
-        root.rglob("*.json"),
+        root.rglob("*.json") if workflow_files is None else workflow_files,
         key=lambda value: value.relative_to(root).as_posix().casefold(),
     )
     if not workflow_files:
@@ -347,12 +363,14 @@ def set_patch_sage_attention_enabled(
         prepared,
         backup_root=backups,
         desired_mode=desired_mode,
-    )
-    result["backup_path"] = str(backup_path)
+    ) if backup_enabled else None
+    result["backup_path"] = str(backup_path) if backup_path else None
     try:
         for item in prepared:
             _write_bytes_atomic(item.source, item.payload)
     except Exception as exc:
+        if backup_path is None:
+            raise WorkflowNodeModeError(f"워크플로우 변경에 실패했습니다: {exc}") from exc
         print(
             "[COMFY_INSTALL][WORKFLOW_MODE] 일괄 변경 실패, 롤백 시작: "
             f"root={root}, backup={backup_path}, error={exc}"

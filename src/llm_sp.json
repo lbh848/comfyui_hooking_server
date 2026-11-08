@@ -1,0 +1,18 @@
+{
+  "id": "llm_sp",
+  "service": "comfy_gemma4",
+  "workflow_name": "배포_공방_Gemma4_이미지분석",
+  "workflow_filename": "배포_공방_Gemma4_이미지분석_V1_0.json",
+  "workflow_binding": "gemma4_workflow_source_path",
+  "node_type": "SoyaGemma4Vision_mdsoya",
+  "model_name": "Gemma 4 12B Uncensored",
+  "quantization": "Q4_K_M",
+  "context_size": 32768,
+  "context_size_step": 8192,
+  "context_size_max": 262144,
+  "reasoning_budgets": [1024, 2048, 4096],
+  "slots": [
+    {"id": "llm_sp", "label": "공방-로컬 LLM (추론)", "alias": "공방-로컬 LLM (추론)", "thinking_mode": "on", "reasoning_budget_tokens": 2048},
+    {"id": "llm_sp2", "label": "공방-로컬 LLM (비추론)", "alias": "공방-로컬 LLM (비추론)", "thinking_mode": "off", "reasoning_budget_tokens": 0}
+  ]
+}

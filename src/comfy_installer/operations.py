@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Mapping
 
+from console_encoding import utf8_subprocess_env
+
 
 class CommandError(RuntimeError):
     """외부 명령 실행 실패."""
@@ -38,7 +40,7 @@ def isolated_subprocess_env(extra: Mapping[str, str] | None = None) -> dict[str,
     env["UV_LINK_MODE"] = "copy"
     if extra:
         env.update({str(key): str(value) for key, value in extra.items()})
-    return env
+    return utf8_subprocess_env(env)
 
 
 def run_command(
@@ -74,7 +76,7 @@ def run_command(
         process = subprocess.Popen(
             command,
             cwd=str(workdir),
-            env=dict(env) if env is not None else isolated_subprocess_env(),
+            env=utf8_subprocess_env(env) if env is not None else isolated_subprocess_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,

@@ -176,10 +176,11 @@ def _descriptor_context(descriptor: dict[str, Any], slot: int) -> str:
 
 
 def _build_image_messages(context: str, entry: dict[str, Any], *, scope: str = IMAGE_SCOPE,
-                          prompts: dict | None = None, candidate_refs: list[dict] | None = None) -> list[dict[str, str]]:
+                          prompts: dict | None = None, candidate_refs: list[dict] | None = None,
+                          workshop: str = "illustration") -> list[dict[str, str]]:
     slot = _slot_number(entry.get("slot"), field="entry slot")
     if scope in {CORRECTION_SCOPE, SELECTION_SCOPE}:
-        prompts = illustration_context_pipeline.load_prompt_files() if prompts is None else prompts
+        prompts = illustration_context_pipeline.load_prompt_files(workshop) if prompts is None else prompts
         descriptor = entry.get("descriptor") or {}
         layout = descriptor.get("multi_char_layout")
         if isinstance(layout, dict):
@@ -1103,6 +1104,7 @@ async def execute_inspection(
     entries: list[dict],
     flow_run_id: str = "",
     individual_results: list[dict[str, Any]] | None = None,
+    workshop: str = "illustration",
 ) -> dict[str, Any]:
     """Run one immediate image review or one completed-set contact-sheet review."""
 
@@ -1116,7 +1118,8 @@ async def execute_inspection(
     expected_slot = refs[0]["slot"] if scope != OVERALL_SCOPE else None
     messages = (
         _build_image_messages(str(context or ""), normalized_entries[0], scope=scope,
-                              candidate_refs=refs if scope == SELECTION_SCOPE else None)
+                              candidate_refs=refs if scope == SELECTION_SCOPE else None,
+                              workshop=workshop)
         if scope != OVERALL_SCOPE
         else _build_overall_messages(
             str(context or ""), normalized_entries, individual_results

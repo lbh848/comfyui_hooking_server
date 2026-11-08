@@ -99,7 +99,6 @@ def create_workflow_pack(
     *,
     release_version: str = "v1",
     workflow_items: Sequence[Mapping[str, object]] | None = None,
-    install_manifest: Mapping[str, object] | None = None,
 ) -> dict:
     """워크플로우 파일을 Argon2id + AES-256-GCM 팩으로 묶는다."""
 
@@ -182,23 +181,12 @@ def create_workflow_pack(
             if workflow_items is not None:
                 generated_items = [dict(item) for item in workflow_items]
             inner_manifest = {
-                "schema_version": 3 if install_manifest is not None else 2,
+                "schema_version": 2,
                 "release_version": release_version,
                 "workflow_bindings": bindings,
                 "files": file_manifest,
                 "workflow_items": generated_items,
             }
-            if install_manifest is not None:
-                install_manifest_payload = _canonical_json(dict(install_manifest))
-                archive.writestr(
-                    PACK_INSTALL_MANIFEST_NAME,
-                    install_manifest_payload,
-                )
-                inner_manifest["install_manifest"] = {
-                    "archive_name": PACK_INSTALL_MANIFEST_NAME,
-                    "sha256": _sha256_bytes(install_manifest_payload),
-                    "size": len(install_manifest_payload),
-                }
             archive.writestr("manifest.json", _canonical_json(inner_manifest))
 
         plaintext = zip_buffer.getvalue()
@@ -244,7 +232,7 @@ def create_workflow_pack(
             "workflow_count": len(files),
             "binding_count": len(bindings),
             "release_version": release_version,
-            "install_manifest_embedded": install_manifest is not None,
+            "install_manifest_embedded": False,
         }
     except WorkflowPackError:
         raise

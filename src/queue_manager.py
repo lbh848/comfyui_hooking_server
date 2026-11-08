@@ -4,6 +4,7 @@
 """
 
 from app_paths import data_root
+from lora_paths import bot_lora_load_path
 
 import asyncio
 import aiohttp
@@ -40,6 +41,8 @@ from modes.lora_export_utils import format_lora_export_filename
 
 # 원격 첫 컨테이너는 sd-scripts 런타임 부트스트랩까지 이 안에 끝내야 한다.
 LORA_TRAINING_TIMEOUT_SECONDS = 7_200
+QUEUE_HISTORY_LIMIT = 10
+FINISHED_QUEUE_STATUSES = ("completed", "failed", "cancelled")
 CURRENT_COMFY_QUEUE_ITEM = ContextVar("comfy_queue_item", default=None)
 
 
@@ -438,8 +441,6 @@ class QueueManager:
         self.submit_to_real_comfy = None       # async def(prompt_data) -> (prompt_id, result)
         self.convert_workflow_via_endpoint = None  # async def(wf) -> (api_wf, error)
         self.build_lora_training_text = None   # def(...)
-        self.prepare_ref_folder = None         # def(images, comfy_input_dir) -> str
-        self.prepare_style_ref_folder = None   # def(images, comfy_input_dir) -> str
         self.get_real_comfy_host = None        # def() -> str
         self.get_real_comfy_port = None        # def() -> int
         self.get_comfy_port_for_task = None    # def(task_key) -> int
@@ -668,6 +669,12 @@ class QueueManager:
             priority=priority,
             depends_on=normalized_dependencies,
         )
+        # 봇 저장소 스코프(삽화/감정 삽화)를 작업 실행까지 따라가게 한다.
+        try:
+            from importlib import import_module
+            item._bot_scope = import_module("modes.bot_mode").bot_scope()
+        except Exception:
+            item._bot_scope = "illust"
         if runtime_handler is not None:
             if not callable(runtime_handler):
                 print(
@@ -1108,6 +1115,8 @@ class QueueManager:
         if mapped:
             return mapped
         if item.type == "tag_analysis":
+            if (item.params or {}).get("source") == "asset_lora":
+                return "asset_lora_training"
             # LoRA 계열 태그 분석은 학습과 같은 대상에서 돌아야 한다.
             if isinstance(item.params, dict) and str(
                 item.params.get("source") or ""
@@ -1327,7 +1336,31 @@ class QueueManager:
         )
         return data
 
+    def _prune_finished_items(self) -> None:
+        """Keep recent work history and active jobs; preserve reviewable guides."""
+        cutoff = time.time() - 6 * 60 * 60
+        self.items = [item for item in self.items if not (
+            item.type == "visual_profile_guide" and item.completed_at is not None
+            and item.completed_at < cutoff
+        )]
+        recent = sorted(
+            (item for item in self.items
+             if item.status in FINISHED_QUEUE_STATUSES and item.completed_at is not None),
+            key=lambda item: item.completed_at or item.created_at,
+            reverse=True,
+        )[:QUEUE_HISTORY_LIMIT]
+        recent_ids = {item.id for item in recent}
+        self.items = [
+            item for item in self.items
+            if item.status not in FINISHED_QUEUE_STATUSES
+            or item.completed_at is None
+            or item.id in recent_ids
+            or (item.type == "visual_profile_guide" and item.completed_at is not None
+                and item.completed_at >= cutoff)
+        ]
+
     def get_status(self) -> dict:
+        self._prune_finished_items()
         # 종료된 배치는 원클릭 대기/재연결보다 긴 6시간 보관한다.
         # 진행 중인 배치는 시간에 관계없이 보존한다.
         cutoff = time.time() - 6 * 60 * 60
@@ -1503,6 +1536,8 @@ class QueueManager:
         if item_type == "tag_analysis":
             source = str(params.get("source") or "").strip().lower()
             image = params.get("image") if isinstance(params.get("image"), dict) else {}
+            if source == "asset_lora":
+                return self._normalized_scope("asset_lora", image.get("character"), image.get("entry"))
             if source == "instance_lora":
                 return self._normalized_scope(
                     "instance",
@@ -1688,7 +1723,7 @@ class QueueManager:
             self._illust_wait_started_at = None
             await self._notify_queue_updated()
 
-    async def _notify_progress(self, item: QueueItem, detail: dict):
+    async def _notify_progress(self, item: QueueItem, detail: dict, *, snapshot_detail: dict | None = None):
         percentage = detail.get("percentage")
         phase = detail.get("phase", "")
         if percentage is None:
@@ -1709,7 +1744,7 @@ class QueueManager:
                     percentage = (step / total) * 100
         if percentage is not None:
             item.progress = percentage
-        item.progress_detail = detail
+        item.progress_detail = snapshot_detail if snapshot_detail is not None else detail
         illustration_flow.queue_progress(item)
         if self.notify_frontend:
             await self.notify_frontend("queue_progress", {
@@ -2034,7 +2069,7 @@ class QueueManager:
             print(f"[QUEUE] 실행 취소: item={item.id}, reason={item.error}")
         except Exception as e:
             item.status = "failed"
-            item.error = str(e)
+            item.error = str(e).strip() or type(e).__name__
             print(f"[QUEUE] 처리 실패: id={item.id}, error={e}")
             traceback.print_exc()
         finally:
@@ -2058,8 +2093,7 @@ class QueueManager:
         if is_gpu and self.current_item is item:
             self.current_item = None
         was_illustration = item.type == "illustration"
-        # 완료 알림 후 잠시 유지 — 완료 항목을 UI에 2초간 띄운 뒤 삭제(프룬)하되,
-        # 백그라운드로 지연시켜 다음 큐가 즉시 시작되도록 한다(파이프라인은 블록하지 않음).
+        # 종료 기록은 최근 10개를 유지하며 다음 큐 실행을 막지 않는다.
         await self._notify_queue_updated()
         if item.status != "pending":
             asyncio.ensure_future(self._deferred_prune(item))
@@ -2609,7 +2643,7 @@ class QueueManager:
             )
         except Exception as exc:
             item.status = "failed"
-            item.error = str(exc)
+            item.error = str(exc).strip() or type(exc).__name__
             item.progress_detail = {
                 "phase": "error",
                 "percentage": item.progress,
@@ -2642,16 +2676,13 @@ class QueueManager:
                 self._vast_wakeup.set()
 
     async def _deferred_prune(self, item: QueueItem):
-        """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
+        """Trim older history; retain the latest ten results and reviewable guides.
         _run_item_pipeline의 다음 큐 시작을 막지 않도록 백그라운드에서 실행된다.
         asyncio는 단일 스레드이므로 self.items 필터링은 다른 코루틴과 원자적으로,
         pending/processing/waiting 항목은 항상 보존되어 실행 중인 다음 큐에 영향을 주지 않는다."""
         try:
             await asyncio.sleep(2.0)
-            self.items = [
-                i for i in self.items
-                if i.status in ("pending", "processing", "waiting")
-            ]
+            self._prune_finished_items()
             await self._notify_queue_updated()
         except Exception as e:
             print(f"[QUEUE] 지연 프룬 실패: item={getattr(item, 'id', '')}, error={e}")
@@ -2980,13 +3011,16 @@ class QueueManager:
 
     def _target_llm_workers(self) -> int:
         """설정된 LLM 슬롯의 실제 요청 상한 합만큼 큐 producer를 유지한다."""
-        config = self.get_config() if self.get_config else {}
+        # Provider settings live in settings.json. The general app config still
+        # contains legacy slot defaults and can otherwise pin this pool to one.
+        # Use the same effective settings as the API gates; those gates enforce
+        # the shared provider limit even when several slots share this pool.
+        config = llm_service.get_config()
         total = 0
-        # 슬롯별 (표시명, 모델 키, 동시요청 키)는 llm_service.LLM_SLOT_COUNT 에서 파생.
+        # Include both numbered slots and named slots in the worker budget.
         # 모든 슬롯은 모델명이 설정되어 있을 때만 합산한다.
-        for n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-            suffix = "" if n == 1 else str(n)
-            slot = f"LLM{n}"
+        for slot_id, suffix in zip(llm_service.LLM_SLOT_IDS, llm_service.LLM_SLOT_SUFFIXES):
+            slot = slot_id.upper()
             model_key = f"llm_model{suffix}"
             concurrency_key = f"llm_max_concurrency{suffix}"
             if not str(config.get(model_key, "") or "").strip():
@@ -3089,6 +3123,9 @@ class QueueManager:
                     await self._llm_wakeup.wait()
                     continue
                 await self._run_item_pipeline(item, is_gpu=False)
+                # The settings UI runs in another process. Refill the producer
+                # pool between items when its provider allowance was increased.
+                await self._ensure_llm_workers()
         except Exception:
             print(f"[QUEUE:LLM_WORKER] 워커 {wid} 치명적 예외")
             traceback.print_exc()
@@ -3099,7 +3136,7 @@ class QueueManager:
         # auto_match/bot_single은 결과 반환형이므로 기존 루프 핸들러 유지.
         if item.type == "tag_analysis":
             src = (item.params.get("source") or "")
-            if src in ("asset_batch", "asset_selected", "bot_rep", "bot_utility", "instance_lora", "style_lora"):
+            if src in self._TAG_SAVE_MODE:
                 return await self._handle_tag_analysis_single(item)
             return await self._handle_tag_analysis(item)
         dispatch = {
@@ -3147,7 +3184,17 @@ class QueueManager:
         handler = dispatch.get(item.type)
         if not handler:
             raise ValueError(f"알 수 없는 큐 아이템 타입: {item.type}")
-        return await handler(item)
+        try:
+            from importlib import import_module
+            bot_mode_module = import_module("modes.bot_mode")
+            scope_token = bot_mode_module.set_bot_scope(getattr(item, "_bot_scope", "illust"))
+        except Exception:
+            scope_token = None
+        try:
+            return await handler(item)
+        finally:
+            if scope_token is not None:
+                bot_mode_module.reset_bot_scope(scope_token)
 
     # ─── 타입별 핸들러 ──────────────────────────────────────
 
@@ -3171,6 +3218,8 @@ class QueueManager:
         character_maker.revise 를 호출하고 결과를 completion_future 로 회신한다.
         HTTP 핸들러가 await item.completion_future 로 동기적으로 결과를 받아가므로
         프론트엔드 revise 흐름(request→wait→JSON)은 그대로 유지된다."""
+        if callable(getattr(item, "_runtime_handler", None)):
+            return await self._handle_runtime_llm_task(item)
         cm = self.character_maker
         if cm is None:
             raise RuntimeError("character_maker 인스턴스가 큐에 주입되지 않았습니다")
@@ -3189,7 +3238,7 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT_TRANSLATE] 실행 실패: "
                 f"QwenEditMode 미주입 item={item.id}, params={item.params!r}"
             )
-            raise RuntimeError("Qwen Edit 모드가 큐에 주입되지 않았습니다")
+            raise RuntimeError("EDIT 모드가 큐에 주입되지 않았습니다")
         text = str((item.params or {}).get("text") or "").strip()
         edit_tool = str(
             (item.params or {}).get("edit_tool") or "qwen"
@@ -3202,7 +3251,7 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT_TRANSLATE] 실행 실패: "
                 f"번역 입력 비어 있음 item={item.id}, params={item.params!r}"
             )
-            raise ValueError("번역할 Qwen Edit 프롬프트가 비어 있습니다")
+            raise ValueError("번역할 EDIT 프롬프트가 비어 있습니다")
         try:
             await self._notify_progress(
                 item,
@@ -3635,6 +3684,13 @@ class QueueManager:
         prompt_data = params.get("prompt_data", {})
         raw_body = params.get("raw_body", {})
 
+        # Enable the existing sampler tracker on the representative itself.
+        # Hybrid requests reach here after their actual provider is selected.
+        if (params.get("npc_tracking_root") and raw_body.get("illustration_provider") == "comfy"
+                and raw_body.get("illustration_prompt_format") == "v3"):
+            from modes.illustration_npc import character_tracking_context
+            raw_body["illustration_multi_char"] = character_tracking_context(params["npc_tracking_root"])
+
         # Lookahead uses a private folder and the existing mask_location input.
         # Legacy serial callers retain their configured mask directory.
         multi_char_context = raw_body.get("illustration_multi_char") or {}
@@ -4014,6 +4070,7 @@ class QueueManager:
             params.get("prompt_provider", provider) or provider
         ).strip().lower()
         generation_params = params.get("generation_params") or {}
+        seed = params.get("seed")
         multi_char_context = params.get("illustration_multi_char")
         visual_states = params.get("illustration_visual_states")
         mask_bytes = None
@@ -4099,8 +4156,18 @@ class QueueManager:
             "width": generation_params.get("width"),
             "height": generation_params.get("height"),
         }
+        if seed is not None:
+            generation_call_kwargs["seed"] = int(seed)
         if provider == "comfy":
             generation_call_kwargs["comfy_task_key"] = "restore_regenerate"
+            if params.get("illustration_prompt_json") is not None:
+                from illustration_json import merge_illustration_edit_document
+                # Keep embedded references and queue-side mask policy together.
+                generation_call_kwargs["illustration_prompt_json"] = merge_illustration_edit_document(
+                    params["illustration_prompt_json"],
+                    (params["positive"], params.get("negative", "")),
+                    (positive, negative),
+                )
         img_bytes, error = await self.generate_image_with_prompt(
             positive,
             negative,
@@ -4156,69 +4223,31 @@ class QueueManager:
         body = params.get("body", {})
         presets = params.get("presets", {})
 
-        # 프리셋 로드 (배치 체인용)
-        if presets and self.asset_mode:
-            _load_presets(self.asset_mode, presets)
-
-        # 참조 이미지 준비 (face_id, style_ref, snapref)
-        reference_subfolder = ""
-        style_ref_subfolder = ""
-        snapref_subfolder = ""
+        # AssetMode embeds original images after building the final prompt.
+        reference_subfolder = style_ref_subfolder = snapref_subfolder = ""
+        modal_input_paths = []
         config = self.get_config()
-        comfy_input_dir = config.get("comfy_input_dir", "")
         import workflow_profiles
         asset_profile = workflow_profiles.normalize_asset_workflow_type(
             body.get("asset_workflow_type") or config.get("asset_workflow_type", "ilxl")
         )
         snapref_enabled = bool(body.get("snapref_enabled", False) and workflow_profiles.asset_capabilities(asset_profile)["anima"])
-        if body.get("snapref_enabled", False) and not snapref_enabled:
-            print(f"[QUEUE:ASSET] Ref 이미지 미지원 프로필: {asset_profile}; 참조 적용 생략")
-        if snapref_enabled:
-            snapref_images = body.get("snapref_images") or []
-            valid_images = [img for img in snapref_images if img.get("local_path") and os.path.isfile(img["local_path"])]
-            if not valid_images:
-                print(f"[QUEUE:ASSET] Ref 이미지 준비 실패: item={item.id}, images={snapref_images!r}")
-                raise ValueError("Ref 이미지 파일을 찾을 수 없습니다. 이미지를 다시 선택해 주세요.")
-            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-                print(f"[QUEUE:ASSET] Ref 이미지 input 경로 오류: item={item.id}, path={comfy_input_dir!r}")
-                raise ValueError("Ref 이미지를 저장할 ComfyUI input 폴더를 확인해 주세요.")
-            if len(valid_images) > 1:
-                print(f"[QUEUE:ASSET] Ref 이미지 첫 번째 1장 사용: item={item.id}, count={len(valid_images)}")
-            snapref_subfolder = self.prepare_ref_folder(valid_images[:1], comfy_input_dir, snapref=True)
-
-        if body.get("face_id_enabled", False) and body.get("reference_images", []):
-            if comfy_input_dir and os.path.isdir(comfy_input_dir):
-                valid_images = [img for img in body.get("reference_images", [])
-                                if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
-                if valid_images:
-                    reference_subfolder = self.prepare_ref_folder(valid_images, comfy_input_dir)
-
-        if body.get("style_ref_enabled", False) and body.get("style_ref_images", []):
-            if comfy_input_dir and os.path.isdir(comfy_input_dir):
-                valid_images = [img for img in body.get("style_ref_images", [])
-                                if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
-                if valid_images:
-                    style_ref_subfolder = self.prepare_style_ref_folder(valid_images, comfy_input_dir)
-
-        modal_input_paths = []
-        for subfolder in (reference_subfolder, style_ref_subfolder, snapref_subfolder):
-            if not subfolder:
-                continue
-            candidate = os.path.join(comfy_input_dir, subfolder)
-            if os.path.exists(candidate):
-                modal_input_paths.append(candidate)
-            else:
-                print(
-                    "[QUEUE:ASSET:MODAL] 참조 입력 경로 없음: "
-                    f"item={item.id}, subfolder={subfolder!r}, path={candidate!r}"
-                )
 
         execution_asset_mode = (
             self.asset_mode.fork_for_execution()
             if callable(getattr(self.asset_mode, "fork_for_execution", None))
             else self.asset_mode
         )
+        async def on_asset_progress(value, maximum):
+            await self._notify_progress(item, {
+                "phase": "sampling", "value": value, "max": maximum,
+                "percentage": max(0, min(100, value / maximum * 100)) if maximum > 0 else 0,
+            })
+
         result = await execution_asset_mode.generate(
+            progress_callback=on_asset_progress,
+            model_preset=params.get("asset_model_preset"),
+            preset_selections={**body, **presets},
             character=body.get("character", ""),
             outfit=body.get("outfit", ""),
             expression=body.get("expression", ""),
@@ -4327,7 +4356,7 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT] 실행 실패: "
                 f"QwenEditMode 미주입 item={item.id}, params={item.params!r}"
             )
-            raise RuntimeError("Qwen Edit 모드가 큐에 주입되지 않았습니다")
+            raise RuntimeError("EDIT 모드가 큐에 주입되지 않았습니다")
 
         params = item.params if isinstance(item.params, dict) else {}
         if not params:
@@ -4335,7 +4364,7 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT] 실행 실패: "
                 f"params 비어 있음 item={item.id}, raw={item.params!r}"
             )
-            raise ValueError("Qwen Edit 큐 파라미터가 비어 있습니다")
+            raise ValueError("EDIT 큐 파라미터가 비어 있습니다")
 
         async def _on_qwen_progress(value, max_value):
             percentage = (
@@ -4396,14 +4425,13 @@ class QueueManager:
         if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
 
-        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
+        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage, training_save_path
         data = _load_lora_manage()
         entry_info = _get_entry(data, character, entry) or {}
         training_config = entry_info.get("training_config", {})
         trigger = entry_info.get("trigger", "")
 
         profile = training_config.get("profile", "anima")
-        step = training_config.get("step_per_image", 50)
         il_rate = training_config.get("il_rate", 0.0005)
         save_step = training_config.get("save_per_step", 50)
         base_folder = training_config.get("multi_img_folder_name", "soya_lora")
@@ -4414,25 +4442,29 @@ class QueueManager:
         )
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
-        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
+        lora_save_path = training_save_path(character, entry)
         upscale = training_config.get("upscale", False)
         resolution = training_config.get("resolution", 1024)
         save_after = training_config.get("save_after", 0)
         dim = training_config.get("dim", 32)
         alpha = training_config.get("alpha", 16)
 
+        from lora_training_steps import prepare_training_images
+        from lora_training_workflow import training_workflow_source_path
+        workflow_path = training_workflow_source_path(training_config)
+        images, step = prepare_training_images(list_training_images(character, entry), training_config)
+        if not images:
+            raise ValueError("학습 이미지가 없습니다")
+
         export_result = export_training_images(
             character,
             entry,
             comfy_input_dir,
             folder_name_override=folder,
+            image_filenames=[image["filename"] for image in images],
         )
         if not export_result.get("success"):
             raise ValueError(f"이미지 전송 실패: {export_result.get('error', '')}")
-
-        images = list_training_images(character, entry)
-        if not images:
-            raise ValueError("학습 이미지가 없습니다")
 
         from modes.lora_mode import list_test_images
         test_images = list_test_images(character, entry)
@@ -4449,20 +4481,6 @@ class QueueManager:
         )
 
         # 워크플로우 로드 & 변환
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        workflow_path = ""
-        if isinstance(workflow_paths, dict) and workflow_paths:
-            workflow_path = workflow_paths.get(profile, "")
-            if not workflow_path:
-                for v in workflow_paths.values():
-                    if v:
-                        workflow_path = v
-                        break
-        else:
-            workflow_path = config.get("lora_training_workflow_source_path", "")
-        if not workflow_path or not os.path.isfile(workflow_path):
-            raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
-
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
         api_wf, conv_err = await self.convert_workflow_via_endpoint(
@@ -4551,7 +4569,6 @@ class QueueManager:
         effective_test_images = char_test_images if char_test_images else test_images
 
         profile = training_config.get("profile", "anima")
-        step = training_config.get("step_per_image", 50)
         il_rate = training_config.get("il_rate", 0.0005)
         save_step = training_config.get("save_per_step", 50)
         base_folder = training_config.get("multi_img_folder_name", "soya_lora")
@@ -4568,26 +4585,17 @@ class QueueManager:
         dim = training_config.get("dim", 32)
         alpha = training_config.get("alpha", 16)
 
-        def _safe_dirname_bot(name: str) -> str:
-            return re.sub(r'[\\/*?:"<>|]', '_', name).strip() or "unnamed"
+        from modes.bot_lora_mode import training_save_path
+        lora_save_path = training_save_path(bot_name, project_name, char_name, visual_card_id, training_config)
 
-        default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(char_name)}"
-        lora_save_path = (training_config.get("lora_save_path") or default_save_path).replace("\\", "/").rstrip("/")
-        path_parts = lora_save_path.split("/")
-        safe_project = _safe_dirname_bot(project_name)
-        safe_character = _safe_dirname_bot(char_name)
-        # 같은 이름이어도 프로젝트와 캐릭터는 각각 별도의 폴더다.
-        if path_parts[-1] != safe_character or (
-            safe_project == safe_character
-            and path_parts[-2:] != [safe_project, safe_character]
-        ):
-            lora_save_path += "/" + safe_character
-        if visual_card_id:
-            lora_save_path = (
-                lora_save_path.rstrip("/")
-                + "/_visual_profiles/"
-                + _safe_dirname_bot(visual_card_id)
-            )
+        from lora_training_steps import prepare_training_images
+        from lora_training_workflow import training_workflow_source_path
+        workflow_path = training_workflow_source_path(training_config)
+        images, step = prepare_training_images(
+            _get_project_training_images(bot_name, project_name, char_name, visual_card_id), training_config,
+        )
+        if not images:
+            raise ValueError(f"{char_name}: 학습 이미지가 없습니다")
 
         export_result = export_bot_training_images(
             bot_name,
@@ -4596,15 +4604,10 @@ class QueueManager:
             comfy_input_dir,
             folder,
             visual_card_id,
+            image_filenames=[image["filename"] for image in images],
         )
         if not export_result.get("success"):
             raise ValueError(f"{char_name} 이미지 전송 실패: {export_result.get('error', '')}")
-
-        images = _get_project_training_images(
-            bot_name, project_name, char_name, visual_card_id
-        )
-        if not images:
-            raise ValueError(f"{char_name}: 학습 이미지가 없습니다")
 
         positive_text = self.build_lora_training_text(
             images, trigger, profile, step, il_rate, save_step, folder,
@@ -4622,7 +4625,7 @@ class QueueManager:
             from modes.bot_lora_feedback import feedback_inputs, BACKUPS
             from modes.bot_lora_mode import list_bot_trained_sessions
             from pathlib import Path
-            feedback_load_path = config.get("bot_lora_load_path") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+            feedback_load_path = bot_lora_load_path(config)
             previous_sessions = {s["name"] for s in list_bot_trained_sessions(feedback_load_path, bot_name, project_name, char_name, visual_card_id)}
             feedback_context = feedback_inputs(bot_name, project_name, char_name, visual_card_id, training=images, tests=effective_test_images)
             # The queue owns item.id; request parameters must not choose a disk path.
@@ -4635,19 +4638,6 @@ class QueueManager:
                 source["original_filepath"] = source["filepath"]
                 source["filepath"] = str(captured)
             (capture_dir / "inputs.json").write_text(json.dumps(feedback_context, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        if isinstance(workflow_paths, dict) and workflow_paths:
-            workflow_path = workflow_paths.get(profile, "")
-            if not workflow_path:
-                for k, v in workflow_paths.items():
-                    if v:
-                        workflow_path = v
-                        break
-        else:
-            workflow_path = config.get("lora_training_workflow_source_path", "")
-        if not workflow_path or not os.path.isfile(workflow_path):
-            raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
@@ -5501,7 +5491,6 @@ class QueueManager:
 
             settings = settings_fn().get("data", {})
             profile_settings = settings.get(profile, {})
-            step = profile_settings.get("step_per_image", 125)
             il_rate = profile_settings.get("il_rate", 0.00025)
             save_step = profile_settings.get("save_per_step", 25)
             base_folder = profile_settings.get("multi_img_folder_name", "soya_lora")
@@ -5518,24 +5507,13 @@ class QueueManager:
             dim = profile_settings.get("dim", 32)
             alpha = profile_settings.get("alpha", 16)
 
-            # 그림체(style_lora) 전용: "전체 STEP" = export 할 이미지 슬롯 수.
-            # ComfyUI에는 STEP_PER_IMAGE=1, N_IMG=전체STEP 로 넘기고,
-            # 슬롯을 (전체 STEP // 이미지 수)회 순회 + 나머지 무작위 로 구성한다.
-            if source == "style_lora":
-                total_step = step if (isinstance(step, int) and step > 0) else len(training_images)
-                n_img = len(training_images)
-                if n_img > 0:
-                    full = total_step // n_img            # 전체 이미지를 몇 바퀴 도는가
-                    rem = total_step % n_img              # 남은 슬롯
-                    picked = []
-                    for _ in range(full):
-                        picked.extend(training_images)    # 전체 이미지 1순회
-                    if rem:
-                        picked += random.sample(training_images, rem)  # 남은 슬롯은 무작위(중복 없이)
-                    # step < n_img 인 경우 full=0, rem=step → STEP 장을 무작위로 선택
-                    training_images = picked
-                    step = 1  # ComfyUI 전달값: STEP_PER_IMAGE=1, N_IMG=len(training_images)=total_step
-                    print(f"[STYLE_LORA] 전체 STEP={total_step}, 이미지 수={n_img} → export {len(training_images)}장 (전체 순회 {full}회 + 랜덤 {rem}장), STEP_PER_IMAGE=1")
+            from lora_training_steps import prepare_training_images
+            from lora_training_workflow import training_workflow_source_path
+            workflow_path = training_workflow_source_path(profile_settings)
+            training_images, step = prepare_training_images(
+                training_images, profile_settings,
+                default_mode="total" if source == "style_lora" else "per_image", default_step=125,
+            )
 
             lora_save_path = f"{lora_save_prefix}/{profile}/{storage_key}"
 
@@ -5575,24 +5553,6 @@ class QueueManager:
             )
 
             # 워크플로우 로드
-            # - source=="style_lora": 스타일(그림체) LoRA 전용 워크플로우 (폴백 없음)
-            # - 그 외(instance): 인스턴스/봇 LoRA 워크플로우 (기존 동작 유지)
-            if source == "style_lora":
-                workflow_paths = config.get("style_lora_training_workflow_source_paths", {})
-                workflow_path = workflow_paths.get(profile, "") if isinstance(workflow_paths, dict) else ""
-            else:
-                workflow_paths = config.get("lora_training_workflow_source_paths", {})
-                workflow_path = ""
-                if isinstance(workflow_paths, dict) and workflow_paths:
-                    workflow_path = workflow_paths.get(profile, "")
-                    if not workflow_path:
-                        for v in workflow_paths.values():
-                            if v:
-                                workflow_path = v
-                                break
-            if not workflow_path or not os.path.isfile(workflow_path):
-                raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
-
             with open(workflow_path, "r", encoding="utf-8") as f:
                 original_wf = json.load(f)
             api_wf, conv_err = await self.convert_workflow_via_endpoint(
@@ -6320,6 +6280,7 @@ class QueueManager:
     # tag_analysis 단일 소스 → 결과 저장 방식 매핑 (이미지별 분할 핸들러용)
     _TAG_SAVE_MODE = {
         "asset_batch": "asset", "asset_selected": "asset",
+        "asset_lora": "asset",
         "bot_rep": "bot", "bot_utility": "bot",
         "instance_lora": "instance_lora", "style_lora": "style_lora",
     }
@@ -6374,13 +6335,13 @@ class QueueManager:
                 category = "expressions"
 
             comfy_task_key = (
-                "instance_lora"
-                if source in ("instance_lora", "style_lora")
+                "asset_lora_training" if source == "asset_lora" else "instance_lora"
+                if source in ("instance_lora", "style_lora", "asset_lora")
                 else "tag_analysis"
             )
             analysis_tool = self.asset_tool
             if (
-                comfy_task_key == "instance_lora"
+                comfy_task_key in ("instance_lora", "asset_lora_training")
                 and callable(getattr(analysis_tool, "fork_for_execution", None))
             ):
                 analysis_tool = analysis_tool.fork_for_execution()
@@ -6756,6 +6717,7 @@ class QueueManager:
                 outfit_tags,
                 etc_tags,
                 visual_card_id,
+                batch_refine=item.params.get("batch_refine") is True,
                 execution_context=execution_context,
                 queue_item_id=item.id,
             )
@@ -7733,32 +7695,6 @@ class QueueManager:
         """봇 유틸리티 이미지 경로 목록 반환."""
         from modes.bot_mode import get_bot_visual_utility_paths
         return get_bot_visual_utility_paths(bot_name, char_name)
-
-
-def _load_presets(asset_mode_obj, presets: dict):
-    """배치 체인에서 프리셋을 로드한다."""
-    _preset_map = {
-        "quality_preset": ("get_quality_presets", "quality"),
-        "composition_preset": ("get_composition_presets", "composition"),
-        "negative_preset": ("get_negative_presets", "negative"),
-        "character_negative_preset": ("get_character_negative_presets", "character_negative"),
-        "anima_quality_preset": ("get_anima_quality_presets", "anima_quality"),
-        "anima_negative_preset": ("get_anima_negative_presets", "anima_negative"),
-    }
-    for preset_type, preset_name in presets.items():
-        if not preset_name or preset_type not in _preset_map:
-            continue
-        getter_name, tag_key = _preset_map[preset_type]
-        try:
-            getter_fn = getattr(asset_mode_obj, getter_name, None)
-            if getter_fn:
-                all_presets = getter_fn()
-                if preset_name in all_presets:
-                    asset_mode_obj._tags[tag_key] = list(all_presets[preset_name])
-                else:
-                    print(f"[QUEUE] 프리셋 '{preset_name}' 없음 (type={preset_type})")
-        except Exception as e:
-            print(f"[QUEUE] 프리셋 로드 실패 ({preset_type}={preset_name}): {e}")
 
 
 # 싱글톤

@@ -18,6 +18,8 @@ import json
 import math
 import os
 import re
+import shutil
+import threading
 import time
 import traceback
 import datetime
@@ -49,6 +51,13 @@ from modes import illustration_prompt_builders as prompt_builders
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPTS_DIR = os.path.join(data_root(BASE_DIR), "prompts", "lighbd")
 PROMPT_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "backups", "prompt_files")
+# 감정 삽화(합성) 공방은 삽화 공방과 별도 지침 파일을 사용한다.
+PROMPTS_DIR_EMOTION = os.path.join(data_root(BASE_DIR), "prompts", "lighbd_emotion")
+PROMPT_BACKUP_DIR_EMOTION = os.path.join(
+    data_root(BASE_DIR), "backups", "prompt_files_emotion"
+)
+WORKSHOPS = ("illustration", "emotion")
+_prompt_seed_lock = threading.Lock()
 SESSION_DIR = os.path.join(data_root(BASE_DIR), "logs", "illustration_context_sessions")
 WORKFLOW_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "workflow_backup")
 
@@ -94,6 +103,7 @@ def _trace_append(history_id: str) -> None:
 PROMPT_FILES = {
     "call1_enhance": "enhance.txt",
     "time_place": "time_place.txt",
+    "npc_generation": "npc_generation.txt",
     "genre": "genre.txt",
     "character_resolve": "character.txt",
     "profile_resolve": "profile.txt",
@@ -108,6 +118,7 @@ PROMPT_FILES = {
     "manga_select": "manga_select.txt",
     "manga_plan": "manga_plan.txt",
     "manga_detail": "manga_detail.txt",
+    "composite_detail": "composite_detail.txt",
     "call2_keyvis": "keyvisual.txt",
     "call2_fallback": "fallback.txt",
     # Combined TOON response format used by the ENQUEUE endpoint.
@@ -129,7 +140,7 @@ PROMPT_FILES = {
 #   illustration    -> 일반 삽화(OUTFIT/CALL2/CALL3 + Comfy)만
 #   original_asset  -> 업로드 원본 에셋 선택만
 #   both            -> 일반 삽화 + 원본 에셋 병행
-ILLUSTRATION_OUTPUT_MODES = ("illustration", "original_asset", "both", "manga", "manga_both")
+ILLUSTRATION_OUTPUT_MODES = ("illustration", "original_asset", "both", "manga", "manga_both", "composite", "composite_both")
 _ILLUSTRATION_OUTPUT_MODE_SET = frozenset(ILLUSTRATION_OUTPUT_MODES)
 DEFAULT_ILLUSTRATION_OUTPUT_MODE = "illustration"
 
@@ -157,27 +168,22 @@ def _normalize_illustration_output_mode(
 
 
 DEFAULT_TOGGLES = {
+    "local_llm_load_after_generation": False,
+    "image_model_load_at_detail": False,
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "genre": "",
     "original_asset_count": 1,
     "original_asset_instruction": "",
-    "outfit_enabled": True,
-    "time_place_enabled": True,
-    "call2_plan_enabled": True,
+    "outfit_enabled": False,
+    "time_place_enabled": False,
+    "npc_generation_enabled": False,
+    "npc_lifetime": 30,
+    "call2_plan_enabled": False,
     "visual_correction_enabled": False,
     "visual_correction_max_redraws": 1,
-    "call1_parallel_enabled": True,
-    "call1_parallel_max_concurrency": 3,
-    "call1_parallel_slow_retry_enabled": False,
-    "call1_parallel_slow_retry_remaining": 1,
-    "call1_parallel_slow_retry_progress_enabled": True,
-    "call1_parallel_slow_retry_progress_threshold": 50,
-    "call1_parallel_slow_retry_tps_enabled": False,
-    "call1_parallel_slow_retry_tps_threshold": 5.0,
-    "call1_parallel_slow_retry_condition_operator": "and",
     "call1_context_turns": 5,
     "call2_context_turns": 5,
-    "call2_parallel_enabled": True,
+    "call2_parallel_enabled": False,
     "call2_parallel_max_concurrency": 3,
     "call2_parallel_slow_retry_enabled": False,
     "call2_parallel_slow_retry_remaining": 1,
@@ -186,7 +192,7 @@ DEFAULT_TOGGLES = {
     "call2_parallel_slow_retry_tps_enabled": False,
     "call2_parallel_slow_retry_tps_threshold": 5.0,
     "call2_parallel_slow_retry_condition_operator": "and",
-    "call2_detail_parallel_enabled": True,
+    "call2_detail_parallel_enabled": False,
     "call2_detail_parallel_max_concurrency": 3,
     "call2_detail_parallel_slow_retry_enabled": False,
     "call2_detail_parallel_slow_retry_remaining": 1,
@@ -197,33 +203,34 @@ DEFAULT_TOGGLES = {
     "call2_detail_parallel_slow_retry_condition_operator": "and",
     "call3_context_turns": 5,
     "multi_char_mask_enabled": True,
-    "multi_char_mask_inline_enabled": False,
+    "multi_char_mask_inline_enabled": True,
     "single_char_mask_enabled": True,
-    "single_char_mask_skip_enabled": True,
+    "single_char_mask_skip_enabled": False,
     "single_char_mask_skip_area_percent": 30.0,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
     "speak_language": "한국어",
     "speak_emotion_enabled": False,
     "speak_emotions": "",
-    "nsfw": False,
+    "nsfw": True,
+    "profile_context_translate": True,
     "supplement": True,
     "key_visual": True,
-    "keyvis_in_detail_enabled": False,
-    "minimal_background_description": True,
+    "keyvis_in_detail_enabled": True,
+    "minimal_background_description": False,
     "character_limit": 3,
     # scene_mode: 두 모드 모두 output_count_min/max를 강제한다. "auto"는 그 범위
     # 안에서 문맥에 맞는 수량을 고르고, "manual"은 지정 범위 자체만 전달한다.
     "scene_mode": "manual",
     # output_count_min/max: 삽화 총 장면 수의 유일한 소스. PLAN은 이 총량을,
     # 병렬 Call2-detail worker는 (총량÷worker수)를 받아 3배 과잉 생성을 방지한다.
-    "output_count_min": 15,
-    "output_count_max": 17,
+    "output_count_min": 5,
+    "output_count_max": 7,
     "context_history": True,
     "focus": "",
     "direction": "",
-    "manga_output_count_min": 15,
-    "manga_output_count_max": 17,
+    "manga_output_count_min": 5,
+    "manga_output_count_max": 7,
     "manga_scene_mode": "manual",
     "manga_character_limit": 3,
     "manga_focus": "",
@@ -436,13 +443,10 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
                 f"[ILLUST_CONTEXT:CALL3] 기존 대사 토글 통합: "
                 f"call3_enabled={value['call3_enabled']!r}, speak_enabled={out['speak_enabled']}"
             )
-        # 구버전의 자유 입력 preset 값은 V1/V3 선택값으로 한 번만 해석한다.
-        # tutorial/default/빈 값은 모두 기존 preset.txt(V3)를 뜻했다.
+        # Legacy local presets now use the active V3 builder.
         if "prompt_format" not in value and "preset" in value:
             legacy_preset = str(value.get("preset") or "").strip().lower()
-            if legacy_preset == "v1":
-                out["prompt_format"] = "v1"
-            elif legacy_preset in ("", "default", "tutorial", "v3"):
+            if legacy_preset in ("", "default", "tutorial", "v1", "v3"):
                 out["prompt_format"] = "v3"
             else:
                 print(
@@ -450,10 +454,13 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
                     f"{legacy_preset!r}, V3로 전환"
                 )
                 out["prompt_format"] = "v3"
-    for key in ("outfit_enabled", "time_place_enabled", "call2_plan_enabled", "call2_parallel_enabled",
+    for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "call2_plan_enabled", "call2_parallel_enabled",
                 "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled",
-                "single_char_mask_skip_enabled", "visual_correction_enabled"):
+                "single_char_mask_skip_enabled", "visual_correction_enabled", "profile_context_translate",
+                "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
+    from modes.illustration_npc import get_npc_lifetime
+    out["npc_lifetime"] = get_npc_lifetime(out)
     try:
         out["visual_correction_max_redraws"] = max(0, int(out["visual_correction_max_redraws"]))
     except (TypeError, ValueError, OverflowError) as exc:
@@ -473,7 +480,7 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         traceback.print_exc()
         out["single_char_mask_skip_area_percent"] = DEFAULT_TOGGLES["single_char_mask_skip_area_percent"]
     prompt_format = str(out.get("prompt_format") or "").strip().lower()
-    if prompt_format not in ("v1", "v3", "chansub"):
+    if prompt_format not in ("v3", "chansub"):
         print(f"[ILLUST_CONTEXT] 지원하지 않는 프롬프트 입력 형식 {prompt_format!r}, V3 사용")
         prompt_format = "v3"
     out["prompt_format"] = prompt_format
@@ -486,7 +493,6 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         call3_prompt_mode = "speak"
     out["call3_prompt_mode"] = call3_prompt_mode
     for prefix, label in (
-        ("call1_parallel", "OUTFIT 병렬"),
         ("call2_parallel", "CALL2 병렬"),
         ("call2_detail_parallel", "DETAIL 병렬"),
     ):
@@ -500,7 +506,7 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
             condition_operator = "and"
         out[operator_key] = condition_operator
     try:
-        for prefix in ("call1_parallel", "call2_parallel"):
+        for prefix in ("call2_parallel",):
             out[f"{prefix}_max_concurrency"] = max(
                 1,
                 min(16, int(out[f"{prefix}_max_concurrency"])),
@@ -544,18 +550,6 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         print(f"[ILLUST_CONTEXT] 토글 숫자 보정 실패: {e}")
         traceback.print_exc()
         out.update({
-            "call1_parallel_max_concurrency": DEFAULT_TOGGLES[
-                "call1_parallel_max_concurrency"
-            ],
-            "call1_parallel_slow_retry_remaining": DEFAULT_TOGGLES[
-                "call1_parallel_slow_retry_remaining"
-            ],
-            "call1_parallel_slow_retry_progress_threshold": DEFAULT_TOGGLES[
-                "call1_parallel_slow_retry_progress_threshold"
-            ],
-            "call1_parallel_slow_retry_tps_threshold": DEFAULT_TOGGLES[
-                "call1_parallel_slow_retry_tps_threshold"
-            ],
             "call2_parallel_max_concurrency": DEFAULT_TOGGLES[
                 "call2_parallel_max_concurrency"
             ],
@@ -613,8 +607,8 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         legacy_booleans=(legacy_illust, legacy_asset),
     )
     out["illustration_output_mode"] = output_mode
-    out["illustration_enabled"] = output_mode in ("illustration", "both", "manga", "manga_both")
-    out["original_asset_enabled"] = output_mode in ("original_asset", "both", "manga_both")
+    out["illustration_enabled"] = output_mode in ("illustration", "both", "manga", "manga_both", "composite", "composite_both")
+    out["original_asset_enabled"] = output_mode in ("original_asset", "both", "manga_both", "composite_both")
     instruction = str(out.get("original_asset_instruction") or "")
     if len(instruction) > illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
         print(
@@ -627,6 +621,11 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         ]
     out["original_asset_instruction"] = instruction
     out["genre"] = str(out.get("genre") or "").strip()
+    if for_generation and output_mode in ("composite", "composite_both"):
+        # Correction edits a single generated scene. Layered scenes keep their
+        # own DETAIL geometry and always assemble before any image postprocess.
+        out["visual_correction_enabled"] = False
+        out["keyvis_in_detail_enabled"] = True
     for key, maximum in (("manga_output_count_min", 30), ("manga_output_count_max", 30), ("manga_character_limit", 3)):
         try:
             out[key] = max(1, min(maximum, int(out[key])))
@@ -650,9 +649,6 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
-    # OUTFIT은 하나의 누적 상태 타임라인을 위한 단일 호출이다.
-    # 예전 segment 청크 크기 설정은 사용하지 않는다.
-    out.pop("call1_parallel_chunk_size", None)
     return out
 
 
@@ -661,15 +657,56 @@ def should_enable_multi_char_layout(toggles: dict | None, provider: str) -> bool
     normalized = merged_toggles(toggles)
     return (
         bool(normalized.get("multi_char_mask_enabled", True))
+        and normalized["illustration_output_mode"] not in ("composite", "composite_both")
         and str(provider or "").strip().lower() == "comfy"
         and str(normalized.get("prompt_format") or "v3").strip().lower() == "v3"
     )
 
 
-def load_prompt_files() -> dict:
+def normalize_workshop(workshop: str | None) -> str:
+    value = str(workshop or "").strip().lower()
+    if value == "emotion":
+        return "emotion"
+    return "illustration"
+
+
+def prompts_dir_for(workshop: str | None = None) -> str:
+    return PROMPTS_DIR_EMOTION if normalize_workshop(workshop) == "emotion" else PROMPTS_DIR
+
+
+def _seed_emotion_prompt_files() -> None:
+    """감정 삽화 지침 폴더를 삽화 지침의 최초 스냅샷으로 한 번만 채운다."""
+    os.makedirs(PROMPTS_DIR_EMOTION, exist_ok=True)
+    if os.listdir(PROMPTS_DIR_EMOTION):
+        return
+    for filename in PROMPT_FILES.values():
+        source = os.path.join(PROMPTS_DIR, filename)
+        target = os.path.join(PROMPTS_DIR_EMOTION, filename)
+        try:
+            if os.path.isfile(source):
+                shutil.copyfile(source, target)
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] 감정 삽화 지침 초기화 실패: "
+                f"source={source}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+    print(
+        f"[ILLUST_CONTEXT] 감정 삽화 전용 지침 폴더 준비 완료: "
+        f"{PROMPTS_DIR_EMOTION}"
+    )
+
+
+def load_prompt_files(workshop: str | None = None) -> dict:
+    """지침 파일을 읽는다. 감정 삽화 공방은 자체 폴더를 사용한다."""
+    normalized = normalize_workshop(workshop)
+    if normalized == "emotion":
+        with _prompt_seed_lock:
+            _seed_emotion_prompt_files()
+    directory = prompts_dir_for(normalized)
     result = {}
     for key, filename in PROMPT_FILES.items():
-        path = os.path.join(PROMPTS_DIR, filename)
+        path = os.path.join(directory, filename)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 result[key] = f.read()
@@ -680,21 +717,30 @@ def load_prompt_files() -> dict:
     return result
 
 
-def save_prompt_files(values: dict) -> list[str]:
+def save_prompt_files(values: dict, workshop: str | None = None) -> list[str]:
     """UI 편집본 저장. 기존 텍스트는 배포 가능한 backups/에 먼저 백업한다."""
-    os.makedirs(PROMPTS_DIR, exist_ok=True)
-    os.makedirs(PROMPT_BACKUP_DIR, exist_ok=True)
+    normalized = normalize_workshop(workshop)
+    directory = prompts_dir_for(normalized)
+    backup_dir = (
+        PROMPT_BACKUP_DIR_EMOTION if normalized == "emotion" else PROMPT_BACKUP_DIR
+    )
+    if normalized == "emotion":
+        with _prompt_seed_lock:
+            _seed_emotion_prompt_files()
+    os.makedirs(directory, exist_ok=True)
+    os.makedirs(backup_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
+    prefix = "lighbd_emotion" if normalized == "emotion" else "lighbd"
     saved = []
     for key, filename in PROMPT_FILES.items():
         if key not in values:
             continue
-        path = os.path.join(PROMPTS_DIR, filename)
+        path = os.path.join(directory, filename)
         try:
             if os.path.exists(path):
                 backup = os.path.join(
-                    PROMPT_BACKUP_DIR,
-                    f"lighbd_{filename}.{stamp}.bak",
+                    backup_dir,
+                    f"{prefix}_{filename}.{stamp}.bak",
                 )
                 with open(path, "r", encoding="utf-8") as src:
                     old = src.read()
@@ -3800,7 +3846,7 @@ def _mark_current_characters_with_tracked_history(
         warnings=list((character_result or {}).get("validation_warnings") or []),
         repair_requests=list((character_result or {}).get("repair_requests") or []),
     )
-    for key in ("scene_plan", "character_output"):
+    for key in ("scene_plan", "character_output", "npc_candidates"):
         if key in character_result:
             result[key] = deepcopy(character_result[key])
     return result
@@ -5561,7 +5607,7 @@ def render_call2_prompt(
         "lb-xnai.supplement": "1" if toggles.get("supplement") else "0",
         "lb-xnai.kv.off": "0" if toggles.get("key_visual") else "1",
         "lb-xnai.background.minimal": (
-            "1" if toggles.get("minimal_background_description", True) else "0"
+            "1" if toggles.get("minimal_background_description", DEFAULT_TOGGLES["minimal_background_description"]) else "0"
         ),
         "lb-xnai.compat.comfy": "1" if toggles.get("compat_comfy") else "0",
         "lb-xnai.compat.charPrompt": "1" if toggles.get("compat_character_prompt") == "separate" else "0",
@@ -5703,6 +5749,10 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     for ch in raw.get("characters") or []:
         if not isinstance(ch, dict):
             continue
+        original_name = str(ch.get("name") or "")
+        name = original_name.strip().strip('\"“”').strip()
+        if name != original_name:
+            print(f"[ILLUST_CONTEXT:CALL2] 캐릭터 이름 인용부호 정리: {original_name!r} -> {name!r}")
         if ch.get("negative"):
             print(f"[ILLUST_CONTEXT:CALL2] LLM negative ignored (disabled): "
                   f"kind={kind}, name={ch.get('name')!r}, value={ch['negative']!r}")
@@ -5717,7 +5767,7 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
         chars.append({
             "positive": str(ch.get("positive") or "").strip(),
             "negative": "",  # LLM negative control disabled; keep descriptor compatibility.
-            "name": str(ch.get("name") or "").strip(),
+            "name": name,
             "position": str(ch.get("position") or "").strip(),
             "authority_exceptions": [
                 str(value).strip()
@@ -5787,7 +5837,8 @@ def _parse_call2_keyvis_output(
         "scene_mode": "auto",
     })
     raw = None
-    if mask_inline or allow_scenes:
+    composite = toggles.get("illustration_output_mode") in ("composite", "composite_both")
+    if mask_inline or allow_scenes or composite:
         documents = (re.findall(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
                      if allow_scenes else []) or [text]
         for document in documents:
@@ -5797,7 +5848,32 @@ def _parse_call2_keyvis_output(
                 if len(documents) > 1:
                     print(f"[ILLUST_CONTEXT:{source}] 분리된 응답 문서에서 KEYVIS 복구: documents={len(documents)}")
                 break
-    if mask_inline:
+    if composite:
+        from modes.illustration_composite import declared_backgrounds, parse_scene
+        try:
+            # A split response may keep the KEYVIS in its own document without
+            # repeating the root backgrounds declared by the scene documents.
+            # Merge every document's declarations or the id itself ("B2")
+            # becomes the background prompt and produces a nonsensical image.
+            backgrounds = {}
+            for document in documents:
+                candidate = _json_object_from_text(document)
+                if not isinstance(candidate, dict):
+                    continue
+                for background_id, positive in declared_backgrounds(
+                        candidate.get("backgrounds")).items():
+                    if background_id in backgrounds and backgrounds[background_id] != positive:
+                        print(f"[ILLUST_CONTEXT:{source}] 배경 id 충돌, 첫 선언 유지: "
+                              f"id={background_id!r}")
+                        continue
+                    backgrounds[background_id] = positive
+            descriptor = parse_scene({**raw["keyvis"], "slot": -1}, {"slot": -1},
+                                     backgrounds=backgrounds)
+            descriptor["kind"] = "keyvis"
+            descriptors = [descriptor]
+        except (KeyError, TypeError, ValueError) as exc:
+            return None, f"DETAIL-COMPOSITE KEYVIS: {exc}"
+    elif mask_inline:
         from modes import illustration_scene_pipeline
         if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
             reason = "자체 마스크 KEYVIS 응답에 keyvis object가 없습니다"
@@ -5861,35 +5937,6 @@ def _parse_call2_keyvis_output(
         illustration_flow.llm_metadata(validation_warnings=[
             {"stage": source, "reason": reason, "input": text} for reason in warnings])
     return descriptor, ""
-
-
-def descriptors_to_toon(descriptors: list[dict]) -> str:
-    """Serialize merged PLAN/DETAIL descriptors into one diagnostic CALL2 block."""
-    data: dict[str, object] = {"scenes": []}
-    for descriptor in descriptors:
-        raw = {
-            "camera": str(descriptor.get("camera") or ""),
-            "characters": deepcopy(descriptor.get("characters") or []),
-            "scene": str(descriptor.get("scene") or ""),
-            "supplement": str(descriptor.get("supplement") or ""),
-        }
-        if str(descriptor.get("kind") or "") == "keyvis":
-            data["keyvis"] = raw
-        else:
-            if str(descriptor.get("plan_id") or "").strip():
-                raw["plan_id"] = str(descriptor["plan_id"]).strip()
-            raw["slot"] = int(descriptor.get("slot") or 0)
-            raw["anonymous_partner_fragment"] = bool(
-                descriptor.get("anonymous_partner_fragment", False)
-            )
-            data["scenes"].append(raw)
-    body = yaml.safe_dump(
-        data,
-        allow_unicode=True,
-        sort_keys=False,
-        default_flow_style=False,
-    ).strip()
-    return f"<lb-xnai>\n{body}\n</lb-xnai>"
 
 
 def _authority_values_for_name(values: dict, name: str):
@@ -6802,11 +6849,13 @@ _CALL_TASK_KEYS = {
     "MANGA-CHARACTER-RESOLVE": "illustration_character_resolve",
     "PLANNER-MANGA": "illustration_call2_plan",
     "DETAIL-MANGA": "illustration_call2",
+    "DETAIL-COMPOSITE": "illustration_call2",
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
     "OUTFIT": "illustration_call1",
     "CALL1": "illustration_call1",
     "TIME & PLACE": "illustration_time_place",
+    "NPC 생성 노드": "illustration_npc_generation",
     "CHARACTER-RESOLVE": "illustration_character_resolve",
     "CHARACTER-RESOLVE-REPAIR": "illustration_character_resolve",
     "PROFILE-RESOLVE": "illustration_profile_resolve",
@@ -6834,6 +6883,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "MANGA-CHARACTER-RESOLVE": ("manga_select", "MANGA-CHARACTER-RESOLVE 사건 선택"),
     "PLANNER-MANGA": ("manga_plan", "대사 및 컷신 계획자"),
     "DETAIL-MANGA": ("manga_detail", "DETAIL-MANGA 페이지 묘사"),
+    "DETAIL-COMPOSITE": ("composite_detail", "DETAIL 합성 삽화"),
     "ORIGINAL-ASSET": ("original_asset", "원본 에셋 선택"),
     "ORIGINAL-ASSET-RECOVERY": (
         "original_asset_recovery",
@@ -6842,6 +6892,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "OUTFIT": ("call1", "OUTFIT 복장·헤어 분석"),
     "CALL1": ("call1", "OUTFIT 복장·헤어 분석"),
     "TIME & PLACE": ("time_place", "TIME & PLACE 시간·장소 추적"),
+    "NPC 생성 노드": ("npc_generation", "NPC 생성 노드"),
     "CHARACTER-RESOLVE": ("character_resolve", "CURRENT 등장인물·장면 선택"),
     "CHARACTER-RESOLVE-REPAIR": (
         "character_resolve",
@@ -6883,7 +6934,7 @@ async def _call_pipeline_llm(
     """
     started = time.time()
     task_key = _CALL_TASK_KEYS.get(call_name)
-    if task_key is None and call_name.partition(" ")[0] in ("MANGA-CHARACTER-RESOLVE", "PLANNER-MANGA", "DETAIL-MANGA"):
+    if task_key is None and call_name.partition(" ")[0] in ("MANGA-CHARACTER-RESOLVE", "PLANNER-MANGA", "DETAIL-MANGA", "DETAIL-COMPOSITE"):
         task_key = _CALL_TASK_KEYS[call_name.partition(" ")[0]]
     if task_key is None and call_name.startswith(("OUTFIT ", "CALL1 ")):
         task_key = _CALL_TASK_KEYS["OUTFIT"]
@@ -6972,6 +7023,8 @@ async def _call_pipeline_llm(
         "pdf_tokens_before",
         "pdf_pages_after",
         "reasoning_tokens",
+        "reasoning_tokens_estimated",
+        "tokens_estimated",
         "reasoning_chars",
         "reasoning_text",
         "http_status",
@@ -7120,7 +7173,7 @@ async def _call_pipeline_llm(
             "parent_execution_id": parent_execution_id,
         })
         base64_response_mode_token = None
-        if call_name.startswith(("CALL2-DETAIL", "DETAIL-MANGA")):
+        if call_name.startswith(("CALL2-DETAIL", "DETAIL-MANGA", "DETAIL-COMPOSITE")):
             # The validator retains healthy scenes and narrows this list before
             # the next routed attempt. Other callers keep immutable requests.
             call_kwargs["retry_messages"] = messages
@@ -7793,243 +7846,6 @@ async def _run_parallel_pipeline_jobs(
     return [resolved[index]["value"] for index in range(1, len(jobs) + 1)]
 
 
-def _merge_call1_shard_values(
-    shard_values: list[dict],
-    segment_order: list[str],
-) -> tuple[dict, list[str], list[str]]:
-    """Merge disjoint OUTFIT shard JSON without semantic keyword inference."""
-    merged = {
-        "wardrobe_at_start": [],
-        "wardrobe_events": [],
-        "hairstyle_events": [],
-    }
-    warnings = []
-    fallback_errors = []
-    wardrobe_seen = set()
-    hairstyle_seen = set()
-    segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
-    selected_baseline = None
-
-    for shard_index, value in enumerate(shard_values, start=1):
-        assigned_ids = set(value.get("assigned_segment_ids") or [])
-        raw = value.get("value") if isinstance(value.get("value"), dict) else {}
-
-        shard_baseline = raw.get("wardrobe_at_start") or []
-        if not isinstance(shard_baseline, list):
-            warnings.append(f"OUTFIT shard {shard_index} 시작 복장 형식 오류로 폐기")
-        elif shard_baseline:
-            normalized_baseline = json.dumps(
-                shard_baseline,
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-            if selected_baseline is None:
-                selected_baseline = normalized_baseline
-                merged["wardrobe_at_start"] = deepcopy(shard_baseline)
-            elif normalized_baseline != selected_baseline:
-                warnings.append(
-                    f"OUTFIT shard {shard_index} 시작 복장 판정이 선행 shard와 달라 "
-                    "선행 판정을 유지"
-                )
-
-        for item in raw.get("wardrobe_events") or []:
-            if not isinstance(item, dict):
-                warnings.append(f"OUTFIT shard {shard_index} 복장 이벤트 형식 오류로 폐기")
-                continue
-            segment_id = str(item.get("segment_id") or "").strip()
-            if segment_id and segment_id not in assigned_ids:
-                warnings.append(
-                    f"OUTFIT shard {shard_index} 담당 밖 복장 이벤트 폐기: segment={segment_id!r}"
-                )
-                continue
-            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-            if key not in wardrobe_seen:
-                wardrobe_seen.add(key)
-                merged["wardrobe_events"].append(deepcopy(item))
-
-        for item in raw.get("hairstyle_events") or []:
-            if not isinstance(item, dict):
-                warnings.append(f"OUTFIT shard {shard_index} 헤어스타일 이벤트 형식 오류로 폐기")
-                continue
-            segment_id = str(item.get("segment_id") or "").strip()
-            if segment_id and segment_id not in assigned_ids:
-                warnings.append(
-                    f"OUTFIT shard {shard_index} 담당 밖 헤어스타일 이벤트 폐기: segment={segment_id!r}"
-                )
-                continue
-            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-            if key not in hairstyle_seen:
-                hairstyle_seen.add(key)
-                merged["hairstyle_events"].append(deepcopy(item))
-
-    merged["wardrobe_events"].sort(
-        key=lambda item: segment_rank.get(
-            str(item.get("segment_id") or ""),
-            len(segment_rank),
-        )
-    )
-    merged["hairstyle_events"].sort(
-        key=lambda item: segment_rank.get(
-            str(item.get("segment_id") or ""),
-            len(segment_rank),
-        )
-    )
-    return merged, warnings, fallback_errors
-
-
-async def _run_parallel_call1_analysis(
-    *,
-    call1_system: str,
-    segmented_current: str,
-    current_segments: dict[str, dict],
-    history_text: str,
-    toggles: dict,
-    stream_notify,
-) -> tuple[str, list[str], list[str]]:
-    segment_ids = list(current_segments)
-    max_concurrency = int(toggles["call1_parallel_max_concurrency"])
-    # 작업 수 = 동시 호출 LLM 수. segment를 max_concurrency개 작업에 서사 순서대로
-    # 균등 분할한다. segment가 동시 호출 수보다 적으면 그 수만큼만 만든다.
-    worker_count = min(max(1, max_concurrency), len(segment_ids))
-    base_size, larger_worker_count = divmod(len(segment_ids), worker_count)
-    chunk_sizes = [
-        base_size + (1 if index < larger_worker_count else 0)
-        for index in range(worker_count)
-    ]
-    chunks = []
-    cursor = 0
-    for chunk_size in chunk_sizes:
-        chunks.append(segment_ids[cursor:cursor + chunk_size])
-        cursor += chunk_size
-    jobs = [
-        {
-            "assigned_segment_ids": chunk,
-            "weight": len(chunk),
-        }
-        for chunk in chunks
-    ]
-    print(
-        f"[ILLUST_CONTEXT:OUTFIT_PARALLEL] 분석 작업 준비: "
-        f"segments={len(segment_ids)}, max_concurrency={max_concurrency}, "
-        f"jobs={len(jobs)}, distribution={chunk_sizes}"
-    )
-
-    async def invoke(
-        job,
-        index,
-        total,
-        attempt_kind,
-        stream_observer,
-        history_id,
-        job_stream_notify,
-    ):
-        assigned = list(job["assigned_segment_ids"])
-        shard_instruction = (
-            "\n\n# Parallel shard contract\n"
-            f"This is shard {index}/{total}. Read the full context for discourse understanding, "
-            "emit the complete wardrobe_at_start for every resolved CURRENT character, but emit "
-            "wardrobe_events and hairstyle_events only "
-            f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
-            "Use only the resolved CURRENT canonical names supplied by the system prompt. "
-            "Return one JSON object with exactly those three arrays."
-        )
-        messages = _normalize_messages([
-            {"role": "system", "content": call1_system + shard_instruction},
-            {
-                "role": "user",
-                "content": (
-                    "# PAST HISTORY\n"
-                    + (history_text or "(empty)")
-                    + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-                    + segmented_current
-                    + "\n\n# ASSIGNED SEGMENT IDS\n"
-                    + json.dumps(assigned, ensure_ascii=False)
-                ),
-            },
-        ])
-
-        def validate(result):
-            raw = _json_object_from_text(result)
-            if raw is None:
-                return False, "OUTFIT shard JSON object 없음"
-            for key in ("wardrobe_at_start", "wardrobe_events", "hairstyle_events"):
-                if key not in raw or not isinstance(raw.get(key), list):
-                    return False, f"OUTFIT shard {key}가 list가 아님"
-            return True, ""
-
-        call_name = f"OUTFIT {index}/{total}"
-        if attempt_kind == "duplicate":
-            call_name += " [느리다고? 다시해!]"
-        raw_output = await _call_pipeline_llm(
-            call_name,
-            messages,
-            job_stream_notify,
-            result_validator=validate,
-            json_mode=True,
-            stream_observer=stream_observer,
-            history_id=history_id,
-        )
-        raw_value = _json_object_from_text(raw_output)
-        if raw_value is None:
-            raise ValueError(f"OUTFIT shard {index}/{total} JSON 파싱 실패")
-        return {
-            "raw": raw_output,
-            "value": raw_value,
-            "assigned_segment_ids": assigned,
-        }
-
-    failed_shard_warnings: list[str] = []
-    try:
-        shard_values = await _run_parallel_pipeline_jobs(
-            jobs,
-            group_id="OUTFIT_PARALLEL",
-            group_label="OUTFIT 병렬 분석",
-            max_concurrency=int(toggles["call1_parallel_max_concurrency"]),
-            slow_retry_enabled=bool(toggles["call1_parallel_slow_retry_enabled"]),
-            slow_retry_remaining=int(toggles["call1_parallel_slow_retry_remaining"]),
-            slow_retry_progress_enabled=bool(toggles["call1_parallel_slow_retry_progress_enabled"]),
-            slow_retry_progress_threshold=int(toggles["call1_parallel_slow_retry_progress_threshold"]),
-            slow_retry_tps_enabled=bool(toggles["call1_parallel_slow_retry_tps_enabled"]),
-            slow_retry_tps_threshold=float(toggles["call1_parallel_slow_retry_tps_threshold"]),
-            slow_retry_condition_operator=str(toggles["call1_parallel_slow_retry_condition_operator"]),
-            stream_notify=stream_notify,
-            invoke=invoke,
-        )
-    except ParallelPipelineJobsError as group_error:
-        # 각 shard는 공통 전체 문맥을 읽지만 담당 segment의 사건만 출력한다.
-        # 라우팅 재시도까지 소진된 shard 때문에 이미 검증된 다른 shard를 버리고
-        # 전체 OUTFIT을 다시 호출하지 않는다. 실패 shard의 segment 사건만 누락시키고
-        # 성공 shard를 시간순으로 병합해 후속 CALL2에 전달한다.
-        shard_values = [
-            group_error.resolved_values[index]
-            for index in sorted(group_error.resolved_values)
-        ]
-        for failed_index, reason in sorted(group_error.failures.items()):
-            assigned = list(jobs[failed_index - 1].get("assigned_segment_ids") or [])
-            warning = (
-                f"OUTFIT shard {failed_index}/{len(jobs)} 최종 실패로 담당 사건만 누락: "
-                f"segments={assigned}, reason={reason}"
-            )
-            failed_shard_warnings.append(warning)
-            print(f"[ILLUST_CONTEXT:OUTFIT_PARALLEL] {warning}")
-        if not shard_values:
-            print(
-                "[ILLUST_CONTEXT:OUTFIT_PARALLEL] 모든 shard가 실패해 빈 사건 목록으로 "
-                f"계속 진행: failures={group_error.failures}"
-            )
-    merged, merge_warnings, merge_fallback_errors = _merge_call1_shard_values(
-        shard_values,
-        segment_ids,
-    )
-    merge_warnings.extend(failed_shard_warnings)
-    compact = {
-        "wardrobe_at_start": list(merged.get("wardrobe_at_start") or []),
-        "wardrobe_events": list(merged.get("wardrobe_events") or []),
-        "hairstyle_events": list(merged.get("hairstyle_events") or []),
-    }
-    return json.dumps(compact, ensure_ascii=False), merge_warnings, merge_fallback_errors
-
-
 async def _run_resolution_stage(
     *,
     profile_system: str,
@@ -8044,6 +7860,7 @@ async def _run_resolution_stage(
     history_ids_sink: list[str] | None = None,
     selection_messages: list[dict] | None = None,
     call_name: str = "",
+    npc_generation_enabled: bool = False,
 ) -> tuple[str, dict]:
     """Run one separated CHARACTER or PROFILE resolution stage.
 
@@ -8095,7 +7912,8 @@ async def _run_resolution_stage(
     messages = _normalize_messages(prompt_builders.resolution_messages(
         profile_inference_enabled, selected_names, tracked_state, catalog,
         segmented_current, card_identity_context, persona_context, profile_system,
-        selection=selection_messages, anchors=list(current_segments)))
+        selection=selection_messages, anchors=list(current_segments),
+        npc_generation_enabled=npc_generation_enabled))
 
     def validate_shape(result):
         raw = _json_object_from_text(result)
@@ -8136,12 +7954,17 @@ async def _run_resolution_stage(
                 ),
             })
     else:
+        # Recover shorthand names before the existing character-item checks.
+        raw_characters = [
+            {"name": item} if isinstance(item, str) else item
+            for item in normalized_raw.get("characters") or []
+        ]
         normalized_characters = [
             {
                 "name": str(item.get("name") or "").strip(),
                 "profile_timeline": [],
             }
-            for item in normalized_raw.get("characters") or []
+            for item in raw_characters
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ]
     parse_output = json.dumps({
@@ -8167,8 +7990,42 @@ async def _run_resolution_stage(
             default_only=False,
         )
     else:
+        if npc_generation_enabled and selection_messages is not None:
+            from modes.illustration_npc import parse_candidates
+            raw_candidates = normalized_raw.get("npc_candidates", [])
+            if "npc_candidates" not in normalized_raw:
+                print(f"[ILLUST_CONTEXT:NPC] {stage_call_name} 응답에 npc_candidates 필드 없음")
+            parsed["npc_candidates"] = parse_candidates(
+                raw_candidates, candidate_names, current_segments, repair=True)
+            print(
+                f"[ILLUST_CONTEXT:NPC] {stage_call_name} 후보: "
+                f"raw={len(raw_candidates) if isinstance(raw_candidates, list) else 'invalid'}, "
+                f"kept={len(parsed['npc_candidates'])}"
+            )
+            # A dropped candidate must not invalidate scenes that mention it; the
+            # scene_brief still describes the subject, only the stale identity
+            # reference is removed.
+            if isinstance(raw_candidates, list):
+                retained = {candidate["name"].casefold() for candidate in parsed["npc_candidates"]}
+                dropped = {
+                    str(entry.get("name") or "").strip().casefold()
+                    for entry in raw_candidates
+                    if isinstance(entry, dict) and str(entry.get("name") or "").strip()
+                } - retained
+                scene_plan = normalized_raw.get("scene_plan")
+                if dropped and isinstance(scene_plan, list):
+                    normalized_raw["scene_plan"] = [
+                        {**scene, "characters": [
+                            name for name in scene["characters"]
+                            if str(name).strip().casefold() not in dropped
+                        ]}
+                        if isinstance(scene, dict) and isinstance(scene.get("characters"), list)
+                        else scene
+                        for scene in scene_plan
+                    ]
         raw_output = json.dumps({
             **({"scene_plan": normalized_raw.get("scene_plan")} if selection_messages is not None else {}),
+            **({"npc_candidates": parsed["npc_candidates"]} if "npc_candidates" in parsed else {}),
             "characters": [
                 {"name": str(item.get("name") or "").strip()}
                 for item in parsed.get("characters") or []
@@ -8228,12 +8085,16 @@ async def _run_character_resolution(
         selection_messages=selection_messages,
         call_name=("MANGA-CHARACTER-RESOLVE" if (toggles or {}).get("illustration_output_mode")
                    in ("manga", "manga_both") else ""),
+        npc_generation_enabled=merged_toggles(toggles).get("npc_generation_enabled", False),
     )
     if selection_messages is None:
         return raw_output, parsed
 
     from modes import illustration_scene_pipeline as scenes
 
+    for candidate in parsed.get("npc_candidates") or []:
+        parsed["characters"].append({"name": candidate["name"], "profile_timeline": [], "in_history": False})
+        parsed["current_characters"].append({"name": candidate["name"], "confidence": 1.0})
     names = [item["name"] for item in parsed.get("current_characters") or []]
     segment_slots, _catalog, reason = build_segment_slot_map(current_context, current_segments)
     if reason:
@@ -8483,7 +8344,7 @@ def _merge_character_and_profile_stage_results(
     )
     if "state_table" in profile_result:
         result["state_table"] = deepcopy(profile_result["state_table"])
-    for key in ("scene_plan", "character_output"):
+    for key in ("scene_plan", "character_output", "npc_candidates"):
         if key in character_result:
             result[key] = deepcopy(character_result[key])
     return result
@@ -8847,22 +8708,12 @@ async def resolve_profiles_before_generation(
             raise ValueError(f"CHARACTER-RESOLVE 장면 앵커 매핑 실패: {reason}")
         history_slice = ((history_plan or {}).get("call1_history") or []) if history_plan else chats[
             max(0, target_index - int(toggles["call1_context_turns"])):target_index]
-        single_subjects = None
-        if toggles["character_limit"] == 1:
-            non_persona = [name for name in candidate_names
-                          if (visual_profiles[name] or {}).get("is_persona") is not True]
-            single_subjects = (
-                "First resolve CURRENT participants. Among those participants, prefer registered illustration-bot "
-                "characters other than the user persona: "
-                + json.dumps(non_persona, ensure_ascii=False)
-                + ". Only if none participate in CURRENT, use the CURRENT roster. Choose exactly one named subject per image."
-            )
         protected = render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
         selection = prompt_builders.selection_messages(
             prompts, prompt_builders.role_context(
                 protected, extra_instruction, genre=toggles.get("genre", ""),
-                genre_prompt=prompts.get("genre", "")), candidate_names,
-            single_subjects, render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
+                genre_prompt=prompts.get("genre", "")),
+            render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
             scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "")
     character_output, character_result = await run_stage(_run_character_resolution,
         character_system=prompts.get("character_resolve", ""),
@@ -8904,22 +8755,29 @@ async def resolve_profiles_before_generation(
         )
         return character_output, character_result
 
-    if progress:
-        await progress(2, "profile_context_translation", "프로필 영어 컨텍스트 준비")
     profile_resolution_inputs = _selected_visual_profiles(
         current_profiles,
         multi_profile_names,
         multiple_only=True,
     )
-    translated_profiles, _translation_summary = (
-        await run_stage(prepare_profile_context_translations,
-            profile_resolution_inputs,
-            cache_namespace=profile_translation_namespace,
-            stream_notify=stream_notify,
-            history_ids_sink=history_ids_sink,
+    if toggles["profile_context_translate"]:
+        if progress:
+            await progress(2, "profile_context_translation", "프로필 영어 컨텍스트 준비")
+        translated_profiles, _translation_summary = (
+            await run_stage(prepare_profile_context_translations,
+                profile_resolution_inputs,
+                cache_namespace=profile_translation_namespace,
+                stream_notify=stream_notify,
+                history_ids_sink=history_ids_sink,
+            )
         )
-    )
-    await run_stage(_record_profile_context_cache_summary, _translation_summary)
+        await run_stage(_record_profile_context_cache_summary, _translation_summary)
+    else:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 토글 OFF, 프로필 영어 번역 생략: "
+            f"characters={multi_profile_names}"
+        )
+        translated_profiles = profile_resolution_inputs
     if progress:
         await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
     profile_output, profile_result = await run_stage(_run_profile_resolution,
@@ -8960,6 +8818,11 @@ def _parse_multi_char_layout_response(
         raise ValueError(f"마스크 레이아웃 JSON 파싱 실패: {exc}") from exc
     if isinstance(value, dict) and isinstance(value.get("regions"), list):
         for raw_region in value["regions"]:
+            if isinstance(raw_region, dict) and isinstance(raw_region.get("name"), str):
+                original_name = raw_region["name"]
+                raw_region["name"] = original_name.strip().strip('\"“”').strip()
+                if raw_region["name"] != original_name:
+                    print(f"[ILLUST_CONTEXT:MULTI_CHAR] 캐릭터 이름 인용부호 정리: {original_name!r} -> {raw_region['name']!r}")
             if isinstance(raw_region, dict) and "outfit_state" in raw_region:
                 print(f"[ILLUST_CONTEXT:MULTI_CHAR] 모델의 outfit_state 무시: character={raw_region.get('name')!r}")
                 raw_region.pop("outfit_state")
@@ -9227,6 +9090,8 @@ async def calculate_multi_char_layouts(
 
 
 def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: dict) -> tuple[str, str]:
+    for layer in descriptor.get("composite_layers") or []:
+        layer["raw_positive"], layer["raw_negative"] = build_raw_prompt(layer, narrative, prompts, toggles)
     template = prompts.get("call2_preset") or "[Positive]\n[SETUP]\n{setup}\n[CHAR]\n{char}\n[SUPPLEMENT]\n{supplement}\n\n[Negative]\n"
     positive_part, marker, negative_part = template.partition("[Negative]")
     chars = descriptor.get("characters") or []
@@ -9238,9 +9103,9 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     positive_note = str(toggles.get("positive_note") or "").strip()
     prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
 
-    # 모든 포맷(v1/v3/chansub)이 동일하게 V3 마커([SETUP]/[CHAR]/[SUPPLEMENT])를 내보낸다.
+    # All formats emit the shared V3 markers: [SETUP], [CHAR], [SUPPLEMENT].
     # 포맷별 최종 조립(LoRA/품질 프리셋/챈섭 평탄화)은 후속 처리기(process_prompt)가 수행.
-    if prompt_format not in ("v1", "v3", "chansub"):
+    if prompt_format not in ("v3", "chansub"):
         print(f"[ILLUST_CONTEXT] RAW 생성 중 알 수 없는 입력 형식 {prompt_format!r}, V3 사용")
     if positive_part.startswith("[Positive]"):
         positive_part = positive_part[len("[Positive]"):]
@@ -9301,6 +9166,10 @@ async def build_from_context(
     profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "",
     pre_resolved_profile_result: dict | None = None,
+    on_detail_start=None,
+    npc_manager=None,
+    render_npc_image=None,
+    prepare_npc_character=None,
 ) -> dict:
     # Ordinary scenes use the streaming PLAN -> DETAIL implementation exclusively.
     # TOON decoding remains shared with Key Visual and the ENQUEUE endpoint.
@@ -9311,6 +9180,9 @@ async def build_from_context(
         progress=progress, stream_notify=stream_notify,
         on_call2_plan_ready=on_call2_plan_ready, on_call2_ready=on_call2_ready,
         on_keyvis_ready=on_keyvis_ready, extra_instruction=extra_instruction,
+        on_detail_start=on_detail_start,
+        npc_manager=npc_manager, render_npc_image=render_npc_image,
+        prepare_npc_character=prepare_npc_character,
         extra_costume=extra_costume, extra_names=extra_names,
         character_names=character_names,
         enable_multi_char_layout=enable_multi_char_layout, history_plan=history_plan,

@@ -66,7 +66,7 @@ def _require_user_workflow(
 
 
 def _workflow_model_catalog(project_root, workflow_filenames):
-    """Resolve installed copies against their own release and embedded manifest."""
+    """Combine fixed pack dependencies and selected models using the project catalog."""
     from comfy_installer.model_scope import binding_model_ids
     from modal_backend.workflow_assets import _workflow_string_values
 
@@ -117,11 +117,9 @@ def _workflow_model_catalog(project_root, workflow_filenames):
             for rank, pack, item in matches:
                 if rank != best:
                     continue
-                embedded = pack.get("install_manifest") or manifest
-                catalog.update({str(m["id"]): m for m in embedded.get("models", [])})
                 ids = item.get("model_ids")
                 if ids is None:
-                    ids = binding_model_ids(embedded.get("workflows", {}), item.get("bindings", []))
+                    ids = binding_model_ids(manifest.get("workflows", {}), item.get("bindings", []))
                 model_ids.update(str(value) for value in ids)
         else:
             print(f"[MODAL] No pack entry for {name}; checking actual model references.")

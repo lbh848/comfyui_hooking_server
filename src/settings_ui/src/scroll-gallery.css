@@ -1,0 +1,4 @@
+.scroll-gallery { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.scroll-gallery-batch { display: flow-root; min-width: 0; overflow-anchor: none; }
+.scroll-gallery-more { display: flex; justify-content: center; padding: 16px; }
+.scroll-gallery-search { max-width: 460px; width: 100%; }

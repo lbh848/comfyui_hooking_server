@@ -13,31 +13,16 @@ from threading import Event
 from types import SimpleNamespace
 from typing import Iterator
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from console_encoding import configure_utf8_stdio, utf8_subprocess_env
+
 
 PUBLIC_PYPI_SIMPLE = "https://pypi.org/simple"
 
 
 class DependencyDriftCanaryError(RuntimeError):
     """The live-index dependency canary could not establish a clean install."""
-
-
-def _configure_utf8_stdio() -> None:
-    for stream_name in ("stdout", "stderr"):
-        stream = getattr(sys, stream_name, None)
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="backslashreplace")
-        except Exception as exc:
-            print(
-                "[DEPENDENCY_CANARY] UTF-8 console configuration failed: "
-                f"stream={stream_name}, error={exc}"
-            )
-            traceback.print_exc()
-            raise DependencyDriftCanaryError(
-                f"Could not configure {stream_name} for UTF-8: {exc}"
-            ) from exc
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -117,8 +102,7 @@ def _live_public_index_environment(test_root: Path) -> Iterator[dict[str, str]]:
                 "PIP_CONFIG_FILE": os.devnull,
                 "PIP_INDEX_URL": PUBLIC_PYPI_SIMPLE,
                 "PIP_NO_CACHE_DIR": "1",
-                "PYTHONIOENCODING": "utf-8",
-                "PYTHONUTF8": "1",
+                **utf8_subprocess_env({}),
                 "TEMP": str(temp_root),
                 "TMP": str(temp_root),
                 "TMPDIR": str(temp_root),
@@ -455,7 +439,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    _configure_utf8_stdio()
+    configure_utf8_stdio()
     args = _parse_args(argv)
     candidate = args.candidate_root.resolve()
     manifest = (

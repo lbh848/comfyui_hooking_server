@@ -32,7 +32,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app_paths import config_root, data_root, install_root
+from app_paths import config_root, data_root
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -720,14 +720,15 @@ async def _main_async(args: argparse.Namespace) -> int:
     run_dir = (
         Path(args.output_dir).resolve()
         if args.output_dir
-        else install_root(PROJECT_ROOT) / ".work" / "illustration_wardrobe_e2e" / timestamp
+        else PROJECT_ROOT / ".work" / "illustration_wardrobe_e2e" / timestamp
     )
     if run_dir.exists():
         raise FileExistsError(f"refusing to reuse output directory: {run_dir}")
     run_dir.mkdir(parents=True)
     _redirect_process_writes(run_dir, source_record_path)
 
-    config = _read_json(config_root(PROJECT_ROOT) / "config.json")
+    from configuration import config_path, read_config
+    config = read_config(config_root(PROJECT_ROOT) / "settings.json")
     keys = _read_json(config_root(PROJECT_ROOT) / "key" / "llm_keys.json")
     _load_llm_runtime(config, keys)
 

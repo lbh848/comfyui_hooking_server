@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .crypto import ExtractedWorkflowPack, extract_workflow_pack
-from .manifest import InstallManifest, load_install_manifest_data
+from .manifest import InstallManifest, load_install_manifest
+from .execution_profile import cpu_workflow_bindings
 
 
 class WorkflowLibraryError(RuntimeError):
-    """배포 워크플로우 보관 또는 사용자 사본 생성 실패."""
+    """배포 워크플로우 보관 또는 관리 워크플로우 설치 실패."""
 
 
 LogCallback = Callable[[str], None]
@@ -36,7 +37,7 @@ class WorkflowSelection:
     selected_item_ids: tuple[str, ...]
     workflow_bindings: dict[str, str]
     model_ids: tuple[str, ...]
-    user_files: tuple[str, ...]
+    workflow_files: tuple[str, ...]
 
 
 def embedded_workflow_base_dir(
@@ -48,7 +49,6 @@ def embedded_workflow_base_dir(
         / "user"
         / "default"
         / "workflows"
-        / USER_WORKFLOW_DIRNAME
     ).resolve()
 
 
@@ -58,11 +58,14 @@ def _sha256_bytes(payload: bytes) -> str:
 
 def _write_bytes_new(path: Path, payload: bytes) -> None:
     part = path.with_name(f"{path.name}.part-{uuid.uuid4().hex[:8]}")
+    original_mode = path.stat().st_mode if path.exists() else None
     try:
         with part.open("xb") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        if original_mode is not None:
+            _make_file_writable(path)
         os.replace(part, path)
     except Exception:
         print(
@@ -71,6 +74,11 @@ def _write_bytes_new(path: Path, payload: bytes) -> None:
         )
         traceback.print_exc()
         raise
+    finally:
+        if original_mode is not None and path.exists():
+            path.chmod(original_mode)
+        if part.exists():
+            part.unlink()
 
 
 def _write_json_new(path: Path, value: dict) -> None:
@@ -435,7 +443,7 @@ def _catalog_for_extracted(
         ]
         if unknown_models:
             raise WorkflowLibraryError(
-                "팩 동봉 설치 매니페스트에 없는 모델 ID가 있습니다: "
+                "프로젝트 설치 명세에 없는 고정 모델 ID가 있습니다: "
                 f"item={item_id}, models={unknown_models}"
             )
         archive_name = str(item["archive_name"])
@@ -700,6 +708,7 @@ def unpack_to_library(
     passphrase: str,
     library_root: str | os.PathLike[str],
     work_root: str | os.PathLike[str],
+    manifest: InstallManifest | None = None,
     log: LogCallback | None = None,
 ) -> dict:
     work = Path(work_root).resolve() / "workflow-unpack"
@@ -710,21 +719,15 @@ def unpack_to_library(
     try:
         work.mkdir(parents=True, exist_ok=True)
         extracted = extract_workflow_pack(pack_path, stage, passphrase)
-        if extracted.install_manifest is None:
-            raise WorkflowLibraryError(
-                "워크플로우 팩에 install_manifest.json이 동봉되지 않았습니다."
-            )
-        pack_manifest = load_install_manifest_data(extracted.install_manifest)
+        project_manifest = manifest or load_install_manifest()
         release = extracted.release_version
         if not _RELEASE_RE.fullmatch(release):
             raise WorkflowLibraryError(f"잘못된 워크플로우 배포 버전입니다: {release}")
-        catalog = _catalog_for_extracted(extracted, pack_manifest)
+        catalog = _catalog_for_extracted(extracted, project_manifest)
         state = {
-            "schema_version": 3,
+            "schema_version": 4,
             "release_version": release,
             "pack_sha256": extracted.pack_sha256,
-            "install_manifest_sha256": pack_manifest.sha256,
-            "install_manifest": pack_manifest.data,
             "workflow_count": len(catalog),
             "binding_count": len(extracted.workflow_bindings),
             "items": catalog,
@@ -811,7 +814,27 @@ def _load_release(library_root: Path, release_version: str) -> tuple[Path, dict]
         raise WorkflowLibraryError(
             f"워크플로우 팩 폴더와 상태 버전이 다릅니다: {root}"
         )
-    return root, state
+    return root, _resolve_model_metadata(state, load_install_manifest())
+
+
+def _resolve_model_metadata(state: dict, manifest: InstallManifest) -> dict:
+    """Keep fixed dependency IDs in packs; resolve their metadata from one catalog."""
+    result = {key: value for key, value in state.items()
+              if key not in {"install_manifest", "install_manifest_sha256"}}
+    models = {str(model["id"]): model for model in manifest.models}
+    items = []
+    for item in state.get("items", []):
+        model_ids = item.get("model_ids", [])
+        unknown = set(model_ids) - models.keys()
+        if unknown:
+            raise WorkflowLibraryError(
+                f"프로젝트 설치 명세에 없는 고정 모델입니다: {', '.join(sorted(unknown))}"
+            )
+        sizes = {identity: int(models[identity]["size"]) for identity in model_ids}
+        items.append({**item, "model_sizes": sizes, "model_count": len(sizes),
+                      "model_bytes": sum(sizes.values())})
+    result["items"] = items
+    return result
 
 
 def release_install_manifest(
@@ -819,18 +842,20 @@ def release_install_manifest(
     library_root: str | os.PathLike[str],
     release_version: str,
 ) -> InstallManifest:
+    """Use one model catalog with the selected pack's fixed workflow requirements."""
     _, state = _load_release(Path(library_root).resolve(), release_version)
-    embedded = state.get("install_manifest")
-    if isinstance(embedded, dict):
-        return load_install_manifest_data(
-            embedded,
-            source_name=(
-                f"<workflow-library>/{release_version}/install_manifest.json"
-            ),
-        )
-    raise WorkflowLibraryError(
-        "워크플로우 팩에 install_manifest.json이 없습니다: "
-        f"release={release_version}"
+    project = load_install_manifest()
+    workflows = dict(project.workflows)
+    workflows.pop("release_dependencies", None)
+    workflows.update(
+        release_version=release_version,
+        items=[{key: item[key] for key in ("id", "bindings", "model_ids")}
+               for item in state["items"]],
+    )
+    return InstallManifest(
+        source_path=project.source_path,
+        data={**project.data, "workflows": workflows},
+        sha256=project.sha256,
     )
 
 
@@ -1034,6 +1059,7 @@ def configured_workflow_integrity(
     config_path: str | os.PathLike[str],
     library_root: str | os.PathLike[str],
     release_version: str | None = None,
+    selected_item_ids: Iterable[str] | None = None,
 ) -> dict:
     """Compare configured workflow files with one immutable pack release.
 
@@ -1045,7 +1071,8 @@ def configured_workflow_integrity(
     config_file = Path(config_path).resolve()
     release = release_version or latest_release_version(library_root)
     try:
-        config = _read_json_object(config_file, "워크플로우 무결성 검사 설정")
+        from configuration import read_config
+        config = read_config(config_file)
         release_root, state = _load_release(
             Path(library_root).resolve(), release
         )
@@ -1054,6 +1081,13 @@ def configured_workflow_integrity(
             raise WorkflowLibraryError(
                 f"워크플로우 팩 항목 목록이 손상되었습니다: {release}"
             )
+
+        if selected_item_ids is not None:
+            requested = set(selected_item_ids)
+            available = {item.get("id") for item in raw_items if isinstance(item, dict)}
+            if not requested or not requested.issubset(available):
+                raise WorkflowLibraryError("검사할 배포 워크플로우를 다시 선택하세요.")
+            raw_items = [item for item in raw_items if isinstance(item, dict) and item.get("id") in requested]
 
         results: list[dict] = []
         for raw_item in raw_items:
@@ -1246,77 +1280,168 @@ def configured_workflow_integrity(
         ) from exc
 
 
-def import_user_copies(
+def managed_workflow_paths(comfy_root: str | os.PathLike[str]) -> tuple[Path, ...]:
+    root = embedded_workflow_base_dir(comfy_root)
+    state_path = Path(comfy_root).resolve() / ".installer-state" / "managed-workflows.json"
+    if not state_path.exists():
+        return ()
+    state = _read_json_object(state_path, "관리 워크플로우 상태")
+    paths = []
+    for name in state.get("files", {}):
+        path = root / name
+        if Path(name).name != name or path.is_symlink() or path.resolve().parent != root:
+            raise WorkflowLibraryError("관리 워크플로우 경로가 올바르지 않습니다.")
+        paths.append(path)
+    return tuple(paths)
+
+
+def install_managed_workflows(
     *,
     comfy_root: str | os.PathLike[str],
     library_root: str | os.PathLike[str],
     release_version: str,
     selected_item_ids: Iterable[str],
     log: LogCallback | None = None,
+    allow_missing_models: bool = False,
 ) -> WorkflowSelection:
+    """Replace selected workflows without backups, then protect them read-only."""
+    selection = resolve_distribution_selection(
+        library_root=library_root, release_version=release_version,
+        selected_item_ids=selected_item_ids,
+    )
+    if not allow_missing_models:
+        from .model_installer import missing_models
+        manifest = release_install_manifest(library_root=library_root, release_version=release_version)
+        by_id = {model["id"]: model for model in manifest.models}
+        if missing_models(models=[by_id[identity] for identity in selection.model_ids], comfy_root=Path(comfy_root)):
+            raise WorkflowLibraryError("필수 모델 설치가 완료된 뒤 워크플로우 파일을 추가할 수 있습니다.")
     comfy = Path(comfy_root).resolve()
-    release_root, state = _load_release(
-        Path(library_root).resolve(), release_version
-    )
-    requested = tuple(dict.fromkeys(str(value) for value in selected_item_ids))
-    if not requested:
-        raise WorkflowLibraryError("가져올 워크플로우를 하나 이상 선택하세요.")
-    items = state.get("items")
-    if not isinstance(items, list):
-        raise WorkflowLibraryError("워크플로우 팩 항목 목록이 손상되었습니다.")
-    items_by_id = {
-        str(item.get("id")): item for item in items if isinstance(item, dict)
-    }
-    missing = [item_id for item_id in requested if item_id not in items_by_id]
-    if missing:
-        raise WorkflowLibraryError(
-            "선택한 워크플로우가 팩에 없습니다: " + ", ".join(missing)
-        )
-    user_root = embedded_workflow_base_dir(comfy)
-    user_root.mkdir(parents=True, exist_ok=True)
-    bindings: dict[str, str] = {}
-    model_ids: set[str] = set()
-    user_files: list[str] = []
-    for item_id in requested:
-        item = items_by_id[item_id]
-        filename = Path(str(item.get("filename", ""))).name
-        source = release_root / filename
-        if not source.is_file():
-            raise WorkflowLibraryError(
-                f"배포 워크플로우 원본이 없습니다: {source}"
-            )
+    root = embedded_workflow_base_dir(comfy)
+    if not root.is_relative_to(comfy):
+        raise WorkflowLibraryError("워크플로우 폴더가 ComfyUI 폴더 밖을 가리킵니다.")
+    root.mkdir(parents=True, exist_ok=True)
+    state_path = comfy / ".installer-state" / "managed-workflows.json"
+    if state_path.is_symlink():
+        raise WorkflowLibraryError("관리 워크플로우 상태 파일이 심볼릭 링크입니다.")
+    state = _read_json_object(state_path, "관리 워크플로우 상태") if state_path.exists() else {"version": 1, "files": {}}
+    previous_paths = managed_workflow_paths(comfy)
+    planned = []
+    names = set()
+    bindings = {}
+    for item_id, source_name in zip(selection.selected_item_ids, selection.workflow_files):
+        source = Path(source_name)
+        destination = root / source.name
+        if source.name.casefold() in names:
+            raise WorkflowLibraryError(f"워크플로우 파일명이 중복됩니다: {source.name}")
+        names.add(source.name.casefold())
+        if destination.is_symlink() or destination.resolve().parent != root or (destination.exists() and not destination.is_file()):
+            raise WorkflowLibraryError(f"안전하지 않은 워크플로우 경로입니다: {destination}")
+        item_bindings = [key for key, value in selection.workflow_bindings.items() if value == source_name]
+        bindings.update({key: str(destination) for key in item_bindings})
         payload = source.read_bytes()
-        expected_hash = str(item.get("sha256", ""))
-        if _sha256_bytes(payload) != expected_hash:
-            raise WorkflowLibraryError(
-                f"배포 워크플로우 원본 해시가 손상되었습니다: {source}"
-            )
-        base_name = f"{source.stem}__{release_version}{source.suffix}"
-        destination = user_root / base_name
-        suffix = 2
-        while destination.exists() and destination.read_bytes() != payload:
-            destination = user_root / (
-                f"{source.stem}__{release_version}_{suffix}{source.suffix}"
-            )
-            suffix += 1
-        if destination.exists():
-            if log:
-                log(f"[워크플로우] 동일한 사용자 사본 재사용: {destination.name}")
-        else:
-            _write_bytes_new(destination, payload)
-            if log:
-                log(f"[워크플로우] 새 사용자 사본 생성: {destination.name}")
-        for binding_key in item.get("bindings", []):
-            bindings[str(binding_key)] = str(destination)
-        model_ids.update(str(value) for value in item.get("model_ids", []))
-        user_files.append(str(destination))
+        planned.append((destination, payload))
+        state["files"][source.name] = {
+            "item_id": item_id, "release_version": release_version,
+            "sha256": _sha256_bytes(payload), "bindings": item_bindings,
+            "allow_missing_models": allow_missing_models,
+        }
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    # Item IDs stay stable when a pack renames files. Remove only that item's
+    # previously managed name; unrelated user workflows are never inferred.
+    for previous in previous_paths:
+        if (
+            state["files"][previous.name].get("item_id") in selection.selected_item_ids
+            and previous.name.casefold() not in names
+        ):
+            if previous.exists():
+                if not previous.is_file():
+                    raise WorkflowLibraryError(f"관리 워크플로우가 일반 파일이 아닙니다: {previous}")
+                _make_file_writable(previous)
+                previous.unlink()
+            del state["files"][previous.name]
+    changed = [path for path, payload in planned if not path.exists() or path.read_bytes() != payload]
+    for destination, payload in planned:
+        try:
+            if destination in changed:
+                if destination.exists():
+                    _make_file_writable(destination)
+                    destination.unlink()
+                _write_bytes_new(destination, payload)
+        finally:
+            if destination.is_file():
+                destination.chmod(destination.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+    _write_json_new(state_path, state)
+    if log:
+        log(f"[워크플로우] 읽기 전용 설치 완료: {len(planned)}개, 폴더={root}")
     return WorkflowSelection(
-        release_version=release_version,
-        selected_item_ids=requested,
-        workflow_bindings=bindings,
-        model_ids=tuple(sorted(model_ids)),
-        user_files=tuple(user_files),
+        release_version=release_version, selected_item_ids=selection.selected_item_ids,
+        workflow_bindings=bindings, model_ids=selection.model_ids,
+        workflow_files=tuple(str(path) for path, _ in planned),
     )
+
+
+def hide_unready_workflows(
+    *, comfy_root: Path, library_root: Path, library: dict | None = None,
+    log: LogCallback | None = None,
+) -> list[str]:
+    """Archive unchanged distribution copies until their local models are ready."""
+    from .model_installer import missing_models
+    comfy = Path(comfy_root).resolve()
+    root = embedded_workflow_base_dir(comfy)
+    inventory = library if library is not None else library_status(comfy, library_root)
+    state_path = comfy / ".installer-state" / "managed-workflows.json"
+    if state_path.is_symlink() or not state_path.resolve().is_relative_to(comfy):
+        raise WorkflowLibraryError("관리 워크플로우 상태 경로가 올바르지 않습니다.")
+    state = _read_json_object(state_path, "관리 워크플로우 상태") if state_path.exists() else {"version": 1, "files": {}}
+    originals = {}
+    manifests = {}
+    for release in inventory.get("releases", []):
+        for item in release.get("items", []):
+            if item.get("sha256") and isinstance(item.get("model_ids"), list):
+                originals.setdefault((item["filename"], item["sha256"]), []).append((release["release_version"], item))
+    hidden = []
+    try:
+        for file in inventory.get("workflow_files", []):
+            # Only original copies at the managed top level may be archived.
+            # Edited files and personal copies in subfolders stay untouched.
+            source = Path(file["path"])
+            candidates = originals.get((source.name, file["sha256"]), [])
+            if not candidates or source.parent != root or source.is_symlink() or source.resolve().parent != root:
+                continue
+            if state.get("files", {}).get(source.name, {}).get("allow_missing_models"):
+                continue  # Explicit cloud installations may keep models remotely.
+            ready = False
+            for version, item in candidates:
+                if version not in manifests:
+                    manifests[version] = release_install_manifest(library_root=library_root, release_version=version)
+                by_id = {model["id"]: model for model in manifests[version].models}
+                if not missing_models(models=[by_id[identity] for identity in item["model_ids"]], comfy_root=comfy):
+                    ready = True
+                    break
+            if ready:
+                continue
+            payload = source.read_bytes()
+            if _sha256_bytes(payload) != file["sha256"]:
+                continue
+            archive = comfy / ".installer-state" / "uninstalled-workflows" / file["sha256"] / source.name
+            if not archive.resolve().is_relative_to(comfy / ".installer-state") or archive.is_symlink():
+                raise WorkflowLibraryError("미설치 워크플로우 보관 경로가 올바르지 않습니다.")
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            if archive.exists():
+                if archive.read_bytes() != payload:
+                    raise WorkflowLibraryError("보관된 워크플로우가 변경되어 폴더 정리를 중단했습니다.")
+            else:
+                _write_bytes_new(archive, payload)
+            _make_file_writable(source)
+            source.unlink()
+            state.get("files", {}).pop(source.name, None)
+            hidden.append(str(source))
+            if log:
+                log(f"[워크플로우] 설치 대기 보관: {source.name}")
+    finally:
+        if hidden and state_path.exists():
+            _write_json_new(state_path, state)
+    return hidden
 
 
 def resolve_distribution_selection(
@@ -1325,7 +1450,7 @@ def resolve_distribution_selection(
     release_version: str,
     selected_item_ids: Iterable[str],
 ) -> WorkflowSelection:
-    """Resolve immutable distribution originals without creating user copies."""
+    """Resolve immutable distribution originals without installing workflows."""
     try:
         release_root, state = _load_release(
             Path(library_root).resolve(), release_version
@@ -1388,7 +1513,7 @@ def resolve_distribution_selection(
             selected_item_ids=requested,
             workflow_bindings=bindings,
             model_ids=tuple(sorted(model_ids)),
-            user_files=tuple(source_files),
+            workflow_files=tuple(source_files),
         )
     except WorkflowLibraryError as exc:
         print(
@@ -1409,87 +1534,39 @@ def resolve_distribution_selection(
         ) from exc
 
 
-def import_default_user_copies(
+def basic_workflow_item_ids(
+    library_root: str | os.PathLike[str], release_version: str,
+) -> list[str]:
+    """Select the shared analysis, face extraction and utility task bindings."""
+    _, state = _load_release(Path(library_root).resolve(), release_version)
+    required = cpu_workflow_bindings()
+    selected = []
+    found = set()
+    for item in state.get("items", []):
+        bindings = set(item.get("bindings", []))
+        if bindings & required:
+            if not bindings <= required:
+                raise WorkflowLibraryError("기본 워크플로우에 생성 작업이 함께 묶여 있습니다.")
+            selected.append(str(item["id"]))
+            found.update(bindings)
+    if found != required:
+        raise WorkflowLibraryError("기본 워크플로우가 팩에 없습니다: " + ", ".join(sorted(required - found)))
+    return selected
+
+
+def install_default_workflows(
     *,
     comfy_root: str | os.PathLike[str],
     library_root: str | os.PathLike[str],
     release_version: str | None = None,
     log: LogCallback | None = None,
 ) -> WorkflowSelection:
-    """Ensure every workflow in one release has an embedded user copy.
-
-    The release metadata is the sole source of truth for default config
-    bindings.  A future pack can add or rename workflows without adding a
-    second filename map to the installer or server config.
-    """
     release = release_version or latest_release_version(library_root)
-    try:
-        _, state = _load_release(Path(library_root).resolve(), release)
-        items = state.get("items")
-        if not isinstance(items, list) or not items:
-            print(
-                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 항목이 "
-                f"비어 있습니다: release={release}, items={items!r}"
-            )
-            raise WorkflowLibraryError(
-                f"기본 워크플로우 배포 항목이 비어 있습니다: {release}"
-            )
-        item_ids: list[str] = []
-        expected_bindings: set[str] = set()
-        for item in items:
-            if not isinstance(item, dict):
-                print(
-                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 "
-                    f"항목 형식 오류: release={release}, item={item!r}"
-                )
-                raise WorkflowLibraryError(
-                    f"기본 워크플로우 항목 형식이 잘못되었습니다: {release}"
-                )
-            item_id = str(item.get("id") or "").strip()
-            bindings = item.get("bindings")
-            if not item_id or not isinstance(bindings, list) or not bindings:
-                print(
-                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 "
-                    "ID/바인딩 누락: "
-                    f"release={release}, item={item!r}"
-                )
-                raise WorkflowLibraryError(
-                    f"기본 워크플로우 ID/바인딩이 누락되었습니다: {release}"
-                )
-            item_ids.append(item_id)
-            expected_bindings.update(str(value) for value in bindings)
-
-        selection = import_user_copies(
-            comfy_root=comfy_root,
-            library_root=library_root,
-            release_version=release,
-            selected_item_ids=item_ids,
-            log=log,
-        )
-        actual_bindings = set(selection.workflow_bindings)
-        if actual_bindings != expected_bindings:
-            print(
-                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 바인딩 "
-                "검증 실패: "
-                f"release={release}, missing="
-                f"{sorted(expected_bindings - actual_bindings)}, extra="
-                f"{sorted(actual_bindings - expected_bindings)}"
-            )
-            raise WorkflowLibraryError(
-                f"기본 워크플로우 바인딩 검증에 실패했습니다: {release}"
-            )
-        return selection
-    except WorkflowLibraryError:
-        raise
-    except Exception as exc:
-        print(
-            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 사용자 "
-            f"사본 준비 실패: release={release}, error={exc}"
-        )
-        traceback.print_exc()
-        raise WorkflowLibraryError(
-            f"기본 워크플로우 사용자 사본 준비 실패: {exc}"
-        ) from exc
+    return install_managed_workflows(
+        comfy_root=comfy_root, library_root=library_root,
+        release_version=release,
+        selected_item_ids=basic_workflow_item_ids(library_root, release), log=log,
+    )
 
 
 def selection_requirements(
@@ -1538,7 +1615,6 @@ def library_status(
     library_root: str | os.PathLike[str],
 ) -> dict:
     comfy = Path(comfy_root).resolve()
-    workflows_root = comfy / "user" / "default" / "workflows"
     distributed_root = (
         Path(library_root).resolve() / DISTRIBUTION_LIBRARY_DIRNAME
     )
@@ -1552,7 +1628,7 @@ def library_status(
             if not child.is_dir() or not state_path.is_file():
                 continue
             try:
-                state = _read_json_object(state_path, "워크플로우 팩 상태")
+                _, state = _load_release(Path(library_root).resolve(), child.name)
                 public_state = {
                     key: value
                     for key, value in state.items()
@@ -1565,20 +1641,61 @@ def library_status(
                     f"path={child}, error={exc}"
                 )
                 traceback.print_exc()
-    user_files = []
-    if user_root.is_dir():
-        user_files = [
-            {
-                "name": path.name,
-                "path": str(path),
-                "size": path.stat().st_size,
-            }
-            for path in sorted(user_root.glob("*.json"), key=lambda p: p.name.casefold())
-            if path.is_file()
-        ]
+    workflow_files = []
+    workflow_files_error = ""
+    visited: set[Path] = set()
+    seen: set[Path] = set()
+
+    def walk_error(error: OSError) -> None:
+        raise error
+
+    try:
+        if not user_root.is_relative_to(comfy):
+            raise OSError("Workflow folder is outside embedded ComfyUI")
+        for directory, children, filenames in os.walk(user_root, followlinks=False, onerror=walk_error) if user_root.is_dir() else []:
+            current = Path(directory)
+            resolved = current.resolve()
+            if resolved in visited or not resolved.is_relative_to(user_root):
+                children[:] = []
+                continue
+            visited.add(resolved)
+            children[:] = sorted(name for name in children if not name.startswith(".") and (current / name).resolve().is_relative_to(user_root))
+            for name in sorted(filenames, key=str.casefold):
+                path = current / name
+                if name.startswith(".") or path.suffix.casefold() != ".json":
+                    continue
+                resolved_file = path.resolve()
+                if not resolved_file.is_relative_to(user_root) or resolved_file in seen or not path.is_file():
+                    continue
+                try:
+                    payload = path.read_bytes()
+                    workflow = json.loads(payload)
+                except (ValueError, UnicodeError):
+                    continue  # A broken JSON file or a sidecar is not a workflow.
+                except FileNotFoundError:
+                    continue  # The user may remove a workflow during refresh.
+                except OSError:
+                    workflow_files_error = "일부 워크플로우 파일을 읽지 못했습니다. 폴더와 파일 권한을 확인하세요."
+                    continue
+                if not isinstance(workflow, dict) or not (
+                    isinstance(workflow.get("nodes"), list)
+                    or (workflow and all(isinstance(node, dict) and isinstance(node.get("class_type"), str)
+                                         and isinstance(node.get("inputs"), dict) for node in workflow.values()))
+                ):
+                    continue
+                seen.add(resolved_file)
+                workflow_files.append({
+                    "name": path.name, "path": str(path), "size": len(payload),
+                    "relative_path": path.relative_to(user_root).as_posix(),
+                    "sha256": _sha256_bytes(payload),
+                })
+    except (OSError, RuntimeError):
+        workflow_files_error = "워크플로우 폴더를 읽지 못했습니다. 폴더 위치와 접근 권한을 확인하세요."
+    workflow_files.sort(key=lambda item: item["relative_path"].casefold())
     return {
         "releases": releases,
-        "user_files": user_files,
+        "workflow_files": workflow_files,
+        "workflow_files_error": workflow_files_error,
         "distributed_root": str(distributed_root),
         "user_root": str(user_root),
     }

@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 _LORA_INPUT_FIELDS = {"lora_name", "lora", "snapref_model"}
 _IMAGE_INPUT_FIELDS = {"image"}
 _SOYA_FIRST_SAMPLER_CLASS = "SoyaFirstSampler_mdsoya"
+_SOYA_FIRST_SAMPLER_CLASSES = {_SOYA_FIRST_SAMPLER_CLASS, "SoyaFirstSamplerV2_mdsoya"}
 _SOYA_PROMPT_PARSER_CLASS = "SoyaPromptParser_mdsoya"
 _SOYA_ASSET_PROMPT_PARSER_CLASS = "SoyaAssetV2PromptParser_mdsoya"
 _SOYA_PROMPT_PARSER_CLASSES = frozenset(
@@ -112,7 +113,7 @@ def _workflow_string_values(value: Any) -> Iterable[str]:
         return
     if isinstance(value, Mapping):
         inputs = value.get("inputs")
-        if (value.get("class_type") == _SOYA_FIRST_SAMPLER_CLASS
+        if (value.get("class_type") in _SOYA_FIRST_SAMPLER_CLASSES
                 and isinstance(inputs, Mapping) and "snapref_model" in inputs):
             # This weight is collected through _workflow_paths, which resolves
             # the connected SNAPREF block before deciding whether it is used.
@@ -150,7 +151,7 @@ def resolve_workflow_model_files(
             )
             raise ValueError("Modal 모델 동기화에 사용할 워크플로우가 비어 있습니다.")
         for raw_value in (*_workflow_string_values(workflow),
-                          *_workflow_paths(workflow, {"snapref_model"})):
+                          *_workflow_paths(workflow, _LORA_INPUT_FIELDS)):
             normalized = raw_value.replace("\\", "/").casefold()
             for entry in lookup.get(normalized, []):
                 selected[str(entry["source_path"])] = dict(entry)
@@ -195,6 +196,13 @@ def resolve_workflow_model_files(
 
 def _workflow_paths(workflow: Mapping[str, Any], field_names: set[str]) -> list[str]:
     result: list[str] = []
+    json_fields = list(_illustration_json_fields(workflow))
+    if field_names & {"lora_name", "lora"}:
+        for fields in json_fields:
+            for prefix in ("LORA", "FACE_LORA", "STYLE_LORA"):
+                if fields.get(prefix + "_ACTIVATE"):
+                    result.extend(str(item["lora_path"]).replace("\\", "/")
+                                  for item in fields.get(prefix + "_DATA", {}).get("list", []))
     for node in workflow.values():
         if not isinstance(node, Mapping):
             continue
@@ -209,6 +217,8 @@ def _workflow_paths(workflow: Mapping[str, Any], field_names: set[str]) -> list[
                 continue
             if normalized_field == "snapref_model":
                 enabled = inputs.get("snapref_enabled", False)
+                if "prompt_json" in inputs:
+                    enabled = any(fields.get("SNAPREF", {}).get("enabled", False) for fields in json_fields)
                 try:
                     for text in _soya_parser_section_texts(workflow, inputs.get("SNAPREF", ""), "SNAPREF"):
                         if text.strip():
@@ -217,12 +227,31 @@ def _workflow_paths(workflow: Mapping[str, Any], field_names: set[str]) -> list[
                     print(f"[MODAL_SYNC] SnapRef 설정 해석 실패: inputs={inputs!r}, error={exc}")
                     traceback.print_exc()
                     raise
-                if node.get("class_type") != _SOYA_FIRST_SAMPLER_CLASS or not enabled:
+                if node.get("class_type") not in _SOYA_FIRST_SAMPLER_CLASSES or not enabled:
                     print("[MODAL_SYNC] 활성 SnapRef 입력이 아니어서 참조 가중치 동기화 생략")
                     continue
             if isinstance(value, str) and value.strip():
                 result.append(value.strip().replace("\\", "/"))
     return list(dict.fromkeys(result))
+
+
+def _illustration_json_fields(workflow):
+    """Read transport fields once; embedded input assets never become file paths."""
+    seen = set()
+    for node in workflow.values():
+        if not isinstance(node, Mapping):
+            continue
+        value = node.get("inputs", {}).get("prompt_json")
+        if value is None:
+            continue
+        identity = tuple(value) if isinstance(value, list) else value
+        if identity in seen:
+            continue
+        seen.add(identity)
+        for text in _resolve_linked_strings(workflow, value):
+            payload = json.loads(text)
+            if payload.get("schema") == "soya.illustration.v2":
+                yield payload["fields"]
 
 
 def _safe_relative(value: str, label: str) -> PurePosixPath:
@@ -613,6 +642,14 @@ def resolve_input_files(
         )
         traceback.print_exc()
         raise
+    image_names = _workflow_paths(workflow, _IMAGE_INPUT_FIELDS)
+    input_directory_names = _workflow_reference_dirs(workflow)
+    snapref_nodes = [(node_id, node) for node_id, node in workflow.items()
+                     if isinstance(node, Mapping) and node.get("class_type") == _SOYA_FIRST_SAMPLER_CLASS]
+    # JSON workflows carry their images and masks in the request. Do not even
+    # resolve a configured input directory (which may belong to a remote host).
+    if not (cache_names or image_names or input_directory_names or snapref_nodes):
+        return []
     input_root_raw = str(config.get("comfy_input_dir") or "").strip()
     if not input_root_raw:
         if cache_names:
@@ -624,10 +661,7 @@ def resolve_input_files(
         return []
     input_root = Path(input_root_raw).resolve()
     result: list[dict[str, str]] = []
-    image_names = _workflow_paths(workflow, _IMAGE_INPUT_FIELDS)
-    for node_id, node in workflow.items():
-        if not isinstance(node, Mapping) or node.get("class_type") != _SOYA_FIRST_SAMPLER_CLASS:
-            continue
+    for node_id, node in snapref_nodes:
         inputs = node.get("inputs") or {}
         try:
             enabled = inputs.get("snapref_enabled", False)
@@ -680,7 +714,7 @@ def resolve_input_files(
             print(f"[MODAL_SYNC] 입력 이미지 파일을 찾지 못해 업로드 생략: {candidate}")
             continue
         result.append({"source_path": str(candidate), "remote_name": relative.as_posix()})
-    for name in _workflow_reference_dirs(workflow):
+    for name in input_directory_names:
         relative = _safe_relative(name, "참조 이미지 폴더")
         candidate = input_root.joinpath(*relative.parts).resolve()
         if input_root != candidate and input_root not in candidate.parents:

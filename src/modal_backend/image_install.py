@@ -131,6 +131,9 @@ def install() -> None:
                 f"지원하지 않는 custom node 소스입니다: {node.get('source_type')!r}"
             )
 
+    from illustration_v2_nodes import install_illustration_v2_nodes
+    install_illustration_v2_nodes(COMFY_ROOT, resource_dir="/opt/soya/illustration_v2")
+
     requirement_files = sorted(custom_root.glob("*/requirements.txt"))
     for requirements in requirement_files:
         print(f"[MODAL_IMAGE] 의존성 설치: {requirements.parent.name}")

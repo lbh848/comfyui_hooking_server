@@ -1,0 +1,21 @@
+{
+  "custom_node": {
+    "name": "comfyui-llamacpp",
+    "source_type": "git",
+    "repository": "https://github.com/Setmaster/comfyui-llamacpp.git",
+    "ref": "e4c4c1f278563a2931ed9f0ae1018645131a1fb8"
+  },
+  "llama_cpp_release": "b12032",
+  "windows_cuda_archives": [
+    {
+      "filename": "llama-b12032-bin-win-cuda-12.4-x64.zip",
+      "size": 279952566,
+      "sha256": "36c7e24ad048cceabf00c1b49d0f0411b954c6a410a7ff4300af8721a94fd00a"
+    },
+    {
+      "filename": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "size": 391443627,
+      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+    }
+  ]
+}

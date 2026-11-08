@@ -15,6 +15,7 @@
         'OUTFIT': 'illustration_call1',
         'CALL1': 'illustration_call1',
         'TIME & PLACE': 'illustration_time_place',
+        'NPC 생성 노드': 'illustration_npc_generation',
         'CALL2-PLAN': 'illustration_call2_plan',
         'CALL2-DETAIL': 'illustration_call2',
         'CALL2-KEYVIS': 'illustration_call2_keyvis',
@@ -118,8 +119,8 @@
     function renderIllustrationPreviewPlan(root, plan, activeGroup) {
         const escape = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;')
             .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-        const labels = {call1_select: 'OUTFIT + TIME & PLACE',
-            call2_plan: 'PLAN 배치', call2_detail: 'DETAIL 배치', keyvis: 'KEYVIS',
+        const labels = {call1_select: 'OUTFIT + TIME & PLACE + NPC',
+            call2_plan: 'PLAN 배치', call2_detail: 'DETAIL 배치', composite_detail: 'DETAIL 합성 삽화', keyvis: 'KEYVIS',
             original_asset: 'Original Asset', profile_resolve: 'PROFILE-RESOLVE',
             illustration_images: '삽화', illustration_postprocess: '이미지 후처리',
             illustration_inspection: '생성 이미지 자동 검사'};

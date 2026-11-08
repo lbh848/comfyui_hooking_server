@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "builtin-anima-default",
+      "profile": "anima",
+      "name": "ANIMA 기본",
+      "settings": {
+        "il_rate": 0.0003,
+        "save_per_step": 50,
+        "save_after": 0,
+        "gen_w": 704,
+        "gen_h": 1024,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 16,
+        "step_mode": "per_image",
+        "step_per_image": 200,
+        "total_steps": 200,
+        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
+        "profile": "anima",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false
+      }
+    },
+    {
+      "id": "builtin-ilxl-default",
+      "profile": "sdxl",
+      "name": "ILXL 기본",
+      "settings": {
+        "il_rate": 0.0002,
+        "save_per_step": 50,
+        "save_after": 0,
+        "gen_w": 1024,
+        "gen_h": 1536,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 16,
+        "step_mode": "per_image",
+        "step_per_image": 300,
+        "total_steps": 300,
+        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_캐릭터_ILXL_V1_1.json",
+        "profile": "sdxl",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false
+      }
+    },
+    {
+      "id": "6a7c1cd0397f49479a4d310ec5567b23",
+      "profile": "anima",
+      "name": "ANIMA 그림체",
+      "settings": {
+        "il_rate": 0.0001,
+        "save_per_step": 100,
+        "save_after": 200,
+        "gen_w": 704,
+        "gen_h": 1024,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 16,
+        "step_mode": "per_image",
+        "step_per_image": 2000,
+        "total_steps": 2000,
+        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
+        "profile": "anima",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false
+      }
+    },
+    {
+      "id": "6e9a41c24c2c4157bc8ca2ab265760f1",
+      "profile": "sdxl",
+      "name": "ILXL 그림체",
+      "settings": {
+        "il_rate": 0.0001,
+        "save_per_step": 200,
+        "save_after": 0,
+        "gen_w": 1024,
+        "gen_h": 1536,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 16,
+        "step_mode": "total",
+        "step_per_image": 400,
+        "total_steps": 2000,
+        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_스타일_ILXL_V1_1.json",
+        "profile": "sdxl",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false
+      }
+    }
+  ]
+}

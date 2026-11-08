@@ -1,6 +1,6 @@
 PURPOSE
 
-As part of CHARACTER-RESOLVE, select the requested number of CURRENT source anchors, their visible canonical participants and the intended scene focus.
+As part of CHARACTER-RESOLVE, select the requested number of CURRENT source anchors, their visible subjects and intended scene focus, recording registered identity references separately from NPC descriptions.
 
 Apply shared scene-execution guidance to the meaning of scene_brief. Keep the selection output contract below; image-tag fields belong to the later image-writing role.
 
@@ -12,24 +12,24 @@ SELECTION
 
 Read all CURRENT candidates before deciding. Preserve the requested scene_plan item count and choose unique exact supplied anchors. Return order is unrestricted; the server arranges selected anchors by their source insertion positions. Favor passages supporting materially different visible events or changes. An invisible thought or abstract effect is not a filler scene. One event may supply several anchors when its passages support different visible actions, poses, reactions or contact changes; each selected anchor still appears only once.
 
-Apply the single-subject rules when the active policy requires SINGLE, or when choosing an individual single-subject image within a mixed set. Their presence in a mixed policy does not make every scene single-subject. For a selected single-subject view, the named subject is the sole main identity/LoRA owner. Choose anchors supporting an event that remains physically understandable with only the smallest naturally connected off-frame anonymous partner fragment permitted by the active policy. Never add that anonymous fragment's owner to scene_plan.characters. Preserve source intensity and exposure; do not choose a concealed or euphemized substitute.
+Apply the single-subject rules when the active policy requires SINGLE, or when choosing an individual single-subject image within a mixed set. Their presence in a mixed policy does not make every scene single-subject. For a selected single-subject view, the selected person is the sole independently depicted subject, whether registered or NPC; use only that person's own identity/Profile/LoRA when supplied. Choose anchors supporting an event that remains physically understandable with only the smallest naturally connected off-frame anonymous partner fragment permitted by the active policy. Never add that anonymous fragment's owner to scene_plan.characters. Preserve source intensity and exposure; do not choose a concealed or euphemized substitute.
 
-Write scene_brief as one short English sentence stating the selection intent: the visible action, reaction, relationship or event this image should convey, including source-established unregistered participants. The characters array lists every registered identity selected as a depicted subject of that view. In a shared shot, include both sides of the interaction; selecting the initiator alone does not represent the pair. Use `characters: []` when no registered subject is selected, including NPC-only, creature-only and environmental views allowed by the active policy. Choose the visible subjects for the event's meaning; do not insert a registered observer merely to populate the array. Keep the brief concise, without detailed staging, camera directions, appearance, wardrobe inventories, selection rationale or alternative scenes.
+Write scene_brief as one short English sentence stating the selection intent: the visible action, reaction, relationship or event this image should convey, including source-established unregistered participants. The characters array lists only the registered identities selected as depicted subjects, not the entire visible cast. Registration supplies appearance references, not priority in scene selection. A registered subject and a separately depicted NPC form a shared shot even with one registered entry; an NPC-only shot has an empty registered array. Describe both sides of a selected shared interaction in scene_brief and include each registered side in the array. Use `characters: []` when no registered subject is selected, including NPC-only, creature-only and environmental views allowed by the active policy. Choose the visible subjects for the event's meaning; do not insert a registered observer merely to populate the array. Keep the brief concise, without detailed staging, camera directions, appearance, wardrobe inventories, selection rationale or alternative scenes.
 
 CONTRASTING SELECTION EXAMPLES
 
-These examples illustrate the existing fields, not required events, names, anchors, array lengths or a fixed ratio. Assume Mira and Ren are registered CURRENT participants. Apply the active policy and actual source; shared-shot examples apply only when that policy permits multiple subjects.
+These examples illustrate the existing fields, not required events, names, anchors, array lengths or a fixed ratio. Assume Mira and Ren are registered CURRENT participants, while the porter is a source-established NPC. Apply the active policy and actual source; shared-shot examples apply only when that policy permits multiple subjects.
 
 - Shared relationship, one grammatical subject: {"anchor_segment":"C001","scene_brief":"Mira clutches Ren's sleeve, her shoulders slowly relaxing.","characters":["Mira","Ren"]}
-- Shared action, unequal activity: {"anchor_segment":"C002","scene_brief":"Ren steadies Mira as she climbs from the boat onto the pier.","characters":["Mira","Ren"]}
+- Shared registered/NPC action: {"anchor_segment":"C002","scene_brief":"Mira and the unregistered porter face each other as he steadies her step onto the pier.","characters":["Mira"]}
 - Shared reaction without contact: {"anchor_segment":"C003","scene_brief":"Mira laughs at Ren's sheepish expression as they face each other across the table.","characters":["Mira","Ren"]}
 - Shared contact, passive receiver: {"anchor_segment":"C004","scene_brief":"Mira straightens Ren's collar, concentrating on the crooked fastening.","characters":["Mira","Ren"]}
 - Single expression during that same action: {"anchor_segment":"C005","scene_brief":"Mira's concentrated expression while adjusting an off-frame partner's collar.","characters":["Mira"]}
 - Single reaction to a known but unseen partner: {"anchor_segment":"C006","scene_brief":"Mira's tense expression softens at Ren's reassurance from outside the view.","characters":["Mira"]}
 - Single action with minimal anonymous contact: {"anchor_segment":"C007","scene_brief":"Mira accepts a key from a connected anonymous hand entering at the frame edge.","characters":["Mira"]}
-- No registered subject: {"anchor_segment":"C008","scene_brief":"Unregistered porters hurry beneath the station awning as rain floods the empty tracks.","characters":[]}
+- Single NPC subject: {"anchor_segment":"C008","scene_brief":"The unregistered porter braces himself against the rain beneath the station awning.","characters":[]}
 
-The shared examples need both names because both people are selected subjects, even when only one acts. The single examples deliberately isolate Mira; Ren can remain in the overall CURRENT roster without becoming a depicted subject. A source passage may support either kind of view, but its chosen brief and cast must express the same selection. Neither the grammatical subject nor the number of names mentioned decides the image's cast.
+A shared view lists both names only when both selected subjects are registered. The registered/NPC example has one registered name but two independently depicted subjects; the NPC-only example has no registered name but one subject. Neither case changes the visible-subject limit. The single examples deliberately isolate Mira; Ren can remain in the overall CURRENT roster without becoming a depicted subject. A source passage may support either kind of view, but its chosen brief and cast must express the same selection. Neither the grammatical subject nor the number of names mentioned decides the image's cast.
 
 OUTPUT
 
@@ -37,4 +37,4 @@ Add scene_plan to the same JSON object as characters. Each scene item has anchor
 
 FINAL CHECK
 
-Requested count, unique supplied anchors, canonical-subset identities and distinct scene intentions. Check that each brief's selected subjects match its characters array, including both participants of a shared shot. Keep each scene_brief to one short sentence.
+Requested count, unique supplied anchors, canonical-subset identities and distinct scene intentions. Check that each brief's selected registered subjects match its characters array and that any selected NPC subjects remain explicit in the brief. Apply single/shared composition rules to the independently depicted subjects, not the registered-array length. Keep each scene_brief to one short sentence.

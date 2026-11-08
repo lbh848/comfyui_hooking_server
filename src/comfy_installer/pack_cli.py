@@ -7,6 +7,8 @@ import os
 import sys
 import traceback
 from pathlib import Path, PurePosixPath
+from typing import Iterable
+from configuration import config_path as application_config_path, read_config
 
 from .crypto import WorkflowPackError, create_workflow_pack
 from .manifest import InstallManifest, load_install_manifest
@@ -26,21 +28,22 @@ def collect_workflow_bindings(
     manifest: InstallManifest | None = None,
     *,
     include_optional: bool = False,
+    required_bindings: Iterable[str] | None = None,
 ) -> dict[str, Path]:
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config = read_config(config_path)
     except Exception as exc:
         print(
-            "[COMFY_INSTALL][PACK] config.json 읽기 실패: "
+            "[COMFY_INSTALL][PACK] settings.json 읽기 실패: "
             f"path={config_path}, error={exc}"
         )
         traceback.print_exc()
-        raise WorkflowPackError(f"config.json을 읽을 수 없습니다: {config_path}") from exc
+        raise WorkflowPackError(f"settings.json을 읽을 수 없습니다: {config_path}") from exc
     if not isinstance(config, dict):
-        raise WorkflowPackError("config.json 최상위 값이 객체가 아닙니다.")
+        raise WorkflowPackError("settings.json 최상위 값이 객체가 아닙니다.")
 
     manifest = manifest or load_install_manifest()
-    required = list(manifest.workflows["required_bindings"])
+    required = list(manifest.workflows["required_bindings"] if required_bindings is None else required_bindings)
     required_set = set(required)
     binding_keys = required
     if include_optional:
@@ -57,7 +60,7 @@ def collect_workflow_bindings(
                     f"팩에서 제외: key={key}"
                 )
                 continue
-            raise WorkflowPackError(f"config.json 워크플로우 경로가 비었습니다: {key}")
+            raise WorkflowPackError(f"settings.json 워크플로우 경로가 비었습니다: {key}")
         path = Path(raw_path).resolve()
         if not path.is_file():
             raise WorkflowPackError(
@@ -71,7 +74,27 @@ def collect_workflow_bindings(
 def _workflow_string_values(value: object):
     if isinstance(value, str):
         yield value.replace("\\", "/").strip().casefold()
+        # V2 workflows carry model names inside a JSON prompt string.
+        if value.lstrip().startswith(("{", "[")):
+            try:
+                nested = json.loads(value)
+            except (ValueError, RecursionError):
+                pass
+            else:
+                if isinstance(nested, (dict, list)):
+                    yield from _workflow_string_values(nested)
     elif isinstance(value, dict):
+        # These fields are selected by the application at generation time.
+        # Defaults in an editable prompt are not fixed workflow dependencies.
+        if value.get("schema") == "soya.illustration.v2" and isinstance(value.get("fields"), dict):
+            fields = value["fields"]
+            runtime_fields = {
+                "ANIMA_DIFFUSION_MODEL", "ILXL_CHECKPOINT",
+                "LORA_DATA", "FACE_LORA_DATA", "STYLE_LORA_DATA",
+            }
+            value = {**value, "fields": {
+                key: nested for key, nested in fields.items() if key not in runtime_fields
+            }}
         for nested in value.values():
             yield from _workflow_string_values(nested)
     elif isinstance(value, list):
@@ -138,60 +161,12 @@ def build_workflow_items(
     return sorted(items, key=lambda item: item["id"])
 
 
-def pack_install_manifest(
-    manifest: InstallManifest,
-    workflow_items: list[dict],
-    release_version: str,
-) -> dict:
-    data = json.loads(json.dumps(manifest.data, ensure_ascii=False))
-    selected_model_ids = {
-        str(model_id)
-        for item in workflow_items
-        for model_id in item["model_ids"]
-    }
-    validation_profiles = data.get("validation_profiles")
-    if isinstance(validation_profiles, dict):
-        for profile in validation_profiles.values():
-            if isinstance(profile, dict):
-                selected_model_ids.update(
-                    str(model_id)
-                    for model_id in profile.get("model_ids", [])
-                )
-    models = data.get("models")
-    if isinstance(models, list):
-        data["models"] = [
-            model
-            for model in models
-            if str(model.get("id", "")) in selected_model_ids
-        ]
-    workflows = data.get("workflows")
-    if isinstance(workflows, dict):
-        workflows.pop("release_dependencies", None)
-        workflows["release_version"] = release_version
-        workflows["required_bindings"] = sorted(
-            {
-                str(binding)
-                for item in workflow_items
-                for binding in item["bindings"]
-            }
-        )
-        workflows["optional_bindings"] = []
-        workflows["items"] = [
-            {
-                "id": str(item["id"]),
-                "bindings": list(item["bindings"]),
-                "model_ids": list(item["model_ids"]),
-            }
-            for item in workflow_items
-        ]
-    return data
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="현재 config.json의 배포 워크플로우를 암호화 팩으로 생성합니다."
+        description="현재 settings.json의 배포 워크플로우를 암호화 팩으로 생성합니다."
     )
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default=str(application_config_path()))
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--release-version",
@@ -233,11 +208,6 @@ def main(argv: list[str] | None = None) -> int:
             key,
             release_version=release_version,
             workflow_items=workflow_items,
-            install_manifest=pack_install_manifest(
-                manifest,
-                workflow_items,
-                release_version,
-            ),
         )
         key = ""
         print(

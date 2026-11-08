@@ -10,6 +10,8 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from configuration import read_config, write_config
+from lora_paths import ASSET_LORA_FOLDER
 
 from comfy_allocation import (
     CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
@@ -45,7 +47,7 @@ class ConfigRetargetResult:
 
 _EMBEDDED_DIRECT_PATHS: dict[str, tuple[str, ...]] = {
     "$.comfy_input_dir": ("input",),
-    "$.lora_load_path": ("models", "loras", "SOYA_CHAR_LORA"),
+    "$.lora_load_path": ("models", "loras", "SOYA_CHAR_LORA", ASSET_LORA_FOLDER),
     "$.bot_lora_load_path": (
         "models",
         "loras",
@@ -82,7 +84,7 @@ def backup_current_config(
     ).strip("_") or "operation"
     try:
         if not config_file.is_file():
-            raise ConfigUpdateError(f"백업할 config.json이 없습니다: {config_file}")
+            raise ConfigUpdateError(f"백업할 settings.json이 없습니다: {config_file}")
         before_hash = _sha256_file(config_file)
         backup_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -90,7 +92,7 @@ def backup_current_config(
         shutil.copy2(config_file, backup_path)
         if _sha256_file(backup_path) != before_hash:
             raise ConfigUpdateError(
-                f"config.json 백업 SHA-256 검증에 실패했습니다: {backup_path}"
+                f"settings.json 백업 SHA-256 검증에 실패했습니다: {backup_path}"
             )
         print(
             "[COMFY_INSTALL][CONFIG] 설정 백업 완료: "
@@ -120,7 +122,7 @@ def _sha256_file(path: Path) -> str:
 
 def _read_json_object(path: Path, label: str) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = read_config(path)
     except Exception as exc:
         print(
             f"[COMFY_INSTALL][CONFIG] {label} JSON 읽기 실패: "
@@ -134,6 +136,9 @@ def _read_json_object(path: Path, label: str) -> dict:
 
 
 def _write_json_atomic(path: Path, value: dict) -> None:
+    if path.name == "settings.json":
+        write_config(path, value)
+        return
     payload = (
         json.dumps(value, ensure_ascii=False, indent=2) + os.linesep
     ).encode("utf-8")
@@ -154,6 +159,10 @@ def _write_json_atomic(path: Path, value: dict) -> None:
 
 
 def _copy_file_atomic(source: Path, destination: Path) -> None:
+    if destination.name == "settings.json":
+        # Installer rollback owns application paths, not newer provider edits.
+        write_config(destination, read_config(source))
+        return
     part_path = destination.with_name(f"{destination.name}.part")
     try:
         with source.open("rb") as input_stream, part_path.open("wb") as output_stream:
@@ -168,6 +177,13 @@ def _copy_file_atomic(source: Path, destination: Path) -> None:
                 f"{part_path}"
             )
         raise
+
+
+def _restored_config_matches(source: Path, destination: Path) -> bool:
+    if destination.name == "settings.json":
+        from llm_settings import without_migrated_llm_settings
+        return read_config(destination) == without_migrated_llm_settings(read_config(source))
+    return _sha256_file(source) == _sha256_file(destination)
 
 
 def _set_dotted(config: dict, dotted_key: str, value: str) -> None:
@@ -313,7 +329,7 @@ def retarget_legacy_workflow_paths(
     try:
         if not config_file.is_file():
             print(
-                "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] config.json이 없어 "
+                "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] settings.json이 없어 "
                 f"경로 전환을 건너뜁니다: {config_file}"
             )
             return {
@@ -397,7 +413,7 @@ def retarget_legacy_workflow_paths(
         )
         if _sha256_file(config_file) != backup["sha256"]:
             raise ConfigUpdateError(
-                "워크플로우 ASCII 경로 전환 전 config.json이 변경되었습니다."
+                "워크플로우 ASCII 경로 전환 전 settings.json이 변경되었습니다."
             )
 
         _write_json_atomic(config_file, updated)
@@ -407,7 +423,7 @@ def retarget_legacy_workflow_paths(
         )
         if reloaded != updated:
             raise ConfigUpdateError(
-                "워크플로우 ASCII 경로 전환 후 config.json 재검증이 "
+                "워크플로우 ASCII 경로 전환 후 settings.json 재검증이 "
                 "일치하지 않습니다."
             )
         print(
@@ -673,7 +689,7 @@ def retarget_config_to_embedded_comfy(
     new_root = Path(new_comfy_root).resolve()
     try:
         if not config_file.is_file():
-            raise ConfigUpdateError(f"수정할 config.json이 없습니다: {config_file}")
+            raise ConfigUpdateError(f"수정할 settings.json이 없습니다: {config_file}")
         if old_root is not None and not old_root.is_dir():
             raise ConfigUpdateError(f"기존 ComfyUI 폴더가 없습니다: {old_root}")
         if old_root is not None and old_root == new_root:
@@ -706,7 +722,7 @@ def retarget_config_to_embedded_comfy(
         backup_hash = _sha256_file(backup_file)
         if backup_hash != before_hash:
             raise ConfigUpdateError(
-                "내장 Comfy 전환 설정 백업과 현재 config.json이 다릅니다. "
+                "내장 Comfy 전환 설정 백업과 현재 settings.json이 다릅니다. "
                 "동시 설정 변경 가능성이 있어 덮어쓰지 않습니다."
             )
 
@@ -790,7 +806,7 @@ def retarget_config_to_embedded_comfy(
                 f"old_root={old_root}, new_root={new_root}"
             )
             raise ConfigUpdateError(
-                "config.json에서 내장 Comfy로 전환할 설정 경로를 "
+                "settings.json에서 내장 Comfy로 전환할 설정 경로를 "
                 f"찾지 못했습니다: old_root={old_root}"
             )
 
@@ -798,7 +814,7 @@ def retarget_config_to_embedded_comfy(
         reloaded = _read_json_object(config_file, "내장 Comfy 갱신 설정")
         if reloaded != updated:
             raise ConfigUpdateError(
-                "내장 Comfy config.json 저장 후 재검증 값이 일치하지 않습니다."
+                "내장 Comfy settings.json 저장 후 재검증 값이 일치하지 않습니다."
             )
         after_hash = _sha256_file(config_file)
         print(
@@ -827,7 +843,7 @@ def retarget_config_to_embedded_comfy(
 
 
 def _cloud_only_config_updates() -> dict[str, Any]:
-    """클라우드 전용 설치가 config.json 에 적용할 값.
+    """클라우드 전용 설치가 settings.json 에 적용할 값.
 
     이 값들을 **덮어쓴다.** 기본값을 채우는 것이 아니라 설치 모드가 뜻하는 바를
     적용하는 것이다 — 사용자가 "클라우드 전용" 을 고른 뒤에도 배분이 로컬로
@@ -864,7 +880,7 @@ def apply_installed_config(
     install_root = Path(comfy_root).resolve()
     try:
         if not config_file.is_file():
-            raise ConfigUpdateError(f"수정할 config.json이 없습니다: {config_file}")
+            raise ConfigUpdateError(f"수정할 settings.json이 없습니다: {config_file}")
         if not install_root.is_dir():
             raise ConfigUpdateError(
                 f"설치 완료된 ComfyUI 폴더가 없습니다: {install_root}"
@@ -909,7 +925,7 @@ def apply_installed_config(
         direct_updates = {
             "comfyui_port": int(comfy_port),
             "comfy_input_dir": str(install_root / "input"),
-            "lora_load_path": str(lora_base),
+            "lora_load_path": str(lora_base / ASSET_LORA_FOLDER),
             "bot_lora_load_path": str(lora_base / "SOYA_BOT_LORA"),
             "instance_lora_load_path": str(lora_base / "SOYA_INSTANCE_LORA"),
             "style_lora_load_path": str(lora_base / "SOYA_STYLE_LORA"),
@@ -928,14 +944,14 @@ def apply_installed_config(
         shutil.copy2(config_file, backup_path)
         if _sha256_file(backup_path) != before_hash:
             raise ConfigUpdateError(
-                f"config.json 백업 SHA-256 검증에 실패했습니다: {backup_path}"
+                f"settings.json 백업 SHA-256 검증에 실패했습니다: {backup_path}"
             )
         print(f"[COMFY_INSTALL][CONFIG] 설정 백업 완료: {backup_path}")
 
         _write_json_atomic(config_file, updated)
         reloaded = _read_json_object(config_file, "갱신 설정")
         if reloaded != updated:
-            raise ConfigUpdateError("config.json 저장 후 재검증 값이 일치하지 않습니다.")
+            raise ConfigUpdateError("settings.json 저장 후 재검증 값이 일치하지 않습니다.")
         after_hash = _sha256_file(config_file)
         all_updated_keys = tuple(
             sorted(
@@ -996,7 +1012,7 @@ def apply_repaired_workflow_bindings(
         backup_path = Path(str(backup["backup_path"])).resolve()
         if backup["sha256"] != before_hash or _sha256_file(config_file) != before_hash:
             raise ConfigUpdateError(
-                "워크플로우 복구 전 config.json이 변경되어 경로 전환을 중단합니다."
+                "워크플로우 복구 전 settings.json이 변경되어 경로 전환을 중단합니다."
             )
 
         _write_json_atomic(config_file, updated)
@@ -1004,7 +1020,7 @@ def apply_repaired_workflow_bindings(
             reloaded = _read_json_object(config_file, "워크플로우 복구 설정")
             if reloaded != updated:
                 raise ConfigUpdateError(
-                    "워크플로우 복구 후 config.json 재검증 값이 일치하지 않습니다."
+                    "워크플로우 복구 후 settings.json 재검증 값이 일치하지 않습니다."
                 )
             after_hash = _sha256_file(config_file)
         except Exception as verify_exc:
@@ -1016,9 +1032,9 @@ def apply_repaired_workflow_bindings(
             try:
                 _copy_file_atomic(backup_path, config_file)
                 restored_hash = _sha256_file(config_file)
-                if restored_hash != before_hash:
+                if not _restored_config_matches(backup_path, config_file):
                     raise ConfigUpdateError(
-                        "워크플로우 복구 실패 후 기존 config.json의 SHA-256을 "
+                        "워크플로우 복구 실패 후 기존 settings.json의 SHA-256을 "
                         "복원하지 못했습니다."
                     )
                 print(
@@ -1032,11 +1048,11 @@ def apply_repaired_workflow_bindings(
                 )
                 traceback.print_exc()
                 raise ConfigUpdateError(
-                    "워크플로우 복구 설정 재검증과 기존 config.json 복원이 "
+                    "워크플로우 복구 설정 재검증과 기존 settings.json 복원이 "
                     f"모두 실패했습니다: {restore_exc}"
                 ) from verify_exc
             raise ConfigUpdateError(
-                "워크플로우 복구 설정 재검증에 실패해 기존 config.json을 "
+                "워크플로우 복구 설정 재검증에 실패해 기존 settings.json을 "
                 f"복원했습니다: {verify_exc}"
             ) from verify_exc
         print(
@@ -1103,15 +1119,15 @@ def restore_config_backup(
         else:
             safety_backup = None
             print(
-                "[COMFY_INSTALL][CONFIG] 복원 대상 config.json이 없어 "
+                "[COMFY_INSTALL][CONFIG] 복원 대상 settings.json이 없어 "
                 "복원 직전 백업을 건너뜁니다."
             )
 
         _copy_file_atomic(source, config_file)
         restored_hash = _sha256_file(config_file)
         expected_hash = _sha256_file(source)
-        if restored_hash != expected_hash:
-            raise ConfigUpdateError("복원한 config.json SHA-256이 백업과 다릅니다.")
+        if not _restored_config_matches(source, config_file):
+            raise ConfigUpdateError("복원한 settings.json SHA-256이 백업과 다릅니다.")
         print(
             "[COMFY_INSTALL][CONFIG] 원래 설정 복원 완료: "
             f"source={source}, target={config_file}"
@@ -1192,12 +1208,12 @@ def restore_verified_config_snapshot(
         else:
             safety_backup = None
             print(
-                "[COMFY_INSTALL][CONFIG] 트랜잭션 복원 대상 config.json이 없어 "
+                "[COMFY_INSTALL][CONFIG] 트랜잭션 복원 대상 settings.json이 없어 "
                 "복원 직전 백업을 건너뜁니다."
             )
         _copy_file_atomic(source, config_file)
         restored_hash = _sha256_file(config_file)
-        if restored_hash != expected:
+        if not _restored_config_matches(source, config_file):
             raise ConfigUpdateError(
                 "트랜잭션 config snapshot 복원 후 SHA-256이 다릅니다."
             )

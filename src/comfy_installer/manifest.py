@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import hashlib
 import json
 import os
@@ -8,7 +7,7 @@ import re
 import traceback
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -72,6 +71,31 @@ class InstallManifest:
     def validation_profiles(self) -> dict[str, Any]:
         value = self.data.get("validation_profiles", {})
         return value if isinstance(value, dict) else {}
+
+
+def bundled_lora_model_ids(models: Iterable[Mapping[str, Any]]) -> frozenset[str]:
+    """LoRAs in the install catalog ship independently of workflow references."""
+    return frozenset(
+        str(model["id"])
+        for model in models
+        if str(model.get("relative_path", "")).replace("\\", "/").casefold().startswith(
+            "models/loras/"
+        )
+    )
+
+
+def default_install_model_ids(models: Iterable[Mapping[str, Any]]) -> frozenset[str]:
+    """Install Anima base/2.9B, the shared encoder/VAE and bundled LoRAs."""
+    models = tuple(models)
+    anima_model_ids = {
+        "anima-base-v1",
+        "anima-2.9b-preview-v1",
+        "anima-text-encoder",
+        "anima-vae",
+    }
+    return bundled_lora_model_ids(models) | frozenset(
+        str(model["id"]) for model in models if str(model["id"]) in anima_model_ids
+    )
 
 
 def _is_safe_relative_path(value: str) -> bool:
@@ -447,6 +471,10 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     validation_profiles = data.get("validation_profiles")
     if not isinstance(validation_profiles, dict):
         raise ManifestError("validation_profiles가 JSON 객체가 아닙니다.")
+    if "minimax_h3" not in validation_profiles and not any(
+        binding.startswith("video_workflow_source_paths.") for binding in known_binding_set
+    ):
+        return  # Image-only packs have no H3 validation profile or model dependencies.
     h3_profile = validation_profiles.get("minimax_h3")
     if not isinstance(h3_profile, dict):
         raise ManifestError("validation_profiles.minimax_h3가 없습니다.")
@@ -613,105 +641,3 @@ def load_install_manifest(
         )
         traceback.print_exc()
         raise ManifestError(f"설치 매니페스트 로드 실패: {exc}") from exc
-
-
-def load_install_manifest_data(
-    data: dict[str, Any],
-    *,
-    source_name: str = "<workflow-pack>/install_manifest.json",
-) -> InstallManifest:
-    """Validate an install manifest bundled inside a workflow pack."""
-
-    try:
-        if not isinstance(data, dict):
-            raise ManifestError(
-                "팩 동봉 install_manifest 최상위 값이 객체가 아닙니다."
-            )
-        raw = json.dumps(
-            data,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        normalized = json.loads(raw.decode("utf-8"))
-        _validate_manifest(normalized)
-        return InstallManifest(
-            source_path=Path(source_name),
-            data=normalized,
-            sha256=hashlib.sha256(raw).hexdigest(),
-        )
-    except ManifestError as exc:
-        print(
-            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 검증 실패: "
-            f"source={source_name}, error={exc}"
-        )
-        traceback.print_exc()
-        raise
-    except Exception as exc:
-        print(
-            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 로드 실패: "
-            f"source={source_name}, error={exc}"
-        )
-        traceback.print_exc()
-        raise ManifestError(
-            f"팩 동봉 설치 매니페스트 로드 실패: {exc}"
-        ) from exc
-
-
-def replace_install_manifest(
-    *,
-    destination: str | os.PathLike[str],
-    data: dict[str, Any],
-    backup_dir: str | os.PathLike[str],
-) -> tuple[InstallManifest, Path | None]:
-    """Atomically replace the shared manifest with a pack-bundled manifest."""
-
-    target = Path(destination).resolve()
-    backups = Path(backup_dir).resolve()
-    part = target.with_name(f"{target.name}.part")
-    backup_path: Path | None = None
-    try:
-        validated = load_install_manifest_data(
-            data,
-            source_name="<workflow-pack>/install_manifest.json",
-        )
-        payload = (
-            json.dumps(validated.data, ensure_ascii=False, indent=2) + "\n"
-        ).encode("utf-8")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.is_file():
-            old_payload = target.read_bytes()
-            backups.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            old_hash = hashlib.sha256(old_payload).hexdigest()[:12]
-            backup_path = backups / (
-                f"install_manifest_before_pack_{timestamp}_{old_hash}.json"
-            )
-            with backup_path.open("xb") as stream:
-                stream.write(old_payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-        with part.open("wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(part, target)
-        return load_install_manifest(target), backup_path
-    except Exception as exc:
-        print(
-            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 적용 실패: "
-            f"target={target}, backup={backup_path}, error={exc}"
-        )
-        traceback.print_exc()
-        if part.is_file():
-            try:
-                part.unlink()
-            except OSError as cleanup_exc:
-                print(
-                    "[COMFY_INSTALL][MANIFEST] 임시 매니페스트 정리 실패: "
-                    f"path={part}, error={cleanup_exc}"
-                )
-                traceback.print_exc()
-        raise ManifestError(
-            f"팩 동봉 설치 매니페스트 적용 실패: {exc}"
-        ) from exc

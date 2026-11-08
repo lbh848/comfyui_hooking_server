@@ -432,9 +432,9 @@ class VideoEngineRuntimeManager:
                     port=parsed_port,
                 )
 
-            env = os.environ.copy()
+            from console_encoding import utf8_subprocess_env
+            env = utf8_subprocess_env()
             env["PYTHONUNBUFFERED"] = "1"
-            env["PYTHONUTF8"] = "1"
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(project_root),
                 "env": env,

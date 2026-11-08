@@ -64,6 +64,39 @@ def _managed_node_compatibility_update(
     requirements_dir: Path | None,
     log: LogCallback | None,
 ) -> Iterator[None]:
+    if node_name == "comfyui-soya-custom-nodes":
+        from .illustration_v2_nodes import (
+            SOYA_ATTENTION_FILES, V2_REGISTRATION, install_illustration_v2_nodes,
+            patch_soya_attention_source,
+        )
+        from .gemma4_vision import GEMMA_REGISTRATION, install_gemma4_nodes
+        package = comfy_root / "custom_nodes" / node_name
+        initializer = package / "__init__.py"
+        if initializer.is_file() and (package / ".git").is_dir():
+            for name in SOYA_ATTENTION_FILES:
+                path = package / name
+                tracked = "\n".join(run_command(["git", "show", f"HEAD:{name}"], cwd=package)) + "\n"
+                current_source = path.read_text(encoding="utf-8")
+                # Strip only our exact managed patch. Any user edits remain dirty.
+                if current_source == patch_soya_attention_source(name, tracked) and current_source != tracked:
+                    path.write_text(tracked, encoding="utf-8")
+            current = initializer.read_bytes()
+            if V2_REGISTRATION in current or GEMMA_REGISTRATION in current:
+                tracked = "\n".join(run_command(["git", "show", "HEAD:__init__.py"], cwd=package))
+                # Remove only our uncommitted registration hook before Git's
+                # dirty-tree check. Published registration stays Git-managed.
+                for registration in (V2_REGISTRATION, GEMMA_REGISTRATION):
+                    marker = registration.decode("utf-8").strip().splitlines()[0]
+                    if marker not in tracked:
+                        current = current.replace(registration, b"", 1)
+                initializer.write_bytes(current)
+        try:
+            yield
+        finally:
+            if initializer.is_file():
+                install_illustration_v2_nodes(comfy_root)
+                install_gemma4_nodes(comfy_root)
+        return
     if node_name == INSTANT_LORA_NODE_NAME:
         compatibility_label = "Instant LoRA managed Python"
         compatibility_path = (
@@ -525,6 +558,10 @@ def install_custom_nodes(
                     f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
                 )
         installed.append(path)
+    from .illustration_v2_nodes import install_illustration_v2_nodes
+    install_illustration_v2_nodes(comfy_root)
+    from .gemma4_vision import install_gemma4_nodes
+    install_gemma4_nodes(comfy_root)
     return installed
 
 
@@ -776,4 +813,8 @@ def update_custom_nodes(
                     f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
                 )
         updated.append(path)
+    from .illustration_v2_nodes import install_illustration_v2_nodes
+    install_illustration_v2_nodes(comfy_root)
+    from .gemma4_vision import install_gemma4_nodes
+    install_gemma4_nodes(comfy_root)
     return updated

@@ -2667,7 +2667,7 @@ def _to_output_bytes(canvas) -> bytes:
 def is_postprocess_active(config: dict) -> bool:
     """후처리 마스터 토글이 켜져 있는지 판별.
 
-    봇별 vn.enabled 검사는 get_vn_settings 내부에서 수행한다(봇별 설정 이관).
+    Each composition mode also has a shared enabled switch.
     """
     if not config:
         return False
@@ -2675,10 +2675,10 @@ def is_postprocess_active(config: dict) -> bool:
 
 
 def _default_vn() -> dict:
-    """봇별 postprocess_vn 기본값.
+    """Shared visual-novel composition defaults.
 
     ERENCHA_ONLINE 의 실제 설정값을 기준으로 한다(단 name_replace 는 kapri만).
-    저장값이 없는 봇·신규 봇이 이 값에서 시작한다.
+    Used when no composition settings have been saved.
     """
     return {
         "enabled": True,
@@ -2763,7 +2763,7 @@ def normalize_min_font_size(value, default: int = 0) -> int:
 
 
 def _default_bubble() -> dict:
-    """봇별 postprocess_bubble 기본값 (말풍선 모드).
+    """Shared speech-bubble composition defaults.
 
     Roshidere simulator 의 실제 설정값을 기준으로 한다. 단 하드웨어 값
     (onnx_device/cpu_threads)은 git 배포 소스이므로 이식성을 위해 auto/0 으로 둔다.
@@ -2803,65 +2803,67 @@ def _default_bubble() -> dict:
 
 
 def _default_subtitle() -> dict:
-    """봇별 방송 애니메이션 자막 설정 기본값."""
+    """Shared animation subtitle composition defaults."""
     from modes.subtitle_render import DEFAULT_SUBTITLE_SETTINGS
 
     return dict(DEFAULT_SUBTITLE_SETTINGS)
 
 
-def _load_bot_subtitle(bot_name: str) -> dict:
-    """bot.json에서 해당 봇의 postprocess_subtitle을 읽고 검증한다."""
-    from modes.subtitle_render import normalize_subtitle_settings
-
-    if not bot_name:
-        print("[POSTPROCESS] 봇 이름이 비어 자막 기본값 사용")
-        return _default_subtitle()
+def normalize_postprocess_settings(mode: str, settings: dict) -> dict:
+    """Normalize shared composition options using the renderer's defaults."""
+    if not isinstance(settings, dict):
+        raise ValueError("Composition settings must be an object")
+    if mode == "subtitle":
+        from modes.subtitle_render import normalize_subtitle_settings
+        return normalize_subtitle_settings(settings)
+    if mode == "vn":
+        clean = _merge_vn_defaults(settings) if settings else _default_vn()
+        clean.pop("emotion_rows", None)
+        clean.pop("emotion_total", None)
+        return clean
+    if mode != "bubble":
+        raise ValueError("Unknown composition mode")
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
+    clean = {**_default_bubble(), **settings}
+    # 폐기된 말풍선 옵션은 기존 클라이언트가 보내더라도 다시 저장하지 않는다.
+    clean.pop("tail_len", None)
+    clean.pop("conf", None)
+    clean["layout_font_scale"] = normalize_layout_font_scale(
+        clean.get("layout_font_scale", 2.0)
+    )
+    clean["min_font_size"] = normalize_min_font_size(clean.get("min_font_size", 0))
+    # 자간/행간/가로축소/폰트id 정규화(범위 클램프)
     try:
-        from modes.bot_mode import _load_bot_data
-
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_subtitle"), dict):
-            return normalize_subtitle_settings(bot["postprocess_subtitle"])
-        print(f"[POSTPROCESS] 봇 자막 저장값 없음, 기본값 사용: bot={bot_name!r}")
-    except Exception as e:
-        print(f"[POSTPROCESS] 봇 자막 설정 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    return _default_subtitle()
-
-
-def _load_bot_bubble(bot_name: str) -> dict:
-    """bot.json에서 해당 봇의 postprocess_bubble 반환. 없으면 기본값."""
-    if not bot_name:
-        return _default_bubble()
+        clean["letter_spacing"] = max(-0.10, min(0.05, float(clean.get("letter_spacing", -0.03))))
+    except (TypeError, ValueError):
+        clean["letter_spacing"] = -0.03
     try:
-        from modes.bot_mode import _load_bot_data
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_bubble"), dict):
-            base = _default_bubble()
-            base.update(bot["postprocess_bubble"])
-            return base
-    except Exception as e:
-        print(f"[POSTPROCESS] ⚠ 봇 bubble 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    return _default_bubble()
-
-
-def _load_bot_vn(bot_name: str) -> dict:
-    """bot.json에서 해당 봇의 postprocess_vn 반환. 없으면 기본값."""
-    if not bot_name:
-        return _default_vn()
+        clean["line_height_ratio"] = max(1.0, min(1.40, float(clean.get("line_height_ratio", 1.15))))
+    except (TypeError, ValueError):
+        clean["line_height_ratio"] = 1.15
     try:
-        from modes.bot_mode import _load_bot_data
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-        if bot and isinstance(bot.get("postprocess_vn"), dict):
-            return _merge_vn_defaults(bot["postprocess_vn"])
-    except Exception as e:
-        print(f"[POSTPROCESS] ⚠ 봇 vn 로드 실패({bot_name}): {e}")
-        traceback.print_exc()
-    return _default_vn()
+        clean["text_width_scale"] = max(0.70, min(1.00, float(clean.get("text_width_scale", 1.0))))
+    except (TypeError, ValueError):
+        clean["text_width_scale"] = 1.0
+    clean["font_id"] = str(clean.get("font_id", "system") or "system")
+    clean["onnx_device"] = normalize_device_key(clean.get("onnx_device", "auto"))
+    clean["cpu_threads"] = normalize_cpu_threads(clean.get("cpu_threads", 0))
+    return clean
+
+
+def get_postprocess_mode(config: dict) -> str:
+    """Return the shared dialogue presentation mode."""
+    mode = (config.get("postprocess") or {}).get("mode", "vn")
+    return mode if mode in ("vn", "bubble", "subtitle") else "vn"
+
+
+def get_postprocess_config(config: dict) -> dict:
+    """Resolve all composition settings without consulting a bot."""
+    stored = config.get("postprocess") or {}
+    return {"scope": "global", "mode": get_postprocess_mode(config), **{
+        mode: normalize_postprocess_settings(mode, stored.get(mode) or {})
+        for mode in ("vn", "bubble", "subtitle")
+    }}
 
 
 def get_vn_settings(
@@ -2872,14 +2874,14 @@ def get_vn_settings(
 ) -> Optional[dict]:
     """활성 시 vn 설정(플랫 딕셔너리) 반환, 비활성 시 None.
 
-    bot_name이 주어지면 bot.json의 해당 봇 postprocess_vn에서 읽는다(봇별 설정).
-    마스터 토글(postprocess_enabled) + 봇별 vn.enabled 모두 켜져 있어야 활성.
+    Settings come from the shared config, independently of bot_name.
+    Both postprocess_enabled and the shared vn.enabled toggle must be enabled.
     force=True는 수동 그리기 1회성 후처리 테스트에서 저장값을 변경하지 않고
     활성 토글만 우회한다.
     """
     if not force and not is_postprocess_active(config):
         return None
-    vn = _load_bot_vn(bot_name) if bot_name else _default_vn()
+    vn = normalize_postprocess_settings("vn", (config.get("postprocess") or {}).get("vn") or {})
     if not force and not bool(vn.get("enabled", False)):
         return None
     return {
@@ -2922,13 +2924,13 @@ def get_bubble_settings(
 ) -> Optional[dict]:
     """활성 시 bubble 설정(플랫 딕셔너리) 반환, 비활성 시 None.
 
-    마스터 토글(postprocess_enabled) + 봇별 bubble.enabled 모두 켜져 있어야 활성.
+    Both postprocess_enabled and the shared bubble.enabled toggle must be enabled.
     force=True는 수동 그리기 1회성 후처리 테스트에서 저장값을 변경하지 않고
     활성 토글만 우회한다.
     """
     if not force and not is_postprocess_active(config):
         return None
-    bb = _load_bot_bubble(bot_name) if bot_name else _default_bubble()
+    bb = normalize_postprocess_settings("bubble", (config.get("postprocess") or {}).get("bubble") or {})
     if not force and not bool(bb.get("enabled", False)):
         return None
     from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
@@ -3001,11 +3003,11 @@ def get_subtitle_settings(
             f"마스터 토글 비활성, bot={bot_name!r}"
         )
         return None
-    subtitle = _load_bot_subtitle(bot_name) if bot_name else _default_subtitle()
+    subtitle = normalize_postprocess_settings("subtitle", (config.get("postprocess") or {}).get("subtitle") or {})
     if not force and not bool(subtitle.get("enabled", False)):
         print(
             "[POSTPROCESS] 자막 후처리 스킵: "
-            f"봇별 자막 토글 비활성, bot={bot_name!r}"
+            f"공통 자막 토글 비활성, bot={bot_name!r}"
         )
         return None
     from modes.subtitle_render import normalize_subtitle_settings

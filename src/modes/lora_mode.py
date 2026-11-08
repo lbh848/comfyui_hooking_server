@@ -1,23 +1,32 @@
 """
 LoRA 매니징 모듈
-- asset/<character>/Lora/<entry>/ 폴더에서 LoRA 파일 관리
-- asset/<character>/Lora/<entry>/학습용 이미지/ 폴더에서 학습용 이미지 관리
+- Independent projects use data/lora_data/projects/<entry>/.
+- Existing asset character entries keep their original directories.
 """
 
+import io
 import os
 import json
 import shutil
 import traceback
+import uuid
 from PIL import Image
+from app_paths import data_root
+from asset_character_presets import AssetCharacterPresets
+from illustration_json import illustration_edit_document
 from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
+from lora_paths import ASSET_LORA_FOLDER
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 TRAINING_DIR_NAME = "학습용 이미지"
 TEST_DIR_NAME = "테스트 이미지"
 LORA_MANAGE_FILE = os.path.join(os.path.dirname(TAGS_FILE), "lora_manage.json")
+# A private owner key lets projects share the existing training/queue APIs.
+LORA_PROJECT_OWNER = "__projects__"
+LORA_PROJECT_DIR = str(data_root() / "lora_data" / "projects")
 DEFAULT_BLOCK_TAG_RULES: tuple[str, ...] = (
     "* hair",
     "* eyes",
@@ -155,6 +164,7 @@ DEFAULT_BLOCK_TAG_RULES: tuple[str, ...] = (
     "* clothes",
     "* earring",
     "@ @",
+    "@ *",
     "tattoo",
     "feathers",
     "gauntlets",
@@ -288,7 +298,9 @@ def validate_lora_entry_name(name: str) -> str:
 
 
 def _lora_dir(character: str) -> str:
-    """캐릭터의 Lora 폴더 경로 반환"""
+    """Resolve independent projects or an existing character's LoRA folder."""
+    if character == LORA_PROJECT_OWNER:
+        return LORA_PROJECT_DIR
     return os.path.join(ASSET_DIR, _safe_dirname(character), "Lora")
 
 
@@ -310,14 +322,9 @@ def _test_dir(character: str, entry: str = "") -> str:
 
 
 def list_characters() -> list:
-    """tags.json에서 캐릭터 목록 반환"""
-    if not os.path.isfile(TAGS_FILE):
-        print("[LORA] tags.json 없음")
-        return []
+    """Return both shipped and user characters from the shared asset catalog."""
     try:
-        with open(TAGS_FILE, "r", encoding="utf-8") as f:
-            tags = json.load(f)
-        return list(tags.get("characters", {}).keys())
+        return list(AssetCharacterPresets(TAGS_FILE).catalog()["characters"])
     except Exception as e:
         print(f"[LORA] 캐릭터 목록 로드 실패: {e}")
         return []
@@ -673,12 +680,48 @@ def delete_lora_file(character: str, filename: str, entry: str = "") -> dict:
 
 # ─── 학습용 이미지 관리 ─────────────────────────────────────
 
+def save_uploaded_image(character: str, entry: str, filename: str, file_data: bytes, *, test: bool = False) -> dict:
+    """Import a local image into a project's existing image/prompt format."""
+    if not entry or _get_entry(_load_lora_manage(), character, entry) is None:
+        return {"success": False, "error": "프로젝트를 찾을 수 없습니다."}
+    filename = os.path.basename(filename or "")
+    stem, extension = os.path.splitext(filename)
+    if extension.lower() not in IMAGE_EXTENSIONS:
+        return {"success": False, "error": "PNG, JPEG, WebP 이미지 파일을 선택하세요."}
+    try:
+        with Image.open(io.BytesIO(file_data)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"}:
+                raise ValueError("지원하지 않는 이미지 형식입니다.")
+            image.verify()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        return {"success": False, "error": "이미지 파일을 읽을 수 없습니다."}
+    directory = _test_dir(character, entry) if test else _training_dir(character, entry)
+    os.makedirs(directory, exist_ok=True)
+    name = f"{_safe_dirname(stem).lstrip('_') or 'image'}_{uuid.uuid4().hex[:12]}{extension.lower()}"
+    path = os.path.join(directory, name)
+    prompt_path = os.path.splitext(path)[0] + "_prompt.json"
+    created = []
+    try:
+        with open(path, "xb") as output:
+            created.append(path)
+            output.write(file_data)
+        with open(prompt_path, "x", encoding="utf-8") as output:
+            created.append(prompt_path)
+            json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, output)
+    except Exception:
+        for created_path in created:
+            os.remove(created_path)
+        raise
+    return {"success": True, "filename": name}
+
+
 def add_training_images(character: str, entry: str, sources: list) -> dict:
-    """
-    에셋 폴더에서 학습용 이미지로 복사
-    sources: [{ "outfit": "...", "expression": "...", "filename": "..." }, ...]
-    """
-    t_dir = _training_dir(character, entry)
+    """Copy asset or bot images and prompts into the project's training folder."""
+    return add_project_images(character, _training_dir(character, entry), sources)
+
+
+def add_project_images(character: str, t_dir: str, sources: list, *, test_profile: str | None = None) -> dict:
+    """Use the same physical copy rules for training and test images."""
     os.makedirs(t_dir, exist_ok=True)
 
     added = []
@@ -691,14 +734,20 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
         src_char = src.get("character") or character
         src_char_dir = os.path.join(ASSET_DIR, _safe_dirname(src_char))
 
-        if not outfit or not expression or not filename:
-            print(f"[LORA] 학습 이미지 추가: 필수 값 누락 - {src}")
+        if not filename or any(part in filename for part in ("..", "/", "\\")):
+            skipped.append({"filename": filename, "reason": "잘못된 파일명"})
+            continue
+        if src.get("type", "asset") == "bot":
+            from modes.bot_lora_mode import get_bot_char_image_path
+            bot = src.get("bot", "")
+            src_path = get_bot_char_image_path(bot, src_char, filename) if bot and src_char else None
+        elif src.get("type", "asset") == "asset" and outfit and expression:
+            src_path = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
+        else:
             skipped.append({"filename": filename, "reason": "필수 값 누락"})
             continue
 
-        # 원본 경로
-        src_path = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
-        if not os.path.isfile(src_path):
+        if not src_path or not os.path.isfile(src_path):
             print(f"[LORA] 학습 이미지 원본 없음: {src_path}")
             skipped.append({"filename": filename, "reason": "원본 파일 없음"})
             continue
@@ -707,36 +756,35 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
         dest_name = filename
         dest_path = os.path.join(t_dir, dest_name)
         if os.path.exists(dest_path):
-            # 이미 존재하면 타임스탬프 접두어 추가
-            import time
             base, ext = os.path.splitext(filename)
-            dest_name = f"{int(time.time())}_{base}{ext}"
+            dest_name = f"{uuid.uuid4().hex}_{base}{ext}"
             dest_path = os.path.join(t_dir, dest_name)
 
         try:
-            shutil.copy2(src_path, dest_path)
-
-            # 프롬프트 JSON도 복사
-            base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
+            # Resolve the copied prompt before writing the image.
+            prompt_src = os.path.splitext(src_path)[0] + "_prompt.json"
             prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            pdata = {"positive": "", "negative": "", "original_positive": "", "original_negative": ""}
             if os.path.isfile(prompt_src):
-                # 복사하면서 positive에서 [FACE_ID_ACTIVATE] 위쪽만 추출
                 with open(prompt_src, "r", encoding="utf-8") as f:
                     pdata = json.load(f)
-                positive = pdata.get("positive", "")
-                marker = "[FACE_ID_ACTIVATE]"
-                if marker in positive:
-                    pdata["positive"] = positive.split(marker)[0].strip()
-                # 원본 프롬프트 저장
-                pdata["original_positive"] = pdata["positive"]
-                pdata["original_negative"] = pdata.get("negative", "")
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump(pdata, f, ensure_ascii=False, indent=2)
-            else:
-                # 프롬프트 파일이 없으면 빈 프롬프트 생성
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+                positive = pdata.get("positive", pdata.get("prompt", ""))
+                if test_profile is not None:
+                    document = illustration_edit_document(positive, "")
+                    if "fields" in document:
+                        content_key = "SDXL_CONTENT" if test_profile == "sdxl" else "ANIMA_CONTENT"
+                        positive = document["fields"].get(content_key, "")
+                        if not isinstance(positive, str):
+                            raise ValueError(f"{content_key} 본문은 문자열이어야 합니다.")
+                    pdata = {"positive": positive, "negative": "", "original_positive": positive, "original_negative": ""}
+                else:
+                    marker = "[FACE_ID_ACTIVATE]"
+                    pdata["positive"] = positive.split(marker)[0].strip() if marker in positive else positive
+                    pdata["original_positive"] = pdata["positive"]
+                    pdata["original_negative"] = pdata.get("negative", "")
+            shutil.copy2(src_path, dest_path)
+            with open(prompt_dest, "w", encoding="utf-8") as f:
+                json.dump(pdata, f, ensure_ascii=False, indent=2)
 
             added.append(dest_name)
             print(f"[LORA] 학습 이미지 추가: {dest_path}")
@@ -778,6 +826,8 @@ def list_training_images(character: str, entry: str = "") -> list:
         prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
         positive = ""
         negative = ""
+        original_positive = ""
+        original_negative = ""
         if os.path.isfile(prompt_path):
             try:
                 with open(prompt_path, "r", encoding="utf-8") as f:
@@ -959,71 +1009,10 @@ def save_training_prompt_positive_only(character: str, entry: str, filename: str
 # ─── 테스트 이미지 관리 ─────────────────────────────────────
 
 def add_test_images(character: str, entry: str, sources: list) -> dict:
-    """
-    에셋 폴더에서 테스트 이미지로 복사
-    sources: [{ "outfit": "...", "expression": "...", "filename": "..." }, ...]
-    """
-    t_dir = _test_dir(character, entry)
-    os.makedirs(t_dir, exist_ok=True)
-
-    added = []
-    skipped = []
-
-    for src in sources:
-        outfit = src.get("outfit", "")
-        expression = src.get("expression", "")
-        filename = src.get("filename", "")
-        src_char = src.get("character") or character
-        src_char_dir = os.path.join(ASSET_DIR, _safe_dirname(src_char))
-
-        if not outfit or not expression or not filename:
-            print(f"[LORA] 테스트 이미지 추가: 필수 값 누락 - {src}")
-            skipped.append({"filename": filename, "reason": "필수 값 누락"})
-            continue
-
-        src_path = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
-        if not os.path.isfile(src_path):
-            print(f"[LORA] 테스트 이미지 원본 없음: {src_path}")
-            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
-            continue
-
-        dest_name = filename
-        dest_path = os.path.join(t_dir, dest_name)
-        if os.path.exists(dest_path):
-            import time
-            base, ext = os.path.splitext(filename)
-            dest_name = f"{int(time.time())}_{base}{ext}"
-            dest_path = os.path.join(t_dir, dest_name)
-
-        try:
-            shutil.copy2(src_path, dest_path)
-
-            base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
-            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
-            if os.path.isfile(prompt_src):
-                with open(prompt_src, "r", encoding="utf-8") as f:
-                    pdata = json.load(f)
-                positive = pdata.get("positive", "")
-                marker = "[FACE_ID_ACTIVATE]"
-                if marker in positive:
-                    pdata["positive"] = positive.split(marker)[0].strip()
-                pdata["original_positive"] = pdata["positive"]
-                pdata["original_negative"] = pdata.get("negative", "")
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump(pdata, f, ensure_ascii=False, indent=2)
-            else:
-                with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
-
-            added.append(dest_name)
-            print(f"[LORA] 테스트 이미지 추가: {dest_path}")
-        except Exception as e:
-            print(f"[LORA] 테스트 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
-            traceback.print_exc()
-            skipped.append({"filename": filename, "reason": str(e)})
-
-    return {"success": True, "added": added, "skipped": skipped}
+    """Copy test images with only the selected model's original prompt content."""
+    info = _get_entry(_load_lora_manage(), character, entry) or {}
+    profile = info.get("training_config", {}).get("profile", "anima")
+    return add_project_images(character, _test_dir(character, entry), sources, test_profile=profile)
 
 
 def list_test_images(character: str, entry: str = "") -> list:
@@ -1298,6 +1287,7 @@ def _migrate_lora_manage(data: dict) -> dict:
 def _save_lora_manage(data: dict):
     """lora_manage.json 저장"""
     try:
+        os.makedirs(os.path.dirname(LORA_MANAGE_FILE), exist_ok=True)
         with open(LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"[LORA_MANAGE] 저장 완료")
@@ -1358,6 +1348,11 @@ def _get_entry(data: dict, character: str, name: str) -> dict | None:
     return data.get("loras", {}).get(character, {}).get(name)
 
 
+def training_save_path(character: str, entry: str) -> str:
+    """Path relative to SOYA_CHAR_LORA, shared by training and preview."""
+    return f"{ASSET_LORA_FOLDER}/{_safe_dirname(character)}/Lora/{_safe_dirname(entry)}"
+
+
 def list_lora_entries(character: str = "") -> list:
     """LoRA 항목 목록 반환. character 지정 시 해당 캐릭터 것만."""
     data = _load_lora_manage()
@@ -1371,6 +1366,7 @@ def list_lora_entries(character: str = "") -> list:
                 "trigger": info.get("trigger", ""),
                 "description": info.get("description", ""),
                 "character": char_name,
+                "standalone": char_name == LORA_PROJECT_OWNER,
                 "representative": info.get("representative", ""),
                 "training_config": info.get("training_config", {}),
             })
@@ -1382,7 +1378,7 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
     data = _load_lora_manage()
     result = []
     for char_name, char_entries in data.get("loras", {}).items():
-        char_group = {"character": char_name, "entries": []}
+        char_group = {"character": char_name, "standalone": char_name == LORA_PROJECT_OWNER, "entries": []}
         for name, info in char_entries.items():
             entry = {
                 "name": name,
@@ -1423,7 +1419,7 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
                                 except Exception as e:
                                     print(f"[LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
             # 수동 업로드된 safetensors도 포함
-            manual_dir = os.path.join(ASSET_DIR, _safe_dirname(char_name), "Lora", _safe_dirname(name))
+            manual_dir = _lora_entry_dir(char_name, name)
             if os.path.isdir(manual_dir):
                 for fname in os.listdir(manual_dir):
                     if fname.endswith('.safetensors'):
@@ -1449,9 +1445,7 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str) ->
     if not trigger or not trigger.strip():
         print("[LORA_MANAGE] 트리거 키워드 누락")
         return {"success": False, "error": "트리거 키워드를 입력하세요"}
-    if not character:
-        print("[LORA_MANAGE] 캐릭터 미지정")
-        return {"success": False, "error": "캐릭터를 선택하세요"}
+    character = character or LORA_PROJECT_OWNER
 
     name = name.strip()
     name_error = validate_lora_entry_name(name)
@@ -1472,7 +1466,8 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str) ->
         "trigger": trigger.strip(),
         "description": description.strip(),
     }
-    _save_lora_manage(data)
+    if not _save_lora_manage(data):
+        return {"success": False, "error": "프로젝트를 저장하지 못했습니다."}
     print(f"[LORA_MANAGE] LoRA 추가: {name} (캐릭터: {character}, 트리거: {trigger.strip()})")
     return {"success": True, "name": name}
 
@@ -1491,9 +1486,7 @@ def duplicate_lora_entry(
     if not trigger or not trigger.strip():
         print("[LORA_MANAGE] 복제: 트리거 키워드 누락")
         return {"success": False, "error": "트리거 키워드를 입력하세요"}
-    if not target_character:
-        print("[LORA_MANAGE] 복제: 대상 캐릭터 누락")
-        return {"success": False, "error": "대상 캐릭터를 선택하세요"}
+    target_character = target_character or LORA_PROJECT_OWNER
 
     target_entry = target_entry.strip()
     name_error = validate_lora_entry_name(target_entry)
@@ -1561,10 +1554,11 @@ def duplicate_lora_entry(
         "description": description.strip() if description else "",
     }
     if training_config and isinstance(training_config, dict):
-        entry_meta["training_config"] = training_config
+        entry_meta["training_config"] = {**training_config, "lora_save_path": training_save_path(target_character, target_entry)}
 
     data.setdefault("loras", {}).setdefault(target_character, {})[target_entry] = entry_meta
-    _save_lora_manage(data)
+    if not _save_lora_manage(data):
+        return {"success": False, "error": "프로젝트를 저장하지 못했습니다."}
 
     print(f"[LORA_MANAGE] 복제 완료: {source_character}/{source_entry} → {target_character}/{target_entry} "
           f"(학습 {copied_training}장, 테스트 {copied_test}장)")
@@ -1659,7 +1653,7 @@ def update_lora_entry(name: str, character: str, trigger: str = None, descriptio
     if representative is not None:
         entry["representative"] = representative.strip()
     if training_config is not None:
-        entry["training_config"] = training_config
+        entry["training_config"] = {**training_config, "lora_save_path": training_save_path(character, name)}
     if session_name is not None and session_representative is not None:
         if "session_representatives" not in entry:
             entry["session_representatives"] = {}
@@ -1675,6 +1669,7 @@ def export_training_images(
     entry: str,
     comfy_input_dir: str,
     folder_name_override: str | None = None,
+    image_filenames: list[str] | None = None,
 ) -> dict:
     """
     학습용 이미지를 Comfy Input 폴더 하위로 복사
@@ -1695,6 +1690,12 @@ def export_training_images(
         ext = os.path.splitext(fname)[1].lower()
         if ext in IMAGE_EXTENSIONS:
             image_files.append(fname)
+
+    if image_filenames is not None:
+        available = set(image_files)
+        if any(name not in available for name in image_filenames):
+            return {"success": False, "error": "학습 이미지 목록이 변경되었습니다. 다시 시도하세요."}
+        image_files = image_filenames
 
     if not image_files:
         print(f"[LORA_EXPORT] 학습 이미지 파일 없음: {t_dir}")
@@ -1756,23 +1757,13 @@ def export_training_images(
 
 
 def scan_untracked_loras(lora_load_path: str) -> dict:
-    """lora_load_path에서 추적되지 않는 캐릭터/엔트리 스캔
-    추적 조건: lora_manage.json에 등록되어 있고, 에셋(tags.json)에도 캐릭터가 존재해야 함"""
+    """Find output folders without registered LoRA projects."""
     if not lora_load_path or not os.path.isdir(lora_load_path):
         print(f"[LORA_UNTRACKED] lora_load_path 없음: {lora_load_path}")
         return {"success": False, "error": "로라 로드 경로가 존재하지 않습니다", "items": []}
 
     manage_data = _load_lora_manage()
     tracked = manage_data.get("loras", {})
-
-    # 에셋 시스템의 캐릭터 목록 로드
-    asset_chars = set()
-    try:
-        with open(TAGS_FILE, "r", encoding="utf-8") as f:
-            asset_tags = json.load(f)
-        asset_chars = set(asset_tags.get("characters", {}).keys())
-    except Exception as e:
-        print(f"[LORA_UNTRACKED] 에셋 캐릭터 로드 실패, 에셋 체크 생략: {e}")
 
     untracked = []
 
@@ -1794,15 +1785,10 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
             print(f"[LORA_UNTRACKED] {char_dir_name} 폴더 스킵: {char_path}")
             continue
 
-        # 이 디렉토리가 tracked의 어떤 캐릭터와 매칭되는지 확인
-        # 단, 에셋 시스템에도 존재해야 추적으로 인정
+        # Registration is independent of the asset character list.
         matched_char = None
         for tracked_char in tracked:
             if _safe_dirname(tracked_char) == char_dir_name:
-                if asset_chars and tracked_char not in asset_chars:
-                    # lora_manage에는 있지만 에셋에서 삭제된 캐릭터 → 비추적
-                    print(f"[LORA_UNTRACKED] 에셋에 없는 캐릭터: {tracked_char}")
-                    continue
                 matched_char = tracked_char
                 break
 
@@ -1868,9 +1854,11 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
     # 디스크에 없지만 lora_manage.json에만 있는 항목도 비추적으로 추가
     disk_dirs = set(top_items) if os.path.isdir(lora_load_path) else set()
     for tracked_char, entries in tracked.items():
+        # A new independent project need not have trained output yet.
+        if tracked_char == LORA_PROJECT_OWNER:
+            continue
         safe_char = _safe_dirname(tracked_char)
-        # 에셋에 없는 캐릭터 or 디스크에 없는 캐릭터 → 비추적
-        if (asset_chars and tracked_char not in asset_chars) or safe_char not in disk_dirs:
+        if safe_char not in disk_dirs:
             if not any(u["type"] == "character" and u["display"] == safe_char for u in untracked):
                 # 캐릭터 전체가 비추적
                 char_path = os.path.join(lora_load_path, safe_char) if os.path.isdir(lora_load_path) else safe_char
@@ -1885,7 +1873,7 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
                             except Exception:
                                 pass
                     size_mb = round(size_mb / (1024 * 1024), 1)
-                reason = "에셋에 없음" if (asset_chars and tracked_char not in asset_chars) else "폴더 없음"
+                reason = "폴더 없음"
                 print(f"[LORA_UNTRACKED] JSON에만 있는 캐릭터 ({reason}): {tracked_char}")
                 untracked.append({
                     "type": "character",

@@ -300,7 +300,7 @@ def legacy_visual_card(
     card = {
         "id": LEGACY_VISUAL_PROFILE_ID,
         "label": "카드 1",
-        "selection_guide": "다른 카드로 바뀌었다는 서사적 근거가 없을 때 유지하는 기본 모습.",
+        "selection_guide": "",
         "visual_context": "",
         "aliases": [],
         "appearance": normalize_tag_entries(extra.get("appearance"), field="legacy.appearance"),
@@ -311,6 +311,7 @@ def legacy_visual_card(
         if key in root_character:
             card[key] = deepcopy(root_character[key])
     card["use_profile_embedding"] = False
+    card["gender_tag"] = _clean_text(root_character.get("gender_tag")) or "1girl"
     return card
 
 
@@ -399,6 +400,9 @@ def character_profiles_to_cards(raw: dict) -> list[dict]:
 def store_visual_cards(root_character: dict, cards: list[dict]) -> list[dict]:
     """Store normalized cards and mirror card [1] into legacy root fields."""
     normalized = normalize_visual_cards(cards)
+    for card in normalized:
+        if not _clean_text(card.get("gender_tag")):
+            raise VisualProfileValidationError(f"{card['label']}의 성별 태그를 선택하세요.")
     root_character["visual_cards"] = deepcopy(normalized)
     primary = normalized[0]
     for key in _CARD_RENDER_KEYS - {"use_profile_embedding"}:
@@ -521,7 +525,21 @@ def effective_character_profiles(
 ) -> tuple[dict, str]:
     root = root_character if isinstance(root_character, dict) else {"name": character_name}
     cards, source = effective_character_cards(root, lb_extra_character)
-    return cards_to_character_profiles(character_name, cards), source
+    character = cards_to_character_profiles(character_name, cards)
+    character["lb_extra_batch_locked"] = bool(root.get("lb_extra_batch_locked", False))
+    return character, source
+
+
+def ensure_lb_extra_batch_refine_allowed(root_character: dict, visual_card_id: str) -> None:
+    """Check current persisted exclusions before batch work and before saving it."""
+    if root_character.get("lb_extra_batch_locked"):
+        raise VisualProfileValidationError("캐릭터가 잠겨 있어 일괄 정제에서 제외됩니다.")
+    cards, _source = effective_character_cards(root_character, None)
+    card = next((item for item in cards if item["id"] == visual_card_id), None)
+    if card is None:
+        raise VisualProfileValidationError("일괄 정제할 캐릭터 카드를 찾을 수 없습니다.")
+    if card.get("skip_lb_extra_batch_refine"):
+        raise VisualProfileValidationError("일괄 정제에서 제외된 카드입니다.")
 
 
 def effective_bot_profiles(bot: dict, lb_extra: list[dict] | None) -> dict[str, dict]:
@@ -656,6 +674,7 @@ def resolve_render_character(
             continue
         resolved[key] = deepcopy(value)
     resolved["_visual_profile_id"] = base["visual_profile_id"]
+    resolved["_visual_profile_is_primary"] = base["visual_profile_id"] == character_profiles["profiles"][0]["id"]
     resolved["_use_profile_embedding"] = bool(
         base["render_overrides"].get("use_profile_embedding", False)
     )

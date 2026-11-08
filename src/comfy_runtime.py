@@ -31,7 +31,7 @@ from comfy_installer.manifest import load_install_manifest
 from comfy_installer.runtime_state import load_runtime_receipt
 
 
-VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
+VALID_VRAM_MODES = {"auto", "highvram", "lowvram", "novram"}
 COMFY_INSTANCE_IDS = (1, 2, 3)
 MANAGED_COMFY_ARGUMENTS = frozenset(
     {
@@ -46,7 +46,6 @@ MANAGED_COMFY_ARGUMENTS = frozenset(
         "--highvram",
         "--listen",
         "--lowvram",
-        "--normalvram",
         "--novram",
         "--port",
     }
@@ -193,9 +192,11 @@ def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
         profile[key] = value[key]
 
     vram_mode = value.get("vram_mode", profile["vram_mode"])
+    if vram_mode == "normalvram":
+        vram_mode = "auto"
     if not isinstance(vram_mode, str) or vram_mode not in VALID_VRAM_MODES:
         raise ComfyRuntimeValidationError(
-            "VRAM 모드는 auto/highvram/normalvram/lowvram/novram 중 하나여야 합니다."
+            "VRAM 모드는 auto/highvram/lowvram/novram 중 하나여야 합니다."
         )
     profile["vram_mode"] = vram_mode
 
@@ -605,6 +606,12 @@ class ComfyRuntimeManager:
                 print(f"[COMFY_RUNTIME] 실행 거부: {message}")
                 raise ComfyRuntimeError(message)
 
+            from comfy_installer.credentials import CredentialStoreError, configure_lora_manager, load_civitai_key
+            try:
+                configure_lora_manager(self.comfy_root, civitai_key=load_civitai_key(self.project_root))
+            except CredentialStoreError as exc:
+                raise ComfyRuntimeError(f"LoRA Manager 전용 설정을 준비하지 못했습니다: {exc}") from exc
+
             with state.lock:
                 state.reset_for_start(
                     command=command, port=parsed_port, profile=normalized_profile
@@ -655,9 +662,14 @@ class ComfyRuntimeManager:
                     traceback.print_exc()
                     state.append_log(f"[Python] GPU 준비 실패로 CPU를 사용합니다: {exc}\n")
 
-            env = os.environ.copy()
+            from console_encoding import utf8_subprocess_env
+            env = utf8_subprocess_env()
             env["PYTHONUNBUFFERED"] = "1"
-            env["PYTHONUTF8"] = "1"
+            env["LORA_MANAGER_PORTABLE"] = "1"
+            env["LORA_MANAGER_STANDALONE"] = "0"
+            # Never inherit another installation's explicit cache database paths.
+            for key in ("LORA_MANAGER_CACHE_DB", "LORA_MANAGER_MODEL_UPDATE_DB", "LORA_MANAGER_RECIPE_CACHE_DB", "LORA_MANAGER_RECIPE_FTS_DB", "LORA_MANAGER_TAG_FTS_DB"):
+                env.pop(key, None)
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(self.comfy_root),
                 "env": env,

@@ -1,7 +1,8 @@
 """설치 프로필과 작업 배분에 따라 로컬 모델 다운로드 범위를 정한다.
 
 GPU 프로필은 기존 local_first / cloud_direct 설정을 따른다. CPU 경량
-프로필은 로컬에 배분된 분석·유틸리티의 모델만 받는다. 모델 이름이나 크기로
+프로필은 로컬에 배분된 분석·유틸리티의 모델을 받는다. 기본 제공 Anima 모델과 LoRA는
+워크플로우 참조나 실행 환경과 관계없이 로컬에 설치한다. 모델 이름이나 크기로
 용도를 추측하지 않고 작업 바인딩과 해당 팩의 model_ids를 사용한다.
 CPU용 필터는 설치 범위만 바꾸며 원격 서비스·모델 취득 설정은 변경하지 않는다.
 """
@@ -13,6 +14,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from comfy_allocation import local_required_binding_ids
 from .execution_profile import cpu_workflow_bindings
+from .manifest import default_install_model_ids
 
 
 MODEL_SOURCE_LOCAL_FIRST = "local_first"
@@ -201,7 +203,7 @@ class ModelScope:
 
         if self.model_source == "cpu_local":
             return (
-                f"[모델 범위] CPU 경량 작업용 {len(self.keep)}개 "
+                f"[모델 범위] CPU 경량 작업용 모델 및 기본 Anima·LoRA {len(self.keep)}개 "
                 f"({self.keep_bytes / 1024**3:.2f} GiB) 다운로드; "
                 f"생성/학습 또는 원격 작업용 {len(self.skipped)}개 "
                 f"({self.skipped_bytes / 1024**3:.2f} GiB)는 로컬 설치 생략. "
@@ -231,13 +233,15 @@ def scope_models(
 ) -> ModelScope:
     """선택된 모델 목록을 로컬 다운로드분과 원격 위임분으로 가른다.
 
-    GPU의 ``local_first`` 는 기존대로 전체를 받고 CPU는 경량 로컬 작업만 준비한다.
+    GPU의 ``local_first`` 는 전체를 받고 CPU는 경량 로컬 작업을 준비한다.
+    기본 제공 Anima 모델과 LoRA는 어느 환경에서도 로컬 다운로드 목록에 유지한다.
     """
 
     ordered = tuple(dict(model) for model in models)
+    default_model_ids = default_install_model_ids(ordered)
     if cpu_only:
         bindings = local_required_binding_ids(allocations) & cpu_workflow_bindings()
-        needed = binding_model_ids(workflows, bindings)
+        needed = binding_model_ids(workflows, bindings) | default_model_ids
         return ModelScope(
             model_source="cpu_local",
             keep=tuple(model for model in ordered if str(model.get("id")) in needed),
@@ -250,7 +254,7 @@ def scope_models(
             skipped=(),
         )
 
-    needed = local_model_ids(workflows, allocations)
+    needed = local_model_ids(workflows, allocations) | default_model_ids
     keep = tuple(model for model in ordered if str(model.get("id")) in needed)
     skipped = tuple(model for model in ordered if str(model.get("id")) not in needed)
     return ModelScope(

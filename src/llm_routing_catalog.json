@@ -1,0 +1,773 @@
+{
+  "groups": [
+    {
+      "key": "lora_management",
+      "label": "LoRA 관리",
+      "description": "봇·에셋·스타일 LoRA 프롬프트 정제, 테스트 세팅과 학습 피드백",
+      "color": "#39a8d0"
+    },
+    {
+      "key": "preset_management",
+      "label": "프리셋 관리",
+      "description": "가져온 프리셋 항목의 자동 분류",
+      "color": "#b58b49"
+    },
+    {
+      "key": "asset_management",
+      "label": "에셋 관리",
+      "description": "에셋의 복장·표정 이름 자동 수정과 전체 매핑",
+      "color": "#3f9c91"
+    },
+    {
+      "key": "asset_editing",
+      "label": "에셋 편집",
+      "description": "에셋 이미지의 EDIT 지시 영어 번역",
+      "color": "#e08070"
+    },
+    {
+      "key": "asset_character_maker",
+      "label": "에셋-캐릭터 메이커",
+      "description": "캐릭터 초안 작성과 생성 이미지 피드백",
+      "color": "#d18bd8"
+    },
+    {
+      "key": "knowledge_search",
+      "label": "지식 · 태그 검색",
+      "description": "자연어 질문 분석과 Danbooru RAG 근거 선별",
+      "color": "#e6a23c"
+    },
+    {
+      "key": "illustration_bot_creation",
+      "label": "삽화 봇 만들기",
+      "description": "캐릭터 카드의 얼굴·외모·복장 태그와 프로필 선택 기준·대표 이미지 분석",
+      "color": "#8b7ce8"
+    },
+    {
+      "key": "illustration_pipeline",
+      "label": "삽화 생성 파이프라인",
+      "description": "수동 그리기와 등장인물·장면 선택, 프롬프트·대사·마스크 생성, 비주얼 교정과 결과 선택",
+      "color": "#5fbd8b"
+    },
+    {
+      "key": "illustration_editing",
+      "label": "삽화 수정",
+      "description": "생성된 삽화의 편하게 수정, 이미지 분석과 오토피드백 검수",
+      "color": "#cc6f88"
+    },
+    {
+      "key": "video_pipeline",
+      "label": "MiniMax H3 영상화",
+      "description": "I2V·FLF2V용 공식 H3 프롬프트 작성",
+      "color": "#cf6bd6"
+    },
+    {
+      "key": "developer_settings",
+      "label": "개발자 옵션",
+      "description": "프로그램 개선용 삽화 품질 자동 검사",
+      "color": "#f0a04b"
+    }
+  ],
+  "modalities": [
+    {
+      "key": "text",
+      "label": "텍스트 요구 작업",
+      "description": "이미지를 전송하지 않는 일반 텍스트·JSON 작업"
+    },
+    {
+      "key": "vision",
+      "label": "비전 요구 작업",
+      "description": "한 장 이상의 이미지를 LLM에 함께 전달할 수 있는 작업"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "llm_thinking_check",
+      "label": "Think 확인 (선택한 연결)",
+      "kind": "텍스트 · 슬롯 직접 선택",
+      "modality": "text",
+      "group": "developer_settings",
+      "locked": true,
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_quality_inspection",
+      "label": "삽화 품질 자동 검사",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "developer_settings",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "extract_outfit",
+      "label": "복장 추출",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "locked": true,
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "enhance_outfit",
+      "label": "복장 정제",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "locked": true,
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "restore_workflow",
+      "label": "수동 그리기",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "classify_face_tags",
+      "label": "얼굴/눈 태그 분류",
+      "kind": "비전",
+      "modality": "vision",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 2,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 2
+      }
+    },
+    {
+      "key": "refine_lb_extra",
+      "label": "외모/복장 태그 정제",
+      "kind": "비전",
+      "modality": "vision",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 2,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 2
+      }
+    },
+    {
+      "key": "refine_lora_prompt",
+      "label": "LoRA/에셋/스타일 정제",
+      "kind": "비전",
+      "modality": "vision",
+      "group": "lora_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 2,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 2
+      }
+    },
+    {
+      "key": "refine_lora_test_setup",
+      "label": "테스트 이미지 일괄 세팅(봇/에셋)",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "lora_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 2,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 2
+      }
+    },
+    {
+      "key": "lora_prompt_review",
+      "label": "LoRA 프롬프트 2차 검수",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "lora_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "lora_feedback_observe",
+      "label": "오토피드백 · 원본 관찰",
+      "kind": "비전/자연어",
+      "modality": "vision",
+      "group": "lora_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "lora_feedback_compare",
+      "label": "오토피드백 · 태그·학습 결과 대조",
+      "kind": "다중 비전/태그 수정",
+      "modality": "vision",
+      "group": "lora_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "asset_name_mapping_auto_fix",
+      "label": "에셋 이름 자동 수정",
+      "kind": "JSON",
+      "modality": "text",
+      "group": "asset_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "asset_name_mapping_full",
+      "label": "에셋 이름 전체 매핑",
+      "kind": "JSON",
+      "modality": "text",
+      "group": "asset_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "preset_import_classify",
+      "label": "프리셋 가져오기 분류",
+      "kind": "JSON",
+      "modality": "text",
+      "group": "preset_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "visual_profile_guide",
+      "label": "프로필 선택 기준 자동 작성",
+      "kind": "텍스트/JSON",
+      "modality": "text",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "visual_profile_appearance_vision",
+      "label": "프로필 대표 이미지 외형 분석",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "edit_illustration_prompt",
+      "label": "삽화 편하게 수정",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_editing",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_image_analysis",
+      "label": "이미지 분석",
+      "kind": "비전",
+      "modality": "vision",
+      "group": "illustration_editing",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_auto_feedback_review",
+      "label": "삽화 오토피드백 검수",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_editing",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "qwen_edit_translate",
+      "label": "EDIT 지시 영어 번역",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "asset_editing",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "character_maker_draft",
+      "label": "캐릭터 메이커 초안",
+      "kind": "텍스트/JSON",
+      "modality": "text",
+      "group": "asset_character_maker",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "character_maker_feedback",
+      "label": "캐릭터 메이커 이미지 피드백",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "asset_character_maker",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "danbooru_tag_search",
+      "label": "단부르 태그 검색",
+      "kind": "텍스트/JSON · 2단계",
+      "modality": "text",
+      "group": "knowledge_search",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "illustration_character_resolve",
+      "label": "삽화·만화 등장인물·장면 선택 (CHARACTER-RESOLVE / MANGA-CHARACTER-RESOLVE)",
+      "kind": "JSON · 항상 실행",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_profile_context_translate",
+      "label": "삽화 프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)",
+      "kind": "JSON · 캐시 미스 시",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_profile_resolve",
+      "label": "삽화 CURRENT 프로필 결정 (PROFILE-RESOLVE)",
+      "kind": "JSON · 캐릭터별 병렬",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_original_asset",
+      "label": "삽화 원본 에셋 선택 (ORIGINAL-ASSET)",
+      "kind": "JSON · 1단계",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_original_asset_recovery",
+      "label": "삽화 원본 에셋 복구 (ORIGINAL-ASSET-RECOVERY)",
+      "kind": "JSON · 실패 후보 재선택",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_call1",
+      "label": "삽화 복장·헤어 (OUTFIT)",
+      "kind": "JSON · 단일 상태 추적",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_time_place",
+      "label": "삽화 시간·장소·조명 (TIME & PLACE)",
+      "kind": "JSON · 독립 상태 추적",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_npc_generation",
+      "label": "NPC 생성 노드",
+      "kind": "JSON · NPC 캐릭터 카드 생성",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1", "fallback_target": "none", "retry_delay_sec": 1,
+        "max_retries": 0, "fallback_retry_delay_sec": 1, "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_call2_plan",
+      "label": "삽화·만화 장면 계획 (PLAN / PLANNER-MANGA)",
+      "kind": "텍스트 · 배치별 시각 계획",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_call2_keyvis",
+      "label": "삽화 대표 이미지 (KEYVIS)",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_call2",
+      "label": "삽화·합성 삽화·만화 장면 묘사 (DETAIL / DETAIL-COMPOSITE / DETAIL-MANGA)",
+      "kind": "텍스트 · 장면 배치 묘사",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_call3",
+      "label": "삽화 대사 생성 (POST PROCESS)",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_visual_correction",
+      "label": "삽화 비주얼 교정 (VISUAL CORRECTION)",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_visual_selection",
+      "label": "삽화 비주얼 교정 결과 선택 (VISUAL SELECTION)",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "illustration_multi_char_mask",
+      "label": "삽화 다중 캐릭터 마스크 (MULTI-CHAR-MASK)",
+      "kind": "JSON",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_instruction_translate",
+      "label": "영상 연출 영어 번역",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_i2v",
+      "label": "H3 I2V 연출·정적 분석",
+      "kind": "비전",
+      "modality": "vision",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_i2v_compose",
+      "label": "H3 I2V 프롬프트 작성",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_first_last",
+      "label": "H3 FLF2V 연출·정적 분석",
+      "kind": "다중 비전",
+      "modality": "vision",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_first_last_compose",
+      "label": "H3 FLF2V 프롬프트 작성",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_ref2v",
+      "label": "H3 REF2V 연출·정적 분석",
+      "kind": "다중 비전",
+      "modality": "vision",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
+      "key": "video_prompt_ref2v_compose",
+      "label": "H3 REF2V 프롬프트 작성",
+      "kind": "텍스트",
+      "modality": "text",
+      "group": "video_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    }
+  ]
+}

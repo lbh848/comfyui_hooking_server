@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "characters": {
+    "Lune": {
+      "appearance": "공방-Lune",
+      "outfit": "공방-Lune",
+      "expression": "SD-80_acting coy_v4",
+      "settings": {
+        "defaults": {
+          "natural_language": "",
+          "appearance": "공방-Lune",
+          "raw_appearance_tags": [
+            "1girl",
+            "furry",
+            "brown hair",
+            "brown fur",
+            "cat girl",
+            "long hair",
+            "messy hair",
+            "green eyes",
+            "cat whiskers"
+          ],
+          "outfit": "공방-Lune",
+          "raw_outfit_tags": [
+            "ragged tunic",
+            "coarse linen tunic",
+            "frayed edges",
+            "oversized tunic",
+            "rope belt",
+            "torn fabric",
+            "medieval slave clothing",
+            "one hand cuff with broken chain",
+            "black leader choker"
+          ],
+          "expression": "SD-80_acting coy_v4",
+          "raw_expression_tags": [
+            "blush",
+            "light smile",
+            "arm behind back",
+            "hand on own mouth",
+            "finger to mouth",
+            "finger in own mouth",
+            "index finger raised",
+            "cowboy shot",
+            "looking away"
+          ],
+          "raw_character_negative_tags": []
+        },
+        "values": {
+          "natural_language_preset": "",
+          "natural_language": "",
+          "appearance": "공방-Lune",
+          "raw_appearance_tags": [
+            "1girl",
+            "furry",
+            "brown hair",
+            "brown fur",
+            "cat girl",
+            "long hair",
+            "messy hair",
+            "green eyes",
+            "cat whiskers"
+          ],
+          "outfit": "공방-Lune",
+          "raw_outfit_tags": [
+            "ragged tunic",
+            "coarse linen tunic",
+            "frayed edges",
+            "oversized tunic",
+            "rope belt",
+            "torn fabric",
+            "medieval slave clothing",
+            "one hand cuff with broken chain",
+            "black leader choker"
+          ],
+          "expression": "SD-80_acting coy_v4",
+          "raw_expression_tags": [
+            "blush",
+            "light smile",
+            "arm behind back",
+            "hand on own mouth",
+            "finger to mouth",
+            "finger in own mouth",
+            "index finger raised",
+            "cowboy shot",
+            "looking away"
+          ],
+          "raw_character_negative_tags": [],
+          "snapref_enabled": true,
+          "snapref_images": [
+            {
+              "name": "1793973955_d2f7be.webp",
+              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1793973955_d2f7be.webp",
+              "orig_filename": "1793973744_beb530.webp",
+              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1793973955_d2f7be.webp"
+            }
+          ],
+          "snapref_face_images": [],
+          "snapref_secondary_images": [],
+          "snapref_strength": 1,
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_preprocess": "none",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "lora_enabled": true,
+          "lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Lune/20261107-062539/9c3e2d02-step00000150.safetensors",
+              "strength": 0.3,
+              "BASE": "anima",
+              "trigger": "@Lune",
+              "name": "Lune · 20261107-062539 · 9c3e2d02-step00000150.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Lune/20261107-062539/9c3e2d02-step00000150-1.jpg"
+            }
+          ],
+          "face_lora_enabled": false,
+          "face_lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Lune/20261107-062539/9c3e2d02-step00000150.safetensors",
+              "strength": 0.8,
+              "BASE": "anima",
+              "trigger": "@Lune",
+              "name": "Lune · 20261107-062539 · 9c3e2d02-step00000150.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Lune/20261107-062539/9c3e2d02-step00000150-1.jpg"
+            }
+          ],
+          "face_crop_top": 2.5,
+          "face_crop_bottom": 1,
+          "face_lora_upscale_size": "512"
+        }
+      },
+      "group": "공방-튜토리얼"
+    },
+    "Test-profile": {
+      "appearance": "공방-여자",
+      "outfit": "공방-빈 복장",
+      "expression": "SD-80_acting cute_v1",
+      "settings": {
+        "defaults": {
+          "natural_language": "",
+          "appearance": "공방-여자",
+          "raw_appearance_tags": [
+            "1girl"
+          ],
+          "outfit": "공방-빈 복장",
+          "raw_outfit_tags": [],
+          "expression": "공방-빈 표정",
+          "raw_expression_tags": [],
+          "raw_character_negative_tags": []
+        },
+        "values": {
+          "natural_language_preset": "",
+          "natural_language": "",
+          "appearance": "공방-여자",
+          "raw_appearance_tags": [
+            "1girl"
+          ],
+          "outfit": "공방-빈 복장",
+          "raw_outfit_tags": [],
+          "expression": "SD-80_acting cute_v1",
+          "raw_expression_tags": [
+            "happy",
+            ":d",
+            "fingers to cheeks",
+            "pointing at self",
+            "tareme",
+            "cowboy shot",
+            "looking at viewer"
+          ],
+          "raw_character_negative_tags": [],
+          "snapref_enabled": false,
+          "snapref_images": [
+            {
+              "name": "1793973955_d2f7be.webp",
+              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1793973955_d2f7be.webp",
+              "orig_filename": "1793973744_beb530.webp",
+              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1793973955_d2f7be.webp"
+            }
+          ],
+          "snapref_face_images": [],
+          "snapref_secondary_images": [],
+          "snapref_strength": 1,
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_preprocess": "none",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "lora_enabled": false,
+          "lora_list": [],
+          "face_lora_list": [],
+          "face_crop_top": 2.5,
+          "face_crop_bottom": 1
+        }
+      },
+      "group": "공방-참고자료"
+    },
+    "Dale": {
+      "appearance": "공방-Dale",
+      "outfit": "공방-빈 복장",
+      "expression": "공방-빈 표정",
+      "settings": {
+        "defaults": {
+          "natural_language": "",
+          "appearance": "공방-Dale",
+          "raw_appearance_tags": [
+            "1male",
+            "white hair",
+            "long beard",
+            "old man",
+            "muscular",
+            "tanned skin",
+            "sunglasses",
+            "scarred hands",
+            "scar on face",
+            "short hair"
+          ],
+          "outfit": "공방-Dale",
+          "raw_outfit_tags": [
+            "sunglasses",
+            "leather harness",
+            "potion vials on belt",
+            "leather gloves",
+            "white lab coat",
+            "utility pouches",
+            "brown linen tunic",
+            "fingerless gloves"
+          ],
+          "expression": "청원고-angry1",
+          "raw_expression_tags": [
+            "angry",
+            "furrowed brow",
+            "clenched teeth",
+            "shouting",
+            "glaring",
+            "clenched hands",
+            "looking at viewer",
+            "anger vein",
+            "blush",
+            "cowboy shot"
+          ],
+          "raw_character_negative_tags": []
+        },
+        "values": {
+          "natural_language_preset": "",
+          "natural_language": "",
+          "appearance": "공방-Dale",
+          "raw_appearance_tags": [
+            "1male",
+            "white hair",
+            "long beard",
+            "old man",
+            "muscular",
+            "tanned skin",
+            "sunglasses",
+            "scarred hands",
+            "scar on face",
+            "short hair"
+          ],
+          "outfit": "공방-빈 복장",
+          "raw_outfit_tags": [],
+          "expression": "공방-빈 표정",
+          "raw_expression_tags": [],
+          "raw_character_negative_tags": [],
+          "snapref_enabled": true,
+          "snapref_images": [
+            {
+              "name": "1794009028_dcefa3.webp",
+              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\Dale\\공방-빈 복장\\공방-빈 표정\\1794009028_dcefa3.webp",
+              "orig_filename": "1794009028_dcefa3.webp",
+              "preview_url": "/api/asset/asset_mode/characters/Dale/outfits/%EA%B3%B5%EB%B0%A9-%EB%B9%88%20%EB%B3%B5%EC%9E%A5/expressions/%EA%B3%B5%EB%B0%A9-%EB%B9%88%20%ED%91%9C%EC%A0%95/images/1794009028_dcefa3.webp"
+            }
+          ],
+          "snapref_face_images": [],
+          "snapref_secondary_images": [],
+          "snapref_strength": 1,
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_preprocess": "none",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "lora_enabled": true,
+          "lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Dale/20261107-091637/637b3f4e-step00000100.safetensors",
+              "strength": 0.3,
+              "BASE": "anima",
+              "trigger": "@Dale",
+              "name": "Dale · 20261107-091637 · 637b3f4e-step00000100.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Dale/20261107-091637/637b3f4e-step00000100-1.jpg"
+            }
+          ],
+          "face_lora_enabled": false,
+          "face_lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Lune/20261107-062539/9c3e2d02-step00000150.safetensors",
+              "strength": 0.8,
+              "BASE": "anima",
+              "trigger": "@Lune",
+              "name": "Lune · 20261107-062539 · 9c3e2d02-step00000150.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Lune/20261107-062539/9c3e2d02-step00000150-1.jpg"
+            }
+          ],
+          "face_crop_top": 2.5,
+          "face_crop_bottom": 1,
+          "face_lora_upscale_size": "512"
+        }
+      },
+      "group": "공방-튜토리얼"
+    },
+    "Yuki": {
+      "appearance": "공방-Yuki",
+      "outfit": "공방-Yuki 비키니",
+      "expression": "SD-80_acting coy_v3",
+      "settings": {
+        "defaults": {
+          "natural_language": "",
+          "appearance": "공방-Yuki",
+          "raw_appearance_tags": [
+            "1girl",
+            "red eyes",
+            "grey hair",
+            "long hair",
+            "small breasts",
+            "(straight hair:1.2)",
+            "(swept bangs:1.2)",
+            "side part",
+            "parted bangs",
+            "hair behind ear",
+            "fore head",
+            "blunt bangs",
+            "single hair intake"
+          ],
+          "outfit": "공방-Yuki 비키니",
+          "raw_outfit_tags": [
+            "single hoop earring",
+            "heart choker",
+            "black wings",
+            "detached wings",
+            "black bikini",
+            "lowleg bikini",
+            "black  single wrist scrunchie"
+          ],
+          "expression": "SD-80_acting coy_v3",
+          "raw_expression_tags": [
+            "blush",
+            "happy",
+            "smile",
+            "shy",
+            "averting eyes",
+            "hand over own mouth",
+            "cowboy shot",
+            "looking to the side"
+          ],
+          "raw_character_negative_tags": []
+        },
+        "values": {
+          "natural_language_preset": "",
+          "natural_language": "",
+          "appearance": "공방-Yuki",
+          "raw_appearance_tags": [
+            "1girl",
+            "red eyes",
+            "grey hair",
+            "long hair",
+            "small breasts",
+            "(straight hair:1.2)",
+            "(swept bangs:1.2)",
+            "side part",
+            "parted bangs",
+            "hair behind ear",
+            "fore head",
+            "blunt bangs",
+            "single hair intake"
+          ],
+          "outfit": "공방-Yuki 비키니",
+          "raw_outfit_tags": [
+            "single hoop earring",
+            "heart choker",
+            "black wings",
+            "detached wings",
+            "black bikini",
+            "lowleg bikini",
+            "black  single wrist scrunchie"
+          ],
+          "expression": "SD-80_acting coy_v3",
+          "raw_expression_tags": [
+            "blush",
+            "happy",
+            "smile",
+            "shy",
+            "averting eyes",
+            "hand over own mouth",
+            "cowboy shot",
+            "looking to the side"
+          ],
+          "raw_character_negative_tags": [],
+          "snapref_enabled": true,
+          "snapref_images": [
+            {
+              "name": "1794097096_ccfe32.webp",
+              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\Yuki\\공방-Yuki 비키니\\SD-80_acting coy_v3\\1794097096_ccfe32.webp",
+              "orig_filename": "1794097096_ccfe32.webp",
+              "preview_url": "/api/asset/asset_mode/characters/Yuki/outfits/%EA%B3%B5%EB%B0%A9-Yuki%20%EB%B9%84%ED%82%A4%EB%8B%88/expressions/SD-80_acting%20coy_v3/images/1794097096_ccfe32.webp"
+            }
+          ],
+          "snapref_face_images": [
+            {
+              "name": "1794083151_9355c3.webp",
+              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1794083151_9355c3.webp",
+              "orig_filename": "1794054497_dcf254_face.png",
+              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1794083151_9355c3.webp"
+            }
+          ],
+          "snapref_secondary_images": [],
+          "snapref_strength": 1,
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_preprocess": "none",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "lora_enabled": true,
+          "lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Yuki/20261108-063916/922c8643-step00000150.safetensors",
+              "strength": 0.3,
+              "BASE": "anima",
+              "trigger": "@Yuki",
+              "name": "Yuki · 20261108-063916 · 922c8643-step00000150.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Yuki/20261108-063916/922c8643-step00000150-1.jpg"
+            }
+          ],
+          "face_lora_enabled": false,
+          "face_lora_list": [
+            {
+              "source": "external",
+              "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Lune/20261107-062539/9c3e2d02-step00000150.safetensors",
+              "strength": 0.8,
+              "BASE": "anima",
+              "trigger": "@Lune",
+              "name": "Lune · 20261107-062539 · 9c3e2d02-step00000150.safetensors",
+              "preview_url": "/api/setting/internal-lora/lora/trained/preview/__projects__/Lune/20261107-062539/9c3e2d02-step00000150-1.jpg"
+            }
+          ],
+          "face_crop_top": 2.5,
+          "face_crop_bottom": 1,
+          "face_lora_upscale_size": "512"
+        }
+      },
+      "group": "공방-튜토리얼"
+    }
+  }
+}

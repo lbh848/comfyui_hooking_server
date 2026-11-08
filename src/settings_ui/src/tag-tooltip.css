@@ -1,0 +1,11 @@
+.illust-tag-label:focus-visible { outline: 2px solid var(--rose-dark); outline-offset: 2px; }
+.illust-tag-tooltip { position: fixed; z-index: 20; display: flex; flex-direction: column; width: max-content; max-width: min(340px, calc(100vw - 20px)); padding: 11px 13px; border: 1px solid var(--line); border-top: 2px solid var(--rose); border-radius: 9px; background: var(--panel); box-shadow: 0 5px 24px #895d7a26; color: var(--ink); font-size: 12px; line-height: 1.7; white-space: normal; overflow-wrap: anywhere; }
+.illust-tag-tooltip-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.illust-tag-tooltip-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; }
+.illust-tag-tooltip-heading strong { font-weight: 650; color: var(--rose-dark); }
+.illust-tag-tooltip-heading > span { padding: 1px 6px; border-radius: 4px; background: var(--lavender); color: var(--lavender-ink); font-size: 11px; }
+.illust-tag-tooltip p { margin: 6px 0 0; color: var(--secondary); white-space: pre-line; }
+/* Keep the tooltip hoverable across the small gap from its tag. */
+.illust-tag-tooltip::before { content: ""; position: absolute; left: 0; width: 100%; height: 9px; }
+.illust-tag-tooltip[data-side=below]::before { bottom: 100%; }
+.illust-tag-tooltip[data-side=above]::before { top: 100%; }

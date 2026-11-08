@@ -121,6 +121,10 @@
                 </span>
             </button>
         </div>
+        <div class="tab-group tab-group--emotion" role="group" aria-label="감정 삽화 기능">
+            <span class="tab-group-label" aria-hidden="true">감정 삽화</span>
+            <button type="button" id="tab-btn-comfy-emotion" class="tab-btn" onclick="switchTab('comfy-emotion')">Comfy 공방 감정 삽화</button>
+        </div>
         <div class="tab-group tab-group--asset" role="group" aria-label="에셋 기능">
             <span class="tab-group-label" aria-hidden="true">에셋</span>
             <button type="button" class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
@@ -1154,6 +1158,56 @@
         <!-- 삽화 프롬프트 생성 탭 -->
         <div id="tab-illustration-prompt-content" class="tab-content">
             <div id="illust-log-modal" class="independent-scroll-container"></div>
+        </div>
+        <!-- Comfy 공방 감정 삽화 탭 -->
+        <div id="tab-comfy-emotion-content" class="tab-content">
+            <div class="ce-workspace independent-scroll-container">
+                <header class="ce-header">
+                    <div class="ce-brand-mark" aria-hidden="true">E</div>
+                    <div class="ce-header-copy">
+                        <h2 class="ce-title">Comfy 공방 감정 삽화</h2>
+                        <p class="ce-subtitle">배경과 캐릭터를 분리 생성해 한 장으로 합성하는 감정 삽화 전용 작업 공간입니다.</p>
+                    </div>
+                </header>
+                <div class="ce-body">
+                    <section class="ce-card" aria-labelledby="ce-output-title">
+                        <div class="ce-card-head">
+                            <div>
+                                <h3 id="ce-output-title">출력 모드</h3>
+                                <p>이 탭에서 합성 삽화 사용 여부를 결정합니다. 변경 즉시 저장되어 삽화 파이프라인에 적용됩니다.</p>
+                            </div>
+                            <span id="ce-output-status" class="ce-status" role="status" aria-live="polite">불러오는 중...</span>
+                        </div>
+                        <div class="ce-field">
+                            <label for="ce-output-mode">합성 방식</label>
+                            <select id="ce-output-mode" onchange="onComfyEmotionOutputModeChange(this)">
+                                <option value="">사용 안 함 (일반 삽화)</option>
+                                <option value="composite">합성 삽화</option>
+                                <option value="composite_both">합성 삽화 + 원본 에셋</option>
+                            </select>
+                        </div>
+                        <p class="ce-hint" id="ce-output-note">현재 출력 모드를 확인하는 중입니다.</p>
+                    </section>
+
+                    <section class="ce-card" aria-labelledby="ce-detail-title">
+                        <div class="ce-card-head">
+                            <div>
+                                <h3 id="ce-detail-title">DETAIL 합성 삽화 지침</h3>
+                                <p>TIME &amp; PLACE와 기존 DETAIL 입력을 재사용해 배경·캐릭터별 이미지와 가로 중심 위치를 정합니다. 최종 합성에서 캐릭터는 비율을 유지하며 배경 높이를 꽉 채웁니다.</p>
+                            </div>
+                            <span id="ce-prompt-status" class="ce-status" role="status" aria-live="polite">대기 중</span>
+                        </div>
+                        <textarea id="lighbd-prompt-composite_detail" data-lighbd-prompt="composite_detail"
+                                  class="ce-prompt-editor" spellcheck="false"
+                                  aria-label="DETAIL 합성 삽화 지침"></textarea>
+                        <div class="ce-actions">
+                            <span class="ce-hint">편집한 지침은 저장 후 새 호출부터 적용됩니다.</span>
+                            <button type="button" class="ce-button" onclick="loadComfyEmotionPrompt(true)">다시 불러오기</button>
+                            <button type="button" class="ce-button ce-button--primary" onclick="saveComfyEmotionPrompt()">저장</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
         </div>
         <div id="tab-asset-content" class="tab-content">
             <div class="asset-breadcrumb" id="asset-breadcrumb">
@@ -4232,6 +4286,14 @@
                             <label>수정 방향</label>
                             <textarea id="llm-edit-direction-input" rows="5" placeholder="예: 밤 분위기로 바꾸고 두 캐릭터가 서로 마주 보며 웃게 해줘" style="width:100%; resize:vertical;"></textarea>
                         </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap;">
+                            <label for="llm-edit-response-language" style="font-size:0.8rem;">답변 언어</label>
+                            <select id="llm-edit-response-language" onchange="_saveLlmEditTemplate(this.value)" style="width:auto; padding:5px 9px;">
+                                <option value="en">영어</option>
+                                <option value="ko">한국어</option>
+                            </select>
+                            <span style="font-size:0.7rem; color:var(--text-secondary);">자동 저장 · 플러그인 수정에도 적용</span>
+                        </div>
                         <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:0.8rem; cursor:pointer;">
                             <input id="llm-edit-allow-mask-edit" type="checkbox" checked onchange="localStorage.setItem('llmEditAllowMaskEdit', String(this.checked))">
                             마스크 영역 편집 허용
@@ -4318,34 +4380,6 @@
         </div>
     </div>
 
-    <!-- 시드 선택 재생성 모달 -->
-    <div class="modal" id="seed-regen-modal">
-        <div class="modal-content" style="max-width:480px;">
-            <div class="modal-header">
-                <h2>🔄 재생성 — 시드 선택</h2>
-                <button class="modal-close" onclick="closeSeedRegenModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
-                    이 프롬프트에 [SEED] 블록이 감지되었습니다.<br>
-                    시드를 바꿔 다른 결과를 얻거나, 그대로 재생성할 수 있습니다.
-                </div>
-                <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:0.9rem; align-items:center;">
-                    <div>현재 시드: <span id="seed-regen-current" style="font-family:monospace; color:var(--text-secondary);">-</span></div>
-                    <div>새 시드: <span id="seed-regen-new" style="font-family:monospace; color:#ffd54f; font-weight:600;">-</span>
-                        <button onclick="rollNewSeed()" title="새 시드 다시 뽑기" style="margin-left:4px; padding:1px 8px; cursor:pointer; border:1px solid var(--border); background:var(--surface2); border-radius:4px;">🎲</button>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="cancel" onclick="closeSeedRegenModal()">취소</button>
-                <button class="confirm secondary" onclick="seedRegenAsIs()">🔄 그대로 재생성</button>
-                <button class="confirm" onclick="seedRegenWithNewSeed()">🎲 시드 바꿔서 재생성</button>
-            </div>
-        </div>
-    </div>
-
-
         <!-- 프리셋매니징 탭 -->
         <div id="tab-preset-mgmt-content" class="tab-content">
             <div class="pm-container">
@@ -4353,7 +4387,7 @@
                     <div class="pm-brand">
                         <div class="pm-brand-mark">P</div>
                         <div style="min-width:0;">
-                            <div class="pm-brand-title">프리셋 매니징</div>
+                            <div class="pm-brand-title">프리셋 관리</div>
                             <div class="pm-brand-subtitle">추가, 비교, 수정, 사용 추적을 한 화면에서 관리합니다.</div>
                         </div>
                     </div>
@@ -7337,7 +7371,7 @@
                                     <span class="comfy-installer-step" aria-hidden="true">M</span>
                                     <div class="comfy-installer-section-heading">
                                         <h3 class="comfy-installer-title">Modal 워크플로우·모델 동기화</h3>
-                                        <p class="comfy-installer-section-copy">선택한 SOYA_USER 워크플로우와 참조 중인 모델·LoRA를 Modal Volume에 직접 업로드합니다. 앱 코드와 Custom Node 이미지는 재배포하지 않습니다.</p>
+                                        <p class="comfy-installer-section-copy">선택한 관리 워크플로우와 참조 중인 모델·LoRA를 Modal Volume에 직접 업로드합니다. 앱 코드와 Custom Node 이미지는 재배포하지 않습니다.</p>
                                     </div>
                                 </div>
                                 <div class="comfy-installer-status-grid">
@@ -9816,7 +9850,6 @@
                         </div>
                         <select id="setting-illustration-workflow-type" class="asset-workflow-type-select"
                                 onchange="onIllustrationWorkflowTypeChange(this.value)" aria-label="삽화 워크플로우 선택">
-                            <option value="v1">V1 계열 삽화 워크플로우</option>
                             <option value="v3">V3 계열 삽화 워크플로우 (ANIMA+ILXL)</option>
                             <option value="v3_anima">V3 계열 삽화 워크플로우 (ONLY ANIMA)</option>
                             <option value="chansub">챈섭</option>
@@ -9831,24 +9864,6 @@
                         <span id="setting-illustration-provider-status" class="toggle-status off">ComfyUI</span>
                     </div>
                     <div class="asset-workflow-grid" id="setting-illustration-workflow-grid" style="margin: -8px 0 14px;">
-                        <section class="asset-workflow-card inactive" id="setting-illustration-v1-workflow-card">
-                            <div class="asset-workflow-card-head">
-                                <div>
-                                    <div class="asset-workflow-card-title">V1 계열 삽화 워크플로우</div>
-                                    <div class="asset-workflow-card-desc">라이브러리의 V1 배포 워크플로우</div>
-                                </div>
-                                <span class="asset-workflow-status" id="setting-illustration-v1-workflow-status">비활성</span>
-                            </div>
-                            <div class="form-group">
-                                <div class="autocomplete-wrapper">
-                                    <input type="text" id="setting-illustration-v1-workflow-filename" placeholder="라이브러리 배포 워크플로우"
-                                           oninput="onIllustrationWorkflowFilenameInput('v1', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v1', this.value)" disabled>
-                                    <div class="autocomplete-list" id="illustration-v1-workflow-autocomplete" data-illustration-profile="v1"></div>
-                                </div>
-                                <div class="hint">공통설정 탭의 베이스 경로를 공유합니다</div>
-                            </div>
-                            <input type="hidden" id="setting-illustration-v1-workflow-source-path">
-                        </section>
                         <section class="asset-workflow-card inactive" id="setting-illustration-v3-workflow-card">
                             <div class="asset-workflow-card-head">
                                 <div>
@@ -10152,55 +10167,23 @@
                     </div>
                     <input type="hidden" id="setting-asset-tag-analysis-workflow-source-path">
 
-                    <!-- 전역 EDIT 툴 및 도구별 마스크 편집 워크플로우 -->
+                    <!-- EDIT 툴 마스크 편집 워크플로우 -->
                     <div class="edit-tool-config">
-                        <div class="edit-tool-selector">
-                            <div class="edit-tool-selector-copy">
-                                <div class="title">✏️ EDIT 툴</div>
-                                <div class="desc">에셋 LV2의 동일한 편집 UI에서 호출할 전역 이미지 편집 엔진. 선택한 엔진의 카드만 활성화됩니다.</div>
-                            </div>
-                            <select id="setting-asset-edit-tool" class="edit-tool-type-select"
-                                    onchange="onAssetEditToolChange(this.value)" aria-label="전역 EDIT 툴 선택">
-                                <option value="qwen">QWEN EDIT</option>
-                                <option value="anima_inpainting">ANIMA Inpainting</option>
-                            </select>
-                        </div>
-
                         <div class="edit-tool-grid">
-                            <section class="edit-tool-card active" id="setting-qwen-edit-tool-card">
-                                <div class="edit-tool-card-head">
-                                    <div>
-                                        <div class="edit-tool-card-title">🟢 QWEN EDIT 워크플로우</div>
-                                        <div class="edit-tool-card-desc">QWEN을 선택했을 때 사용할 UI 또는 API 워크플로우</div>
-                                    </div>
-                                    <span class="edit-tool-status" id="setting-qwen-edit-tool-status">현재 사용</span>
-                                </div>
-                                <div class="form-group">
-                                    <div class="autocomplete-wrapper">
-                                        <input type="text" id="setting-qwen-edit-workflow-filename" placeholder="라이브러리 배포 워크플로우"
-                                               oninput="onQwenEditWorkflowFilenameInput(this.value, true)"
-                                               onfocus="onQwenEditWorkflowFilenameInput(this.value, false)">
-                                        <div class="autocomplete-list" id="qwen-edit-workflow-autocomplete"></div>
-                                    </div>
-                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · UI 또는 API JSON을 사용할 수 있습니다</div>
-                                </div>
-                                <input type="hidden" id="setting-qwen-edit-workflow-source-path">
-                            </section>
-
-                            <section class="edit-tool-card inactive" id="setting-anima-inpainting-tool-card">
+                            <section class="edit-tool-card active" id="setting-anima-inpainting-tool-card">
                                 <div class="edit-tool-card-head">
                                     <div>
                                         <div class="edit-tool-card-title">🟣 ANIMA Inpainting 워크플로우</div>
-                                        <div class="edit-tool-card-desc">ANIMA Inpainting을 선택했을 때 사용할 변환 전 UI 워크플로우</div>
+                                        <div class="edit-tool-card-desc">편집 모달에서 사용할 변환 전 UI 워크플로우</div>
                                     </div>
-                                    <span class="edit-tool-status" id="setting-anima-inpainting-tool-status">비활성</span>
+                                    <span class="edit-tool-status" id="setting-anima-inpainting-tool-status">현재 사용</span>
                                 </div>
                                 <div class="form-group">
                                     <div class="autocomplete-wrapper">
                                         <input type="text" id="setting-anima-inpainting-workflow-filename"
                                                placeholder="라이브러리 배포 워크플로우"
                                                oninput="onAnimaInpaintingWorkflowFilenameInput(this.value, true)"
-                                               onfocus="onAnimaInpaintingWorkflowFilenameInput(this.value, false)" disabled>
+                                               onfocus="onAnimaInpaintingWorkflowFilenameInput(this.value, false)">
                                         <div class="autocomplete-list" id="anima-inpainting-workflow-autocomplete"></div>
                                     </div>
                                     <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
@@ -10776,7 +10759,7 @@
                                 <span class="comfy-installer-step" aria-hidden="true">03</span>
                                 <div class="comfy-installer-section-heading">
                                     <h3 class="comfy-installer-title">가져올 워크플로우 선택</h3>
-                                    <p class="comfy-installer-section-copy">배포 버전과 설치할 워크플로우를 선택합니다. 사용자 사본은 보존됩니다.</p>
+                                    <p class="comfy-installer-section-copy">배포 버전과 설치할 워크플로우를 선택합니다. 선택한 워크플로우는 프로그램이 관리합니다.</p>
                                 </div>
                             </div>
                             <div class="comfy-workflow-toolbar">
@@ -10792,12 +10775,12 @@
                                     <div class="comfy-workflow-list" id="comfy-installer-pack-workflows"><div class="comfy-workflow-empty">풀린 팩이 없습니다.</div></div>
                                 </div>
                                 <div class="comfy-workflow-pane">
-                                    <header>사용자 환경 · 절대 자동 덮어쓰기 안 함</header>
-                                    <div class="comfy-workflow-list" id="comfy-installer-user-workflows"><div class="comfy-workflow-empty">사용자 사본이 없습니다.</div></div>
+                                    <header>설치된 워크플로우 · 읽기 전용</header>
+                                    <div class="comfy-workflow-list" id="comfy-installer-user-workflows"><div class="comfy-workflow-empty">설치된 관리 워크플로우가 없습니다.</div></div>
                                 </div>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
-                                선택한 배포 원본은 <code>SOYA_USER</code>에 새 사본으로 들어갑니다. 사용자가 편집한 기존 사본은 업데이트 시에도 그대로 유지됩니다.
+                                선택한 워크플로우는 ComfyUI 워크플로우 폴더에 원래 파일명으로 설치되며 읽기 전용으로 관리됩니다.
                                 필요한 모델은 워크플로우 JSON에서 자동 추측하지 않고 배포 버전별 고정 명세를 사용합니다.
                             </p>
                         </section>
@@ -10822,9 +10805,9 @@
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
                             <div class="comfy-installer-actions comfy-installer-sage-actions">
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-enable-btn" onclick="comfyInstallerSetPatchSageAttention(true)" title="SOYA_USER의 PathchSageAttentionKJ 노드를 모두 활성화합니다.">PatchSageAttention 일괄 활성화</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-disable-btn" onclick="comfyInstallerSetPatchSageAttention(false)" title="SOYA_USER의 PathchSageAttentionKJ 노드를 MODEL 연결을 유지하는 bypass 모드로 바꿉니다.">PatchSageAttention 일괄 비활성화</button>
-                                <span class="comfy-installer-sage-note" id="comfy-installer-sage-note">SOYA_USER 전체를 노드 제목·워크플로우 파일명과 관계없이 처리합니다. 열려 있는 ComfyUI 워크플로우는 다시 열어야 반영됩니다.</span>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-enable-btn" onclick="comfyInstallerSetPatchSageAttention(true)" title="관리 워크플로우의 PathchSageAttentionKJ 노드를 모두 활성화합니다.">PatchSageAttention 일괄 활성화</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-disable-btn" onclick="comfyInstallerSetPatchSageAttention(false)" title="관리 워크플로우의 PathchSageAttentionKJ 노드를 MODEL 연결을 유지하는 bypass 모드로 바꿉니다.">PatchSageAttention 일괄 비활성화</button>
+                                <span class="comfy-installer-sage-note" id="comfy-installer-sage-note">프로그램이 관리하는 워크플로우를 노드 제목·워크플로우 파일명과 관계없이 처리합니다. 열려 있는 ComfyUI 워크플로우는 다시 열어야 반영됩니다.</span>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 선택한 워크플로우에 필요한 모델만 설치합니다. 실행 검사는 설치·업데이트 후 별도로 진행할 수 있습니다.
@@ -11769,6 +11752,10 @@
     <script src="/llm_thinking_check.js?v=20261017-plan-label"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="/static/bot_batch.js"></script>
+    <script src="/static/bot_rep_batch.js"></script>
+    <script src="/static/bot_visual_guide.js"></script>
+    <script src="/static/asset_prompt.js"></script>
     <script src="/static/app.js"></script>
     <script src="/static/entry.js"></script>
         <!-- IL_RATE(학습률) 추천값 표 모달 (공용: 에셋/봇/인스턴스/그림체) -->

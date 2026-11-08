@@ -1,5 +1,10 @@
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 from app_paths import config_root, data_root, initialize_layout
+from lora_paths import ASSET_LORA_FOLDER, bot_lora_load_path
 import asyncio
 import io
 import json
@@ -58,6 +63,7 @@ mimetypes.add_type('image/webp', '.webp')
 mimetypes.add_type('image/avif', '.avif')
 import re
 import math
+import random
 
 # ─── AIOHTTP_NOSENDFILE: asyncio Windows sendfile 데이터 레이스 회피 ───────
 # Python 3.12.0 의 asyncio._sendfile_fallback 은 16KB bytearray 를 하나만
@@ -113,6 +119,7 @@ import illustration_flow
 from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import illustration_camera
+from modes import illustration_composite
 from modes import illustration_quality_inspection
 from modes import illustration_scene_pipeline
 from modes import autocomplete_service
@@ -152,20 +159,20 @@ from modes.video_postprocess import (
 from modes import qwen_composite_items
 from modes import bot_mode
 from modes.bot_mode import data_patcher
+from modes.bot_mode import resolve_illust_settings
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue, handle_get_lb_extra_refine_prompt, handle_set_lb_extra_refine_prompt, handle_lb_extra_refine
 from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import (
-    FIRST_PASS_SINGLE_V5_PRESET,
     IllustPromptBuilder,
-    allows_anonymous_fragment_negative_relaxation,
     get_illust_logs,
     log_illust_build,
     sync_multi_char_shared_tags,
 )
-from modes.chansub_prompt_builder import ChansubPromptBuilder, build_v1_prompt
+from modes.chansub_prompt_builder import ChansubPromptBuilder
 from modes.prompt_path_normalizer import normalize_modal_prompt_paths
 from modes.word_rules import (
+    apply_weight_clamp,
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
     apply_remove_rule as _apply_remove_word_rule,
@@ -260,7 +267,10 @@ CURRENT_WORK_DIR = os.path.join(data_root(BASE_DIR), "current_work")
 WORKFLOW_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "workflow_backup")
 LOG_DIR = os.path.join(data_root(BASE_DIR), "logs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-CONFIG_FILE = os.path.join(config_root(BASE_DIR), "config.json")
+from configuration import config_path as application_config_path, read_config, write_config, migrate_legacy_config, settings_lock
+from app_paths import comfy_input_root
+CONFIG_FILE = str(application_config_path(BASE_DIR))
+migrate_legacy_config(CONFIG_FILE)
 RUNTIME_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "backups")
 FRONTEND_AUTH_FILE = os.path.join(config_root(BASE_DIR), "key", "frontend_auth.json")
 
@@ -594,11 +604,10 @@ DEFAULT_CONFIG = {
     "video_generation_defaults": copy.deepcopy(DEFAULT_VIDEO_GENERATION_DEFAULTS),
     "video_secondary_motion": True,  # H3 영상 프롬프트에 secondary character motion 블록 포함 (False=주동작만, 완전 정지 지향)
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
-    "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
+    "comfy_input_dir": str(comfy_input_root(BASE_DIR)),
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "illustration_workflow_type": workflow_profiles.ILLUST_V3,
     "illustration_workflow_source_paths": {
-        workflow_profiles.ILLUST_V1: "",
         workflow_profiles.ILLUST_V3: "",
         workflow_profiles.ILLUST_V3_ANIMA: "",
     },
@@ -609,7 +618,7 @@ DEFAULT_CONFIG = {
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
     "chansub_strip_builtin_quality_tags": True,  # 챈섭 전송본에서 서버 내장 추정 품질 태그 제외
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
-    "bot_mode_enabled": True,  # 삽화 모드: 항상 ON 고정 (V1/V3 분기는 파이프라인이 포맷 감지로 처리)
+    "bot_mode_enabled": True,  # Illustration mode is always enabled.
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
     "postprocess_enabled": False,  # 삽화 후처리([SPEAK] 합성) 마스터 스위치
     "postprocess": {  # 후처리 상세 설정 (탭별 모드)
@@ -623,7 +632,10 @@ DEFAULT_CONFIG = {
             "name_replace": {},         # 영문이름 → 표시이름 치환 맵
         }
     },
-    "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
+    "bot_selected": "공방-테스트봇",  # 새 설치에 포함되는 기본 삽화 봇
+    "emotion_bot_selected": "",  # 감정 삽화 워크숍에서 선택한 봇 (삽화 봇과 분리)
+    "emotion_illustration_context_toggles": {},  # 감정 삽화 전용 생성 토글
+    "emotion_postprocess_enabled": False,  # 감정 삽화 전용 후처리 마스터 스위치
     "memo_enabled": True,  # 서버 실행 중에만 유지되는 전역 메모장
     "clamp_enabled": False,  # 프롬프트 가중치 클램프 활성화 여부
     "clamp_value": 1.2,  # 가중치 클램프 최대값
@@ -639,24 +651,18 @@ DEFAULT_CONFIG = {
     "llm_custom_body": "",            # 모든 프리셋의 요청 body 에 재귀 병합되는 JSON object 문자열
     "llm_custom_headers": "",         # LLM1 OpenAI 호환 요청에 병합할 HTTP header JSON object 문자열
     "illustration_context_toggles": {
+        "local_llm_load_after_generation": False,
+        "image_model_load_at_detail": False,
         "illustration_output_mode": "illustration",
-        "genre": "",
         "original_asset_count": 1,
-        "outfit_enabled": True,
-        "time_place_enabled": True,
-        "call2_plan_enabled": True,
-        "call1_parallel_enabled": True,
-        "call1_parallel_max_concurrency": 3,
-        "call1_parallel_slow_retry_enabled": False,
-        "call1_parallel_slow_retry_remaining": 1,
-        "call1_parallel_slow_retry_progress_enabled": True,
-        "call1_parallel_slow_retry_progress_threshold": 50,
-        "call1_parallel_slow_retry_tps_enabled": False,
-        "call1_parallel_slow_retry_tps_threshold": 5.0,
-        "call1_parallel_slow_retry_condition_operator": "and",
+        "outfit_enabled": False,
+        "time_place_enabled": False,
+        "npc_generation_enabled": False,
+        "npc_lifetime": 30,
+        "call2_plan_enabled": False,
         "call1_context_turns": 5,
         "call2_context_turns": 5,
-        "call2_parallel_enabled": True,
+        "call2_parallel_enabled": False,
         "call2_parallel_max_concurrency": 3,
         "call2_parallel_slow_retry_enabled": False,
         "call2_parallel_slow_retry_remaining": 1,
@@ -665,7 +671,7 @@ DEFAULT_CONFIG = {
         "call2_parallel_slow_retry_tps_enabled": False,
         "call2_parallel_slow_retry_tps_threshold": 5.0,
         "call2_parallel_slow_retry_condition_operator": "and",
-        "call2_detail_parallel_enabled": True,
+        "call2_detail_parallel_enabled": False,
         "call2_detail_parallel_max_concurrency": 3,
         "call2_detail_parallel_slow_retry_enabled": False,
         "call2_detail_parallel_slow_retry_remaining": 1,
@@ -676,24 +682,25 @@ DEFAULT_CONFIG = {
         "call2_detail_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
         "multi_char_mask_enabled": True,
-        "multi_char_mask_inline_enabled": False,
+        "multi_char_mask_inline_enabled": True,
         "single_char_mask_enabled": True,
-        "single_char_mask_skip_enabled": True,
+        "single_char_mask_skip_enabled": False,
         "single_char_mask_skip_area_percent": 30.0,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
         "speak_language": "한국어",
         "speak_emotion_enabled": False,
         "speak_emotions": "",
-        "nsfw": False,
+        "nsfw": True,
+        "profile_context_translate": True,
         "supplement": True,
         "key_visual": True,
-        "keyvis_in_detail_enabled": False,
-        "minimal_background_description": True,
+        "keyvis_in_detail_enabled": True,
+        "minimal_background_description": False,
         "character_limit": 3,
         "scene_mode": "manual",
-        "output_count_min": 15,
-        "output_count_max": 17,
+        "output_count_min": 5,
+        "output_count_max": 7,
         "context_history": True,
         "focus": "",
         "direction": "",
@@ -764,6 +771,7 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
         "illustration_time_place": _llm_route_defaults(),  # 캐릭터별 시간·장소 독립 추적
+        "illustration_npc_generation": _llm_route_defaults(),
         "illustration_visual_correction": _llm_route_defaults(),
         "illustration_visual_selection": _llm_route_defaults(),
         "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물·장면 선택
@@ -796,9 +804,7 @@ DEFAULT_CONFIG = {
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_asset_workflow_source_path": "",  # ANIMA+ILXL 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_only_asset_workflow_source_path": "",  # ONLY ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
-    "qwen_edit_workflow_source_path": "",  # 설치 라이브러리의 QWEN_EDIT 워크플로우 절대 경로
     "anima_inpainting_workflow_source_path": "",  # 설치 라이브러리의 ANIMA Inpainting 절대 경로
-    "asset_edit_tool": "qwen",  # qwen | anima_inpainting
     "asset_workflow_type": workflow_profiles.ASSET_ILXL,
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
@@ -814,7 +820,7 @@ DEFAULT_CONFIG = {
         "first_last_fast": "",
         "ref2v_fast": "",
     },  # MiniMax H3 영상 워크플로우 원본 소스 경로
-    "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
+    "lora_load_path": "",  # Asset category folder: SOYA_CHAR_LORA/SOYA_ASSET_LORA.
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
     "instance_lora_load_path": "",  # 인스턴스 LoRA 모델 로드 폴더 절대 경로 (SOYA_INSTANCE_LORA 자동 추가)
     "style_lora_load_path": "",  # 스타일(그림체) LoRA 모델 로드 폴더 절대 경로 (SOYA_STYLE_LORA 자동 추가)
@@ -828,11 +834,10 @@ DEFAULT_CONFIG = {
     "llm_queue_type_order": dict(DEFAULT_LLM_QUEUE_TYPE_ORDER),
 }
 
-# LLM 슬롯 2..N 의 config 기본값을 단일 소스(llm_service.LLM_SLOT_COUNT)에서 자동 생성.
+# Generate defaults for numbered and named slots from the shared suffix list.
 # DEFAULT_CONFIG 는 저장 화이트리스트의 진실 소스이므로, 여기에 키가 있어야 프론트에서
 # 보낸 llm_service2/llm_model2 ... 값이 config.json 에 저장된다. LLM1만 접미사가 없다.
-for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
-    _suffix = str(_slot_n)
+for _suffix in llm_service.LLM_SLOT_SUFFIXES[1:]:
     DEFAULT_CONFIG.update({
         f"llm_service{_suffix}": "openai",
         f"llm_model{_suffix}": "",
@@ -1056,11 +1061,11 @@ def load_config() -> dict:
     """설정 파일을 로드한다. 없으면 기본값으로 생성한다."""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                config = json.load(f)
+            with settings_lock(CONFIG_FILE):
+                config = read_config(CONFIG_FILE)
                 if not isinstance(config, dict):
                     raise TypeError(
-                        f"config.json 최상위 값은 객체여야 합니다: {type(config).__name__}"
+                        f"settings.json 앱 설정은 객체여야 합니다: {type(config).__name__}"
                     )
                 video_engine_migrated: list[str] = []
                 for key, default in (
@@ -1080,6 +1085,7 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                merged["comfy_input_dir"] = str(comfy_input_root(BASE_DIR))
                 try:
                     merged["video_engine_port"] = normalize_video_engine_port(
                         config.get("video_engine_port", VIDEO_ENGINE_DEFAULT_PORT)
@@ -1283,13 +1289,21 @@ def load_config() -> dict:
                     merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
                 llm_service.migrate_config(merged)
-                workflow_profiles.normalize_workflow_config(merged)
+                # All consumers, including queue/UI previews, see the same
+                # provider/slot values rather than legacy in-memory defaults.
+                merged.update(llm_service._shared_settings())
+                from illustration_model_presets import apply_active_model_preset
+                try:
+                    apply_active_model_preset(merged, CONFIG_FILE)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    print(f"[CONFIG] 그림 모델 프리셋 로드 실패: {exc}")
+                    workflow_profiles.normalize_workflow_config(merged)
                 return merged
         except Exception as e:
             print(f"[CONFIG] 설정 파일 로드 실패: {e}")
     else:
-        # config.json이 없으면 기본값으로 자동 생성
-        print(f"[CONFIG] config.json이 없습니다. 기본값으로 생성합니다.")
+        # settings.json이 없으면 기본값으로 자동 생성
+        print(f"[CONFIG] settings.json이 없습니다. 기본값으로 생성합니다.")
         save_config(DEFAULT_CONFIG.copy())
     return workflow_profiles.normalize_workflow_config(copy.deepcopy(DEFAULT_CONFIG))
 
@@ -1326,11 +1340,12 @@ CONFIG_SAVE_ORIGIN: ContextVar[str] = ContextVar("CONFIG_SAVE_ORIGIN", default="
 def save_config(config: dict):
     """설정 파일을 저장한다."""
     try:
+        from llm_settings import without_migrated_llm_settings
+        config = without_migrated_llm_settings(config)
         previous_config = {}
         if os.path.isfile(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    previous_config = json.load(f) or {}
+                previous_config = read_config(CONFIG_FILE)
             except Exception as e:
                 print(f"[CONFIG_DIFF] 이전 설정 읽기 실패, diff 생략: {e}")
                 traceback.print_exc()
@@ -1348,18 +1363,7 @@ def save_config(config: dict):
             print(f"[CONFIG_DIFF] 변경 {len(changed_keys)}건 origin={origin}: {details}{more}")
         else:
             print(f"[CONFIG_DIFF] 변경 없음 origin={origin}")
-        if os.path.isfile(CONFIG_FILE):
-            config_backup_dir = os.path.join(RUNTIME_BACKUP_DIR, "config")
-            os.makedirs(config_backup_dir, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            backup_path = os.path.join(
-                config_backup_dir,
-                f"config_before_save_{stamp}.json",
-            )
-            shutil.copy2(CONFIG_FILE, backup_path)
-            print(f"[CONFIG] 기존 설정 백업 완료: {backup_path}")
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+        write_config(CONFIG_FILE, config)
         print(f"[CONFIG] 설정 저장 완료")
     except Exception as e:
         print(f"[CONFIG] 설정 파일 저장 실패: {e}")
@@ -1384,6 +1388,78 @@ except Exception as e:
 
 # 전역 설정 로드
 app_config = load_config()
+
+
+def _migrate_illustration_setting_scopes() -> None:
+    """Keep the active composition and existing genre when changing their scope."""
+    from modes.bot_mode import BOT_DATA_FILE, _save_bot_data
+    from modes.postprocess import get_postprocess_config, _default_vn, _default_bubble, _default_subtitle
+
+    postprocess = app_config.get("postprocess") or {}
+    toggles = app_config.get("illustration_context_toggles") or {}
+    if postprocess.get("scope") == "global" and "genre" not in toggles:
+        return
+    data = {"bots": []}
+    if os.path.isfile(BOT_DATA_FILE):
+        with open(BOT_DATA_FILE, "r", encoding="utf-8") as stream:
+            data = json.load(stream)
+    if postprocess.get("scope") != "global":
+        bot = next((item for item in data.get("bots", [])
+                    if item.get("name") == app_config.get("bot_selected")), {})
+        postprocess = {"mode": bot.get("postprocess_mode", "vn")}
+        for mode, default in (("vn", _default_vn), ("bubble", _default_bubble), ("subtitle", _default_subtitle)):
+            stored = bot.get(f"postprocess_{mode}")
+            postprocess[mode] = copy.deepcopy(stored) if isinstance(stored, dict) else default()
+        app_config["postprocess"] = get_postprocess_config({"postprocess": postprocess})
+    genre = str(toggles.pop("genre", "") or "").strip()
+    if genre:
+        changed = False
+        for bot in data.get("bots", []):
+            if "genre" not in bot:
+                bot["genre"] = genre
+                changed = True
+        if changed:
+            _save_bot_data(data)
+    app_config["illustration_context_toggles"] = toggles
+    save_config(app_config)
+
+
+def _migrate_emotion_workshop_scope() -> None:
+    """감정 삽화 공방의 생성 토글·후처리 설정을 삽화 공방과 분리한다.
+
+    기존 설치의 합성 출력 모드는 감정 삽화 공방의 값이었으므로, 최초 1회
+    삽화 공방 토글에서 복사한 뒤 삽화 공방 쪽 출력 모드는 일반 모드로 되돌린다.
+    """
+    emotion_toggles = app_config.get("emotion_illustration_context_toggles")
+    if isinstance(emotion_toggles, dict) and emotion_toggles:
+        if "emotion_postprocess_enabled" in app_config:
+            return
+        app_config["emotion_postprocess_enabled"] = bool(
+            app_config.get("postprocess_enabled", False)
+        )
+        save_config(app_config)
+        return
+    shared = copy.deepcopy(app_config.get("illustration_context_toggles") or {})
+    app_config["emotion_illustration_context_toggles"] = copy.deepcopy(shared)
+    mode = str(shared.get("illustration_output_mode") or "")
+    if mode in illustration_composite.OUTPUT_MODES:
+        shared["illustration_output_mode"] = (
+            "both" if mode == "composite_both" else "illustration"
+        )
+        app_config["illustration_context_toggles"] = shared
+    if "emotion_postprocess_enabled" not in app_config:
+        app_config["emotion_postprocess_enabled"] = bool(
+            app_config.get("postprocess_enabled", False)
+        )
+    save_config(app_config)
+    print(
+        "[CONFIG:MIGRATION] 감정 삽화 공용 설정을 전용 저장소로 분리했습니다: "
+        f"mode={mode or '(none)'!r}"
+    )
+
+
+_migrate_illustration_setting_scopes()
+_migrate_emotion_workshop_scope()
 
 # 생성 이미지 자동 검사는 배포 설정과 분리된 개발자용 실행 상태다.
 # 이전 실행에서 어떤 값이 저장되어 있어도 새 서버 프로세스는 항상 OFF로 시작한다.
@@ -1535,8 +1611,8 @@ print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, charac
 qwen_edit_mode = QwenEditMode(asset_mode=asset_mode)
 qwen_edit_mode.get_config = lambda: load_config()
 print(
-    "[QWEN_EDIT] 초기화: workflow="
-    f"{app_config.get('qwen_edit_workflow_source_path')!r}"
+    "[EDIT] 초기화: workflow="
+    f"{app_config.get('anima_inpainting_workflow_source_path')!r}"
 )
 
 # ─── MiniMax H3 영상화 모드 초기화 ───
@@ -2167,11 +2243,12 @@ async def update_workflow_if_needed(
     *,
     local_first_modal_fallback: bool = False,
     allow_convert: bool = True,
+    source_path: str | None = None,
 ) -> bool:
     """워크플로우 해시를 비교하고, 필요하면 API 형식으로 변환한다."""
     global current_original_workflow, current_api_workflow, current_conversion_info
 
-    wf_file = get_workflow_file(workflow_type)
+    wf_file = source_path if source_path is not None else get_workflow_file(workflow_type)
     if not wf_file:
         print("[WORKFLOW] ⚠ workflow 폴더에 JSON 파일 없음")
         return False
@@ -2348,21 +2425,6 @@ def set_prompt_by_title(prompt_data: dict, title: str, value: str) -> bool:
     return False
 
 
-def clamp_weights(prompt: str, clamp_value: float) -> str:
-    """프롬프트에서 가중치(:수치)를 클램프한다.
-    (tag:2) → clamp_value가 1.2이면 (tag:1.2)
-    (tag:-2) → clamp_value가 1.2이면 (tag:-1.2)
-    """
-    def replacer(match):
-        weight = float(match.group(1))
-        if abs(weight) > clamp_value:
-            clamped = math.copysign(clamp_value, weight)
-            return f":{clamped})"
-        return match.group(0)
-
-    return re.sub(r':(-?\d+(?:\.\d+)?)\)', replacer, prompt)
-
-
 def _apply_remove_rule(text: str, rule: dict) -> tuple:
     """하위 호환용 제거 규칙 진입점."""
     return _apply_remove_word_rule(text, rule)
@@ -2384,13 +2446,67 @@ def _load_word_rules_snapshot(bot_name: str) -> list[dict]:
     return copy.deepcopy(rules)
 
 
+EMOTION_TOGGLES_KEY = "emotion_illustration_context_toggles"
+
+
+def _request_workshop(request: web.Request) -> str:
+    scope = str(request.query.get("scope") or "").strip().lower()
+    return "emotion" if scope == "emotion" else "illustration"
+
+
+def _illustration_workshop_for_config(config_snapshot: dict) -> str:
+    """합성 출력 모드는 감정 삽화 공방의 전용 토글이 소유한다.
+
+    전용 저장소가 아직 없는 기존 설치에서는 공용 토글의 합성 모드를
+    레거시 신호로만 사용한다.
+    """
+    emotion_raw = config_snapshot.get(EMOTION_TOGGLES_KEY)
+    if isinstance(emotion_raw, dict) and emotion_raw:
+        return "emotion" if illustration_composite.enabled(emotion_raw) else "illustration"
+    return "emotion" if illustration_composite.enabled(
+        config_snapshot.get("illustration_context_toggles")
+    ) else "illustration"
+
+
+def _illustration_raw_toggles_for_workshop(
+    config_snapshot: dict, *, workshop: str | None = None,
+) -> dict:
+    workshop = workshop or _illustration_workshop_for_config(config_snapshot)
+    if workshop == "emotion":
+        emotion_raw = config_snapshot.get(EMOTION_TOGGLES_KEY)
+        if isinstance(emotion_raw, dict) and emotion_raw:
+            return copy.deepcopy(emotion_raw)
+    return copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+
+
+def _illustration_postprocess_for_workshop(
+    config_snapshot: dict, workshop: str,
+) -> bool:
+    if workshop == "emotion" and "emotion_postprocess_enabled" in config_snapshot:
+        return bool(config_snapshot.get("emotion_postprocess_enabled"))
+    return bool(config_snapshot.get("postprocess_enabled", False))
+
+
 def _capture_illustration_runtime_snapshot(
     config: dict | None = None, *, asset_instruction: str | None = None,
+    workshop: str | None = None,
 ) -> dict:
     """삽화 요청 시작 시 설정·선택 봇·단어 규칙을 하나의 값으로 고정한다."""
+    from illustration_model_presets import IllustrationModelPresets
     config_snapshot = copy.deepcopy(app_config if config is None else config)
+    # Composite output runs from the emotion workshop's active preset so its
+    # DUAL_VAE model never changes normal illustration generations. Preview
+    # requests pass their workshop explicitly so a composite-off emotion
+    # workshop still reads its own toggles and bot.
+    workshop = workshop or _illustration_workshop_for_config(config_snapshot)
+    workshop = "emotion" if str(workshop or "").strip().lower() == "emotion" else "illustration"
+    model_preset = IllustrationModelPresets(CONFIG_FILE).snapshot(workshop=workshop)
+    if model_preset:
+        config_snapshot.update(copy.deepcopy(model_preset["config"]))
     workflow_profiles.normalize_workflow_config(config_snapshot)
-    bot_name = str(config_snapshot.get("bot_selected") or "")
+    bot_name = str(config_snapshot.get(
+        "emotion_bot_selected" if workshop == "emotion" else "bot_selected"
+    ) or "")
     illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
         config_snapshot.get("illustration_workflow_type")
     )
@@ -2417,7 +2533,10 @@ def _capture_illustration_runtime_snapshot(
         chansub_workflow_type = "anima"
 
     rules = _load_word_rules_snapshot(bot_name)
-    raw_toggles = copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+    raw_toggles = _illustration_raw_toggles_for_workshop(config_snapshot, workshop=workshop)
+    bot = next((item for item in _load_bot_data_readonly().get("bots", [])
+                if item.get("name") == bot_name), {}) if bot_name else {}
+    raw_toggles["genre"] = str(bot.get("genre") or "").strip()
     raw_toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
         illustration_workflow_type
     )
@@ -2427,7 +2546,7 @@ def _capture_illustration_runtime_snapshot(
     # The pipeline master controls dialogue generation and image composition.
     # Retired dialogue switches must not veto the one visible control.
     toggles["speak_enabled"] = (
-        bool(config_snapshot.get("postprocess_enabled", False))
+        _illustration_postprocess_for_workshop(config_snapshot, workshop)
         and toggles["illustration_output_mode"] not in ("manga", "manga_both")
     )
     if toggles["illustration_output_mode"] in ("manga", "manga_both"):
@@ -2438,14 +2557,14 @@ def _capture_illustration_runtime_snapshot(
     )
     snapshot = {
         "bot_name": bot_name,
+        "workshop": workshop,
+        "illustration_model_preset": model_preset,
         "illustration_quality_inspection_enabled": bool(
             _illustration_quality_inspection_runtime_enabled
         ),
         "provider": provider,
         "illustration_workflow_type": illustration_workflow_type,
         "chansub_workflow_type": chansub_workflow_type,
-        "clamp_enabled": bool(config_snapshot.get("clamp_enabled", False)),
-        "clamp_value": config_snapshot.get("clamp_value", 1.2),
         "illustration_context_toggles": toggles,
         "word_rules": rules,
     }
@@ -2453,7 +2572,6 @@ def _capture_illustration_runtime_snapshot(
         f"[ILLUST] 런타임 스냅샷 생성: bot={bot_name!r}, provider={provider}, "
         f"workflow={illustration_workflow_type}, "
         f"optional_stages={(toggles.get('outfit_enabled'), toggles.get('time_place_enabled'), toggles.get('call2_plan_enabled'))!r}, "
-        f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
         f"call2_plan_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
         f"call2_detail_parallel={toggles.get('call2_detail_parallel_max_concurrency')!r}, "
         f"word_rules={len(rules)}"
@@ -2626,12 +2744,34 @@ def split_prompt_chat(text: str) -> tuple[str, str]:
     return text, ""
 
 
-def build_prompt(positive: str, negative: str, workflow_api: dict = None) -> dict:
+def build_prompt(positive: str, negative: str, workflow_api: dict = None,
+                 illustration_prompt_json: dict | None = None) -> dict:
     """API 워크플로우의 긍정·부정 프롬프트만 채운다."""
     source_workflow = current_api_workflow if workflow_api is None else workflow_api
     if source_workflow is None:
         raise RuntimeError("API 워크플로우가 로드되지 않았습니다")
     wf = copy.deepcopy(source_workflow)
+    from comfy_installer.spatial_face_workflow import uses_spatial_faces
+    from illustration_json import build_illustration_json, is_illustration_json_workflow, workflow_json_defaults
+    queue_item = CURRENT_COMFY_QUEUE_ITEM.get()
+    render_target = ((getattr(queue_item, "params", None) or {}).get("raw_body") or {}).get("illustration_render_target")
+    if render_target and not any(node.get("class_type") == "SoyaRenderTargetSelect_mdsoya"
+                                 for node in wf.values() if isinstance(node, dict)):
+        raise ValueError("합성 삽화에는 Render Target Select가 있는 배포 공방 삽화 DUAL_VAE 워크플로가 필요합니다")
+    if is_illustration_json_workflow(wf):
+        from app_paths import data_root
+        if illustration_prompt_json is not None:
+            positive = json.dumps(illustration_prompt_json, ensure_ascii=False)
+        positive = build_illustration_json(
+            positive, negative, input_dir=app_config.get("comfy_input_dir", ""),
+            mask_location=getattr(queue_item, "_comfy_mask_location", None) or "region_mask",
+            workflow_defaults=workflow_json_defaults(wf),
+            bot_dir=data_root() / "bot",
+            include_face_embeddings=not uses_spatial_faces(wf),
+            **({"render_target": render_target} if render_target else {}),
+        )
+        from illustration_flow import record_reference_images
+        record_reference_images(positive)
     for nid, ninfo in wf.items():
         if not isinstance(ninfo, dict):
             continue
@@ -2853,6 +2993,7 @@ async def save_backup(
     original_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
+    submitted_prompt_snapshot=_BACKUP_SNAPSHOT_UNSET,
     illustration_multi_char: dict = None,
     illustration_visual_states: dict = None,
     llm_trace: list = None,
@@ -2941,6 +3082,8 @@ async def save_backup(
         traceback.print_exc()
         raise
     active_workflow_snapshot = CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get() or {}
+    submitted_prompt = (submitted_prompt_snapshot if submitted_prompt_snapshot is not _BACKUP_SNAPSHOT_UNSET
+                        else active_workflow_snapshot.get("submitted_prompt"))
     backup_original_workflow = (
         original_workflow_snapshot
         if original_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
@@ -3099,6 +3242,9 @@ async def save_backup(
         print(f"[BACKUP] 챈섭 프롬프트 저장: {base_name}.json")
     elif backup_original_workflow:
         wf_copy = copy.deepcopy(backup_original_workflow)
+        # JSON workflows have no separate negative-prompt node. Preserve the
+        # builder's negative draft for editing and regeneration as well.
+        wf_copy["negative"] = negative
         if "nodes" in wf_copy:
             for node in wf_copy["nodes"]:
                 title = node.get("title", "")
@@ -3125,6 +3271,12 @@ async def save_backup(
             with open(wildcard_path, "w", encoding="utf-8") as f:
                 json.dump(wildcard_info, f, ensure_ascii=False, indent=2)
         print(f"[BACKUP] 워크플로우 저장: {base_name}.json")
+
+    # Keep asset-heavy JSON out of the draft read by every gallery listing.
+    # Historical submissions must never be rebuilt from today's presets/assets.
+    if submitted_prompt is not None:
+        with open(os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_submitted_prompt.json"), "w", encoding="utf-8") as f:
+            json.dump(submitted_prompt, f, ensure_ascii=False, separators=(",", ":"))
 
     # 3) 변환 정보 저장
     info_to_save = copy.deepcopy(backup_conversion_info)
@@ -3226,10 +3378,15 @@ async def save_backup(
                 info_to_save["llm_final_result"]["visual_states"] = final_visual_states
             if llm_final_result.get("manga_page"):
                 info_to_save["llm_final_result"]["manga_page"] = copy.deepcopy(llm_final_result["manga_page"])
+            if llm_final_result.get("composite_scene"):
+                info_to_save["llm_final_result"]["composite_scene"] = copy.deepcopy(llm_final_result["composite_scene"])
         except Exception as e:
             print(f"[BACKUP] llm_final_result 정규화 실패, 무시: {e}")
             traceback.print_exc()
 
+    flow_run_id = illustration_flow.record_backup(base_name)
+    if flow_run_id:
+        info_to_save["illustration_flow_run_id"] = flow_run_id
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
         json.dump(info_to_save, f, indent=2, ensure_ascii=False)
@@ -3256,7 +3413,7 @@ def cleanup_backups():
     old_files = files[max_count:]
     for old_file in old_files:
         base, _image_extension = os.path.splitext(old_file)
-        for ext in [".webp", ".avif", ".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json"]:
+        for ext in [".webp", ".avif", ".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json", "_submitted_prompt.json"]:
             try:
                 os.remove(base + ext)
             except FileNotFoundError:
@@ -3789,6 +3946,7 @@ async def fetch_real_image(
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
 @illustration_flow.stage(
     "이미지 생성",
+    details=lambda: {"submitted_prompt": (CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get() or {}).get("submitted_prompt")},
     executor=lambda inputs: (
         "comfy"
         if str(inputs.get("provider") or "comfy").strip().lower() == "comfy"
@@ -3808,6 +3966,8 @@ async def generate_image_with_prompt(
     illustration_workflow_type: str | None = None,
     comfy_task_key: str = "illustration",
     seed: int | None = None,
+    model_preset: dict | None = None,
+    illustration_prompt_json: dict | None = None,
 ):
     """선택 공급자로 이미지를 생성한다.
 
@@ -3881,26 +4041,44 @@ async def generate_image_with_prompt(
     # 실행될 때는 갱신과 스냅샷 생성을 짧게 직렬화하고, 실제 생성은 복사본으로
     # 병렬 수행해 서로의 워크플로우·백업 메타데이터를 덮지 않게 한다.
     async with illustration_workflow_build_lock:
-        await update_workflow_if_needed(illustration_workflow_type)
+        from illustration_model_presets import IllustrationModelPresets, apply_preset_workflow
+        if model_preset is None:
+            model_preset = IllustrationModelPresets(CONFIG_FILE).snapshot()
+        selected_type = illustration_workflow_type or model_preset.get("config", {}).get("illustration_workflow_type") or app_config.get("illustration_workflow_type")
+        local_profile = workflow_profiles.illustration_local_profile(selected_type)
+        source_path = model_preset.get("config", {}).get("illustration_workflow_source_paths", {}).get(local_profile)
+        await update_workflow_if_needed(selected_type, source_path=source_path)
         if current_api_workflow is None:
             return None, "API 워크플로우 없음"
+        preset_api_workflow = apply_preset_workflow(current_api_workflow, model_preset, selected_type)
         workflow_snapshot = {
-            "original_workflow": copy.deepcopy(current_original_workflow),
-            "api_workflow": copy.deepcopy(current_api_workflow),
+            "original_workflow": apply_preset_workflow(current_original_workflow, model_preset, selected_type),
+            "api_workflow": copy.deepcopy(preset_api_workflow),
             "conversion_info": copy.deepcopy(current_conversion_info),
         }
-        risu_prompt = build_prompt(positive, negative)
+        risu_prompt = build_prompt(positive, negative, workflow_api=preset_api_workflow,
+                                  illustration_prompt_json=illustration_prompt_json)
         if seed is not None:
             for node in risu_prompt.values():
                 inputs = node.get("inputs", {})
                 for key in ("seed", "noise_seed"):
                     if key in inputs and not isinstance(inputs[key], list):
                         inputs[key] = int(seed)
+            from illustration_json import is_illustration_json_workflow
+            if is_illustration_json_workflow(risu_prompt):
+                for node in risu_prompt.values():
+                    if node.get("_meta", {}).get("title") == "긍정프롬프트":
+                        payload = json.loads(node["inputs"]["value"])
+                        payload["fields"]["SEED"] = int(seed)
+                        node["inputs"]["value"] = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             print(f"[MANGA:SEED] 최종 워크플로우 공통 시드 적용: {seed}")
         # 비교 진단은 캐시용 API 그래프가 아니라 Comfy에 실제로 제출된 최종
         # 그래프를 비교해야 한다. ContextVar에만 보관해 일반 응답/백업에는
         # 노출하거나 저장하지 않는다.
         workflow_snapshot["submitted_workflow"] = copy.deepcopy(risu_prompt)
+        from illustration_json import is_illustration_json_workflow
+        if is_illustration_json_workflow(risu_prompt):
+            workflow_snapshot["submitted_prompt"] = json.loads(extract_prompts_by_title(risu_prompt, "긍정프롬프트"))
     CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
     api_workflow_snapshot = workflow_snapshot["api_workflow"]
     illust_port = None
@@ -4118,38 +4296,6 @@ def _compute_ref_folder_hash(filenames: list) -> str:
     """파일명 목록으로 MD5 해시를 생성하여 폴더명으로 사용."""
     combined = "|".join(sorted(filenames))
     return hashlib.md5(combined.encode()).hexdigest()[:12]
-
-
-def _prepare_ref_folder(reference_images: list, comfy_input_dir: str, *, snapref: bool = False) -> str:
-    """참조 이미지를 input 하위에 복사하고 subfolder 경로를 반환한다."""
-    filenames = [str(img.get("local_path") or img["filename"]) if snapref else img["filename"] for img in reference_images]
-    folder_hash = _compute_ref_folder_hash(filenames)
-    ref_root = "soya_snapref" if snapref else "soya_char_ref"
-    ref_dir = os.path.join(comfy_input_dir, ref_root, folder_hash)
-    os.makedirs(ref_dir, exist_ok=True)
-    for img in reference_images:
-        filename = os.path.basename(img["local_path"])
-        if snapref:
-            filename = "representation" + os.path.splitext(filename)[1]
-        dst = os.path.join(ref_dir, filename)
-        if snapref or not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
-            shutil.copy2(img["local_path"], dst)
-    print(f"[ASSET] ref folder prepared: {ref_dir} ({len(reference_images)} images)")
-    return f"{ref_root}/{folder_hash}"
-
-
-def _prepare_style_ref_folder(style_ref_images: list, comfy_input_dir: str) -> str:
-    """IPAdapter 이미지들을 comfy_input_dir/soya_style_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
-    filenames = [img["filename"] for img in style_ref_images]
-    folder_hash = _compute_ref_folder_hash(filenames)
-    ref_dir = os.path.join(comfy_input_dir, "soya_style_ref", folder_hash)
-    os.makedirs(ref_dir, exist_ok=True)
-    for img in style_ref_images:
-        dst = os.path.join(ref_dir, os.path.basename(img["local_path"]))
-        if not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
-            shutil.copy2(img["local_path"], dst)
-    print(f"[ASSET] style ref folder prepared: {ref_dir} ({len(style_ref_images)} images)")
-    return f"soya_style_ref/{folder_hash}"
 
 
 async def handle_api_compute_ref_hash(request: web.Request) -> web.Response:
@@ -4930,8 +5076,6 @@ def init_queue_manager():
     queue_manager.submit_to_real_comfy = submit_to_real_comfy
     queue_manager.convert_workflow_via_endpoint = convert_workflow_via_endpoint
     queue_manager.build_lora_training_text = _build_lora_training_text
-    queue_manager.prepare_ref_folder = _prepare_ref_folder
-    queue_manager.prepare_style_ref_folder = _prepare_style_ref_folder
     queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
     queue_manager.get_comfy_port_for_task = resolve_comfy_port
@@ -5089,126 +5233,43 @@ async def _run_data_patch_utility(
             "[DATA_PATCH_UTILITY] 저장하지 않는 임시 패치 설정 적용: "
             f"bot={bot_name}, char={char_name}, settings={settings}"
         )
-    prompt_text = (
-        build_utility_prompt(bot_name, char_name, settings)
-        if target["is_primary"]
-        else build_utility_prompt(bot_name, char_name, settings, visual_card_id)
-    )
-    print(
-        f"[DATA_PATCH_UTILITY] 실행: {char_name}[{visual_card_index}] "
-        f"| 프롬프트: {prompt_text}"
-    )
-
-    wf = copy.deepcopy(wf_api)
-    for nid, ninfo in wf.items():
-        if not isinstance(ninfo, dict):
-            continue
-        title = ninfo.get("_meta", {}).get("title", "")
-        if title == "긍정프롬프트":
-            ninfo["inputs"]["value"] = prompt_text
-
-    # 유틸리티 워크플로우는 이미지 말고 **파일**도 만든다: 캐릭터 폴더 안의
-    # cache.pt(CLIP 임베딩) 와 cache.ipadpt(InsightFace). 이 둘이 없으면 등록
-    # 캐릭터 삽화가 전부 막히므로(G1) 원격 실행에서도 반드시 회수해야 한다.
-    #
-    # 로컬은 노드가 곧바로 Comfy input 폴더에 쓰므로 할 일이 없다. 원격은
-    # 컨테이너가 사라지면 같이 사라지니, 실행 입력으로 캐릭터 폴더를 올리고
-    # (LoadImagesFromPath_mdsoya 가 그 폴더를 읽는다) 실행 뒤 두 파일을 회수해
-    # 같은 상대 경로로 로컬에 복원한다.
-    relative_char_dir = f"soya_bot/{bot_name}/{char_name}"
-    capture_paths = [
-        f"{relative_char_dir}/cache.pt",
-        f"{relative_char_dir}/cache.ipadpt",
-    ]
-    comfy_input_dir = str(app_config.get("comfy_input_dir") or "").strip()
-    local_char_dir = (
-        os.path.join(comfy_input_dir, "soya_bot", bot_name, char_name)
-        if comfy_input_dir
-        else ""
-    )
-    utility_input_paths = (
-        [local_char_dir] if local_char_dir and os.path.isdir(local_char_dir) else None
-    )
-
-    # 설정의 대표가 아니라 워크플로우가 실제로 읽는 패치된 입력을 기록한다.
-    # 대표를 바꾼 뒤 데이터 패치를 생략해도 이전 입력을 새 대표로 오인하지 않는다.
-    source_record = None
-    staged_rep_path = ""
-    source_dir = local_char_dir
-    if source_dir and not target["is_primary"]:
-        source_dir = os.path.join(source_dir, "_visual_profiles", visual_card_id)
-    try:
-        staged_reps = [
-            os.path.join(source_dir, name)
-            for name in os.listdir(source_dir) if os.path.splitext(name)[0] == "representation"
-            and os.path.isfile(os.path.join(source_dir, name))
-        ] if source_dir and os.path.isdir(source_dir) else []
-        if len(staged_reps) == 1:
-            staged_rep_path = staged_reps[0]
-            source_hash = compute_file_hash(staged_rep_path)
-            source_name = os.path.basename(staged_rep_path)
-            for rep_name in target["rep_images"]:
-                rep_path = os.path.join(char_dir, rep_name)
-                if os.path.isfile(rep_path) and compute_file_hash(rep_path) == source_hash:
-                    source_name = rep_name
-                    break
-            source_record = {"source_filename": source_name, "source_sha256": source_hash}
-        else:
-            print(f"[DATA_PATCH_UTILITY] FACE 출처 기록 생략(대표 입력 특정 불가): {source_dir!r}, files={staged_reps!r}")
-    except Exception as exc:
-        print(f"[DATA_PATCH_UTILITY] FACE 출처 입력 조회 실패: {source_dir!r} - {exc}")
-        traceback.print_exc()
-
-    img_bytes, submit_meta = await submit_workflow_to_comfy(
-        wf,
-        task_key="utility_debug",
-        input_paths=utility_input_paths,
-        capture_input_paths=capture_paths,
-    )
-    if not img_bytes:
-        raise RuntimeError(f"{char_name}: {submit_meta or '이미지 없음'}")
-
-    if source_record:
-        try:
-            if compute_file_hash(staged_rep_path) != source_record["source_sha256"]:
-                print(f"[DATA_PATCH_UTILITY] FACE 출처 기록 생략(실행 중 대표 입력 변경): {staged_rep_path}")
-                source_record = None
-            else:
-                source_record["face_sha256"] = hashlib.sha256(img_bytes).hexdigest()
-        except Exception as exc:
-            print(f"[DATA_PATCH_UTILITY] FACE 출처 입력 재확인 실패: {staged_rep_path!r} - {exc}")
-            traceback.print_exc()
-            source_record = None
-
-    # 원격 실행이었으면 회수한 캐시를 로컬 input 폴더에 되돌려 놓는다.
-    captured = []
-    if isinstance(submit_meta, dict):
-        for provider_result in submit_meta.values():
-            if isinstance(provider_result, dict):
-                captured.extend(provider_result.get("captured_inputs") or [])
-    for entry in captured:
-        relative = str(entry.get("remote_name") or "").strip()
-        payload_bytes = entry.get("bytes")
-        if not relative or not payload_bytes or not comfy_input_dir:
-            continue
-        parts = [part for part in relative.split("/") if part not in ("", ".")]
-        if not parts or ".." in parts:
-            print(f"[DATA_PATCH_UTILITY] 안전하지 않은 회수 경로 무시: {relative!r}")
-            continue
-        target = os.path.join(comfy_input_dir, *parts)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        temp_target = f"{target}.tmp_{uuid.uuid4().hex}"
-        with open(temp_target, "wb") as cache_file:
-            cache_file.write(payload_bytes)
-        os.replace(temp_target, target)
-        print(
-            f"[DATA_PATCH_UTILITY] 원격 캐시 회수 저장: {relative} "
-            f"({len(payload_bytes):,} bytes)"
+    # Only the path-based FACE utility needs staging. Each execution owns its
+    # directory, so source changes and concurrent cards cannot reuse stale input.
+    import tempfile
+    comfy_input_dir = str(app_config.get("comfy_input_dir") or comfy_input_root(BASE_DIR))
+    os.makedirs(comfy_input_dir, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="soya_face_", dir=comfy_input_dir) as utility_dir:
+        source_record = None
+        for index, image_name in enumerate(target["rep_images"]):
+            if image_name != os.path.basename(image_name) or image_name in {".", ".."}:
+                raise ValueError(f"Invalid representative filename: {image_name}")
+            source_path = os.path.join(char_dir, image_name)
+            image_bytes = Path(source_path).read_bytes()
+            staged_name = ("representation" if index == 0 else f"sub_{index}") + os.path.splitext(image_name)[1]
+            Path(utility_dir, staged_name).write_bytes(image_bytes)
+            if index == 0:
+                source_record = {"source_filename": image_name,
+                                 "source_sha256": hashlib.sha256(image_bytes).hexdigest()}
+        prompt_text = build_utility_prompt(
+            bot_name, char_name, settings, visual_card_id,
+            input_path=os.path.basename(utility_dir),
         )
+        wf = copy.deepcopy(wf_api)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = prompt_text
 
-    # 새 결과를 같은 폴더의 임시 파일로 먼저 완성한 뒤 원자적으로 교체한다.
-    # 교체 직전 기존 FACE를 임시 백업해 두고, 성공하면 백업을 지우고
-    # 실패하면 백업에서 되돌린다. 백업은 영구 남지 않는 임시 롤백용이다.
+        img_bytes, submit_meta = await submit_workflow_to_comfy(
+            wf, task_key="utility_debug", input_paths=[utility_dir],
+        )
+        if not img_bytes:
+            raise RuntimeError(f"{char_name}: {submit_meta or 'No FACE image returned'}")
+        source_record["face_sha256"] = hashlib.sha256(img_bytes).hexdigest()
+
+    # Persist the output only after temporary utility inputs have been cleaned up.
     os.makedirs(os.path.dirname(result_path), exist_ok=True)
     temp_result_path = f"{result_path}.tmp_{uuid.uuid4().hex}"
     try:
@@ -5417,7 +5478,7 @@ def _get_illustration_postprocess_settings(
     *,
     force: bool = False,
 ) -> dict | None:
-    """봇별 후처리 설정을 현재 모드에 맞게 스냅샷으로 반환한다.
+    """Return shared composition settings for the current presentation mode.
 
     force=True면 수동 그리기 1회성 테스트를 위해 전역/봇 활성 토글을
     저장하지 않고 우회한다.
@@ -5428,9 +5489,9 @@ def _get_illustration_postprocess_settings(
             get_subtitle_settings,
             get_vn_settings,
         )
-        from modes.bot_mode import _get_postprocess_mode
+        from modes.postprocess import get_postprocess_mode
 
-        postprocess_mode = _get_postprocess_mode(bot_name)
+        postprocess_mode = get_postprocess_mode(app_config)
         if postprocess_mode == "bubble":
             bubble_settings = get_bubble_settings(
                 app_config,
@@ -5569,6 +5630,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             original_workflow_snapshot=state.get("original_workflow"),
             api_workflow_snapshot=state.get("api_workflow"),
             conversion_info_snapshot=state.get("conversion_info"),
+            submitted_prompt_snapshot=state.get("submitted_prompt"),
             illustration_multi_char=state.get("illustration_multi_char"),
             illustration_visual_states=state.get("illustration_visual_states"),
             llm_trace=entry.get("_llm_trace"),
@@ -5659,6 +5721,7 @@ def _discard_deferred_illustration_prompt(prompt_id: str, reason: str) -> None:
 
 
 async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, queue_progress_callback=None):
+    build_log = None
     save_node_id = find_save_image_node(incoming_prompt)
     if not save_node_id:
         all_nodes = list(incoming_prompt.keys())
@@ -5684,16 +5747,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # 이미 [ILXL]/[UPSCALE]까지 조립된 레거시 V1은 빌더 입력이 아니므로
             # 선택 봇이 없어도 기존 호환 경로로 그대로 통과시킨다.
             bot_name = str(runtime_snapshot.get("bot_name") or "")
-
-        # 가중치 클램프 적용
-        if runtime_snapshot.get("clamp_enabled", False):
-            clamp_val = runtime_snapshot.get("clamp_value", 1.2)
-            original_positive = positive
-            original_negative = negative
-            positive = clamp_weights(positive, clamp_val)
-            negative = clamp_weights(negative, clamp_val)
-            if positive != original_positive or negative != original_negative:
-                print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
@@ -5801,7 +5854,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # V1([ILXL]/[UPSCALE]) 입력은 illust 빌딩을 타지 않고 밑 else 에서 통과시킨다.
             builder = IllustPromptBuilder()
             raw_positive = positive
-            raw_detail_negative = negative
+            # Clamp only the LLM's negative note. The configured negative presets
+            # are added by the builder later and retain the user's weights.
+            raw_detail_negative = apply_weight_clamp(negative, word_rules_snapshot)
 
             # 1. 원본 섹션은 로그용으로 보존한다. 캐릭터 1인 전용 규칙은
             # 규칙 적용 전의 구조화된 NAME을 우선 사용해 정확한 인원수를 정한다.
@@ -5817,6 +5872,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 lb_extra_data = lb_extra_data.get("edited") or []
             bot_data = _load_bot_data_local()
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
+            if runtime_snapshot.get("generation_mode") == "character_auto":
+                bot = copy.deepcopy(runtime_snapshot["npc_render_bot"])
             requested_visual_states = raw_body.get("illustration_visual_states") or {}
             if not isinstance(requested_visual_states, dict):
                 print(
@@ -6191,11 +6248,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         f"prompt={prompt_id}, states={backup_visual_states}"
                     )
 
-                # 4. 캐릭터 수에 따라 solo/group 프로필 선택
-                tags = asset_mode._tags
+                # 4. Only image dimensions and seed vary with character count.
+                tags = asset_mode.get_tags()
                 is_multi = len(detected) >= 2
-                settings_key = "illust_settings_group" if is_multi else "illust_settings_solo"
-                settings = bot.get(settings_key, bot.get("illust_settings", {}))
+                settings = resolve_illust_settings(bot, "group" if is_multi else "solo",
+                    generation_mode=runtime_snapshot.get("generation_mode", "illustration"))
+                if runtime_snapshot.get("npc_render_bot") is not None:
+                    # The first representative has no existing identity image.
+                    settings = {**settings, "snapref_enabled": False, "face_id_activate": False}
                 if raw_body.get("illustration_canvas"):
                     canvas_w, canvas_h = raw_body["illustration_canvas"]
                     settings = {**settings, "img_w": int(canvas_w), "img_h": int(canvas_h)}
@@ -6203,23 +6263,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 if raw_body.get("illustration_seed") is not None:
                     settings = {**settings, "seed": int(raw_body["illustration_seed"])}
                 print(f"[ILLUST] 프로필 선택: {'group' if is_multi else 'solo'} ({len(detected)}명)")
-                legacy_fragment_requested = bool(
-                    raw_body.get("illustration_anonymous_partner_fragment", False)
-                )
-                # Only an explicit legacy fragment flag can relax the configured
-                # negative preset. The new ordinary DETAIL route has no such flag;
-                # transport the preset without inferring partner visibility.
-                allow_anonymous_fragment = allows_anonymous_fragment_negative_relaxation(
-                    bot,
-                    legacy_fragment_requested,
-                )
-                if legacy_fragment_requested and not allow_anonymous_fragment:
-                    print(
-                        "[ILLUST:PROMPT] 익명 상호작용 조각 음성 완화 건너뜀 - "
-                        "First-Pass Single V5 계약 아님: "
-                        f"bot={bot_name!r}, preset={bot.get('system_prompt_preset')!r}, "
-                        f"required={FIRST_PASS_SINGLE_V5_PRESET!r}"
-                    )
                 from modes.bot_mode import _load_patch_settings, _load_bot_data
                 patch = _load_patch_settings(bot_name)
                 settings["face_crop_top"] = patch.get("face_crop_top", 1.0)
@@ -6237,7 +6280,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         tags,
                         settings,
                         insert_rules=scene_word_rules,
-                        allow_anonymous_fragment=allow_anonymous_fragment,
                     )
                     positive = chansub_built["positive"]
                     negative = chansub_built["negative"]
@@ -6256,23 +6298,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         f"workflow={chansub_workflow_type.upper()}, "
                         f"size={generation_width}x{generation_height}, "
                         f"detected={detected} (LoRA 트리거 미추가)"
-                    )
-                elif prompt_format == "v1":
-                    # V1 조립: ANIMA 품질/부정 프리셋만 사용, LoRA·아티스트·SDXL 없음.
-                    v1_built = build_v1_prompt(
-                        setup_replaced,
-                        char_replaced,
-                        supplement_replaced,
-                        tags,
-                        settings,
-                        allow_anonymous_fragment=allow_anonymous_fragment,
-                    )
-                    positive = v1_built["positive"]
-                    negative = v1_built["negative"]
-                    print(
-                        f"[ILLUST:V1] V1 조립 완료: "
-                        f"profile={'group' if is_multi else 'solo'}, "
-                        f"detected={detected} (LoRA 미사용)"
                     )
                 else:
                     # 캐릭터 눈 제거 / 얼굴 치환 특수 규칙: 빌드 직전 변수 상에서만
@@ -6299,7 +6324,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         settings,
                         detected,
                         _bot_for_build,
-                        allow_anonymous_fragment=allow_anonymous_fragment,
                     )
                     if multi_char_prompt_context:
                         positive = sync_multi_char_shared_tags(positive)
@@ -6315,11 +6339,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         prompt_format=prompt_format,
                     )
 
-                # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
+                # Count instance LoRA usage for local illustration generation.
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
                 characters_list = bot.get("characters", [])
                 _incremented = set()
-                _lora_active = illustration_provider == "comfy" and prompt_format != "v1"
+                _lora_active = illustration_provider == "comfy"
                 for _cn in (detected if _lora_active else []):
                     _cd = next((c for c in characters_list if c["name"] == _cn), None)
                     if not _cd:
@@ -6345,11 +6369,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     "char": char_replaced,
                     "supplement": supplement_replaced,
                 }
-                log_illust_build(
-                    raw_positive, word_replaced_raw, parsed_raw_sections, detected,
-                    word_replaced, positive, negative,
-                    context=str(raw_body.get("illustration_context") or ""),
-                )
+                build_log = (raw_positive, word_replaced_raw, parsed_raw_sections, detected, word_replaced)
             else:
                 if multi_char_requested:
                     error = f"다중 캐릭터 프롬프트를 조립할 봇을 찾지 못했습니다: {bot_name!r}"
@@ -6402,10 +6422,18 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             chansub_quality_tag_start=chansub_quality_tag_start,
             chansub_quality_tag_count=chansub_quality_tag_count,
             illustration_workflow_type=illustration_workflow_type,
+            model_preset=runtime_snapshot.get("illustration_model_preset"),
             **({"seed": int(raw_body["illustration_seed"])}
                if raw_body.get("illustration_seed") is not None else {}),
         )
         elapsed_time = time.time() - start_time
+
+        if build_log is not None:
+            log_illust_build(
+                *build_log, positive, negative,
+                context=str(raw_body.get("illustration_context") or ""),
+                submitted_prompt=(CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get() or {}).get("submitted_prompt"),
+            )
 
         if img_bytes is None:
             print(f"[ERROR] 이미지 생성 실패: {node_errors}")
@@ -6460,6 +6488,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             prompt_entry = prompts[prompt_id]
             prompt_entry["_deferred_image_bytes"] = img_bytes
             prompt_entry["_deferred_finalize"] = {
+                "submitted_prompt": generation_workflow_snapshot.get("submitted_prompt"),
                 "positive": positive,
                 "negative": negative,
                 "generation_time": elapsed_time,
@@ -6499,7 +6528,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             return
 
         # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
-        # 봇의 postprocess_mode(vn|bubble) 에 따라 어느 합성 빌더를 쓸지 결정.
+        # The shared presentation mode selects the composition builder.
         _force_postprocess = bool(
             raw_body.get("illustration_force_postprocess", False)
         )
@@ -6590,6 +6619,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 pass
 
         print(f"[INFO] 프롬프트 완료: {prompt_id}")
+        if not raw_body.get("illustration_context_session_id"):
+            from illustration_model_preload import load_local_llm_after_generation
+            await load_local_llm_after_generation(runtime_snapshot.get("illustration_context_toggles") or {})
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -6628,6 +6660,11 @@ def _build_llm_final_result(descriptor: dict | None) -> dict | None:
     """
     if not isinstance(descriptor, dict):
         return None
+    if descriptor.get("composite_layers"):
+        return {"raw_positive": "\n\n".join(str(layer.get("raw_positive") or "") for layer in descriptor["composite_layers"]),
+                "character_names": [ch["name"] for ch in descriptor.get("characters") or []],
+                "visual_states": _descriptor_visual_states(descriptor),
+                "composite_scene": copy.deepcopy(descriptor)}
     if descriptor.get("panels"):
         return {"raw_positive": "\n\n".join(str(panel.get("raw_positive") or "") for panel in descriptor["panels"]),
                 "character_names": list(dict.fromkeys(ch["name"] for panel in descriptor["panels"]
@@ -6768,6 +6805,7 @@ def _collect_lb_extra_impl(bot_name: str) -> dict | None:
                 # 선택 프로필이 기본 lb.extra 블록을 대체해도 이 값을 잃지 않도록
                 # 서버 소유 유효 프로필 맵에 구조적으로 보존한다.
                 character_profiles["gender_tag"] = gender_tag
+                character_profiles["npc_generated"] = char.get("npc_generated") is True
                 visual_base = resolve_visual_base(character_profiles)
                 appearance = _tag_text(visual_base.get("appearance"))
                 outfit = _tag_text(visual_base.get("outfit"))
@@ -7697,6 +7735,7 @@ async def _enqueue_illustration_quality_inspection(
     context: str,
     entries: list[dict],
     dependencies: list[Any] | None = None,
+    workshop: str = "illustration",
 ) -> Any | None:
     """Queue one image review or one completed-set review without blocking delivery."""
     if not entries or not str(context or "").strip():
@@ -7757,6 +7796,7 @@ async def _enqueue_illustration_quality_inspection(
                 entries=snapshot_entries,
                 flow_run_id=flow_run_id,
                 individual_results=individual_results,
+                workshop=workshop,
             )
             if scope == illustration_quality_inspection.SELECTION_SCOPE:
                 selected = snapshot_entries[result["selected_candidate"]]
@@ -7815,7 +7855,22 @@ async def _enqueue_illustration_quality_inspection(
         return None
 
 
-def _illustration_mask_canvas_sizes(bot_name: str) -> dict:
+class _CompositeReuseHost:
+    """Queue-compatible handle for a composite background served from cache.
+
+    It never reaches queue_manager; only the collection/finalization path uses
+    its completion future, so a reused background still owns a normal deferred
+    prompt entry and can finalize its assembled illustration independently.
+    """
+
+    def __init__(self, future):
+        self.id = ""
+        self.title = "합성 배경 재사용"
+        self.status = "processing"
+        self.completion_future = future
+
+
+def _illustration_mask_canvas_sizes(bot_name: str, *, composite: bool = False) -> dict:
     bot = next((entry for entry in _load_bot_data_readonly()["bots"]
                 if entry.get("name") == bot_name), None)
     if bot is None:
@@ -7823,8 +7878,12 @@ def _illustration_mask_canvas_sizes(bot_name: str) -> dict:
         return {}
     sizes = {}
     for profile in ("solo", "group"):
-        settings = bot.get(f"illust_settings_{profile}", bot.get("illust_settings", {}))
+        settings = resolve_illust_settings(bot, profile)
         sizes[profile] = (settings.get("img_w", 756), settings.get("img_h", 756))
+    if composite:
+        settings = resolve_illust_settings(bot, "solo", "background")
+        return {"background": (settings.get("img_w", 756), settings.get("img_h", 756)),
+                "character": sizes["solo"]}
     return sizes
 
 
@@ -7834,7 +7893,8 @@ def _multi_char_queue_context(
     """Share the saved Regional layout handoff between initial and RAW generation."""
     if not illust_toggles.get("illustration_enabled", True):
         return None
-    if not illustration_context_pipeline.should_enable_multi_char_layout(illust_toggles, provider):
+    composite_character = (descriptor.get("composite_layer", 0) > 0 and provider == "comfy")
+    if not composite_character and not illustration_context_pipeline.should_enable_multi_char_layout(illust_toggles, provider):
         return None
     if str(prompt_format or "").strip().lower() != "v3":
         return None
@@ -7842,7 +7902,7 @@ def _multi_char_queue_context(
         character for character in (descriptor.get("characters") or [])
         if isinstance(character, dict) and str(character.get("name") or "").strip()
     ]
-    if not characters or (len(characters) == 1 and not illust_toggles.get("single_char_mask_enabled", True)):
+    if not characters or (len(characters) == 1 and not composite_character and not illust_toggles.get("single_char_mask_enabled", True)):
         return None
     layout = descriptor.get("multi_char_layout")
     if not isinstance(layout, dict):
@@ -7856,7 +7916,7 @@ def _multi_char_queue_context(
         "composition_prompt": str(layout.get("composition_prompt") or "").strip(),
         "layout": copy.deepcopy(layout),
         "mask_location": "region_mask",
-        "single_char_mask_skip_enabled": illust_toggles["single_char_mask_skip_enabled"],
+        "single_char_mask_skip_enabled": False if composite_character else illust_toggles["single_char_mask_skip_enabled"],
         "single_char_mask_skip_area_percent": illust_toggles["single_char_mask_skip_area_percent"],
     }
 
@@ -7880,6 +7940,10 @@ async def process_illustration_context_queue_item(item) -> dict:
     illust_toggles = illustration_context_pipeline.merged_toggles(
         copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {}), for_generation=True
     )
+    if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("composite_layers") for entry in payload.get("items") or []):
+        illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
+                             illustration_output_mode="composite", visual_correction_enabled=False)
+        runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
     if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("panels") for entry in payload.get("items") or []):
         # Saved manga descriptors retain their generation semantics even when
         # the user has since switched the ordinary illustration mode.
@@ -7912,6 +7976,12 @@ async def process_illustration_context_queue_item(item) -> dict:
     child_descriptors = {}
     manga_children = {}
     manga_images = {}
+    composite_children = {}
+    composite_images = {}
+    composite_background_jobs = {}
+    composite_reuse_hosts = []
+    composite_reuse_tasks = []
+    composite_seed_retries = set()
     inspection_entries = {}
     inspection_queue_items: dict[int, Any] = {}
     inspection_enabled = bool(runtime_snapshot.get("illustration_quality_inspection_enabled", False))
@@ -7936,6 +8006,35 @@ async def process_illustration_context_queue_item(item) -> dict:
     # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
     # prompt_batch_v1 등 build_from_context 를 거치지 않는 경로는 빈 목록(버튼 비활성).
     llm_trace = []
+
+    image_model_load_task = None
+
+    async def _load_image_model_at_detail():
+        from illustration_model_presets import read_workflow, apply_preset_workflow
+        from illustration_model_preload import load_image_model
+
+        preset = runtime_snapshot.get("illustration_model_preset") or {}
+        profile = workflow_profiles.illustration_local_profile(illustration_workflow_type_snapshot)
+        source = preset.get("config", {}).get("illustration_workflow_source_paths", {}).get(profile)
+        if not source:
+            source = get_comfy_workflow_source_path(illustration_workflow_type_snapshot)
+        workflow, _ = await asyncio.to_thread(read_workflow, source)
+        workflow = apply_preset_workflow(workflow, preset, profile)
+        if not is_api_format(workflow):
+            workflow, error = await convert_workflow_via_endpoint(workflow, task_key="illustration")
+            if workflow is None:
+                raise RuntimeError(error)
+        await load_image_model(workflow, base_url=f"http://{REAL_COMFY_HOST}:{resolve_comfy_port('illustration')}")
+
+    async def _on_detail_start():
+        nonlocal image_model_load_task
+        if image_model_load_task is not None or not illust_toggles["image_model_load_at_detail"]:
+            return
+        if illustration_provider_snapshot == "chansub" or effective_execution_target("illustration") in REMOTE_COMFY_TARGETS:
+            return
+        from illustration_model_preload import run_model_load
+        # Schedule once for the whole request; DETAIL continues while Comfy loads.
+        image_model_load_task = asyncio.create_task(run_model_load(_load_image_model_at_detail(), label="그림 모델 로드"))
 
     def _quality_inspection_context(descriptor: dict | None = None) -> str:
         # Use the original built.context. Judge generated pixels
@@ -8130,12 +8229,17 @@ async def process_illustration_context_queue_item(item) -> dict:
                 context=_quality_inspection_context(),
                 entries=entries,
                 dependencies=dependencies,
+                workshop=str(runtime_snapshot.get("workshop") or "illustration"),
             )
         else:
             print(
                 f"[ILLUST_INSPECTION] 자동 검사 생략: session={session_id}, "
                 f"enabled={inspection_enabled}, cancelled={illustration_flow.cancel_requested()}"
             )
+        if image_model_load_task is not None:
+            await image_model_load_task
+        from illustration_model_preload import load_local_llm_after_generation
+        await load_local_llm_after_generation(illust_toggles)
         return {
             "success": True,
             "session_id": session_id,
@@ -8143,6 +8247,149 @@ async def process_illustration_context_queue_item(item) -> dict:
             "requested_count": requested_count,
             "failed_count": failure_count,
         }
+
+    def _reuse_finalize_state(descriptor, layer):
+        canvas = list(descriptor.get("canvas") or layer.get("canvas")
+                      or illustration_composite.DEFAULT_CANVAS)
+        return {
+            "positive": str(descriptor.get("raw_positive") or layer.get("scene") or ""),
+            "negative": str(descriptor.get("raw_negative") or ""),
+            "bot_name": active_bot,
+            "word_rules": [],
+            "gen_method": "합성 삽화",
+            "provider": "comfy",
+            "provider_mode": "comfy",
+            "prompt_provider": "comfy",
+            "generation_params": {"width": canvas[0], "height": canvas[1]},
+            "execution_target": str(CURRENT_COMFY_EXECUTION_TARGET.get() or ""),
+        }
+
+    def _new_reuse_host(descriptor, layer, key, trace, image=None):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        host_item = _CompositeReuseHost(future)
+        host_id = str(uuid.uuid4())
+        prompts[host_id] = {
+            "status": "processing",
+            "prompt": {},
+            "client_id": raw_body.get("client_id", ""),
+            "extra_data": raw_body.get("extra_data", {}),
+            "outputs": {},
+            "filename": None,
+            "save_node_id": "9",
+            "image_bytes": None,
+            "timestamp": time.time(),
+            "_llm_trace": list(trace or []),
+            "_deferred_finalize": _reuse_finalize_state(descriptor, layer),
+        }
+        composite_reuse_hosts.append((host_id, host_item))
+        all_child_pairs.append((host_id, host_item))
+        if image:
+            prompts[host_id]["_deferred_image_bytes"] = image
+            prompts[host_id]["status"] = "completed"
+            future.set_result(None)
+            print(
+                f"[ILLUST_COMPOSITE:BACKGROUND] 캐시 즉시 재사용: "
+                f"slot={descriptor.get('slot')}, key={key[:8]}, host={host_id}"
+            )
+        else:
+            print(
+                f"[ILLUST_COMPOSITE:BACKGROUND] 생성 중 배경 재사용 대기: "
+                f"slot={descriptor.get('slot')}, key={key[:8]}, host={host_id}"
+            )
+        return host_id, host_item
+
+    async def _resolve_reuse_host(host_id, host_item, key):
+        try:
+            image = illustration_composite.cached_background(key)
+            if not image:
+                job = composite_background_jobs.get(key)
+                if job is None:
+                    raise RuntimeError("배경 재사용 대기 상태가 없습니다")
+                await job["event"].wait()
+                image = job.get("image")
+                if not image:
+                    raise RuntimeError(str(job.get("reason") or "배경 생성 실패"))
+            prompts[host_id]["_deferred_image_bytes"] = image
+            prompts[host_id]["status"] = "completed"
+            if not host_item.completion_future.done():
+                host_item.completion_future.set_result(None)
+            print(
+                f"[ILLUST_COMPOSITE:BACKGROUND] 공유 배경 회수 완료: "
+                f"key={key[:8]}, host={host_id}"
+            )
+        except asyncio.CancelledError:
+            host_item.status = "cancelled"
+            if not host_item.completion_future.done():
+                host_item.completion_future.cancel()
+            raise
+        except Exception as exc:
+            prompts[host_id]["status"] = "completed"
+            prompts[host_id]["outputs"] = {"images": []}
+            if not host_item.completion_future.done():
+                host_item.completion_future.set_exception(RuntimeError(str(exc)))
+            print(
+                f"[ILLUST_COMPOSITE:BACKGROUND] 공유 배경 회수 실패: "
+                f"key={key[:8]}, host={host_id}, error={exc}"
+            )
+
+    def _record_background_result(layer, image_bytes, reason, cancelled):
+        key = str(layer.get("_background_key") or "")
+        if not key:
+            return
+        job = composite_background_jobs.get(key)
+        if image_bytes:
+            illustration_composite.cache_background(key, image_bytes)
+            if job is not None:
+                job["image"] = image_bytes
+                job["reason"] = ""
+                job["cancelled"] = False
+                job["event"].set()
+        elif job is not None and not job["event"].is_set():
+            job["image"] = None
+            job["reason"] = str(reason or "배경 생성 실패")
+            job["cancelled"] = bool(cancelled)
+            job["event"].set()
+
+    async def _queue_composite_background(
+        descriptor, layer, *, slot_index, total_count, context_value,
+        prompt_format, queue_priority, trace,
+    ):
+        """Reuse an identical background, or register exactly one generation."""
+        key = str(layer["_background_key"])
+        job = composite_background_jobs.get(key)
+        if job is not None:
+            if job["event"].is_set():
+                if job.get("image"):
+                    return _new_reuse_host(descriptor, layer, key, trace, image=job["image"])
+                # The previous attempt failed. Reuse a completed cache entry
+                # when one exists; otherwise a retry starts one fresh
+                # generation and shares its result with later scenes.
+                cached = illustration_composite.cached_background(key)
+                if cached:
+                    return _new_reuse_host(descriptor, layer, key, trace, image=cached)
+                job = {"event": asyncio.Event(), "image": None, "reason": "", "cancelled": False}
+                composite_background_jobs[key] = job
+            else:
+                host = _new_reuse_host(descriptor, layer, key, trace)
+                host_id, host_item = host
+                composite_reuse_tasks.append(illustration_flow.create_task(
+                    _resolve_reuse_host(host_id, host_item, key)
+                ))
+                return host
+        else:
+            cached = illustration_composite.cached_background(key)
+            if cached:
+                return _new_reuse_host(descriptor, layer, key, trace, image=cached)
+            job = {"event": asyncio.Event(), "image": None, "reason": "", "cancelled": False}
+            composite_background_jobs[key] = job
+        pair = await _enqueue_child(
+            layer, slot_index, total_count, context_value, prompt_format,
+            defer_postprocess=True, queue_priority=queue_priority, llm_trace=trace,
+            start_correction=False,
+        )
+        job["pair"] = pair
+        return pair
 
     # 단일 슬롯을 삽화 하위 큐에 등록. 조기 등록과 2차 재시도가 모두 이 함수를 경유한다.
     async def _enqueue_child(
@@ -8156,8 +8403,48 @@ async def process_illustration_context_queue_item(item) -> dict:
         queue_priority=None,
         llm_trace=None,
         start_correction=True,
+        npc_render_bot=None,
     ):
         illustration_flow.raise_if_cancel_requested()
+        if descriptor.get("composite_layers"):
+            sizes = _illustration_mask_canvas_sizes(active_bot, composite=True)
+            if sizes.get("background"):
+                descriptor["canvas"] = list(sizes["background"])
+            pairs = []
+            for layer in descriptor["composite_layers"]:
+                if layer["composite_layer"] == 0:
+                    layer["canvas"] = list(descriptor["canvas"])
+                else:
+                    layer.pop("canvas", None)
+                key = (descriptor["slot"], layer["composite_layer"])
+                if layer["composite_layer"] == 0:
+                    layer["_background_key"] = illustration_composite.background_key(
+                        layer, canvas=layer["canvas"], bot_name=active_bot,
+                        workflow_type=illustration_workflow_type_snapshot,
+                        provider=illustration_provider_snapshot)
+                pair = composite_children.get(key)
+                if key not in composite_images:
+                    names = {ch["name"] for ch in layer.get("characters") or []}
+                    for field in ("visual_base_snapshot", "call1_scene_state", "time_place_scene_state"):
+                        if field in descriptor:
+                            layer[field] = {name: copy.deepcopy(value) for name, value in descriptor[field].items() if name in names}
+                    if layer["composite_layer"] == 0:
+                        pair = await _queue_composite_background(
+                            descriptor, layer, slot_index=slot_index, total_count=total_count,
+                            context_value=context_value, prompt_format=prompt_format,
+                            queue_priority=queue_priority, trace=llm_trace)
+                    else:
+                        pair = await _enqueue_child(layer, slot_index, total_count, context_value, prompt_format,
+                            defer_postprocess=True, queue_priority=queue_priority, llm_trace=llm_trace,
+                            start_correction=False)
+                    composite_children[key] = pair
+                    binding = getattr(pair[1], "_illustration_flow", None)
+                    if binding:
+                        label = "배경" if layer["composite_layer"] == 0 else f"캐릭터 {layer['composite_layer']} · {layer['characters'][0]['name']}"
+                        illustration_flow.update(binding[0], binding[1], label=f"합성 삽화 · slot {descriptor['slot']} · {label}")
+                pairs.append(pair)
+            child_descriptors[pairs[0][0]] = copy.deepcopy(descriptor)
+            return pairs[0]
         if descriptor.get("panels"):
             if descriptor.get("seed") is None:
                 import random
@@ -8165,7 +8452,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                             if entry.get("name") == active_bot), {})
                 first_panel = descriptor["panels"][0]
                 profile = "group" if len(first_panel.get("characters") or []) >= 2 else "solo"
-                page_settings = bot.get(f"illust_settings_{profile}", bot.get("illust_settings", {}))
+                page_settings = resolve_illust_settings(bot, profile)
                 seed = int(page_settings.get("seed", -1))
                 descriptor["seed"] = random.SystemRandom().randint(0, 2**32 - 1) if seed == -1 else seed
                 print(f"[MANGA:SEED] 페이지 시드 확정: slot={descriptor['slot']}, seed={descriptor['seed']}")
@@ -8186,6 +8473,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             child_descriptors[pairs[0][0]] = copy.deepcopy(descriptor)
             return pairs[0]
         child_provider = illustration_provider_snapshot
+        if "composite_layer" in descriptor and child_provider != "comfy":
+            raise ValueError("합성 삽화는 ComfyUI의 배포 공방 삽화 DUAL_VAE 워크플로를 사용합니다")
         hybrid_prompt_formats = None
         if child_provider == "hybrid":
             hybrid_prompt_formats = {
@@ -8219,6 +8508,11 @@ async def process_illustration_context_queue_item(item) -> dict:
         child_runtime_snapshot = copy.deepcopy(runtime_snapshot)
         child_runtime_snapshot["provider"] = child_provider
         child_runtime_snapshot["illustration_workflow_type"] = illustration_workflow_type_snapshot
+        if descriptor.get("composite_layer") == 0:
+            child_runtime_snapshot["generation_mode"] = "background"
+        if npc_render_bot is not None:
+            child_runtime_snapshot["generation_mode"] = "character_auto"
+            child_runtime_snapshot["npc_render_bot"] = copy.deepcopy(npc_render_bot)
         prompts[child_id] = {
             "status": "running",
             "prompt": child_prompt,
@@ -8245,7 +8539,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_context_index": slot_index,
             "illustration_prompt_format": child_prompt_format,
             "illustration_provider": child_provider,
-            "illustration_defer_postprocess": bool(defer_postprocess)
+            "illustration_defer_postprocess": "composite_layer" in descriptor or npc_render_bot is not None or bool(defer_postprocess)
                 and illust_toggles["illustration_output_mode"] not in ("manga", "manga_both"),
             "illustration_visual_states": _descriptor_visual_states(descriptor),
             "illustration_anonymous_partner_fragment": bool(
@@ -8254,9 +8548,12 @@ async def process_illustration_context_queue_item(item) -> dict:
         }
         if descriptor.get("canvas"):
             child_raw_body["illustration_canvas"] = list(descriptor["canvas"])
+        if "composite_layer" in descriptor:
+            child_raw_body["illustration_render_target"] = "background" if descriptor["composite_layer"] == 0 else "character"
         if descriptor.get("seed") is not None:
             child_raw_body["illustration_seed"] = int(descriptor["seed"])
         if descriptor.get("kind") == "scene" and ("call1_scene_state" in descriptor
+                or "composite_layer" in descriptor
                 or illust_toggles["illustration_output_mode"] in ("manga", "manga_both")):
             # New ordinary DETAIL already chose image tags; preserve them through
             # the renderer without restoring fixed appearance/wardrobe tags.
@@ -8274,11 +8571,14 @@ async def process_illustration_context_queue_item(item) -> dict:
                 "raw_body": child_raw_body,
                 "provider": child_provider,
             }
+            if npc_render_bot is not None:
+                child_params["npc_tracking_root"] = copy.deepcopy(npc_render_bot["characters"][0])
             if hybrid_prompt_formats is not None:
                 child_params["hybrid_prompt_formats"] = hybrid_prompt_formats
             child_item = await queue_manager.add_item(
                 "illustration",
-                f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}"
+                (f"NPC 대표 이미지 · {descriptor['characters'][0]['name']}" if npc_render_bot is not None
+                 else f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}")
                 + (f" · 컷 {descriptor['panel']}" if descriptor.get("panel") else ""),
                 child_params,
                 priority=int(queue_priority),
@@ -8293,6 +8593,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             prompts[child_id]["outputs"] = {"images": []}
             raise
         pair = (child_id, child_item)
+        if npc_render_bot is not None:
+            return pair
         all_child_pairs.append(pair)
         child_descriptors[child_id] = copy.deepcopy(descriptor)
         if correction_enabled and start_correction:
@@ -8340,7 +8642,142 @@ async def process_illustration_context_queue_item(item) -> dict:
             traceback.print_exc()
             return None, f"큐 실패 - {e}", False
 
+    async def _retry_character_background(descriptor, layer, key, trace):
+        """Regenerate one composited character with a new seed after an opaque render."""
+        import random
+        retry_layer = copy.deepcopy(layer)
+        retry_layer["seed"] = random.SystemRandom().randint(0, 2**32 - 1)
+        name = str((layer.get("characters") or [{}])[0].get("name") or "")
+        print(
+            f"[ILLUST_COMPOSITE:SEED] 캐릭터 레이어 이상 감지 · 새 시드로 1회 재생성: "
+            f"slot={key[0]}, layer={key[1]}, name={name!r}, seed={retry_layer['seed']}"
+        )
+        pair = await _enqueue_child(
+            retry_layer, layer["composite_layer"], len(descriptor["composite_layers"]),
+            built.get("context", ""), built.get("prompt_format", "v3"),
+            defer_postprocess=True, llm_trace=trace, start_correction=False,
+        )
+        composite_children[key] = pair
+        binding = getattr(pair[1], "_illustration_flow", None)
+        if binding:
+            illustration_flow.update(
+                binding[0], binding[1],
+                label=(f"합성 삽화 · slot {descriptor['slot']} · 캐릭터 {key[1]} · "
+                       f"{name} · 시드 재생성"),
+            )
+        return await _await_child(*pair, f"{key[0]} · 레이어 {key[1]} 시드 재생성")
+
     async def _collect_final_child(child_id, child_item, descriptor, *, finalize=True):
+        if descriptor.get("composite_layers"):
+            from modes import illustration_composite
+            errors, cancelled = [], False
+            for layer in descriptor["composite_layers"]:
+                number = layer["composite_layer"]
+                key = (descriptor["slot"], number)
+                if key in composite_images:
+                    continue
+                pair = composite_children.get(key)
+                if pair is None:
+                    errors.append(f"레이어 {number}: 생성 등록 없음")
+                    continue
+                picture, reason, stopped = await _await_child(*pair, f"{key[0]} · 레이어 {number}")
+                cancelled |= stopped
+                if number == 0:
+                    _record_background_result(layer, picture, reason, stopped)
+                if picture:
+                    try:
+                        if number:
+                            try:
+                                picture = await asyncio.to_thread(
+                                    illustration_composite.character_rgba, picture)
+                            except illustration_composite.CharacterTransparencyError:
+                                # The RGBA branch painted a backdrop or returned an
+                                # empty frame. One new seed usually restores a
+                                # usable transparent cutout.
+                                if key in composite_seed_retries:
+                                    raise
+                                composite_seed_retries.add(key)
+                                _discard_deferred_illustration_prompt(
+                                    pair[0], "캐릭터 레이어 이상 · 시드 재생성")
+                                picture, retry_reason, retry_stopped = await _retry_character_background(
+                                    descriptor, layer, key, llm_trace)
+                                cancelled |= retry_stopped
+                                retry_id = composite_children.get(key, ("", None))[0]
+                                if not picture:
+                                    if retry_id:
+                                        _discard_deferred_illustration_prompt(
+                                            retry_id, "새 시드 재생성 결과 없음")
+                                    raise RuntimeError(
+                                        retry_reason or "새 시드 재생성 결과가 없습니다")
+                                try:
+                                    picture = await asyncio.to_thread(
+                                        illustration_composite.character_rgba, picture)
+                                except illustration_composite.CharacterTransparencyError as exc:
+                                    if retry_id:
+                                        _discard_deferred_illustration_prompt(
+                                            retry_id, "새 시드 재생성에도 레이어 이상")
+                                    raise RuntimeError(
+                                        f"새 시드로 재생성했지만 캐릭터 레이어가 유효하지 않습니다: {exc}")
+                                print(
+                                    f"[ILLUST_COMPOSITE:SEED] 새 시드 재생성으로 유효한 캐릭터 레이어 확보: "
+                                    f"slot={key[0]}, layer={key[1]}"
+                                )
+                        composite_images[key] = picture
+                    except Exception as exc:
+                        traceback.print_exc()
+                        errors.append(f"캐릭터 {number} RGBA 출력: {exc}")
+                else:
+                    errors.append(f"레이어 {number}: {reason}")
+            if errors or cancelled:
+                return None, "; ".join(errors) or "취소됨", cancelled
+            try:
+                # Composition is mandatory, even with POST PROCESS disabled.
+                # Successful layers survive retries of a failed sibling.
+                @illustration_flow.stage("최종 조립 · 합성 삽화", layout_group="illustration_postprocess")
+                async def assemble_composite():
+                    illustration_flow.absorb([composite_children[(descriptor["slot"], layer["composite_layer"])][1]
+                                              for layer in descriptor["composite_layers"]])
+                    picture = await asyncio.to_thread(illustration_composite.compose, descriptor,
+                        {layer["composite_layer"]: composite_images[(descriptor["slot"], layer["composite_layer"])]
+                         for layer in descriptor["composite_layers"]})
+                    assembled_source = picture
+                    entry = prompts[child_id]
+                    entry["_deferred_image_bytes"] = picture
+                    entry["_llm_final_result"] = _build_llm_final_result(descriptor)
+                    entry["_llm_trace"] = list(llm_trace or entry.get("_llm_trace") or [])
+                    state = entry.get("_deferred_finalize")
+                    if not isinstance(state, dict):
+                        raise RuntimeError("합성 삽화 후처리 상태가 없습니다")
+                    state.update(gen_method="합성 삽화", positive=descriptor.get("raw_positive", ""),
+                                 illustration_visual_states=_descriptor_visual_states(descriptor),
+                                 generation_params={**(state.get("generation_params") or {}),
+                                                    "width": descriptor["canvas"][0], "height": descriptor["canvas"][1]})
+                    picture = await _finalize_deferred_illustration_prompt(child_id, str(descriptor.get("speak") or ""))
+                    descriptor["backup_name"] = entry.get("backup_name", "")
+                    for layer in descriptor["composite_layers"][1:]:
+                        layer_id = composite_children[(descriptor["slot"], layer["composite_layer"])][0]
+                        prompts[layer_id].pop("_deferred_image_bytes", None)
+                        prompts[layer_id].pop("_deferred_finalize", None)
+                        prompts[layer_id]["status"] = "completed"
+                    if inspection_enabled:
+                        inspection_entry = {"image_bytes": assembled_source, "slot": int(descriptor["slot"]),
+                            "prompt_id": child_id, "backup_name": descriptor["backup_name"],
+                            "positive": str(descriptor.get("raw_positive") or ""),
+                            "negative": str(descriptor.get("raw_negative") or ""),
+                            "descriptor": copy.deepcopy(descriptor)}
+                        inspection_entries[int(descriptor["slot"])] = inspection_entry
+                        queued = await _enqueue_illustration_quality_inspection(
+                            scope=illustration_quality_inspection.IMAGE_SCOPE, session_id=session_id,
+                            context=_quality_inspection_context(), entries=[inspection_entry],
+                            workshop=str(runtime_snapshot.get("workshop") or "illustration"))
+                        if queued is not None:
+                            inspection_queue_items[int(descriptor["slot"])] = queued
+                    return picture
+                picture = await assemble_composite()
+                return picture, "", False
+            except Exception as exc:
+                traceback.print_exc()
+                return None, f"합성 삽화 최종 조립 실패: {exc}", False
         if descriptor.get("panels"):
             import base64
             from PIL import Image, ImageDraw
@@ -8384,6 +8821,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 backup_name, picture = await save_backup(stream.getvalue(), page_id,
                     str(final_result.get("raw_positive") or ""), "", bot_name=active_bot,
                     gen_method="만화 페이지", provider=illustration_provider_snapshot,
+                    submitted_prompt_snapshot=None,
                     llm_trace=llm_trace, llm_final_result=final_result,
                     generation_params={"width": page_size[0], "height": page_size[1], "seed": descriptor["seed"]})
                 descriptor["backup_name"] = backup_name
@@ -8444,7 +8882,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                         session_id=session_id, context=_quality_inspection_context(descriptor),
                         entries=[{**inspection_source, "slot": int(slot_label), "prompt_id": child_id,
                                   "backup_name": str(child_prompt.get("backup_name") or ""),
-                                  "descriptor": copy.deepcopy(descriptor)}])
+                                  "descriptor": copy.deepcopy(descriptor)}],
+                        workshop=str(runtime_snapshot.get("workshop") or "illustration"))
                     if queued is None:
                         raise RuntimeError("비주얼 교정 큐 등록 실패")
                     verdict = await queued.completion_future
@@ -8525,7 +8964,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                             candidate[key] = parsed[key]
                     if _is_multi_char_descriptor(candidate, illust_toggles["prompt_format"]):
                         await illustration_context_pipeline.calculate_multi_char_layouts(
-                            [candidate], illustration_context_pipeline.load_prompt_files().get("multi_char_mask", ""),
+                            [candidate], illustration_context_pipeline.load_prompt_files(
+                                str(runtime_snapshot.get("workshop") or "illustration")
+                            ).get("multi_char_mask", ""),
                             stream_notify=stream_notify, canvas_sizes=_illustration_mask_canvas_sizes(active_bot),
                             single_char_mask_enabled=illust_toggles["single_char_mask_enabled"],
                             mask_inline="multi_char_layout" in candidate)
@@ -8534,7 +8975,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     _, narrative = illustration_context_pipeline._latest_narrative(payload.get("chats") or [])
                     candidate["raw_positive"], _ = illustration_context_pipeline.build_raw_prompt(
                         candidate, illustration_context_pipeline.remove_slot_markers(narrative),
-                        illustration_context_pipeline.load_prompt_files(), illust_toggles)
+                        illustration_context_pipeline.load_prompt_files(
+                            str(runtime_snapshot.get("workshop") or "illustration")
+                        ), illust_toggles)
                     corrected_id, corrected_item = await _enqueue_child(
                         candidate, attempt + 1, max_redraws, built.get("context") or _quality_inspection_context(),
                         illust_toggles["prompt_format"], defer_postprocess=True,
@@ -8578,7 +9021,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                                   "slot": int(slot_label), "prompt_id": prompt_id,
                                   "backup_name": str(prompts[prompt_id].get("backup_name") or ""),
                                   "descriptor": saved_descriptor}
-                                 for prompt_id, _, pixels, source, saved_descriptor in candidates])
+                                 for prompt_id, _, pixels, source, saved_descriptor in candidates],
+                        workshop=str(runtime_snapshot.get("workshop") or "illustration"))
                     if queued is None:
                         raise RuntimeError("비주얼 교정 결과 선택 큐 등록 실패")
                     selection = await queued.completion_future
@@ -8647,6 +9091,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 session_id=session_id,
                 context=_quality_inspection_context(),
                 entries=[entry],
+                workshop=str(runtime_snapshot.get("workshop") or "illustration"),
             )
             if queued is not None:
                 inspection_queue_items[slot_number] = queued
@@ -8692,6 +9137,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 traceback.print_exc()
 
+        # A reused background may still be waiting on its source generation.
+        # Cancellation must release that waiter before recovery collects the
+        # assembled layers, otherwise the shared future never resolves.
+        for child_id, child_item in composite_reuse_hosts:
+            entry = prompts.get(child_id) or {}
+            future = getattr(child_item, "completion_future", None)
+            if future is not None and not future.done() and not entry.get("_deferred_image_bytes"):
+                child_item.status = "cancelled"
+                future.cancel()
+
         successful_items = []
         successful_images = []
         failures = []
@@ -8701,6 +9156,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                 continue
             status = str(getattr(child_item, "status", "") or "")
             descriptor = copy.deepcopy(child_descriptors.get(child_id) or {})
+            if "composite_layer" in descriptor:
+                # Only the parent may publish an assembled illustration.
+                continue
             if descriptor.get("panel"):
                 print(f"[MANGA:CANCEL] 개별 컷은 페이지 수집 경로에서 회수: panel={descriptor['panel']}")
                 continue
@@ -8891,6 +9349,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     history_target_index,
                     active_bot,
                     pre_character_trace_id,
+                    str(runtime_snapshot.get("workshop") or "illustration"),
                 )
 
             # CURRENT 등장인물을 항상 판별하고, 토글 시에만 별도 프로필 단계를 실행한다.
@@ -8964,14 +9423,24 @@ async def process_illustration_context_queue_item(item) -> dict:
                     character_names=character_names,
                 )
             )
+            from modes.illustration_npc import advance_lifetimes
+            if illustration_enabled:
+                expired_npcs = await advance_lifetimes(bot_mode, active_bot,
+                    [entry["name"] for entry in profile_result.get("current_characters") or []], str(item.id),
+                    toggles=illust_toggles)
+                if expired_npcs:
+                    for name in expired_npcs:
+                        effective_visual_profiles.pop(name, None)
+                    print(f"[NPC] 미사용 {illust_toggles['npc_lifetime']}회로 삭제: bot={active_bot!r}, characters={expired_npcs}")
             profile_authority = illustration_context_pipeline.profile_authority_text(
                 profile_result,
                 effective_visual_profiles,
             )
             illustration_flow.raise_if_cancel_requested()
         pipeline_payload = payload
-        if multi_char_mask_active:
-            pipeline_payload = {**payload, "canvas_sizes": _illustration_mask_canvas_sizes(active_bot)}
+        if multi_char_mask_active or illust_toggles["illustration_output_mode"] in ("composite", "composite_both"):
+            pipeline_payload = {**payload, "canvas_sizes": _illustration_mask_canvas_sizes(active_bot,
+                composite=illust_toggles["illustration_output_mode"] in ("composite", "composite_both"))}
 
         async def _run_original_asset_selection(used_slots: set[int] | None = None):
             illustration_flow.raise_if_cancel_requested()
@@ -9129,8 +9598,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
             # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
             try:
-                from modes.bot_mode import _get_postprocess_mode
-                _pp_mode = _get_postprocess_mode(active_bot)
+                from modes.postprocess import get_postprocess_mode
+                _pp_mode = get_postprocess_mode(app_config)
             except Exception as e:
                 print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
                 traceback.print_exc()
@@ -9291,6 +9760,40 @@ async def process_illustration_context_queue_item(item) -> dict:
                     else:
                         print(f"[ILLUST_ORIGINAL_ASSET] DETAIL 배치의 등록 가능한 GPU 작업 없음: session={session_id}, slots={[entry['slot'] for entry in ready_items]}")
 
+            async def render_npc_image(root, render_bot):
+                from modes.illustration_npc import character_image_descriptor
+                descriptor = character_image_descriptor(root)
+                descriptor["raw_positive"], descriptor["raw_negative"] = illustration_context_pipeline.build_raw_prompt(
+                    descriptor, "", illustration_context_pipeline.load_prompt_files(
+                        str(runtime_snapshot.get("workshop") or "illustration")
+                    ), {**illust_toggles, "positive_note": "", "negative_note": ""})
+                child_id, child_item = await _enqueue_child(descriptor, 1, 1, "", illust_toggles["prompt_format"],
+                    defer_postprocess=True, start_correction=False, npc_render_bot=render_bot)
+                try:
+                    pixels, error, cancelled = await _await_child(child_id, child_item, "NPC")
+                    if cancelled:
+                        raise asyncio.CancelledError()
+                    if not pixels:
+                        raise RuntimeError(f"NPC 대표 이미지 생성 실패: {error}")
+                    info = (prompts.get(child_id, {}).get("_deferred_finalize") or {}).get("conversion_info") or {}
+                    return {"image_bytes": pixels, "face_positions": copy.deepcopy(info.get("face_positions") or [])}
+                except asyncio.CancelledError:
+                    if not child_item.completion_future.done():
+                        await queue_manager.cancel_item(child_item.id)
+                    raise
+                finally:
+                    _discard_deferred_illustration_prompt(child_id, "NPC 대표 이미지 카드 전달")
+
+            async def prepare_npc_character(root):
+                if illustration_provider_snapshot == "chansub":
+                    return
+                from settings_illustration_prepare import _call
+                result = await _call(data_patcher.handle_data_patch,
+                                     {"bot_name": active_bot, "char_name": root["name"]})
+                if not result.get("visual_targets"):
+                    raise RuntimeError(f"NPC 참조 데이터 준비 대상이 없습니다: {root['name']}")
+                print(f"[NPC] {root['name']}: 대표 이미지 준비 완료 · FACE는 대표 생성의 마스크 추적 결과 사용")
+
             if illustration_enabled:
                 built = await illustration_context_pipeline.build_from_context(
                     pipeline_payload,
@@ -9301,6 +9804,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     on_call2_plan_ready=_on_call2_plan_ready,
                     on_call2_ready=_on_call2_ready,
                     on_keyvis_ready=_on_keyvis_ready,
+                    on_detail_start=_on_detail_start,
                     extra_instruction=extra_instruction,
                     extra_costume=extra_costume,
                     extra_names=extra_names,
@@ -9312,6 +9816,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     profile_translation_namespace=active_bot,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
+                    npc_manager=bot_mode,
+                    render_npc_image=render_npc_image,
+                    prepare_npc_character=prepare_npc_character,
                 )
                 illustration_flow.raise_if_cancel_requested()
             else:
@@ -9746,11 +10253,22 @@ async def process_illustration_context_queue_item(item) -> dict:
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
     finally:
+        if image_model_load_task is not None and not image_model_load_task.done():
+            image_model_load_task.cancel()
+            await asyncio.gather(image_model_load_task, return_exceptions=True)
         for task in early_correction_tasks.values():
             if not task.done():
                 task.cancel()
         if early_correction_tasks:
             await asyncio.gather(*early_correction_tasks.values(), return_exceptions=True)
+        for task in composite_reuse_tasks:
+            if not task.done():
+                task.cancel()
+        if composite_reuse_tasks:
+            await asyncio.gather(*composite_reuse_tasks, return_exceptions=True)
+        for _host_id, host_item in composite_reuse_hosts:
+            if not host_item.completion_future.done():
+                host_item.completion_future.cancel()
         for child_id, _child_item in all_child_pairs:
             (prompts.get(child_id) or {}).pop("_quality_inspection_source", None)
         if original_asset_task is not None and not original_asset_task.done():
@@ -9872,7 +10390,8 @@ async def handle_illustration_flow(request: web.Request) -> web.Response:
             return web.Response(body=mask_bytes, content_type="image/png",
                                 headers={"Cache-Control": "no-store"})
         if request.query.get("image") == "1":
-            image_bytes = illustration_flow.preview_image(request.query.get("run", ""), node_id)
+            image_bytes = illustration_flow.preview_image(request.query.get("run", ""), node_id,
+                                                         source=request.query.get("source") == "1")
             if not image_bytes:
                 return web.Response(status=404, text="생성 이미지가 없습니다")
             content_type = _detect_illustration_bridge_image_content_type(image_bytes)
@@ -9883,7 +10402,42 @@ async def handle_illustration_flow(request: web.Request) -> web.Response:
         node = illustration_flow.detail(request.query.get("run", ""), node_id)
         return web.json_response({"node": node}, status=200 if node else 404,
                                  headers={"Cache-Control": "no-store"})
-    return web.json_response({"flow": illustration_flow.snapshot(kind=request.query.get("kind", "illustration"))}, headers={"Cache-Control": "no-store"})
+    kind = request.query.get("kind", "illustration")
+    if kind == "illustration" and request.query.get("history") == "1":
+        runs = illustration_flow.history()
+        backup_dir = get_backup_base_dir()
+        scope = request.query.get("scope", "")
+        name_to_method = _ensure_backup_filter_cache(backup_dir)["name_to_method"] if scope in {"illust", "emotion"} else None
+        kept = []
+        for run in runs:
+            names = run.pop("backup_names")
+            run["backup_count"] = sum(any(os.path.isfile(os.path.join(backup_dir, name + ext))
+                                           for ext in (".webp", ".avif"))
+                                      for name in names)
+            if name_to_method is not None and names:
+                emotion_only = scope == "emotion"
+                if not any((name_to_method.get(name, "") == BACKUP_EMOTION_METHOD) == emotion_only for name in names):
+                    continue
+            kept.append(run)
+        runs = kept
+        active_ids = {run["id"] for run in runs if run["active"]}
+        # Queued work may outlive the nine retained records.
+        for item in getattr(queue_manager, "items", ()):
+            binding = getattr(item, "_illustration_flow", None)
+            if binding and binding[0].get("kind") == "illustration" and item.status not in illustration_flow.TERMINAL:
+                active_ids.add(binding[0]["id"])
+        return web.json_response({"history": runs, "limit": illustration_flow.HISTORY_LIMIT,
+                                  "active_count": len(active_ids)},
+                                 headers={"Cache-Control": "no-store"})
+    run_id = request.query.get("run")
+    if run_id:
+        run = illustration_flow.find_run(run_id, kind=kind)
+        if run is None:
+            return web.json_response({"error": "보관된 삽화 흐름을 찾을 수 없습니다."}, status=404)
+        flow = illustration_flow.snapshot(run)
+    else:
+        flow = illustration_flow.snapshot(kind=kind)
+    return web.json_response({"flow": flow}, headers={"Cache-Control": "no-store"})
 
 
 async def handle_video_input_flow_event(request: web.Request) -> web.Response:
@@ -10085,7 +10639,18 @@ async def handle_api_illustration_context_bridge_bots(
     """플러그인 대시보드에 봇 이름과 현재 선택만 최소 범위로 노출한다."""
     global app_config
     try:
-        bot_data = _load_bot_data_readonly()
+        scope = "emotion" if request.query.get("scope") == "emotion" else "illust"
+        selected_key = "emotion_bot_selected" if scope == "emotion" else "bot_selected"
+        try:
+            if scope == "emotion":
+                # 감정 삽화 워크숍은 자체 봇 저장소를 사용한다.
+                from importlib import import_module
+                bot_data = import_module("modes.bot_mode")._load_bot_data()
+            else:
+                bot_data = _load_bot_data_readonly()
+        except FileNotFoundError:
+            # A new installation has no bot.json until its first bot is saved.
+            bot_data = {"bots": []}
         bot_names = []
         seen = set()
         for bot in bot_data.get("bots") or []:
@@ -10103,14 +10668,16 @@ async def handle_api_illustration_context_bridge_bots(
                     {"error": "선택한 봇이 현재 백엔드 목록에 없습니다."},
                     status=400,
                 )
-            app_config["bot_selected"] = selected
+            app_config[selected_key] = selected
             save_config(app_config)
-            print(f"[ILLUST_CONTEXT:BRIDGE] 활성 봇 변경: {selected or '(없음)'}")
-            await notify_bot_selected_changed(selected)
+            print(f"[ILLUST_CONTEXT:BRIDGE] 활성 봇 변경 ({scope}): {selected or '(없음)'}")
+            if scope == "illust":
+                await notify_bot_selected_changed(selected)
 
-        selected = str(app_config.get("bot_selected") or "").strip()
+        selected = str(app_config.get(selected_key) or "").strip()
         return web.json_response({
             "ok": True,
+            "scope": scope,
             "bots": bot_names,
             "bot_selected": selected,
         })
@@ -10441,16 +11008,22 @@ async def handle_api_illustration_prompt_structure(request: web.Request) -> web.
     body = {}
     try:
         from modes.illustration_prompt_structure import build_prompt_structure
+        workshop = _request_workshop(request)
         body = await request.json() if request.method == "POST" else {}
         if not isinstance(body, dict) or not isinstance(body.get("toggles", {}), dict):
             raise ValueError("toggles must be object")
         config = copy.deepcopy(app_config)
-        config["illustration_context_toggles"] = {
-            **(config.get("illustration_context_toggles") or {}), **body.get("toggles", {}),
-        }
-        snapshot = _capture_illustration_runtime_snapshot(config, asset_instruction="")
+        key = _workshop_toggles_key(workshop)
+        base_toggles = config.get(key)
+        if workshop == "emotion" and not isinstance(base_toggles, dict):
+            base_toggles = config.get("illustration_context_toggles")
+        config[key] = {**(base_toggles or {}), **body.get("toggles", {})}
+        snapshot = _capture_illustration_runtime_snapshot(
+            config, asset_instruction="", workshop=workshop,
+        )
         return web.json_response(build_prompt_structure(
-            toggles=snapshot["illustration_context_toggles"], provider=snapshot["provider"]),
+            toggles=snapshot["illustration_context_toggles"], provider=snapshot["provider"],
+            workshop=workshop),
             headers={"Cache-Control": "no-store"})
     except ValueError as e:
         print(f"[ILLUST_CONTEXT] prompt structure 입력 파싱 실패: input={body!r}, error={e}")
@@ -10469,7 +11042,9 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
         from modes.visual_profiles import effective_bot_profiles
         from modes import visual_profile_translation_cache
         from modes.bot_mode import _load_lb_extra, get_bot_asset_output_instruction
+        from modes.postprocess import get_postprocess_mode
 
+        workshop = _request_workshop(request)
         body = await request.json()
         if not isinstance(body, dict) or not isinstance(body.get("toggles", {}), dict):
             print(f"[ILLUST_PREVIEW] 입력 형식 오류: body={body!r}")
@@ -10478,20 +11053,28 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
         # Credentials are held separately from persisted app_config. Use them
         # only inside this read-only plan to identify shared provider budgets.
         runtime_llm_config = llm_service.get_config()
-        for number in range(1, llm_service.LLM_SLOT_COUNT + 1):
-            key = f"llm_api_key{'' if number == 1 else number}"
+        for suffix in llm_service.LLM_SLOT_SUFFIXES:
+            key = f"llm_api_key{suffix}"
             config[key] = runtime_llm_config.get(key, "")
         overrides = {key: value for key, value in body.get("toggles", {}).items()
                      if key in illustration_context_pipeline.DEFAULT_TOGGLES
                      and key != "original_asset_instruction"}
-        config["illustration_context_toggles"] = {
-            **(config.get("illustration_context_toggles") or {}), **overrides,
+        toggles_key = _workshop_toggles_key(workshop)
+        base_toggles = config.get(toggles_key)
+        if workshop == "emotion" and not isinstance(base_toggles, dict):
+            base_toggles = config.get("illustration_context_toggles")
+        config[toggles_key] = {
+            **(base_toggles or {}), **overrides,
         }
-        bot_name = str(config.get("bot_selected") or "")
+        bot_name = str(config.get(
+            "emotion_bot_selected" if workshop == "emotion" else "bot_selected"
+        ) or "")
         data = _load_bot_data_readonly() if bot_name else {"bots": []}
         bot = next((item for item in data["bots"] if item.get("name") == bot_name), {})
         instruction = get_bot_asset_output_instruction(bot_name, data=data) if bot_name else ""
-        snapshot = _capture_illustration_runtime_snapshot(config, asset_instruction=instruction)
+        snapshot = _capture_illustration_runtime_snapshot(
+            config, asset_instruction=instruction, workshop=workshop,
+        )
         extra = _load_lb_extra(bot_name) if bot_name else []
         if isinstance(extra, dict):
             extra = extra.get("edited") or []
@@ -10509,7 +11092,7 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
         plan = await build_execution_plan(
             config=config, snapshot=snapshot, visual_profiles=profiles,
             translation_cache=visual_profile_translation_cache.load_cache(),
-            asset_count=len(index), postprocess_mode=bot.get("postprocess_mode", "vn"),
+            asset_count=len(index), postprocess_mode=get_postprocess_mode(config),
             queue_policy=policy, scenario=body.get("scenario"), bot=bot,
         )
         plan["summary"] += f" · 봇 프리셋 {bot.get('system_prompt_preset') or '(직접 지정)'}"
@@ -10523,8 +11106,11 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
 async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
     """OUTFIT 역번역/1/2/3 프롬프트 파일 조회/저장. 본문은 config에 넣지 않는다."""
     try:
+        workshop = _request_workshop(request)
         if request.method == "GET":
-            return web.json_response(illustration_context_pipeline.load_prompt_files())
+            return web.json_response(
+                illustration_context_pipeline.load_prompt_files(workshop)
+            )
         body = await request.json()
         if not isinstance(body, dict):
             print(f"[ILLUST_CONTEXT] prompt 저장 body가 object가 아님: {type(body).__name__}")
@@ -10533,7 +11119,7 @@ async def handle_api_illustration_context_prompts(request: web.Request) -> web.R
         if invalid:
             print(f"[ILLUST_CONTEXT] prompt 저장 문자열 아닌 필드: {invalid}")
             return web.json_response({"error": f"prompt fields must be strings: {invalid}"}, status=400)
-        saved = illustration_context_pipeline.save_prompt_files(body)
+        saved = illustration_context_pipeline.save_prompt_files(body, workshop)
         return web.json_response({"status": "ok", "saved": saved})
     except Exception as e:
         print(f"[ILLUST_CONTEXT] prompt API 실패: {e}")
@@ -10541,13 +11127,29 @@ async def handle_api_illustration_context_prompts(request: web.Request) -> web.R
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _workshop_toggles_key(workshop: str) -> str:
+    return EMOTION_TOGGLES_KEY if workshop == "emotion" else "illustration_context_toggles"
+
+
+def _workshop_toggles_source(workshop: str) -> dict:
+    """워크숍의 원시 토글을 반환한다. 감정 공방은 최초 1회 공용 값을 복사한다."""
+    key = _workshop_toggles_key(workshop)
+    raw = app_config.get(key)
+    if workshop == "emotion" and (not isinstance(raw, dict) or not raw):
+        raw = copy.deepcopy(app_config.get("illustration_context_toggles") or {})
+        app_config[key] = copy.deepcopy(raw)
+        save_config(app_config)
+        print("[ILLUST_CONTEXT] 감정 삽화 전용 토글을 공용 값에서 초기화했습니다")
+    return copy.deepcopy(raw) if isinstance(raw, dict) else {}
+
+
 async def handle_api_illustration_context_toggles(request: web.Request) -> web.Response:
     """서버가 제어하는 삽화 CALL/출력 토글 조회·저장."""
     try:
+        workshop = _request_workshop(request)
+        key = _workshop_toggles_key(workshop)
         if request.method == "GET":
-            raw_toggles = copy.deepcopy(
-                app_config.get("illustration_context_toggles") or {}
-            )
+            raw_toggles = _workshop_toggles_source(workshop)
             if raw_toggles.pop("original_asset_instruction", None) is not None:
                 print(
                     "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction을 "
@@ -10555,6 +11157,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
                 )
             toggles = illustration_context_pipeline.merged_toggles(raw_toggles)
             toggles.pop("original_asset_instruction", None)
+            toggles.pop("genre", None)
             toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
                 app_config.get("illustration_workflow_type")
             )
@@ -10567,6 +11170,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
             return web.json_response({"error": "toggles must be object"}, status=400)
         raw = copy.deepcopy(raw)
+        raw.pop("genre", None)
         if raw.pop("original_asset_instruction", None) is not None:
             print(
                 "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction 저장 요청을 "
@@ -10574,6 +11178,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             )
         toggles = illustration_context_pipeline.merged_toggles(raw)
         toggles.pop("original_asset_instruction", None)
+        toggles.pop("genre", None)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")
@@ -10583,7 +11188,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
                 f"[ILLUST_CONTEXT] 사용자 prompt_format 값을 자동 선택값으로 교체: "
                 f"requested={requested_prompt_format!r}, actual={toggles['prompt_format']!r}"
             )
-        app_config["illustration_context_toggles"] = toggles
+        app_config[key] = toggles
         save_config(app_config)
         return web.json_response({"status": "ok", "toggles": toggles})
     except Exception as e:
@@ -10605,11 +11210,13 @@ async def handle_api_illustration_chat_histories(request: web.Request) -> web.Re
             )
             traceback.print_exc()
             return web.json_response({"error": "limit must be an integer"}, status=400)
-        records = illustration_chat_history.list_histories(query=query, limit=limit)
+        records = illustration_chat_history.list_histories(
+            query=query, limit=limit, workshop=_request_workshop(request)
+        )
         return web.json_response({
             "histories": records,
             "count": len(records),
-            "settings": illustration_chat_history.load_settings(),
+            "settings": illustration_chat_history.load_settings(workshop=_request_workshop(request)),
         })
     except Exception as e:
         print(f"[ILLUST_HISTORY] 목록 API 실패: error={e}")
@@ -10679,13 +11286,15 @@ async def handle_api_illustration_chat_history_settings(request: web.Request) ->
     """Read/save history character-count limits kept outside config.json."""
     try:
         if request.method == "GET":
-            return web.json_response({"settings": illustration_chat_history.load_settings()})
+            return web.json_response({
+                "settings": illustration_chat_history.load_settings(workshop=_request_workshop(request))
+            })
         body = await request.json()
         raw = body.get("settings") if isinstance(body, dict) else None
         if not isinstance(raw, dict):
             print(f"[ILLUST_HISTORY] 설정 body 형식 오류: body={body!r}")
             return web.json_response({"error": "settings must be object"}, status=400)
-        settings = illustration_chat_history.save_settings(raw)
+        settings = illustration_chat_history.save_settings(raw, workshop=_request_workshop(request))
         return web.json_response({"status": "ok", "settings": settings})
     except Exception as e:
         print(f"[ILLUST_HISTORY] 설정 API 실패: error={e}")
@@ -10871,11 +11480,11 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
     try:
         if request.method == "POST":
             body = await request.json()
-            # 슬롯별 키 읽기(빈 문자열이면 삭제). llm_service.LLM_SLOT_COUNT 에서 파생.
+            # Read keys for every numbered and named slot; empty values delete keys.
             from modes.llm_service import _current_config as _ls_cfg
             slot_keys = {}
-            for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+            for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+                _k = f"llm_api_key{_suffix}"
                 slot_keys[_k] = (body.get(_k) or "").strip()
             # 기존 파일 보존하면서 병합 (한쪽만 업데이트 허용)
             existing = {}
@@ -10923,8 +11532,8 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                 shutil.copy2(keys_path, _os.path.join(requirements_dir, f"llm_keys_before_delete_{stamp}.json"))
                 _os.remove(keys_path)
             from modes.llm_service import _current_config as _ls_cfg
-            for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+            for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+                _k = f"llm_api_key{_suffix}"
                 _ls_cfg[_k] = ""
             print("[LLM_KEY] keys deleted")
             return web.json_response({"status": "ok"})
@@ -10938,8 +11547,8 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
             except Exception:
                 existing = {}
         _get_response = {}
-        for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-            _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+        for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+            _k = f"llm_api_key{_suffix}"
             _val = existing.get(_k, "")
             _get_response[_k] = _val
             _set_suffix = "1" if _k == "llm_api_key" else _k[len("llm_api_key"):]
@@ -11251,6 +11860,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         "llm8": (llm_service.callLLM8, llm_service.callLLMVision8),
         "llm9": (llm_service.callLLM9, llm_service.callLLMVision9),
         "llm10": (llm_service.callLLM10, llm_service.callLLMVision10),
+        "llm_sp": (llm_service.callLLM_sp, llm_service.callLLMVision_sp),
+        "llm_sp2": (llm_service.callLLM_sp2, llm_service.callLLMVision_sp2),
     }
     cfg = llm_service.get_config()
     _suffix = "" if target == "llm1" else target[3:]
@@ -11765,11 +12376,11 @@ def _load_llm_keys_into_config():
             data = json.load(f)
         from modes.llm_service import _current_config as _ls_cfg
         _loaded_summary = []
-        for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-            _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+        for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+            _k = f"llm_api_key{_suffix}"
             if data.get(_k):
                 _ls_cfg[_k] = data[_k]
-            _loaded_summary.append(f"key{_n}={'set' if data.get(_k) else 'empty'}")
+            _loaded_summary.append(f"key{_suffix or '1'}={'set' if data.get(_k) else 'empty'}")
         print(f"[LLM_KEY] loaded from key/llm_keys.json: " + ", ".join(_loaded_summary))
     except Exception as e:
         print(f"[LLM_KEY] load failed: {e}")
@@ -12155,10 +12766,10 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
-    if descriptor.get("panels"):
+    if descriptor.get("panels") or descriptor.get("composite_layers"):
         session = illustration_context_pipeline.get_session(session_id) or {}
         asyncio.create_task(queue_manager.add_item(
-            "illustration_context", f"만화 {operation_label} · slot {slot}",
+            "illustration_context", f"{'합성 삽화' if descriptor.get('composite_layers') else '만화'} {operation_label} · slot {slot}",
             {"prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body,
              "payload": {"protocol": "prompt_batch_v1", "session_id": session_id,
                          "context": session.get("context", ""), "items": [descriptor]}}, priority=0))
@@ -12613,7 +13224,6 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
     client_id = request.query.get("clientId", str(uuid.uuid4()))
     ws_connections[client_id] = ws
-    print(f"[WS] 연결됨: {client_id}")
     init_msg = {
         "type": "status",
         "data": {
@@ -12627,7 +13237,6 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
             pass
     finally:
         ws_connections.pop(client_id, None)
-        print(f"[WS] 해제됨: {client_id}")
     return ws
 
 
@@ -12665,23 +13274,10 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
     client_id = str(uuid.uuid4())
 
-    # 접속 메타정보 (디버깅)
-    peer = ""
-    try:
-        peer = str(getattr(request, "remote", "")) or ""
-    except Exception as e:
-        print(f"[FE-WS] peer 정보 조회 실패 err={type(e).__name__}: {e}")
-        traceback.print_exc()
-    ua = request.headers.get("User-Agent", "")[:80]
-    origin = request.headers.get("Origin", "")
-    fwd_for = request.headers.get("X-Forwarded-For", "")
-    print(f"[FE-WS] connect 시도 peer={peer} origin={origin} xff={fwd_for} ua={ua}")
-
     registered = await frontend_ws_manager.register(client_id, ws)
     if not registered:
         print(f"[FE-WS] 연결 승인 실패 client={client_id[:8]}")
         return ws
-    print(f"[FE-WS] 연결됨 client={client_id[:8]} (총 {len(frontend_ws_connections)}명)")
 
     try:
         # Send initial reschedule status
@@ -12704,14 +13300,7 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
                 except Exception as e:
                     print(f"[FE-WS] msg parse err client={client_id[:8]}: {e} raw={msg.data}")
                     traceback.print_exc()
-            elif msg.type == aiohttp.WSMsgType.CLOSE:
-                print(f"[FE-WS] CLOSE msg client={client_id[:8]}")
-                break
-            elif msg.type == aiohttp.WSMsgType.CLOSING:
-                print(f"[FE-WS] CLOSING msg client={client_id[:8]}")
-                break
-            elif msg.type == aiohttp.WSMsgType.CLOSED:
-                print(f"[FE-WS] CLOSED msg client={client_id[:8]}")
+            elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
                 break
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 print(f"[FE-WS] ERROR msg client={client_id[:8]} exc={ws.exception()}")
@@ -12720,8 +13309,7 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
         print(f"[FE-WS] 루프 예외 client={client_id[:8]} err={type(e).__name__}: {e}")
         traceback.print_exc()
     finally:
-        existed = frontend_ws_manager.unregister(client_id, ws)
-        print(f"[FE-WS] 해제됨 client={client_id[:8]} was_in_dict={existed} (남은 접속자={len(frontend_ws_connections)})")
+        frontend_ws_manager.unregister(client_id, ws)
     return ws
 
 
@@ -12750,6 +13338,9 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
     try:
         with open(filepath, "r", encoding="utf-8") as fp:
             data = json.load(fp)
+        negative_recorded = isinstance(data.get("negative"), str)
+        if negative_recorded:
+            negative = data["negative"]
         if "nodes" in data:
             # 원본 ComfyUI 워크플로우 형식 (.json)
             for node in data["nodes"]:
@@ -12759,6 +13350,7 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
                     positive = wv[0]
                 elif title == "부정프롬프트" and isinstance(wv, list) and len(wv) > 0 and isinstance(wv[0], str):
                     negative = wv[0]
+                    negative_recorded = True
         elif "prompt" in data:
             # 이전 형식 (.txt - API 포맷)
             prompt = data["prompt"]
@@ -12770,6 +13362,7 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
                     positive = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
                 elif title == "부정프롬프트":
                     negative = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
+                    negative_recorded = True
         elif data.get("provider") in ("chansub", "video") or data.get("kind") == "h3_video":
             positive = data.get("positive", "")
             negative = data.get("negative", "")
@@ -12779,10 +13372,69 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
                     f"positive_type={type(positive).__name__}, negative_type={type(negative).__name__}"
                 )
                 return "", ""
+        # Earlier JSON-workflow backups may only retain negatives in the exact
+        # submission. Recover those values, never today's presets. An explicitly
+        # saved empty negative remains empty. New backups skip this asset-heavy read.
+        submitted_path = os.path.splitext(filepath)[0] + "_submitted_prompt.json"
+        if not negative_recorded and os.path.isfile(submitted_path):
+            with open(submitted_path, "r", encoding="utf-8") as fp:
+                submitted = json.load(fp)
+            fields = submitted.get("fields", {})
+            if submitted.get("schema") == "soya.illustration.v2" and all(
+                isinstance(fields.get(key), str) for key in ("NEGATIVE_ANIMA", "NEGATIVE_SDXL")
+            ):
+                negative = fields["NEGATIVE_ANIMA"] + "\n[SDXL]\n" + fields["NEGATIVE_SDXL"]
     except Exception as e:
         print(f"[BACKUP] 프롬프트 추출 실패: file={filepath}, error={e}")
         traceback.print_exc()
     return positive, negative
+
+
+_SEED_BLOCK_RE = re.compile(r"(?m)^\[SEED\][ \t]*\r?\n(?P<value>[^\r\n]*)")
+
+
+def _next_regeneration_seed(previous_seed: int | str | None) -> int:
+    """재생성에 쓸 시드를 뽑는다. 원본과 같은 값이 나오면 다시 뽑는다."""
+    try:
+        previous_value = int(previous_seed)
+    except (TypeError, ValueError):
+        previous_value = None
+    while True:
+        seed = random.SystemRandom().randint(0, 2**32 - 1)
+        if seed != previous_value:
+            return seed
+
+
+def _replace_regeneration_seed(positive: str) -> tuple[str, int]:
+    """재생성 프롬프트의 시드를 원본과 다른 새 값으로 바꾼다.
+
+    텍스트 V3 백업은 [SEED] 블록에, JSON v2 백업은 fields.SEED 에 시드를 보관한다.
+    시드 위치를 찾지 못하면 프롬프트는 그대로 두고, 반환한 시드를 생성 호출에
+    명시적으로 넘겨 워크플로우 기본값 대신 새 시드가 쓰이게 한다.
+    """
+    if positive.lstrip().startswith("{"):
+        try:
+            payload = json.loads(positive)
+        except (TypeError, ValueError) as e:
+            print(f"[REGEN:SEED] 긍정 프롬프트 JSON 해석 실패, 새 시드만 적용: {e}")
+            return positive, _next_regeneration_seed(None)
+        fields = payload.get("fields") if isinstance(payload, dict) else None
+        if not isinstance(fields, dict):
+            return positive, _next_regeneration_seed(None)
+        seed = _next_regeneration_seed(fields.get("SEED"))
+        fields["SEED"] = seed
+        return (
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            seed,
+        )
+    match = _SEED_BLOCK_RE.search(positive)
+    if match is None:
+        return positive, _next_regeneration_seed(None)
+    seed = _next_regeneration_seed(match.group("value"))
+    return (
+        positive[:match.start("value")] + str(seed) + positive[match.end("value"):],
+        seed,
+    )
 
 
 def _extract_video_prompt_metadata(filepath: str) -> dict:
@@ -12892,6 +13544,9 @@ _main_event_loop = None  # on_startup 에서 메인 asyncio 루프 보관 (백�
 
 # {path: (mtime, is_animated)} — 백업 이미지 animated 여부 캐시. mtime 변경시 자동 갱신.
 _BACKUP_ANIM_CACHE: dict = {}
+
+# 감정 삽화 합성본을 구분하는 gen_method. 백업 목록 scope 분리에 사용한다.
+BACKUP_EMOTION_METHOD = "합성 삽화"
 
 
 def _backup_image_kind(path: str) -> bool:
@@ -13364,11 +14019,13 @@ async def _run_regeneration_attempts(
     generation_params: dict,
     illustration_multi_char: dict | None,
     label: str,
+    seed: int | None = None,
     illustration_visual_states: dict | None = None,
     regeneration_request_id: str = "",
     first_item_future: asyncio.Future | None = None,
     illustration_flow_run_id: str = "",
     illustration_flow_auto_open: bool = True,
+    illustration_prompt_json: dict | None = None,
 ) -> tuple[dict, object]:
     """공급자 레인을 점유하지 않는 위치에서 재생성 시도를 순차 조정한다.
 
@@ -13400,6 +14057,20 @@ async def _run_regeneration_attempts(
         )
         prompt_provider = source_provider
 
+    if illustration_prompt_json is None and prompt_provider == "comfy":
+        from illustration_json import illustration_edit_document
+        document = illustration_edit_document(positive, negative)
+        if (document.get("schema") == "soya.illustration.v2"
+                and document["fields"].get("SNAPREF", {}).get("references")
+                and not document.get("assets")):
+            # Tagged backup drafts retain reference IDs; their bytes are saved
+            # separately in the exact submission. Keep the current draft fields.
+            submitted_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_submitted_prompt.json")
+            with open(submitted_path, "r", encoding="utf-8") as submitted_file:
+                submitted = json.load(submitted_file)
+            document["assets"] = submitted["assets"]
+            illustration_prompt_json = document
+
     providers = [source_provider]
     if provider_mode == "hybrid":
         providers.append("chansub" if source_provider == "comfy" else "comfy")
@@ -13430,6 +14101,7 @@ async def _run_regeneration_attempts(
                     "backup_name": backup_name,
                     "positive": positive,
                     "negative": negative,
+                    "seed": seed,
                     "bot_name": bot_name or "",
                     "postprocess_settings": postprocess_settings,
                     "speak_text": speak_text or "",
@@ -13439,6 +14111,7 @@ async def _run_regeneration_attempts(
                     "generation_params": attempt_params,
                     "illustration_multi_char": illustration_multi_char,
                     "illustration_visual_states": illustration_visual_states,
+                    "illustration_prompt_json": illustration_prompt_json,
                     "regeneration_request_id": regeneration_request_id,
                     "illustration_flow_run_id": illustration_flow_run_id,
                     "illustration_flow_auto_open": illustration_flow_auto_open,
@@ -13684,7 +14357,9 @@ def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> d
 
 
 def _load_bot_data_readonly() -> dict:
-    """마이그레이션/저장 부작용 없이 bot.json을 읽는다."""
+    """배포 갱신을 반영한 뒤 봇 데이터를 읽는다."""
+    from illustration_bot_distribution import bot_distribution
+    bot_distribution.sync()
     path = llm_prompt_edit.BOT_JSON_PATH
     if not os.path.isfile(path):
         print(f"[LLM_EDIT:IDENTITY] bot.json 파일 없음: {path}")
@@ -14143,15 +14818,19 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", "20"))
     except ValueError:
         offset, limit = 0, 20
+    offset = max(0, offset)
+    limit = max(1, min(24, limit))
 
     # 모아보기 필터: all(기본) / bot:{bot_name} / bot_none / method:{gen_method}
     filter_param = request.query.get("filter", "all") or "all"
 
     backup_dir = get_backup_base_dir()
-    files = []
-    for _pat in ("*.webp", "*.avif"):
-        files.extend(glob.glob(os.path.join(backup_dir, _pat)))
-    files = sorted(set(files), key=os.path.getmtime, reverse=True)
+    def scan_files():
+        files = set()
+        for pattern in ("*.webp", "*.avif"):
+            files.update(glob.glob(os.path.join(backup_dir, pattern)))
+        return sorted(files, key=os.path.getmtime, reverse=True)
+    files = await asyncio.to_thread(scan_files)
 
     manual_character = str(request.query.get("manual_character") or "").strip()
     if manual_character:
@@ -14184,8 +14863,25 @@ async def handle_api_backups(request: web.Request) -> web.Response:
               f"profile={profile_id!r}, found={len(versions)}, shown={min(8, len(versions))}")
         return web.json_response({"backups": versions[:8], "limit": 8, "has_more": False})
 
+    # ─── 공방 범위 ───
+    # 감정 삽화 합성본은 감정 삽화 백업에만, 나머지는 삽화 백업에만 노출한다.
+    scope = request.query.get("scope", "")
+    if scope in {"illust", "emotion"}:
+        cache = _ensure_backup_filter_cache(backup_dir)
+        name_to_method = cache["name_to_method"]
+        emotion_only = scope == "emotion"
+        files = [
+            path for path in files
+            if (name_to_method.get(os.path.splitext(os.path.basename(path))[0], "") == BACKUP_EMOTION_METHOD) == emotion_only
+        ]
+
     # ─── 필터 적용 ───
-    if filter_param == "bot_none" or filter_param.startswith("bot:"):
+    if filter_param.startswith("flow:"):
+        run = illustration_flow.find_run(filter_param[5:])
+        names = set(run.get("backup_names", [])) if run else set()
+        files = [path for path in files if os.path.splitext(os.path.basename(path))[0] in names]
+        total_count = len(files)
+    elif filter_param == "bot_none" or filter_param.startswith("bot:"):
         # bot_name 기준 필터는 info 파일을 읽어야 하므로 캐시된 인덱스 사용.
         target_bot = filter_param[4:] if filter_param.startswith("bot:") else None  # bot_none → None
         cache = _ensure_backup_filter_cache(backup_dir)
@@ -14204,6 +14900,13 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         total_count = len(files)
     else:
         # all: 필터 없음
+        total_count = len(files)
+
+    # Search the entire filename index before slicing; captions remain page-sized.
+    search = request.query.get("search", "")
+    if search.strip():
+        from image_name_search import matches_image_name
+        files = [path for path in files if matches_image_name(os.path.basename(path), search)]
         total_count = len(files)
 
     # 페이지네이션 적용
@@ -14851,7 +15554,24 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
 
     bot_counts = cache["bot_counts"]
     method_counts = cache["method_counts"]
-    total = cache["total"]
+    # Metadata scanning can still be at zero even though all images were listed.
+    total = cache.get("total_files", cache["total"])
+    scope = request.query.get("scope", "")
+    if scope in {"illust", "emotion"}:
+        # 삽화/감정 삽화 백업이 같은 저장소를 참조하지 않도록 범위별로 집계한다.
+        emotion_only = scope == "emotion"
+        names = [
+            base for base, method in cache["name_to_method"].items()
+            if (method == BACKUP_EMOTION_METHOD) == emotion_only
+        ]
+        bot_counts = {}
+        method_counts = {}
+        for base in names:
+            bot_name = cache["name_to_bot"].get(base, "")
+            method = cache["name_to_method"].get(base, "")
+            bot_counts[bot_name] = bot_counts.get(bot_name, 0) + 1
+            method_counts[method] = method_counts.get(method, 0) + 1
+        total = len(names)
 
     items = []
     items.append({"key": "all", "label": "전체", "count": total})
@@ -14876,7 +15596,7 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
         # 백그라운드 빌드 진행 상황 (UI가 점진/완료 표시에 사용)
         "building": bool(cache.get("building", False)),
         "scanned": cache.get("scanned", total),
-        "total_files": cache.get("total_files", total),
+        "total_files": total if scope in {"illust", "emotion"} else cache.get("total_files", total),
     })
 
 
@@ -15043,10 +15763,28 @@ async def handle_api_backup_prompt(request: web.Request) -> web.Response:
         return web.Response(status=400, text="Invalid name")
     # .json 우선, 없으면 .txt (이전 형식) 탐색
     backup_dir = get_backup_base_dir()
+    if request.query.get("view") == "submitted":
+        path = os.path.join(backup_dir, f"{name}_submitted_prompt.json")
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return web.json_response({"submitted_prompt": json.load(f)})
+        return web.json_response({"submitted_prompt": None})
     path_json = os.path.join(backup_dir, f"{name}.json")
     path_txt = os.path.join(backup_dir, f"{name}.txt")
     path = path_json if os.path.exists(path_json) else path_txt
     if os.path.exists(path):
+        if request.query.get("view") == "edit":
+            from illustration_json import illustration_edit_document
+            positive, negative = _extract_prompts_from_backup(path)
+            submitted_path = os.path.join(backup_dir, f"{name}_submitted_prompt.json")
+            document = None
+            if os.path.isfile(submitted_path):
+                with open(submitted_path, "r", encoding="utf-8") as f:
+                    submitted = json.load(f)
+                if isinstance(submitted, dict) and submitted.get("schema") == "soya.illustration.v2":
+                    document = submitted
+            return web.json_response({"prompt_json": document or illustration_edit_document(positive, negative),
+                                      "positive": positive, "negative": negative})
         with open(path, "r", encoding="utf-8") as f:
             return web.json_response(json.load(f))
     return web.Response(status=404)
@@ -15100,6 +15838,7 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
         f"{name}_chat.txt",
         f"{name}_enhanced.txt",
         f"{name}_wildcard.json",
+        f"{name}_submitted_prompt.json",
         f"{name}.txt",
         os.path.join("_raw", f"{name}.webp"),
         os.path.join("_raw", f"{name}.avif"),
@@ -16922,6 +17661,39 @@ async def handle_api_conversion_info(request: web.Request) -> web.Response:
     return web.json_response(current_conversion_info)
 
 
+async def handle_api_postprocess_settings(request: web.Request) -> web.Response:
+    """Read or patch the shared settings; legacy URLs use the same store."""
+    from modes.postprocess import get_postprocess_config, normalize_postprocess_settings
+
+    try:
+        legacy_mode = request.path.rsplit("postprocess_", 1)[-1] if "/bot_mode/" in request.path else ""
+        body = await request.json() if request.method == "POST" else None
+        settings = get_postprocess_config(app_config)
+        if request.method == "POST":
+            if not isinstance(body, dict):
+                raise ValueError("합성 설정을 확인하세요.")
+            if "mode" in body:
+                if body["mode"] not in ("vn", "bubble", "subtitle"):
+                    raise ValueError("합성 방식을 확인하세요.")
+                settings["mode"] = body["mode"]
+            for mode in ("vn", "bubble", "subtitle"):
+                if mode in body:
+                    if not isinstance(body[mode], dict):
+                        raise ValueError("합성 설정을 확인하세요.")
+                    settings[mode] = normalize_postprocess_settings(mode, {**settings[mode], **body[mode]})
+            app_config["postprocess"] = settings
+            save_config(app_config)
+            if legacy_mode:
+                return web.json_response({"saved": True})
+        if legacy_mode == "vn":
+            return web.json_response(settings["vn"])
+        if legacy_mode in ("bubble", "subtitle"):
+            return web.json_response({legacy_mode: settings[legacy_mode], "mode": settings["mode"]})
+        return web.json_response(settings)
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
     """후처리 설정 미리보기 — 전달된 vn 설정 + SPEAK 샘플로 합성한 이미지를 반환.
 
@@ -16973,7 +17745,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 _bd = _load_bot_data()
                 _bot = next((b for b in _bd.get("bots", []) if b.get("name") == bot_name), None)
                 if _bot:
-                    _is = _bot.get(f"illust_settings_{profile}", _bot.get("illust_settings", {})) or {}
+                    _is = resolve_illust_settings(_bot, profile)
                 else:
                     print(f"[POSTPROCESS_PREVIEW] ⚠ 봇을 찾을 수 없어 저장값 대신 기본값 사용: {bot_name}")
             else:
@@ -17501,10 +18273,12 @@ async def handle_api_regenerate(
 ) -> web.Response | dict:
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
-    생성 자체는 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과
-    ComfyUI 자원을 공유하며 직렬 처리된다. 외부 HTTP 요청은 첫 큐 항목 등록 직후
-    202로 반환하고, 최종 완료/실패는 WebSocket으로 알린다. 내부 원격 슬롯 호출은
-    결과 이미지가 필요하므로 ``_return_queue_result=True``일 때만 완료를 기다린다.
+    재생성은 원본과 같은 그림이 나오지 않도록 새 시드를 뽑아 프롬프트와 생성
+    호출에 함께 적용한다. 생성 자체는 통합 큐(regenerate 타입, priority=0)를
+    경유해 일반 삽화 생성과 ComfyUI 자원을 공유하며 직렬 처리된다. 외부 HTTP
+    요청은 첫 큐 항목 등록 직후 202로 반환하고, 최종 완료/실패는 WebSocket으로
+    알린다. 내부 원격 슬롯 호출은 결과 이미지가 필요하므로
+    ``_return_queue_result=True``일 때만 완료를 기다린다.
     """
     try:
         body = copy.deepcopy(_body) if _body is not None else await request.json()
@@ -17573,13 +18347,19 @@ async def handle_api_regenerate(
                 status=409,
             )
 
+        # 재생성은 원본과 다른 결과를 만들도록 시드를 새로 뽑는다. 새 시드는
+        # 프롬프트에도 반영해 다음 백업이 실제 사용한 값을 보존하게 한다.
+        positive, regeneration_seed = _replace_regeneration_seed(positive)
+
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
+        print(f"[REGEN] 새 시드: {regeneration_seed}")
         print(f"[REGEN] 긍정: {positive}")
 
         attempt_kwargs = {
             "backup_name": backup_name,
             "positive": positive,
             "negative": negative,
+            "seed": regeneration_seed,
             "bot_name": src_bot_name or "",
             "postprocess_settings": src_pp_settings,
             "speak_text": src_speak_text,
@@ -17631,7 +18411,7 @@ async def handle_api_regenerate(
 
 
 async def handle_api_reload_workflow(request: web.Request) -> web.Response:
-    """외부 경로에서 워크플로우를 가져와 workflow 폴더에 덮어쓰고 current_work를 업데이트한다."""
+    """선택된 워크플로우 원본을 다시 읽고 current_work의 변환 캐시를 갱신한다."""
     global current_original_workflow, current_api_workflow, current_conversion_info
     try:
         src = get_comfy_workflow_source_path()
@@ -17651,14 +18431,9 @@ async def handle_api_reload_workflow(request: web.Request) -> web.Response:
         if new_hash == old_hash:
             return web.json_response({"success": True, "message": "현재 워크플로우와 동일합니다"})
 
-        # workflow 폴더의 기존 JSON 파일 제거
-        for old in glob.glob(os.path.join(WORKFLOW_DIR, "*.json")):
-            os.remove(old)
-
-        # 소스 파일 복사
-        dest = os.path.join(WORKFLOW_DIR, os.path.basename(src))
-        shutil.copy2(src, dest)
-        print(f"[RELOAD] 워크플로우 복사: {src} → {dest}")
+        # update_workflow_if_needed reads the selected source directly. Copying it
+        # to the legacy folder also copied its read-only bit and broke later reloads.
+        print(f"[RELOAD] 선택된 워크플로우 다시 읽기: {src}")
 
         # 해시 초기화 → update_workflow_if_needed가 재변환하도록
         hash_path = os.path.join(CURRENT_WORK_DIR, "current_hash.txt")
@@ -17848,7 +18623,7 @@ async def handle_api_reschedule_with_modified_prompt(
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
             return web.json_response({"error": "Invalid name"}, status=400)
 
-        if not modified_positive and not modified_negative:
+        if not modified_positive and not modified_negative and "prompt_json" not in body:
             return web.json_response({"error": "At least one prompt must be modified"}, status=400)
 
         prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
@@ -17858,8 +18633,15 @@ async def handle_api_reschedule_with_modified_prompt(
             print(f"[RESCHEDULE_MOD] 원본 프롬프트 파일 없음: backup={backup_name}")
             return web.json_response({"error": "프롬프트 파일 없음"}, status=404)
         source_positive, source_negative = _extract_prompts_from_backup(prompt_path)
+        prompt_json = body.get("prompt_json")
+        if prompt_json is not None:
+            from illustration_json import illustration_edit_prompts
+            try:
+                modified_positive, modified_negative = illustration_edit_prompts(prompt_json, source_positive)
+            except (ValueError, TypeError) as exc:
+                return web.json_response({"error": str(exc)}, status=400)
         effective_positive = modified_positive or source_positive
-        effective_negative = modified_negative if "negative" in body else source_negative
+        effective_negative = modified_negative if "negative" in body or prompt_json is not None else source_negative
 
         # 원본 백업의 bot_name 상속 (같은 봇 딱지)
         src_bot_name = _read_backup_bot_name(backup_name)
@@ -18028,6 +18810,7 @@ async def handle_api_reschedule_with_modified_prompt(
             "illustration_multi_char": src_multi_char,
             "illustration_visual_states": src_visual_states,
             "label": "수정재생성",
+            "illustration_prompt_json": prompt_json if isinstance(prompt_json, dict) and prompt_json.get("schema") == "soya.illustration.v2" else None,
             "illustration_flow_run_id": str(body.get("illustration_flow_run_id") or ""),
             "illustration_flow_auto_open": _body is not None and body.get("illustration_flow_auto_open") is not False,
         }
@@ -18101,6 +18884,14 @@ async def handle_api_llm_edit_prompt(
         backup_name = body.get("name", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
+        prompt_json = body.get("prompt_json")
+        if prompt_json is not None:
+            from illustration_json import illustration_edit_prompts
+            try:
+                positive, negative = illustration_edit_prompts(prompt_json, positive)
+            except (ValueError, TypeError) as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+        prompt_before_edit = (positive, negative)
         direction = (body.get("direction", "") or "").strip()
         allow_mask_edit = body.get("allow_mask_edit") is True
         requested_multi_char = body.get("illustration_multi_char")
@@ -18996,7 +19787,7 @@ async def handle_api_llm_edit_prompt(
                             bot_name=identity_bot_name,
                             bot=identity_bot,
                             bot_root=identity_bot_root,
-                            tags=asset_mode._tags,
+                            tags=asset_mode.get_tags(),
                             character_names=identity_names,
                             scene=scene,
                             multi_char_snapshot=remapped_multi_char_snapshot,
@@ -19047,6 +19838,13 @@ async def handle_api_llm_edit_prompt(
             "positive": reassembled,
             "negative": reassembled_negative,
         }
+        if prompt_json is not None:
+            from illustration_json import merge_illustration_edit_document
+            response_payload["prompt_json"] = merge_illustration_edit_document(
+                prompt_json, prompt_before_edit, (reassembled, reassembled_negative))
+            if remapped_multi_char_snapshot and allow_mask_edit:
+                # Re-embed the edited geometry when the next image is generated.
+                response_payload["prompt_json"].get("fields", {}).pop("REGION_MASK", None)
         if remapped_multi_char_snapshot:
             response_payload["illustration_multi_char"] = remapped_multi_char_snapshot
         if mask_edit_error:
@@ -20466,10 +21264,11 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
 
     반환 data:
       use_custom: bool (단일 글로벌 스위치)
+      response_language: en / ko (기본값 en)
       templates: { system / system_chansub / user_v3 / user_v1 / user_chansub: {builtin, custom} }
     """
     try:
-        customs, use_custom = llm_prompt_edit._load_llm_edit_custom()
+        customs, use_custom, response_language = llm_prompt_edit._load_llm_edit_custom()
         templates = {}
         for slot, meta in llm_prompt_edit.SLOTS.items():
             templates[slot] = {
@@ -20480,6 +21279,7 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
             "success": True,
             "data": {
                 "use_custom": use_custom,
+                "response_language": response_language,
                 "templates": templates,
             },
         })
@@ -20494,20 +21294,23 @@ async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response
 
     요청: {
         use_custom: bool,
+        response_language: "en" | "ko",
         templates: { system: str, user_v3: str, user_v1: str }  # 각 custom 텍스트
       }
-    누락 슬롯은 '' 로 저장(해당 슬롯 builtin 폴백).
+    생략한 설정은 보존한다. templates를 보냈을 때만 누락 슬롯을 ''로 저장한다.
     """
     try:
         body = await request.json()
-        use_custom = bool(body.get("use_custom", False))
+        use_custom = bool(body["use_custom"]) if "use_custom" in body else None
         raw = body.get("templates", {}) or {}
         customs = {}
-        for slot in llm_prompt_edit.SLOTS:
-            customs[slot] = (raw.get(slot, "") or "")
-        llm_prompt_edit._save_llm_edit_custom(customs, use_custom)
+        if "templates" in body:
+            for slot in llm_prompt_edit.SLOTS:
+                customs[slot] = (raw.get(slot, "") or "")
+        response_language = body.get("response_language")
+        llm_prompt_edit._save_llm_edit_custom(customs, use_custom, response_language)
         lens = {s: len(t) for s, t in customs.items()}
-        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} lens={lens}")
+        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} response_language={response_language} lens={lens}")
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[LLM_EDIT] template 저장 실패: {e}")
@@ -20643,8 +21446,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # 않지만, 아래 키 개수 집계를 흐리지 않도록 명시적으로 뺀다.
             body.pop("_origin", None)
 
-            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                custom_body_key = "llm_custom_body" if _slot_n == 1 else f"llm_custom_body{_slot_n}"
+            for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+                custom_body_key = f"llm_custom_body{_suffix}"
                 if custom_body_key not in body:
                     continue
                 raw_custom_body = body.get(custom_body_key) or ""
@@ -20678,12 +21481,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
 
-            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                custom_headers_key = (
-                    "llm_custom_headers"
-                    if _slot_n == 1
-                    else f"llm_custom_headers{_slot_n}"
-                )
+            for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+                custom_headers_key = f"llm_custom_headers{_suffix}"
                 if custom_headers_key not in body:
                     continue
                 raw_custom_headers = body.get(custom_headers_key)
@@ -20723,13 +21522,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 if legacy_provider == "chansub":
                     body["illustration_workflow_type"] = workflow_profiles.ILLUST_CHANSUB
                 elif legacy_provider == "comfy":
-                    legacy_toggles = body.get("illustration_context_toggles") or {}
-                    body["illustration_workflow_type"] = (
-                        workflow_profiles.ILLUST_V1
-                        if isinstance(legacy_toggles, dict)
-                        and str(legacy_toggles.get("prompt_format") or "").lower() == "v1"
-                        else workflow_profiles.ILLUST_V3
-                    )
+                    body["illustration_workflow_type"] = workflow_profiles.ILLUST_V3
                 else:
                     print(f"[CONFIG] 구 삽화 공급자 저장 거부: {legacy_provider!r}")
                     return web.json_response(
@@ -21059,21 +21852,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
-            if "asset_edit_tool" in body:
-                raw_edit_tool = str(
-                    body.get("asset_edit_tool") or ""
-                ).strip().lower()
-                if raw_edit_tool not in ("qwen", "anima_inpainting"):
-                    print(
-                        "[CONFIG] EDIT 툴 저장 거부: "
-                        f"value={body.get('asset_edit_tool')!r}"
-                    )
-                    return web.json_response(
-                        {"error": "지원하지 않는 EDIT 툴입니다."},
-                        status=400,
-                    )
-                body["asset_edit_tool"] = raw_edit_tool
-
             try:
                 if "character_maker_rag_enabled" in body:
                     body["character_maker_rag_enabled"] = bool(
@@ -21083,8 +21861,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["character_maker_rag_autostart"] = bool(
                         body.get("character_maker_rag_autostart")
                     )
-                for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                    _vk = "llm_vision_compress" if _slot_n == 1 else f"llm_vision_compress{_slot_n}"
+                for _suffix in llm_service.LLM_SLOT_SUFFIXES:
+                    _vk = f"llm_vision_compress{_suffix}"
                     if _vk in body:
                         body[_vk] = bool(body.get(_vk))
                 if "character_maker_rag_top_k" in body:
@@ -21278,9 +22056,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
 
-            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                llm_label = f"LLM{_slot_n}"
-                concurrency_key = "llm_max_concurrency" if _slot_n == 1 else f"llm_max_concurrency{_slot_n}"
+            for _slot_id, _suffix in zip(llm_service.LLM_SLOT_IDS, llm_service.LLM_SLOT_SUFFIXES):
+                llm_label = _slot_id.upper()
+                concurrency_key = f"llm_max_concurrency{_suffix}"
                 if concurrency_key not in body:
                     continue
                 raw_concurrency = body.get(concurrency_key)
@@ -21315,9 +22093,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body[concurrency_key] = concurrency
 
-            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                llm_label = f"LLM{_slot_n}"
-                timeout_key = "llm_stream_idle_timeout_seconds" if _slot_n == 1 else f"llm_stream_idle_timeout_seconds{_slot_n}"
+            for _slot_id, _suffix in zip(llm_service.LLM_SLOT_IDS, llm_service.LLM_SLOT_SUFFIXES):
+                llm_label = _slot_id.upper()
+                timeout_key = f"llm_stream_idle_timeout_seconds{_suffix}"
                 if timeout_key not in body:
                     continue
                 raw_idle_timeout = body.get(timeout_key)
@@ -21478,17 +22256,14 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # LLM 서비스 설정 업데이트
             # 주의: llm_api_key/llm_api_key2 는 /api/llm/keys 에서 별도 관리.
             # 여기서 빈 문자열로 덮어쓰면 key/llm_keys.json 에서 로드한 키가 증발함.
-            # 슬롯별 키는 단일 소스(LLM_SLOT_COUNT)에서 자동 확장한다. 슬롯 4/5 도
-            # 리터럴 누락 없이 런타임에 반영되도록 시작 동기화(server.py 하단 루프)와
-            # 동일한 range() 순회를 사용한다.
+            # Synchronize all numbered and named slots with the request engine.
             _llm_runtime_cfg = {
                 "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
                 "lora_prompt_review_enabled": app_config.get("lora_prompt_review_enabled", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             }
-            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
-                _sfx = "" if _slot_n == 1 else str(_slot_n)
+            for _sfx in llm_service.LLM_SLOT_SUFFIXES:
                 _llm_runtime_cfg.update({
                     f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "openai"),
                     f"llm_model{_sfx}": app_config.get(f"llm_model{_sfx}", ""),
@@ -21527,8 +22302,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # LLM 동시성 설정 변경 시 워커풀 즉시 갱신 (다음 아이템 적재까지 대기하지 않음)
             # 슬롯 1..N(llm_max_concurrency, llm_max_concurrency2, ...) 전부 감시.
             if any(
-                f"llm_max_concurrency{'' if _n == 1 else _n}" in body
-                for _n in range(1, llm_service.LLM_SLOT_COUNT + 1)
+                f"llm_max_concurrency{_suffix}" in body
+                for _suffix in llm_service.LLM_SLOT_SUFFIXES
             ):
                 try:
                     asyncio.ensure_future(queue_manager._ensure_llm_workers())
@@ -22054,9 +22829,9 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                         str(body.get("postprocess_text") or ""),
                         char_names,
                     )
-                from modes.bot_mode import _get_postprocess_mode
+                from modes.postprocess import get_postprocess_mode
 
-                postprocess_mode = _get_postprocess_mode(bot_name)
+                postprocess_mode = get_postprocess_mode(app_config)
             print(
                 f"[RESTORE_MANUAL] LLM 모달 입력 검증 완료: "
                 f"provider={restore_provider}, characters={char_names}, "
@@ -22234,7 +23009,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             }
             _label = f"수동그리기(삽화): {positive[:40]}..."
             print(f"[RESTORE_MANUAL] 삽화 모드 큐 등록: {_label}")
-            asyncio.create_task(queue_manager.add_item(
+            queue_item = await queue_manager.add_item(
                 "illustration", _label,
                 {
                     "prompt_id": prompt_id,
@@ -22243,17 +23018,17 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                     "illustration_flow_auto_open": False,
                 },
                 priority=0,
-            ))
+            )
         else:
             # bot 미선택: 기존 restore_manual 큐
             print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive}'")
             _label = f"수동그리기: {positive[:40]}..."
-            asyncio.create_task(queue_manager.add_item(
+            queue_item = await queue_manager.add_item(
                 "restore_manual", _label,
                 {"positive": positive, "negative": negative},
                 priority=0,
-            ))
-        return web.json_response({"success": True, "queued": True})
+            )
+        return web.json_response({"success": True, "queued": True, "item_id": queue_item.id})
     except Exception as e:
         print(f"[RESTORE_MANUAL] 오류: {e}")
         traceback.print_exc()
@@ -22654,7 +23429,9 @@ async def cors_middleware(request, handler):
 
 
 # ─── 앱 설정 ─────────────────────────────────────────────
-app = web.Application(middlewares=[log_middleware, cors_middleware], client_max_size=200*1024*1024)
+from illustration_bot_distribution import bot_distribution_middleware, handle_bot_distribution
+
+app = web.Application(middlewares=[log_middleware, cors_middleware, bot_distribution_middleware], client_max_size=200*1024*1024)
 
 # ComfyUI 프록시 라우트
 app.router.add_post("/prompt", handle_prompt)
@@ -22762,23 +23539,25 @@ app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedul
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
 app.router.add_post("/api/postprocess/preview_face", handle_api_postprocess_preview_face)
 app.router.add_get("/api/postprocess/face_devices", handle_api_postprocess_face_devices)
+app.router.add_get("/api/postprocess/settings", handle_api_postprocess_settings)
+app.router.add_post("/api/postprocess/settings", handle_api_postprocess_settings)
 app.router.add_get("/api/postprocess/fonts", handle_api_postprocess_fonts)
 app.router.add_post("/api/postprocess/font/upload", handle_api_postprocess_font_upload)
 app.router.add_post("/api/postprocess/font/delete", handle_api_postprocess_font_delete)
 app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
 app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)
-app.router.add_get("/api/bot_mode/postprocess_vn", bot_mode.handle_get_postprocess_vn)
-app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postprocess_vn)
-app.router.add_get("/api/bot_mode/postprocess_bubble", bot_mode.handle_get_postprocess_bubble)
-app.router.add_post("/api/bot_mode/postprocess_bubble", bot_mode.handle_save_postprocess_bubble)
+app.router.add_get("/api/bot_mode/postprocess_vn", handle_api_postprocess_settings)
+app.router.add_post("/api/bot_mode/postprocess_vn", handle_api_postprocess_settings)
+app.router.add_get("/api/bot_mode/postprocess_bubble", handle_api_postprocess_settings)
+app.router.add_post("/api/bot_mode/postprocess_bubble", handle_api_postprocess_settings)
 app.router.add_get(
     "/api/bot_mode/postprocess_subtitle",
-    bot_mode.handle_get_postprocess_subtitle,
+    handle_api_postprocess_settings,
 )
 app.router.add_post(
     "/api/bot_mode/postprocess_subtitle",
-    bot_mode.handle_save_postprocess_subtitle,
+    handle_api_postprocess_settings,
 )
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt/capability", handle_api_llm_edit_capability)
@@ -25129,7 +25908,7 @@ async def handle_api_preset_import_validate(request: web.Request) -> web.Respons
         draft = body.get("draft", body)
         result = preset_importer.validate_draft(
             draft,
-            asset_mode.get_tags(),
+            asset_mode.get_local_tags(),
             asset_mode.load_hidden_tags(),
         )
         chain_validation = _validate_preset_import_chain_request(body, result)
@@ -25162,7 +25941,7 @@ async def handle_api_preset_import_commit(request: web.Request) -> web.Response:
         async with _PRESET_IMPORT_COMMIT_LOCK:
             # 기존 프리셋 편집 API도 이벤트 루프에서 동기 저장하므로, 이 짧은
             # 트랜잭션 역시 이벤트 루프에서 끝내야 중간에 다른 저장이 끼지 않는다.
-            active_tags = asset_mode.get_tags()
+            active_tags = asset_mode.get_local_tags()
             hidden_tags = asset_mode.load_hidden_tags()
             draft = body.get("draft")
             prevalidation = preset_importer.validate_draft(
@@ -25235,7 +26014,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             result = asset_mode.duplicate_character(
                 body.get("source", ""), body.get("name", ""))
         elif action == "remove_character":
-            result = asset_mode.remove_character(body.get("name", ""))
+            result = asset_mode.remove_character(body.get("name", ""), builtin_unlock_token=body.get("builtin_unlock_token"))
         elif action == "update_character":
             result = asset_mode.update_character(
                 body.get("name", ""),
@@ -25243,6 +26022,8 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                 body.get("outfit"),
                 body.get("expression"),
                 group=body.get("group"),
+                settings=body.get("settings"),
+                builtin_unlock_token=body.get("builtin_unlock_token"),
             )
         elif action == "add_appearance":
             result = asset_mode.add_appearance(body.get("name", ""))
@@ -25274,14 +26055,6 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             result = asset_mode.remove_expression_tag(body.get("name", ""), body.get("index", -1))
         elif action == "duplicate_expression":
             result = asset_mode.duplicate_expression(body.get("name", ""), body.get("new_name", ""))
-        elif action == "add_quality_tag":
-            result = asset_mode.add_quality_tag(body.get("value", ""))
-        elif action == "remove_quality_tag":
-            result = asset_mode.remove_quality_tag(body.get("index", -1))
-        elif action == "add_negative_tag":
-            result = asset_mode.add_negative_tag(body.get("value", ""))
-        elif action == "remove_negative_tag":
-            result = asset_mode.remove_negative_tag(body.get("index", -1))
         elif action == "save_quality_preset":
             result = asset_mode.save_quality_preset(body.get("name", ""), body.get("tags", []))
         elif action == "delete_quality_preset":
@@ -25293,25 +26066,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
             elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
             else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
-        elif action == "load_quality_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["quality"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_quality_presets()
-                if name in presets:
-                    asset_mode._tags["quality"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 구도/기타 태그
-        elif action == "add_composition_tag":
-            result = asset_mode.add_composition_tag(body.get("value", ""))
-        elif action == "remove_composition_tag":
-            result = asset_mode.remove_composition_tag(body.get("index", -1))
         elif action == "save_composition_preset":
             result = asset_mode.save_composition_preset(body.get("name", ""), body.get("tags", []))
         elif action == "delete_composition_preset":
@@ -25323,26 +26078,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
             elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
             else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
-        elif action == "load_composition_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["composition"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_composition_presets()
-                if name in presets:
-                    asset_mode._tags["composition"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 태그 순서 변경
-        elif action == "reorder_global_tags":
-            result = asset_mode.reorder_global_tags(
-                body.get("category", ""),
-                body.get("order", []),
-                body.get("tags"))
         elif action == "reorder_sub_tags":
             result = asset_mode.reorder_sub_tags(
                 body.get("sub", ""), body.get("name", ""), body.get("order", []))
@@ -25358,25 +26094,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
             elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
             else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
-        elif action == "load_negative_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["negative"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_negative_presets()
-                if name in presets:
-                    asset_mode._tags["negative"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 캐릭터 부정 태그
-        elif action == "add_character_negative_tag":
-            result = asset_mode.add_character_negative_tag(body.get("value", ""))
-        elif action == "remove_character_negative_tag":
-            result = asset_mode.remove_character_negative_tag(body.get("index", -1))
         elif action == "save_character_negative_preset":
             result = asset_mode.save_character_negative_preset(body.get("name", ""), body.get("tags", []))
         elif action == "delete_character_negative_preset":
@@ -25388,58 +26106,8 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
             elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
             else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
-        elif action == "load_character_negative_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["character_negative"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_character_negative_presets()
-                if name in presets:
-                    asset_mode._tags["character_negative"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # ANIMA 품질 태그
-        elif action == "add_anima_quality_tag":
-            result = asset_mode.add_anima_quality_tag(body.get("value", ""))
-        elif action == "remove_anima_quality_tag":
-            result = asset_mode.remove_anima_quality_tag(body.get("index", -1))
-        elif action == "load_anima_quality_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["anima_quality"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_quality_presets()
-                if name in presets:
-                    asset_mode._tags["anima_quality"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # ANIMA 부정 태그
-        elif action == "add_anima_negative_tag":
-            result = asset_mode.add_anima_negative_tag(body.get("value", ""))
-        elif action == "remove_anima_negative_tag":
-            result = asset_mode.remove_anima_negative_tag(body.get("index", -1))
-        elif action == "load_anima_negative_preset":
-            name = body.get("name", "")
-            if not name:
-                asset_mode._tags["anima_negative"] = []
-                asset_mode.save_tags()
-                result = {"success": True}
-            else:
-                presets = asset_mode.get_negative_presets()
-                if name in presets:
-                    asset_mode._tags["anima_negative"] = list(presets[name])
-                    asset_mode.save_tags()
-                    result = {"success": True}
-                else:
-                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 외모 프리셋
         elif action == "save_appearance_preset":
             result = asset_mode.save_appearance_preset(body.get("name", ""), body.get("character", ""), body.get("appearance", ""))
@@ -25540,7 +26208,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
         elif action in {"preview_managed_presets", "import_managed_presets"}:
             async with _PRESET_IMPORT_COMMIT_LOCK:
                 result = preset_importer.transfer_managed_presets(
-                    body.get("presets"), asset_mode.get_tags(), asset_mode.load_hidden_tags(),
+                    body.get("presets"), asset_mode.get_local_tags(), asset_mode.load_hidden_tags(),
                     commit=action == "import_managed_presets",
                 )
                 if "active_tags" in result:
@@ -25618,53 +26286,11 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
         snapref_subfolder = ""
         if body.get("snapref_enabled", False) and not snapref_enabled:
             print(f"[ASSET] Ref 이미지 미지원 프로필: {asset_profile}; 참조 적용 생략")
-        if snapref_enabled:
-            snapref_images = body.get("snapref_images") or []
-            valid_images = [img for img in snapref_images if img.get("local_path") and os.path.isfile(img["local_path"])]
-            if not valid_images:
-                print(f"[ASSET] Ref 이미지 준비 실패: images={snapref_images!r}")
-                return web.json_response({"success": False, "error": "Ref 이미지 파일을 찾을 수 없습니다. 이미지를 다시 선택해 주세요."}, status=400)
-            comfy_input_dir = load_config().get("comfy_input_dir", "")
-            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-                print(f"[ASSET] Ref 이미지 input 경로 오류: path={comfy_input_dir!r}")
-                return web.json_response({"success": False, "error": "Ref 이미지를 저장할 ComfyUI input 폴더를 확인해 주세요."}, status=400)
-            if len(valid_images) > 1:
-                print(f"[ASSET] Ref 이미지 첫 번째 1장 사용: count={len(valid_images)}")
-            snapref_subfolder = _prepare_ref_folder(valid_images[:1], comfy_input_dir, snapref=True)
-        reference_images = body.get("reference_images", [])
-        reference_subfolder = ""
-        if body.get("face_id_enabled", False) and reference_images:
-            config = load_config()
-            comfy_input_dir = config.get("comfy_input_dir", "")
-            if not comfy_input_dir:
-                print("[ASSET] comfy_input_dir가 설정되지 않음, FACE-IPAdapter 폴더 생성 불가")
-            elif not os.path.isdir(comfy_input_dir):
-                print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
-            else:
-                # local_path가 있는 항목만 필터
-                valid_images = [img for img in reference_images if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
-                if valid_images:
-                    reference_subfolder = _prepare_ref_folder(valid_images, comfy_input_dir)
-                else:
-                    print(f"[ASSET] 유효한 FACE-IPAdapter 이미지 없음 (received={len(reference_images)})")
-
-        style_ref_images = body.get("style_ref_images", [])
-        style_ref_subfolder = ""
-        if body.get("style_ref_enabled", False) and style_ref_images:
-            config = load_config()
-            comfy_input_dir = config.get("comfy_input_dir", "")
-            if not comfy_input_dir:
-                print("[ASSET] comfy_input_dir가 설정되지 않음, IPAdapter 폴더 생성 불가")
-            elif not os.path.isdir(comfy_input_dir):
-                print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
-            else:
-                valid_images = [img for img in style_ref_images if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
-                if valid_images:
-                    style_ref_subfolder = _prepare_style_ref_folder(valid_images, comfy_input_dir)
-                else:
-                    print(f"[ASSET] 유효한 IPAdapter 이미지 없음 (received={len(style_ref_images)})")
+        # Selected references are embedded by AssetMode together with the prompt.
+        reference_subfolder = style_ref_subfolder = ""
 
         result = await asset_mode.generate(
+            preset_selections=body,
             character=body.get("character", ""),
             outfit=body.get("outfit", ""),
             expression=body.get("expression", ""),
@@ -25729,9 +26355,7 @@ async def handle_api_qwen_edit_translate(request: web.Request) -> web.Response:
                 {"success": False, "error": "번역할 편집 프롬프트를 입력하세요"},
                 status=400,
             )
-        edit_tool = qwen_edit_mode.normalize_edit_tool(
-            load_config().get("asset_edit_tool", "qwen")
-        )
+        edit_tool = qwen_edit_mode.normalize_edit_tool(body.get("edit_tool"))
         tool_label = qwen_edit_mode.edit_tool_label(edit_tool)
         item = await queue_manager.add_item(
             "qwen_edit_translate",
@@ -25774,6 +26398,15 @@ async def handle_api_qwen_edit_translate(request: web.Request) -> web.Response:
             {"success": False, "error": f"잘못된 JSON 요청: {e}"},
             status=400,
         )
+    except ValueError as e:
+        print(
+            "[QWEN_EDIT_API] 번역 요청 검증 실패: "
+            f"error={type(e).__name__}: {e}"
+        )
+        return web.json_response(
+            {"success": False, "error": str(e)},
+            status=400,
+        )
     except Exception as e:
         print(
             "[QWEN_EDIT_API] 번역 요청 예외: "
@@ -25800,7 +26433,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             return web.json_response(
                 {
                     "success": False,
-                    "error": "Qwen Edit 요청은 multipart/form-data여야 합니다",
+                    "error": "EDIT 요청은 multipart/form-data여야 합니다",
                 },
                 status=400,
             )
@@ -25894,20 +26527,9 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             )
 
         selected_edit_tool = qwen_edit_mode.normalize_edit_tool(
-            app_config.get("asset_edit_tool", "qwen")
+            fields.get("edit_tool")
         )
-        if selected_edit_tool == "anima_inpainting":
-            edit_defaults = {
-                "steps": "30",
-                "cfg": "4.0",
-                "denoise": "0.8",
-            }
-        else:
-            edit_defaults = {
-                "steps": "6",
-                "cfg": "1.0",
-                "denoise": "1.0",
-            }
+        edit_defaults = qwen_edit_mode.edit_defaults(selected_edit_tool)
         staged = qwen_edit_mode.stage_request(
             character=fields.get("character", ""),
             outfit=fields.get("outfit", ""),
@@ -25918,12 +26540,13 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             source_data=source_data,
             edit_prompt_original=fields.get("edit_prompt_original", ""),
             negative_prompt=fields.get("negative_prompt", ""),
-            seed=fields.get("seed", "-1"),
+            seed=fields.get("seed", edit_defaults["seed"]),
             steps=fields.get("steps", edit_defaults["steps"]),
             cfg=fields.get("cfg", edit_defaults["cfg"]),
             denoise=fields.get("denoise", edit_defaults["denoise"]),
-            mask_grow=fields.get("mask_grow", "8"),
-            mask_blur=fields.get("mask_blur", "4.0"),
+            mask_grow=fields.get("mask_grow", edit_defaults["mask_grow"]),
+            mask_blur=fields.get("mask_blur", edit_defaults["mask_blur"]),
+            edit_tool=selected_edit_tool,
         )
         tool_label = qwen_edit_mode.edit_tool_label(staged["edit_tool"])
         label = (
@@ -27877,7 +28500,7 @@ async def handle_api_pose_mode_delete(request: web.Request) -> web.Response:
 # ─── 체인 프리셋 API 핸들러 ──────────────────────────────
 async def handle_api_chain_presets_list(request: web.Request) -> web.Response:
     try:
-        return web.json_response({"presets": chain_preset_mode.list_presets()})
+        return web.json_response(chain_preset_mode.catalog(), headers={"Cache-Control": "no-store"})
     except Exception as e:
         print(f"[CHAIN_PRESET_API] 활성 목록 조회 예외: {e}")
         traceback.print_exc()
@@ -27886,7 +28509,11 @@ async def handle_api_chain_presets_list(request: web.Request) -> web.Response:
 
 async def handle_api_chain_presets_manage(request: web.Request) -> web.Response:
     try:
+        if request.method == "POST":
+            return web.json_response(chain_preset_mode.change(await request.json()))
         return web.json_response(chain_preset_mode.get_management_presets())
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
     except Exception as e:
         print(f"[CHAIN_PRESET_API] 숨김 관리 목록 조회 예외: {e}")
         traceback.print_exc()
@@ -27895,12 +28522,10 @@ async def handle_api_chain_presets_manage(request: web.Request) -> web.Response:
 async def handle_api_chain_presets_save(request: web.Request) -> web.Response:
     try:
         body = await request.json()
-        result = chain_preset_mode.save_preset(
-            name=body.get("name", ""),
-            chains=body.get("chains", []),
-            repeat=body.get("repeat", 1),
-        )
+        result = chain_preset_mode.change({**body, "action": "save"})
         return web.json_response(result)
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
     except Exception as e:
         print(f"[CHAIN_PRESET_API] 저장 요청 처리 예외: {e}")
         traceback.print_exc()
@@ -27909,7 +28534,7 @@ async def handle_api_chain_presets_save(request: web.Request) -> web.Response:
 async def handle_api_chain_presets_load(request: web.Request) -> web.Response:
     name = request.match_info.get("name", "")
     try:
-        result = chain_preset_mode.load_preset(name)
+        result = chain_preset_mode.load_preset(name, scope=request.query.get("scope"))
         if result is None:
             print(f"[CHAIN_PRESET_API] 로드 실패: 활성 프리셋 없음 (name={name!r})")
             return web.json_response({"error": "프리셋을 찾을 수 없습니다."}, status=404)
@@ -27944,8 +28569,10 @@ async def handle_api_chain_presets_restore(request: web.Request) -> web.Response
 async def handle_api_chain_presets_delete(request: web.Request) -> web.Response:
     try:
         body = await request.json()
-        result = chain_preset_mode.delete_preset(body.get("name", ""))
+        result = chain_preset_mode.change({**body, "action": "delete"})
         return web.json_response(result)
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
     except Exception as e:
         print(f"[CHAIN_PRESET_API] 삭제 요청 처리 예외: {e}")
         traceback.print_exc()
@@ -28085,6 +28712,7 @@ async def _run_on_tunnel_subprocess_loop(coroutine):
 
 
 _tunnel_process: asyncio.subprocess.Process | None = None
+_TUNNEL_TARGET = "http://localhost:8189"
 _tunnel_url: str | None = None
 _cloudflared_path: str | None = None
 _tunnel_stderr_task: asyncio.Task | None = None
@@ -28228,7 +28856,7 @@ async def _start_cloudflared_on_subprocess_loop(
         return {"status": "already_running", "url": _tunnel_url}, 200
 
     _tunnel_process = await asyncio.create_subprocess_exec(
-        cf_bin, "tunnel", "--url", "http://localhost:8189",
+        cf_bin, "tunnel", "--url", _TUNNEL_TARGET,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -28357,7 +28985,7 @@ async def _tunnel_cleanup(app):
         await asyncio.to_thread(_tunnel_subprocess_loop.close)
 
 # ─── Tailscale Serve (tailnet 고정 주소) ─────────────────
-# 이 매니저가 소유하는 설정은 HTTPS 8189 -> 127.0.0.1:8189 한 개뿐이다.
+# The standalone dashboard defaults to 8189; the workshop worker uses 8202.
 # 다른 포트의 기존 Serve 설정은 조회·시작·종료 과정에서 변경하지 않는다.
 _tailscale_active: bool = False
 _tailscale_url: str | None = None
@@ -28397,9 +29025,9 @@ async def _communicate_tailscale_on_subprocess_loop(
 def _parse_tailscale_serve_state(
     data: dict[str, Any],
 ) -> tuple[bool, str | None, str | None]:
-    """Serve JSON에서 이 매니저의 정확한 8189 매핑만 식별한다.
+    """Identify only this manager's configured port and target in Serve JSON.
 
-    반환값은 ``(active, url, conflict)``이다. 8189가 다른 대상으로 이미
+    반환값은 ``(active, url, conflict)``이다. 지정 포트가 다른 대상으로 이미
     설정돼 있으면 conflict를 반환하여 기존 사용자 설정을 덮어쓰지 않는다.
     """
     web_config = data.get("Web") or {}
@@ -28437,12 +29065,12 @@ def _parse_tailscale_serve_state(
             conflicting_descriptions.append(f"{authority} → {configured}")
 
     tcp_config = data.get("TCP") or {}
-    tcp_8189_present = (
+    tcp_port_present = (
         isinstance(tcp_config, dict)
         and str(_TAILSCALE_SERVE_HTTPS_PORT) in tcp_config
     )
 
-    if conflicting_descriptions or (tcp_8189_present and owned_authority is None):
+    if conflicting_descriptions or (tcp_port_present and owned_authority is None):
         detail = ", ".join(conflicting_descriptions) or "기존 TCP/HTTPS 설정"
         conflict = (
             f"Tailscale HTTPS {_TAILSCALE_SERVE_HTTPS_PORT} 포트가 이미 다른 "
@@ -28599,7 +29227,7 @@ async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
         if not active:
             _tailscale_active = False
             _tailscale_url = None
-            print("[TAILSCALE] 종료할 매니저 소유 Serve 8189 설정이 없음")
+            print(f"[TAILSCALE] 종료할 매니저 소유 Serve {_TAILSCALE_SERVE_HTTPS_PORT} 설정이 없음")
             return web.json_response({"status": "stopped"})
 
         out, err, returncode = await _run_on_tunnel_subprocess_loop(
@@ -28616,7 +29244,7 @@ async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
             out_text = out.decode("utf-8", errors="ignore").strip()
             msg = err_text or out_text or f"tailscale serve off 실패 (code {returncode})"
             print(
-                "[TAILSCALE] Serve 8189 종료 실패: "
+                f"[TAILSCALE] Serve {_TAILSCALE_SERVE_HTTPS_PORT} 종료 실패: "
                 f"returncode={returncode}, stderr={err_text!r}, stdout={out_text!r}"
             )
             return web.json_response(
@@ -28624,20 +29252,20 @@ async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
             )
         active, _url, conflict = await _tailscale_serve_state()
         if active or conflict:
-            msg = conflict or "Serve 8189 설정이 종료 후에도 활성 상태입니다."
-            print(f"[TAILSCALE] Serve 8189 종료 확인 실패: {msg}")
+            msg = conflict or f"Serve {_TAILSCALE_SERVE_HTTPS_PORT} 설정이 종료 후에도 활성 상태입니다."
+            print(f"[TAILSCALE] Serve {_TAILSCALE_SERVE_HTTPS_PORT} 종료 확인 실패: {msg}")
             return web.json_response(
                 {"status": "error", "error": msg}, status=500
             )
     except Exception as exc:
-        print(f"[TAILSCALE] Serve 8189 종료 중 예외: {exc}")
+        print(f"[TAILSCALE] Serve {_TAILSCALE_SERVE_HTTPS_PORT} 종료 중 예외: {exc}")
         traceback.print_exc()
         return web.json_response(
             {"status": "error", "error": str(exc)}, status=500
         )
     _tailscale_active = False
     _tailscale_url = None
-    print("[TAILSCALE] Serve HTTPS 8189 연결 종료 완료")
+    print(f"[TAILSCALE] Serve HTTPS {_TAILSCALE_SERVE_HTTPS_PORT} 연결 종료 완료")
     return web.json_response({"status": "stopped"})
 
 # ─── 공유 모달 연결 가이드 이미지 서빙 ──────────────────
@@ -28910,22 +29538,8 @@ def _character_maker_resolve_preset_tags(
 
     settings = session_state.get("settings") or {}
     preset_name = str(settings.get(field) or "").strip()
-    if not preset_name:
-        return []
-    presets = profile_tags.get(category) or {}
-    if not isinstance(presets, dict):
-        print(
-            f"[CHARACTER_MAKER:ILLUST] 프리셋 카테고리 형식 오류: "
-            f"field={field}, category={category}, type={type(presets).__name__}"
-        )
-        return []
-    if preset_name not in presets:
-        print(
-            f"[CHARACTER_MAKER:ILLUST] 선택 프리셋 누락: "
-            f"field={field}, category={category}, preset={preset_name!r}"
-        )
-        return []
-    return _character_maker_prompt_tags(presets.get(preset_name))
+    from preset_catalog import resolve_preset_tags
+    return _character_maker_prompt_tags(resolve_preset_tags(profile_tags, category, preset_name))
 
 
 def _character_maker_lora_payload(
@@ -28980,7 +29594,7 @@ def _build_character_maker_illustration_prompt(
         )
         raise CharacterMakerError("캐릭터 메이커 생성 상태가 올바르지 않습니다.")
 
-    profile_tags = copy.deepcopy(asset_mode._tags or {})
+    profile_tags = asset_mode.get_tags()
     if not isinstance(profile_tags, dict):
         print(
             "[CHARACTER_MAKER:ILLUST] 에셋 태그 데이터 형식 오류: "
@@ -29130,18 +29744,6 @@ def _build_character_maker_illustration_prompt(
         height = built["height"]
         quality_tag_start = built["quality_tag_start"]
         quality_tag_count = built["quality_tag_count"]
-    elif prompt_format == "v1":
-        built = build_v1_prompt(
-            setup,
-            char,
-            supplement,
-            profile_tags,
-            builder_settings,
-        )
-        positive = built["positive"]
-        negative = built["negative"]
-        width = built["width"]
-        height = built["height"]
     else:
         builder = IllustPromptBuilder()
         marker = "character_maker"
@@ -30188,6 +30790,19 @@ app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_e
 app.router.add_post("/api/asset_mode/export", handle_api_asset_mode_export_post)
 # ─── 봇 모드 API 라우트 ──────────────────────────────────
 app.router.add_get("/api/bot_mode/bots", bot_mode.handle_get_bots)
+app.router.add_get("/api/bot_mode/emotion_characters", bot_mode.handle_emotion_store_characters)
+app.router.add_get("/api/bot_mode/emotion_profiles", bot_mode.handle_emotion_store_profiles)
+app.router.add_post("/api/bot_mode/emotion_profiles", bot_mode.handle_emotion_store_profiles)
+app.router.add_get("/api/bot_mode/emotion_outfits", bot_mode.handle_emotion_store_outfits)
+app.router.add_post("/api/bot_mode/emotion_outfits", bot_mode.handle_emotion_store_outfits)
+app.router.add_get("/api/bot_mode/emotion_emotions", bot_mode.handle_emotion_store_emotions)
+app.router.add_post("/api/bot_mode/emotion_emotions", bot_mode.handle_emotion_store_emotions)
+app.router.add_get("/api/bot_mode/emotion_assets", bot_mode.handle_emotion_store_assets)
+app.router.add_post("/api/bot_mode/emotion_assets", bot_mode.handle_emotion_store_assets)
+app.router.add_post("/api/bot_mode/emotion_upload", bot_mode.handle_emotion_store_upload)
+app.router.add_get("/api/bot_mode/emotion_image", bot_mode.handle_emotion_store_image)
+app.router.add_get("/api/bot_mode/distribution", handle_bot_distribution)
+app.router.add_post("/api/bot_mode/distribution", handle_bot_distribution)
 app.router.add_post("/api/bot_mode/action", bot_mode.handle_bot_action)
 app.router.add_get("/api/bot_mode/images", bot_mode.handle_get_images)
 app.router.add_get("/api/bot_mode/image/{bot}/{character}/{filename}", bot_mode.handle_get_image)
@@ -30214,6 +30829,8 @@ app.router.add_post("/api/bot_mode/tag_filter_preview", bot_mode.handle_tag_filt
 app.router.add_post("/api/bot_mode/tag_filter_apply", bot_mode.handle_tag_filter_apply)
 app.router.add_get("/api/bot_mode/asset_chars_with_rep", bot_mode.handle_get_asset_chars_with_rep)
 app.router.add_post("/api/bot_mode/import_asset_chars", bot_mode.handle_import_asset_chars)
+app.router.add_get("/api/bot_mode/importable_bot_chars", bot_mode.handle_get_importable_bot_chars)
+app.router.add_post("/api/bot_mode/import_bot_chars", bot_mode.handle_import_bot_chars)
 app.router.add_post("/api/bot_mode/batch_set_negative", bot_mode.handle_batch_set_negative)
 app.router.add_post("/api/bot_mode/analyze_single", bot_mode.handle_analyze_single)
 app.router.add_post("/api/bot_mode/set_negative_single", bot_mode.handle_set_negative_single)
@@ -30755,6 +31372,7 @@ app.router.add_post("/api/pose_mode/poses/delete", handle_api_pose_mode_delete)
 app.router.add_get("/api/chain_presets", handle_api_chain_presets_list)
 app.router.add_post("/api/chain_presets/save", handle_api_chain_presets_save)
 app.router.add_get("/api/chain_presets/manage", handle_api_chain_presets_manage)
+app.router.add_post("/api/chain_presets/manage", handle_api_chain_presets_manage)
 app.router.add_post("/api/chain_presets/hide", handle_api_chain_presets_hide)
 app.router.add_post("/api/chain_presets/restore", handle_api_chain_presets_restore)
 app.router.add_get("/api/chain_presets/{name}", handle_api_chain_presets_load)
@@ -30863,8 +31481,65 @@ async def handle_api_lora_training_list(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_lora_images_upload(request):
+    """Upload training or test images without an asset character."""
+    try:
+        from modes.lora_mode import save_uploaded_image
+        character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
+        reader = await request.multipart()
+        results = []
+        async for part in reader:
+            if part.name != "files" or not part.filename:
+                continue
+            result = save_uploaded_image(
+                character, entry, part.filename, await part.read(),
+                test=request.path.endswith("/test_images/upload"),
+            )
+            results.append(result)
+        if not results:
+            return web.json_response({"success": False, "error": "이미지 파일을 선택하세요."}, status=400)
+        return web.json_response({"success": True, "results": results})
+    except Exception as e:
+        print(f"[LORA] 이미지 업로드 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def _enqueue_lora_image_tagging(character, entry, filenames):
+    """Tag training copies using the existing image analysis queue."""
+    from modes.lora_mode import get_training_image_path
+    items = []
+    batch_label = f"LoRA 프롬프트 태깅: {entry} · 학습용"
+    for filename in filenames:
+        path = get_training_image_path(character, entry, filename)
+        if not path:
+            continue
+        items.append({
+            "type": "tag_analysis", "label": f"LoRA 프롬프트 태깅: {entry}/{filename}",
+            "batch_label": batch_label,
+            "params": {"source": "asset_lora", "image": {
+                "filepath": path, "filename": filename, "character": character,
+                "entry": entry, "test": False,
+            }},
+        })
+    created = await queue_manager.add_items_batch(items) if items else []
+    return {"batch_id": created[0].batch_id if created else None, "count": len(created)}
+
+
+async def handle_api_lora_images_analyze(request):
+    try:
+        body = await request.json()
+        character, entry, filenames = body.get("character", ""), body.get("entry", ""), body.get("filenames", [])
+        if not character or not entry or not isinstance(filenames, list) or not filenames or not all(isinstance(name, str) for name in filenames):
+            return web.json_response({"success": False, "error": "태깅할 이미지를 선택하세요."}, status=400)
+        result = await _enqueue_lora_image_tagging(character, entry, filenames)
+        return web.json_response({"success": True, **result})
+    except Exception as exc:
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
 async def handle_api_lora_training_add(request):
-    """학습용 이미지 추가 (에셋에서 복사)"""
+    """Copy source images into the project, then enqueue prompt tagging."""
     try:
         body = await request.json()
         character = body.get("character", "")
@@ -30874,6 +31549,10 @@ async def handle_api_lora_training_add(request):
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
         from modes.lora_mode import add_training_images
         result = add_training_images(character, entry, sources)
+        try:
+            result["tagging"] = await _enqueue_lora_image_tagging(character, entry, result.get("added", []))
+        except Exception as exc:
+            result["tagging_error"] = str(exc)
         return web.json_response(result)
     except Exception as e:
         print(f"[LORA] 학습 이미지 추가 실패: {e}")
@@ -30951,6 +31630,9 @@ async def handle_api_lora_training_prompt(request):
 
 
 app.router.add_get("/api/lora/training_images", handle_api_lora_training_list)
+app.router.add_post("/api/lora/training_images/upload", handle_api_lora_images_upload)
+app.router.add_post("/api/lora/test_images/upload", handle_api_lora_images_upload)
+app.router.add_post("/api/lora/training_images/analyze", handle_api_lora_images_analyze)
 app.router.add_post("/api/lora/training_images/add", handle_api_lora_training_add)
 app.router.add_get("/api/lora/training_image/{character}/{entry}/{filename}", handle_api_lora_training_image)
 app.router.add_post("/api/lora/training_images/delete", handle_api_lora_training_delete)
@@ -30975,7 +31657,7 @@ async def handle_api_lora_test_list(request):
 
 
 async def handle_api_lora_test_add(request):
-    """테스트 이미지 추가 (에셋에서 복사)"""
+    """Copy test images and their original prompt content without tagging."""
     try:
         body = await request.json()
         character = body.get("character", "")
@@ -31130,7 +31812,7 @@ async def handle_api_lora_manage_delete(request):
         if result.get("success"):
             try:
                 await modal_service.enqueue_lora_delete(
-                    f"SOYA_CHAR_LORA/{_safe_dirname(character)}/Lora/{_safe_dirname(name)}"
+                    f"SOYA_CHAR_LORA/{ASSET_LORA_FOLDER}/{_safe_dirname(character)}/Lora/{_safe_dirname(name)}"
                 )
             except Exception as sync_error:
                 print(
@@ -31211,7 +31893,7 @@ async def handle_api_bot_lora_for_picker(request):
     try:
         from modes.bot_lora_mode import list_bot_lora_for_picker
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         groups = list_bot_lora_for_picker(lora_load_path)
         return web.json_response({"success": True, "groups": groups})
     except Exception as e:
@@ -31430,7 +32112,9 @@ async def handle_api_lora_training_start(request):
         if not character or not entry:
             return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
 
-        item = await queue_manager.add_item("asset_lora_training", f"[에셋] {character}/{entry} LoRA 학습", {
+        from modes.lora_mode import LORA_PROJECT_OWNER
+        label = entry if character == LORA_PROJECT_OWNER else f"{character}/{entry}"
+        item = await queue_manager.add_item("asset_lora_training", f"[에셋] {label} LoRA 학습", {
             "character": character, "entry": entry,
         })
         return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
@@ -31821,7 +32505,7 @@ async def handle_api_bot_lora_project_delete(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import _safe_dirname, remove_project
         result = remove_project(bot_name, project_name, lora_load_path)
         if result.get("success"):
@@ -31853,7 +32537,7 @@ async def handle_api_bot_lora_project_duplicate(request):
         if not bot_name or not src_project or not dst_project:
             return web.json_response({"success": False, "error": "봇/원본/대상 프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import duplicate_project
         result = duplicate_project(bot_name, src_project, dst_project, lora_load_path)
         return web.json_response(result)
@@ -31871,7 +32555,7 @@ async def handle_api_bot_lora_project(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import get_project_data
         result = get_project_data(bot_name, project_name, lora_load_path)
         return web.json_response(result)
@@ -32158,8 +32842,9 @@ async def handle_api_bot_lora_char_available_images(request):
         if not bot_name or not char_name:
             return web.json_response({"success": False, "error": "봇/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import list_bot_char_available_images
-        images = list_bot_char_available_images(
-            bot_name, char_name, visual_card_id
+        images = await asyncio.to_thread(
+            list_bot_char_available_images, bot_name, char_name, visual_card_id,
+            include_details=request.query.get("summary") != "1",
         )
         return web.json_response({"success": True, "images": images})
     except Exception as e:
@@ -32337,7 +33022,7 @@ async def handle_api_bot_lora_feedback(request):
         bot, project = body.get("bot", ""), body.get("project", "")
         from modes.bot_lora_mode import get_project_data
         config = load_config()
-        load_path = config.get("bot_lora_load_path") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        load_path = bot_lora_load_path(config)
         data = get_project_data(bot, project, load_path)
         if not data.get("success", True):
             raise ValueError(data.get("error", "프로젝트를 찾을 수 없습니다"))
@@ -32472,7 +33157,6 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     )
     effective_test_images = char_test_images if char_test_images else test_images
     profile = training_config.get("profile", "anima")
-    step = training_config.get("step_per_image", 50)
     il_rate = training_config.get("il_rate", 0.0005)
     save_step = training_config.get("save_per_step", 50)
     folder = training_config.get("multi_img_folder_name", "soya_lora")
@@ -32506,33 +33190,26 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "visual_card_id": visual_card_id, "visual_card_label": visual_card_label, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
 
     try:
-        export_result = export_bot_training_images(
-            bot_name, project_name, cn, comfy_input_dir, folder, visual_card_id
-        )
-        if not export_result.get("success"):
-            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
-            return
-        images = _get_project_training_images(
-            bot_name, project_name, cn, visual_card_id
+        from lora_training_steps import prepare_training_images
+        from lora_training_workflow import training_workflow_source_path
+        workflow_path = training_workflow_source_path(training_config)
+        images, step = prepare_training_images(
+            _get_project_training_images(bot_name, project_name, cn, visual_card_id), training_config,
         )
         if not images:
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"{cn}: 학습 이미지 없음"})
             return
 
+        export_result = export_bot_training_images(
+            bot_name, project_name, cn, comfy_input_dir, folder, visual_card_id,
+            image_filenames=[image["filename"] for image in images],
+        )
+        if not export_result.get("success"):
+            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
+            return
+
         positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
         negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
-
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        if isinstance(workflow_paths, dict) and workflow_paths:
-            workflow_path = workflow_paths.get(profile, "")
-            if not workflow_path:
-                for k, v in workflow_paths.items():
-                    if v: workflow_path = v; break
-        else:
-            workflow_path = config.get("lora_training_workflow_source_path", "")
-        if not workflow_path or not os.path.isfile(workflow_path):
-            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": "워크플로우 파일 없음"})
-            return
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
@@ -32572,7 +33249,7 @@ async def handle_api_bot_lora_trained_sessions(request):
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         if not lora_load_path:
             return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
         print(f"[BOT_LORA_TRAINED] 세션 조회: bot={bot_name}, project={project_name}, char={char_name}, lora_load_path={lora_load_path}")
@@ -32597,7 +33274,7 @@ async def handle_api_bot_lora_trained_steps(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import list_bot_trained_steps
         steps = list_bot_trained_steps(
             lora_load_path,
@@ -32625,7 +33302,7 @@ async def handle_api_bot_lora_trained_toml(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import read_bot_toml_file
         result = read_bot_toml_file(
             lora_load_path,
@@ -32654,7 +33331,7 @@ async def handle_api_bot_lora_trained_preview(request):
         if not bot_name or not project_name or not char_name or not session or not filename:
             return web.Response(status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import get_bot_trained_preview_path
         fpath = get_bot_trained_preview_path(
             lora_load_path,
@@ -32685,7 +33362,7 @@ async def handle_api_bot_lora_trained_delete(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import delete_bot_trained_step
         result = delete_bot_trained_step(
             lora_load_path,
@@ -32714,7 +33391,7 @@ async def handle_api_bot_lora_trained_delete_session(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import delete_bot_trained_session
         result = delete_bot_trained_session(
             lora_load_path,
@@ -32789,7 +33466,7 @@ async def handle_api_bot_lora_cleanup_non_representative(request):
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        lora_load_path = bot_lora_load_path(config)
         from modes.bot_lora_mode import cleanup_non_representative_loras
         result = cleanup_non_representative_loras(
             lora_load_path,
@@ -33453,11 +34130,29 @@ async def handle_api_style_lora_detail(request):
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import get_project_detail
-        return web.json_response(await asyncio.to_thread(get_project_detail, project))
+        return web.json_response(await asyncio.to_thread(
+            get_project_detail, project, include_prompts=request.query.get("include_prompts") != "0",
+        ))
     except Exception as e:
         print(f"[STYLE_LORA_API] detail 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_image_page(request):
+    try:
+        project = (request.query.get("project") or "").strip()
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        from modes.style_lora_mode import get_image_page
+        result = await asyncio.to_thread(
+            get_image_page, project, int(request.query.get("offset", "0")),
+            int(request.query.get("limit", "24")), test=request.query.get("test") == "1",
+            search=request.query.get("search", ""),
+        )
+        return web.json_response(result)
+    except ValueError:
+        return web.json_response({"success": False, "error": "이미지 페이지 범위를 확인하세요."}, status=400)
 
 
 async def handle_api_style_lora_image(request):
@@ -33682,7 +34377,7 @@ async def handle_api_style_lora_images_delete_bulk(request):
         if not isinstance(filenames, list) or not filenames:
             return web.json_response({"success": False, "error": "filenames(비어있지 않은 배열) 필수"}, status=400)
         from modes.style_lora_mode import delete_images_bulk
-        result = delete_images_bulk(project, filenames)
+        result = await asyncio.to_thread(delete_images_bulk, project, filenames)
         return web.json_response(result)
     except Exception as e:
         print(f"[STYLE_LORA_API] 이미지 일괄 삭제 실패: {e}")
@@ -33717,7 +34412,7 @@ async def handle_api_style_lora_image_filter_status(request):
     """이미지 필터링 잡 상태 폴링."""
     try:
         from modes.image_filter_mode import get_job_status
-        return web.json_response(get_job_status())
+        return web.json_response(get_job_status(request.query.get("project", ""), request.query.get("job_id", "")))
     except Exception as e:
         print(f"[STYLE_LORA_API] 이미지 필터링 상태 조회 실패: {e}")
         traceback.print_exc()
@@ -33728,11 +34423,19 @@ async def handle_api_style_lora_image_filter_cancel(request):
     """이미지 필터링 잡 중지 요청."""
     try:
         from modes.image_filter_mode import cancel_filter_job
-        return web.json_response(cancel_filter_job())
+        body = await request.json() if request.can_read_body else {}
+        return web.json_response(cancel_filter_job(body.get("project", ""), body.get("job_id", "")))
     except Exception as e:
         print(f"[STYLE_LORA_API] 이미지 필터링 중지 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_image_filter_apply(request):
+    body = await request.json()
+    from modes.image_filter_mode import apply_filter_job
+    result = await apply_filter_job(body.get("project", ""), body.get("job_id", ""))
+    return web.json_response(result, status=200 if result.get("success") else 409)
 
 
 async def handle_api_style_lora_images_upload(request):
@@ -34161,6 +34864,7 @@ app.router.add_post("/api/style_lora/projects", handle_api_style_lora_projects)
 app.router.add_post("/api/style_lora/project/delete", handle_api_style_lora_project_delete)
 app.router.add_post("/api/style_lora/project/update", handle_api_style_lora_project_update)
 app.router.add_get("/api/style_lora/detail", handle_api_style_lora_detail)
+app.router.add_get("/api/style_lora/image_page", handle_api_style_lora_image_page)
 app.router.add_get("/api/style_lora/image/{project}/{filename}", handle_api_style_lora_image)
 app.router.add_post("/api/style_lora/images/add", handle_api_style_lora_images_add)
 app.router.add_post("/api/style_lora/images/delete", handle_api_style_lora_images_delete)
@@ -34174,6 +34878,7 @@ app.router.add_post("/api/style_lora/test_images/prompt", handle_api_style_lora_
 app.router.add_post("/api/style_lora/image_filter/start", handle_api_style_lora_image_filter_start)
 app.router.add_get("/api/style_lora/image_filter/status", handle_api_style_lora_image_filter_status)
 app.router.add_post("/api/style_lora/image_filter/cancel", handle_api_style_lora_image_filter_cancel)
+app.router.add_post("/api/style_lora/image_filter/apply", handle_api_style_lora_image_filter_apply)
 app.router.add_post("/api/style_lora/images/upload", handle_api_style_lora_images_upload)
 app.router.add_post("/api/style_lora/analyze", handle_api_style_lora_analyze)
 app.router.add_get("/api/style_lora/config", handle_api_style_lora_config_get)
@@ -34274,6 +34979,8 @@ async def handle_api_queue_remove(request):
         body = await request.json()
         item_id = body.get("id", "")
         removed = queue_manager.remove_item(item_id)
+        if removed:
+            await queue_manager._notify_queue_updated()
         return web.json_response({"success": removed})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
@@ -34330,7 +35037,6 @@ async def handle_api_instance_lora_preview(request):
         settings = get_settings().get("data", {})
         ps = settings.get(profile, {})
 
-        step = ps.get("step_per_image", 125)
         il_rate = ps.get("il_rate", 0.00025)
         save_step = 25
         folder = ps.get("multi_img_folder_name", "soya_lora")
@@ -34355,6 +35061,9 @@ async def handle_api_instance_lora_preview(request):
                 "positive": prompt_result.get("data", {}).get("positive", "") if prompt_result.get("success") else "",
                 "negative": prompt_result.get("data", {}).get("negative", "") if prompt_result.get("success") else "",
             })
+
+        from lora_training_steps import prepare_training_images
+        training_images, step = prepare_training_images(training_images, ps, default_step=125)
 
         positive_text = _build_lora_training_text(
             training_images, trigger, profile, step, il_rate, save_step, folder,
@@ -34388,7 +35097,6 @@ async def handle_api_style_lora_preview(request):
     큐(_handle_instance_lora_training 의 source=style_lora 분기)와 동일한 로직으로
     _build_lora_training_text 를 재사용해 실제 ComfyUI 전송 프롬프트를 반환한다."""
     try:
-        import random
         project = (request.query.get("project") or "").strip()
         profile = request.query.get("profile", "anima")
         if profile not in ("anima", "sdxl"):
@@ -34426,7 +35134,6 @@ async def handle_api_style_lora_preview(request):
 
         settings = get_project_settings(project).get("data", {})
         ps = settings.get(profile, {})
-        step = ps.get("step_per_image", 125)
         il_rate = ps.get("il_rate", 0.00025)
         save_step = ps.get("save_per_step", 25)
         folder = ps.get("multi_img_folder_name", "soya_lora")
@@ -34438,18 +35145,10 @@ async def handle_api_style_lora_preview(request):
         dim = ps.get("dim", 32)
         alpha = ps.get("alpha", 16)
 
-        # 그림체 전용 "전체 STEP" 확장 (queue_manager._handle_instance_lora_training 와 동일)
-        # 전체 STEP = export 할 이미지 슬롯 수. ComfyUI 에는 STEP_PER_IMAGE=1, N_IMG=전체STEP.
+        from lora_training_steps import prepare_training_images
         n_img = len(training_images)
-        total_step = step if (isinstance(step, int) and step > 0) else n_img
-        full = total_step // n_img
-        rem = total_step % n_img
-        picked = []
-        for _ in range(full):
-            picked.extend(training_images)
-        if rem:
-            picked += random.sample(training_images, rem)
-        step = 1
+        picked, step = prepare_training_images(training_images, ps, default_mode="total", default_step=125)
+        total_step = len(picked) * step
         lora_save_path = f"SOYA_STYLE_LORA/{profile}/{project}"
 
         positive_text = _build_lora_training_text(
@@ -34819,6 +35518,7 @@ app.on_cleanup.append(_video_postprocess_background_cleanup)
 app.on_cleanup.append(_tunnel_cleanup)
 app.on_cleanup.append(_character_maker_rag_runtime_cleanup)
 app.on_cleanup.append(_system_monitor_cleanup)
+app.on_cleanup.append(illustration_flow.flush_history)
 
 if __name__ == "__main__":
     init_queue_manager()

@@ -1617,15 +1617,16 @@ def run_image_diagnostic(
         if not python.is_file():
             raise ImageDiagnosticError(f"내장 Comfy Python이 없습니다: {python}")
         try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
+            from configuration import read_config
+            config = read_config(config_path)
             if not isinstance(config, dict):
-                raise ImageDiagnosticError("config.json 최상위 값이 객체가 아닙니다.")
+                raise ImageDiagnosticError("settings.json 최상위 값이 객체가 아닙니다.")
         except ImageDiagnosticError:
             raise
         except Exception as exc:
             print(f"[COMFY_INSTALL][IMAGE_DIAGNOSTIC] config 읽기 실패: {exc}")
             traceback.print_exc()
-            raise ImageDiagnosticError(f"config.json 읽기 실패: {exc}") from exc
+            raise ImageDiagnosticError(f"settings.json 읽기 실패: {exc}") from exc
 
         binding, workflow_path, workflow_type = _workflow_binding(
             config,

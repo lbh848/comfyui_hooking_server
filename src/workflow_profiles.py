@@ -11,14 +11,12 @@ import copy
 from typing import Iterable
 
 
-ILLUST_V1 = "v1"
 ILLUST_V3 = "v3"
 ILLUST_V3_ANIMA = "v3_anima"
 ILLUST_CHANSUB = "chansub"
 ILLUST_CHANSUB_V3_ANIMA = "chansub_v3_anima"
 
 ILLUSTRATION_WORKFLOW_TYPES = (
-    ILLUST_V1,
     ILLUST_V3,
     ILLUST_V3_ANIMA,
     ILLUST_CHANSUB,
@@ -26,13 +24,11 @@ ILLUSTRATION_WORKFLOW_TYPES = (
 )
 
 ILLUSTRATION_LOCAL_PROFILES = (
-    ILLUST_V1,
     ILLUST_V3,
     ILLUST_V3_ANIMA,
 )
 
 ILLUSTRATION_PROFILE_LABELS = {
-    ILLUST_V1: "V1 계열 삽화 워크플로우",
     ILLUST_V3: "V3 계열 삽화 워크플로우 (ANIMA+ILXL)",
     ILLUST_V3_ANIMA: "V3 계열 삽화 워크플로우 (ONLY ANIMA)",
     ILLUST_CHANSUB: "챈섭",
@@ -58,14 +54,10 @@ _LEGACY_ASSET_TYPES = {
 # 파일 내용을 검색해 형식을 추측하지 않는다. 현재 제공되는 복원 프롬프트의
 # 명시적 호환 계약이며, 새 파일은 이 표에 등록한 뒤 선택할 수 있다.
 RESTORE_PROMPT_COMPATIBILITY = {
-    "restore_workflow_prompt_nikke_style_v2.py": frozenset({"v1"}),
-    "restore_workflow_prompt_terminater_style.py": frozenset({"v1"}),
     # 같은 V3 RAW 섹션을 만들고 실제 공급자에 따라 로컬 V3 또는 챈섭 빌더가
     # 후속 조립한다. 로컬만 2인 Regional RGB 마스크를 사용한다.
     "restore_workflow_prompt_llm.py": frozenset({"v3", "chansub"}),
-    # 이 파일은 설정의 자동 prompt_format을 읽어 V1에서는 [ILXL]/[UPSCALE],
-    # V3/챈섭에서는 삽화 섹션 형식을 내보내므로 세 계열 모두 호환된다.
-    "restore_workflow_prompt_nikke_style_v3.py": frozenset({"v1", "v3", "chansub"}),
+    "restore_workflow_prompt_nikke_style_v3.py": frozenset({"v3", "chansub"}),
 }
 
 LEGACY_RESTORE_PROMPT_FILES = {
@@ -112,9 +104,7 @@ def infer_legacy_illustration_workflow_type(config: dict) -> str:
     provider = str(config.get("illustration_provider") or "comfy").strip().lower()
     if provider == "chansub":
         return ILLUST_CHANSUB
-    toggles = config.get("illustration_context_toggles") or {}
-    prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
-    return ILLUST_V1 if prompt_format == "v1" else ILLUST_V3
+    return ILLUST_V3
 
 
 def illustration_provider_mode(workflow_type: str) -> str:
@@ -132,8 +122,6 @@ def illustration_prompt_format(workflow_type: str, provider: str | None = None) 
     actual_provider = str(provider or illustration_provider_mode(workflow_type)).strip().lower()
     if actual_provider == "chansub":
         return "chansub"
-    if workflow_type == ILLUST_V1:
-        return "v1"
     return "v3"
 
 
@@ -180,16 +168,6 @@ def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "
         )
         chansub_family = "anima"
 
-    if workflow_type == ILLUST_V1:
-        return {
-            "anima_presets": True,
-            "sdxl_presets": False,
-            "ipadapter": False,
-            "local_advanced": False,
-            "chansub_advanced": False,
-            "multi_char_mask": False,
-            "v1_limited": True,
-        }
     if workflow_type == ILLUST_V3:
         return {
             "anima_presets": True,
@@ -240,7 +218,7 @@ def asset_capabilities(workflow_type: str) -> dict:
         "anima": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
         "dual": workflow_type == ASSET_ANIMA_ILXL,
         "pose": workflow_type == ASSET_ILXL,
-        "ipadapter": workflow_type in (ASSET_ILXL, ASSET_ANIMA_ILXL),
+        "ipadapter": workflow_type == ASSET_ILXL,
         "face_lora": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
         "seed": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
     }
@@ -248,8 +226,6 @@ def asset_capabilities(workflow_type: str) -> dict:
 
 def restore_families(workflow_type: str) -> tuple[str, ...]:
     workflow_type = normalize_illustration_workflow_type(workflow_type)
-    if workflow_type == ILLUST_V1:
-        return ("v1",)
     if workflow_type == ILLUST_CHANSUB:
         return ("chansub",)
     if workflow_type == ILLUST_CHANSUB_V3_ANIMA:
@@ -302,7 +278,8 @@ def _normalize_illustration_source_paths(
     }
     legacy_path = str(config.get("comfy_workflow_source_path") or "").strip()
     local_profile = illustration_local_profile(illustration_type)
-    if local_profile and legacy_path and not normalized[local_profile].strip():
+    retired = config.get("illustration_workflow_type") == "v1" or (config.get("illustration_context_toggles") or {}).get("prompt_format") == "v1"
+    if local_profile and legacy_path and not retired and not normalized[local_profile].strip():
         normalized[local_profile] = legacy_path
     return normalized
 
@@ -313,11 +290,11 @@ def normalize_workflow_config(config: dict) -> dict:
     if raw_type in (None, ""):
         raw_type = infer_legacy_illustration_workflow_type(config)
     illustration_type = normalize_illustration_workflow_type(raw_type)
-    config["illustration_workflow_type"] = illustration_type
     config["illustration_workflow_source_paths"] = _normalize_illustration_source_paths(
         config,
         illustration_type,
     )
+    config["illustration_workflow_type"] = illustration_type
     config["illustration_provider"] = illustration_provider_mode(illustration_type)
     config["restore_prompt_file"] = normalize_restore_prompt_file(
         config.get("restore_prompt_file")

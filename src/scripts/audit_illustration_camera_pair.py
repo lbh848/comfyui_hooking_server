@@ -28,7 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-from app_paths import config_root, install_root
+from app_paths import config_root
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -40,14 +40,14 @@ from modes.illust_prompt_builder import IllustPromptBuilder  # noqa: E402
 
 
 DEFAULT_BASELINE = (
-    install_root(PROJECT_ROOT)
+    PROJECT_ROOT
     / ".work"
     / "illustration_wardrobe_e2e"
     / "20260905_225819_413331"
     / "repeat_01"
     / "built_result.json"
 )
-DEFAULT_STORY = install_root(PROJECT_ROOT) / ".work" / "wardrobe_controls" / "interaction_direction.json"
+DEFAULT_STORY = PROJECT_ROOT / ".work" / "wardrobe_controls" / "interaction_direction.json"
 PAIR_SLOTS = (0, 3)
 PAIR_SEEDS = (17426001, 17426002)
 
@@ -189,7 +189,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     run_dir = (
         Path(args.output_dir).resolve()
         if args.output_dir
-        else install_root(PROJECT_ROOT) / ".work" / "illustration_camera_pair" / timestamp
+        else PROJECT_ROOT / ".work" / "illustration_camera_pair" / timestamp
     )
 
     original_call = illustration_context_pipeline._call_pipeline_llm
@@ -232,7 +232,8 @@ async def _main_async(args: argparse.Namespace) -> int:
         raise RuntimeError("after build did not preserve the recorded CALL2-PLAN response")
 
     import server
-    config = wardrobe._read_json(config_root(PROJECT_ROOT) / "config.json")
+    from configuration import config_path, read_config
+    config = read_config(config_root(PROJECT_ROOT) / "settings.json")
     runtime = server._capture_illustration_runtime_snapshot(config)
     if runtime.get("provider") != "comfy" or runtime.get("illustration_workflow_type") != "v3_anima":
         raise RuntimeError(

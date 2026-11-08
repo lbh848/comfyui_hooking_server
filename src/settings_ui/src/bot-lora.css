@@ -1,0 +1,106 @@
+.lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) .workspace { height: 100dvh; display: flex; flex-direction: column; }
+.lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) #lora-main { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: none; padding: 12px 20px 0; }
+.lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) #lora-main > .page-heading,
+.lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) #lora-main > .page-footer { display: none; }
+#lora-main > div:not([hidden]):has(> .bot-lora-project-page) { display: flex; flex: 1; min-height: 0; }
+.bot-lora-project-page { flex: 1; min-height: 0; gap: 8px; }
+.bot-lora-project-page > .internal-lora-location { flex-shrink: 0; }
+.bot-lora-project { display: flex; flex-direction: column; flex: 1; gap: 10px; min-height: 0; min-width: 0; }
+.bot-lora-project-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.bot-lora-project-toolbar h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.bot-lora-project-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.bot-lora-lock-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; vertical-align: middle; }
+.bot-lora-lock-actions .button { min-height: 30px; font-size: 11px; padding: 4px 8px; }
+.bot-lora-project-toolbar .search-field { width: 240px; margin-left: auto; }
+.bot-lora-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 14px; flex: 1; min-height: 0; }
+.bot-lora-mobile-navigation { display: none; }
+.bot-lora-characters, .bot-lora-settings { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 3px 6px 16px 3px; }
+.bot-lora-character-group { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--rose-soft); margin-bottom: 16px; }
+.bot-lora-character-group > summary { cursor: pointer; padding: 2px 0 10px; font-size: 16px; }
+.bot-lora-character-group > summary .badge { margin-left: 8px; }
+.bot-lora-character-group > summary .bot-lora-lock-actions { margin-left: 8px; }
+.bot-lora-character-group > summary > strong { overflow-wrap: anywhere; }
+.bot-lora-trigger { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 10px 0; margin-bottom: 12px; border-block: 1px solid var(--line); }
+.bot-lora-trigger > .field { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 11px; }
+.bot-lora-trigger input { width: 200px; min-height: 30px; padding: 4px 8px; }
+.bot-lora-card { padding: 14px; margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); min-width: 0; }
+.bot-lora-card.skipped { background: var(--lavender); }
+.bot-lora-card.skipped .bot-lora-card-comparison { opacity: .5; }
+.bot-lora-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.bot-lora-card .button { min-height: 26px; font-size: 11px; padding: 3px 8px; }
+.bot-lora-skip { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; cursor: pointer; }
+.bot-lora-skip .toggle { flex-shrink: 0; }
+.bot-lora-card-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, .9fr); align-items: start; gap: 14px; }
+.bot-lora-card h3 { font-size: 12px; font-weight: 500; color: var(--secondary); margin: 0 0 8px; }
+.bot-lora-trained .internal-lora-actions { gap: 5px; margin-bottom: 8px; }
+.bot-lora-trained h3 { margin: 0; }
+.bot-lora-image-gallery { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.bot-lora-image { position: relative; width: min(240px, 100%); min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--lavender); }
+.bot-lora-image .internal-lora-image-open img { width: 100%; height: auto; aspect-ratio: auto; max-height: 360px; object-fit: contain; }
+.bot-lora-image figcaption { max-width: 100%; padding: 2px 5px; background: #211b24c9; color: white; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-lora-image-prompt { width: 100%; border-radius: 0; }
+.bot-lora-image-delete { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: var(--danger); color: white; cursor: pointer; }
+.bot-lora-representative { display: block; max-width: 180px; padding: 0; margin-bottom: 8px; border: 2px solid var(--rose); border-radius: 7px; background: var(--lavender); overflow: hidden; cursor: zoom-in; }
+.bot-lora-representative img { display: block; width: 100%; max-height: 240px; object-fit: contain; }
+.bot-lora-session-list { display: flex; flex-direction: column; gap: 4px; }
+.bot-lora-session-list > button { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border-radius: 4px; background: var(--lavender); font-size: 11px; text-align: left; overflow-wrap: anywhere; }
+.bot-lora-session-list small { color: var(--muted); }
+.bot-lora-card-details { padding-top: 10px; margin-top: 12px; border-top: 1px solid var(--line); }
+.bot-lora-card-details > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.bot-lora-card-details[open] > summary { margin-bottom: 10px; }
+.bot-lora-card-details > .internal-lora-actions { margin-bottom: 10px; }
+.bot-lora-prompt-rows { display: flex; flex-direction: column; gap: 8px; }
+.bot-lora-prompt-row { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--lavender); min-width: 0; }
+.bot-lora-prompt-row > header { display: flex; align-items: center; gap: 8px; }
+.bot-lora-prompt-row > header img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+.bot-lora-prompt-row > header strong { flex: 1; min-width: 0; font-size: 11px; overflow-wrap: anywhere; }
+.bot-lora-prompt-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.bot-lora-prompt-comparison h4 { font-size: 12px; text-align: center; margin: 0 0 8px; }
+.bot-lora-prompt-comparison span { font-size: 10px; color: var(--muted); }
+.bot-lora-prompt-comparison pre { margin: 4px 0 8px; padding: 6px 8px; max-height: 100px; border: 1px solid var(--line); background: var(--panel); font-size: 11px; }
+.bot-lora-shared-tests { border-top: 2px solid var(--line); padding: 16px; }
+.bot-lora-shared-tests h2 { font-size: 17px; }
+.bot-lora-shared-tests > p { margin-bottom: 12px; }
+.bot-lora-settings { display: flex; flex-direction: column; gap: 12px; }
+.bot-lora-settings > * { flex-shrink: 0; }
+.bot-lora-settings .panel-header { padding: 12px; flex-wrap: wrap; gap: 8px; }
+.bot-lora-settings .panel-header h2 { font-size: 12px; }
+.bot-lora-sidebar-actions { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.bot-lora-settings .internal-lora-form { padding: 12px; gap: 12px; }
+.bot-lora-settings .internal-lora-fields { grid-template-columns: minmax(0, 1fr); }
+.bot-lora-settings .internal-lora-preset-picker { padding: 8px; }
+.bot-lora-settings .internal-lora-preset-select { min-width: 0; }
+.bot-lora-settings .internal-lora-toolbar > .button { width: 100%; }
+.bot-lora-settings .button { white-space: normal; }
+.bot-lora-results { grid-template-columns: minmax(0, 1fr); }
+.bot-lora-session-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.bot-lora-results .internal-lora-sessions[hidden] { display: none; }
+.bot-lora-session-overview .internal-lora-session img { height: 260px; max-height: none; }
+.bot-lora-reference-select { padding: 0 10px 10px; }
+.bot-lora-results-modal { height: min(900px, calc(100dvh - 48px)); overflow: hidden; }
+.bot-lora-results-modal > .modal-content { display: flex; flex-direction: column; height: 100%; }
+.bot-lora-results-modal > .modal-content > header { flex-shrink: 0; }
+.bot-lora-results-modal > .modal-content > .internal-lora-section { flex: 1; min-height: 0; overflow-y: auto; }
+@media (max-width: 1050px) {
+  .bot-lora-workspace { grid-template-columns: minmax(0, 1fr) 270px; gap: 8px; }
+  .bot-lora-character-group, .bot-lora-card { padding: 10px; }
+  .bot-lora-card-comparison { grid-template-columns: minmax(0, 1fr) minmax(130px, .8fr); gap: 8px; }
+}
+@media (max-width: 760px) {
+  .lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) #lora-main { padding: 8px 10px 0; }
+  .bot-lora-project-toolbar h2 { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bot-lora-project-title { width: 100%; }
+  .bot-lora-project-title h2 { flex-basis: 100%; }
+  .bot-lora-character-group > summary .bot-lora-lock-actions { display: flex; margin: 8px 0 0; }
+  .bot-lora-project-toolbar .search-field { order: 1; width: 100%; margin: 0; }
+  .bot-lora-mobile-navigation { display: flex; gap: 8px; flex-shrink: 0; }
+  .bot-lora-mobile-navigation > button { flex: 1; }
+  .bot-lora-mobile-navigation > button[aria-pressed=true] { background: var(--rose-soft); border-color: var(--rose); }
+  .bot-lora-workspace { display: flex; flex-direction: column; overflow: hidden; }
+  .bot-lora-characters, .bot-lora-settings { flex: 1; overflow-y: auto; }
+  .bot-lora-panel-characters > .bot-lora-settings, .bot-lora-panel-settings > .bot-lora-characters { display: none; }
+  .bot-lora-card-comparison { grid-template-columns: minmax(0, 1fr) minmax(120px, .8fr); }
+  .bot-lora-trigger input { width: 160px; }
+  .bot-lora-prompt-comparison { grid-template-columns: minmax(0, 1fr); }
+  .bot-lora-session-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -15,7 +15,7 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
         "삽화 재생성, 수동 그리기, 워크플로우 테스트",
     ),
     ("asset_generation", "에셋 생성", "에셋 이미지 생성"),
-    ("qwen_edit", "EDIT", "Qwen Edit 및 ANIMA Inpainting"),
+    ("qwen_edit", "EDIT", "ANIMA Inpainting"),
     ("tag_analysis", "태그 분석", "Comfy 워크플로우 기반 이미지 태그 분석"),
     ("asset_lora_training", "에셋 LoRA", "에셋 LoRA 학습"),
     ("bot_lora_training", "봇 LoRA", "봇 캐릭터 LoRA 학습"),
@@ -142,9 +142,8 @@ COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
         "anima_asset_workflow_source_path",
         "anima_only_asset_workflow_source_path",
     ),
-    # EDIT 계열 = Qwen Edit + ANIMA Inpainting (COMFY_TASK_DEFINITIONS 참고).
+    # EDIT 계열 = ANIMA Inpainting (COMFY_TASK_DEFINITIONS 참고).
     "qwen_edit": (
-        "qwen_edit_workflow_source_path",
         "anima_inpainting_workflow_source_path",
     ),
     "tag_analysis": (

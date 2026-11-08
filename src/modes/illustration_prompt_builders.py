@@ -54,7 +54,7 @@ def time_place_messages(prompts, names, prior_state, past_text, segmented,
          + variable(blank_state_table(names, anchors), "빈 시간·장소 시간표")},
     ]
 
-def selection_messages(prompts, role_context, names, single_names, scene_count, toggles, prior_status, past_text, segment_catalog):
+def selection_messages(prompts, role_context, scene_count, toggles, prior_status, past_text, segment_catalog):
     from modes.illustration_context_pipeline import render_call2_prompt
 
     explicit = ""
@@ -67,11 +67,12 @@ def selection_messages(prompts, role_context, names, single_names, scene_count, 
         {"role": "system", "content": prompt_join("\n\n", (part for part in
             (role_context, explicit, prompts[selection_key]) if part))},
         {"role": "user", "content": "# SCENE SELECTION WITH CURRENT PARTICIPATION\n"
-         "scene_plan.characters contains only the selected visible registered CURRENT identities; [] is valid. "
+         "Choose visible subjects from the source event and active image policy, regardless of registration. "
+         "scene_plan.characters records only selected registered identity references; describe selected NPC subjects "
+         "in scene_brief. [] is valid, and the registered-array length is not the visible-person count. "
          "Keep every registered CURRENT participant in the top-level characters, including those not selected for an image.\n"
-         + ("\n# SINGLE SUBJECTS\n" + variable(single_names, "1인 선택 후보(등록 봇 캐릭터 우선)") if single_names is not None else "")
          + "\n\n# REQUESTED COUNT / CHARACTER LIMIT\n" + variable(scene_count, "요청 장면 수 설정")
-         + "\nMaximum fully visible characters per image: " + variable(toggles['character_limit'], "인물 수 제한") + "."
+         + "\nMaximum independently depicted people per image, including NPCs: " + variable(toggles['character_limit'], "인물 수 제한") + "."
          + ("\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시") if str(toggles.get("direction") or "").strip() else "")
          + "\n\n# PREVIOUS SAVED OUTFIT AND HAIRSTYLE (BEFORE CURRENT; READ-ONLY)\n"
@@ -108,11 +109,8 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
     return [
         {"role": "system", "content": system},
         {"role": "user", "content":
-         "# ASSIGNED SELECTED SCENES (COUNT/ORDER/ANCHORS/CHARACTERS FIXED)\n"
+         "# ASSIGNED SELECTED SCENES (COUNT/ORDER/ANCHORS/REGISTERED REFERENCES FIXED)\n"
          + variable(json.dumps({"scene_plan": batch}, ensure_ascii=False), "할당된 선택 장면")
-         + ("\n\n# SINGLE SUBJECTS\n" + variable(json.dumps(
-             [name for name in single_names if name in batch_names], ensure_ascii=False), "1인 선택 후보(등록 봇 캐릭터 우선)")
-            if single_names is not None else "")
          + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
          + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
                        for slot, values in tracking.items()}, ensure_ascii=False), "추적된 복장·머리 상태")
@@ -157,6 +155,57 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
                     prior_status=None, prior_time_place=None, mask_inline=False,
                     mask_prompt="", canvas_sizes=None, keyvis_messages=None, registered_names=None,
                     plan_profiles=None, tracking=None, time_place=None, segment_slots=None):
+    from modes import illustration_composite
+    if illustration_composite.enabled(toggles):
+        # Keep the exact ordinary DETAIL input assembly, then use one exclusive
+        # layer output contract. Regional diffusion masks are not layer masks.
+        messages = detail_messages(detail_system, batch, slots, past_text=past_text,
+            segmented=segmented, toggles={**toggles, "illustration_output_mode": "illustration",
+                                         "multi_char_mask_enabled": False},
+            prior_status=prior_status, prior_time_place=prior_time_place,
+            registered_names=registered_names, plan_profiles=plan_profiles,
+            tracking=tracking, time_place=time_place, segment_slots=segment_slots)
+        messages[-1]["content"] = prompt_sub(r"\n\nReturn TOON[\s\S]*\Z", "", messages[-1]["content"])
+        if keyvis_messages:
+            keyvis_policy = prompt_sub(r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "", keyvis_messages[0]["content"])
+            messages[0]["content"] = prompt_join("\n\n", (
+                "KEY VISUAL STORY AND IDENTITY POLICY (keyvis only; layer output contract below takes precedence)",
+                keyvis_policy, detail_system))
+            messages[1:1] = [{**message, "content": prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])}
+                             for message in keyvis_messages[1:]]
+        messages[-1]["content"] += (
+            "\n\nReturn ONE JSON object using the DETAIL-COMPOSITE canvas/background/characters/x schema. "
+            "Each assigned scene owns one background and one image per person. Assigned slots: "
+            + variable(json.dumps([scene.get("anchor_segment") or scene.get("slot") for scene in batch]), "출력할 원문 앵커 목록")
+            + ". Use exactly those anchor strings as slot values. canvas is optional: copy the supplied "
+            "background size when one is available, otherwise omit it. Available canvas sizes: "
+            + variable(json.dumps(canvas_sizes or {"group": [1152, 768]}), "합성 캔버스 크기")
+            + ". Declare every distinct background exactly ONCE in a root backgrounds array of "
+            "{\"id\":\"B1\",\"positive\":\"...\"} entries, and set each scene's background to the id string "
+            "that supplies it. Scenes with the exact same place, time, lighting and camera MUST use the same "
+            "id, so the server renders one background and reuses it; never repeat or paraphrase the background "
+            "text inside scenes. A different place, time, lighting or camera needs a new id and its own "
+            "positive text. Declare no unused ids. Apply TIME & PLACE, including all lighting, exclusively to "
+            "each declared background positive. MANDATORY: every character positive, including keyvis, must contain only "
+            "character identity, appearance, outfit, expression, pose, gaze, crop and any held small prop. "
+            "Include the exact tags standing, cowboy shot, solo, transparent background and exactly one matching "
+            "single-person count tag (1girl, 1boy or 1other) in EVERY character positive. Never include scenery, "
+            "place, environment, atmosphere or lighting descriptions in character positive. Set only each "
+            "character's horizontal center x from 0 to 1; do not output mask, y, width, height, scale or z. "
+            "Choose every x from the depicted interaction, never from array order: a character whose gaze or "
+            "face turns screen-left must be placed to the right of the person they look at, and one whose gaze "
+            "turns screen-right to the left, so mutually facing pairs face inward; place a character looking "
+            "toward an off-frame subject toward the opposite side. Keep each character's source gaze direction "
+            "and move x instead of rewriting the gaze. "
+            "Final assembly fills the background height with each character while preserving its aspect ratio. "
+            "Check and correct every character entry before returning the JSON. "
+            + ("If a Key Visual is also requested, add it as a keyvis property of the SAME root object: "
+               "{\"backgrounds\":[...],\"scenes\":[...],\"keyvis\":{\"canvas\":[...],\"background\":\"B1\","
+               "\"characters\":[...]}}. Use a declared background id for keyvis too (add a new id when its "
+               "background differs). keyvis has no slot. NEVER emit a second JSON object or a second "
+               "<lb-xnai> document."
+               if keyvis_messages else "Return the scenes object only; do not add a keyvis property."))
+        return messages
     manga = (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
     mask_inline = mask_inline or manga
     batch_names = {character["name"] if isinstance(character, dict) else character
@@ -313,7 +362,8 @@ def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
         genre_context) if part))
 
-def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None):
+def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None, npc_generation_enabled=False):
+    npc_extension = bool(selection and not profile_inference_enabled and npc_generation_enabled)
     if profile_inference_enabled:
         user_content = (
             "# TARGET CURRENT MULTI-PROFILE CHARACTER\n"
@@ -328,6 +378,43 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             + variable(blank_state_table(selected_names, ["START", *(anchors or [])]), "빈 프로필 시간표")
         )
     else:
+        npc_policy = (
+            "\n\n# NPC REGISTRATION EXTENSION\n"
+            "Also return npc_candidates for source-established, individually identifiable unregistered "
+            "characters participating in CURRENT. Keep top-level characters restricted to registered CURRENT "
+            "participants. Use [] when no such unregistered participant exists. Each name must be a stable "
+            "English storage identifier using only A-Z, a-z, 0-9, underscore, hyphen or period; no spaces, commas, "
+            "path separators, trailing period or Windows reserved names. Preserve actual narrative names/titles "
+            "as aliases. description is a short English source-grounded identity and role; anchors lists exact "
+            "CURRENT C segment identifiers in three-digit form (for example C001) establishing participation. "
+            "A named person who acts, speaks, is addressed or is physically depicted in CURRENT is individually "
+            "identifiable, even when only part of the body or an off-frame viewpoint is shown; do not classify "
+            "that person as an anonymous fragment. Do not create candidates for crowds, anonymous body fragments, "
+            "hypothetical people or merely mentioned absent people. Reuse a registered identity if its card "
+            "aliases/identity match; never generate a duplicate. "
+            "For each selected scene include depicted NPC candidate names alongside depicted registered names in "
+            "scene_plan.characters (and panel character references when applicable). A later parallel stage will "
+            "create their visual cards before PLAN/DETAIL. Preserve the active visible-subject policy. "
+            "Do not predict visual tags here.\n\n"
+        ) if npc_extension else ""
+        output_contract = (
+            "Return only a JSON object with characters, npc_candidates and scene_plan arrays.\n"
+            "Each top-level characters item has name (an exact registered name from the list above).\n"
+            "Each scene_plan item has anchor_segment (an exact selectable C anchor), "
+            "scene_brief (one short English sentence expressing that selection intent), "
+            "then characters (registered identity references only; zero, one or multiple names). "
+            "Apply the active single/shared policy to the visible subjects, not this array's length.\n"
+            "Each npc_candidates item has name (a new stable English storage identifier), aliases "
+            "(actual narrative names or titles), description (short English source-grounded identity and role), "
+            "and anchors (exact CURRENT C anchors in three-digit form). No extra fields."
+        ) if npc_extension else (
+            "Return only a JSON object with characters and scene_plan arrays.\n"
+            "Each top-level characters item has name (an exact registered name from the list above).\n"
+            "Each scene_plan item has anchor_segment (an exact selectable C anchor), "
+            "scene_brief (one short English sentence expressing that selection intent), "
+            "then characters (registered identity references only; zero, one or multiple names). "
+            "Apply the active single/shared policy to the visible subjects, not this array's length. No extra fields."
+        )
         user_content = (
             "# COMPLETE REGISTERED CHARACTER ROSTER\n"
             + variable(json.dumps(selected_names, ensure_ascii=False), "등록 캐릭터 목록")
@@ -339,12 +426,13 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
                + variable(json.dumps(anchors, ensure_ascii=False), "선택 가능한 CURRENT 앵커")
                + "\nChoose the requested number of distinct anchors from this complete list."
                if selection and anchors is not None else "")
-            + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
-            "The preceding CURRENT narrative is the only participation and identity "
-            "evidence. Its name spellings, aliases, titles, and localized forms are never "
-            "valid output values. Select the CURRENT participants semantically, then copy every "
-            "characters[].name character-for-character from this exact registered-name "
-            "list and nowhere else:\n"
+            + "\n\n# REGISTERED IDENTITY FIELD AUTHORITY\n"
+            "The preceding CURRENT narrative is the participation and identity evidence. "
+            "The following name restrictions apply only to registered identity arrays, not "
+            "to scene eligibility, NPC descriptions or the number of visible subjects. "
+            "Resolve registered CURRENT identities semantically, then copy every top-level "
+            "characters[].name and scene_plan.characters entry character-for-character "
+            "from this exact registered-name list; do not substitute narrative aliases there:\n"
             + variable(json.dumps(selected_names, ensure_ascii=False), "출력 가능한 등록 이름")
             + "\nBefore returning, compare every characters[].name against that list. "
             "If a value is not an exact member, replace it with the exact registered name "
@@ -355,27 +443,47 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
                "and has no per-image cast limit. Each scene's characters array may also be [] when no registered identity is selected. "
                "Describe source-established NPCs, creatures and events in scene_brief, subject to the active image policy and visible-subject limit. "
                "An empty registered array does not require an empty image or an added registered observer. "
-               "Each scene's characters lists all registered subjects selected for that view, including both participants of a shared shot. "
+               "Each scene's characters lists only the registered subjects selected for that view. "
+               "The brief describes its complete visible cast, including any selected NPCs. "
+               "One registered entry can accompany a shared registered/NPC view; [] can accompany an NPC-only single view. "
                "For example, with registered A and B and a policy allowing shared views: "
                "'A straightens B's collar, concentrating on the fastening' selects [A, B]; "
                "'A's concentrated expression while adjusting an off-frame partner's collar' selects [A]; "
-               "'A accepts a key from an anonymous hand at the frame edge' also selects [A]. "
+               "'A faces an unregistered porter as they exchange a key' selects [A] but depicts two subjects; "
+               "'A accepts a key from an anonymous hand at the frame edge' also selects [A] but has one independent subject. "
                "A and B are illustrative placeholders, not output names. Choose the view under the active policy, "
                "then make the brief and cast agree; a sentence led by A does not make a shared interaction a one-person image. "
                "When selecting only one subject from a two-person event, make the partner's off-frame or minimal anonymous-fragment role clear in the brief. "
                if selection else "")
-            + ("Return only a JSON object with characters and scene_plan arrays.\n"
-               "Each top-level characters item has name (an exact registered name from the list above).\n"
-               "Each scene_plan item has anchor_segment (an exact selectable C anchor), "
-               "scene_brief (one short English sentence expressing that selection intent), "
-               "then characters (an array of all registered names selected for this view; zero, one or multiple names). No extra fields."
-               if selection else 'Return only this JSON shape:\n{"characters":[{"name":"exact registered name from the list above"}]}')
+            + (npc_policy + output_contract if selection
+               else 'Return only this JSON shape:\n{"characters":[{"name":"exact registered name from the list above"}]}')
         )
     if persona_context:
         user_content = variable(persona_context, "등록 사용자 페르소나") + "\n\n" + user_content
+    npc_system_requirement = (
+        "NPC REGISTRATION EXTENSION ACTIVE: npc_candidates is a required top-level array in the JSON "
+        "shape requested at the end of the user message; use [] only when CURRENT has no unregistered "
+        "individually identifiable participant."
+    ) if npc_extension else ""
     return [
-        {"role": "system", "content": prompt_join("\n\n", [selection[0]["content"], profile_system]) if selection else str(profile_system or "").strip()},
+        {"role": "system", "content": prompt_join("\n\n", [selection[0]["content"], profile_system, npc_system_requirement]) if selection else str(profile_system or "").strip()},
         {"role": "user", "content": user_content},
+    ]
+
+
+def npc_generation_messages(prompts, candidates, past_text, segmented, toggles):
+    from modes.illustration_npc import NPC_GENDER_TAGS
+    return [
+        {"role": "system", "content": prompt_join("\n\n", [
+            prompts.get("npc_generation", ""),
+            role_context("", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", "")),
+        ])},
+        {"role": "user", "content": prompt_join("\n\n", [
+            "# NPC CANDIDATES\n" + variable(json.dumps(candidates, ensure_ascii=False), "미등록 등장인물"),
+            "# GENDER DROPDOWN VALUES\n" + json.dumps(NPC_GENDER_TAGS),
+            "# EARLIER CONTEXT\n" + variable(past_text, "이전 문맥"),
+            "# CURRENT CONTEXT SEGMENTS\n" + variable(segmented, "현재 원문"),
+        ])},
     ]
 
 def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):
@@ -384,15 +492,18 @@ def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):
         "content": (
             "# KEY VISUAL TASK\n"
             "Choose at least one and at most "
-            + variable(max_chars, "대표 이미지 인물 수 제한") + " named characters when supported "
+            + variable(max_chars, "대표 이미지 인물 수 제한") + " independently depicted subjects, registered or NPC, when supported "
             + ("by the current context. Emit regions[] only for the identities selected for this image.\n\n"
                if mask_inline else "by the current context. Emit characters[] only for the identities selected for this image.\n\n")
-            + "# ALLOWED CANONICAL CHARACTER CANDIDATES (CHOOSE A SUBSET)\n"
-            + variable(roster_text if allowed else "(unavailable; use only canonical names in the supplied resolved profiles and current context)", "현재 대화의 등록 인물")
+            + "# REGISTERED IDENTITY REFERENCES (NOT THE COMPLETE VISIBLE CAST)\n"
+            + variable(roster_text if allowed else "(no registered identity references supplied)", "현재 대화의 등록 인물")
+            + "\nChoose subjects for the narrative and active image policy, not registration status. "
+            "Use exact canonical names only for selected registered identities and source-grounded role labels for NPCs. "
+            "An NPC can be the sole subject under SINGLE; anonymous partner fragments have no separate entry."
             + ("\n\n# OUTPUT SCHEMA\n"
             '{"keyvis":{"background_prompt":"shared camera and setting",'
             '"composition_prompt":"neutral placement and physical relations",'
-            '"regions":[{"name":"exact selected canonical name",'
+            '"regions":[{"name":"exact canonical name or NPC role label",'
             '"character_prompt":"final character image tags",'
             '"x":number,"y":number,"width":number,"height":number}]}}\n'
             "Use finite JSON numbers derived from this image for the coordinate fields. "
@@ -403,7 +514,7 @@ def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):
             "  camera: ...\n"
             "  characters:\n"
             "    - positive: ...\n"
-            "      name: canonical name\n"
+            "      name: exact canonical name or NPC role label\n"
             "      position: ...\n"
             "      outfit_state:\n"
             "        body_state: clothed|partial|nude|topless|bottomless|underwear_only|unknown\n"
@@ -432,8 +543,12 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
             ("Use the accurate one-person count and solo only if", "Use solo only if"),
             ("retain only the named subject's count and omit", "omit"),
             ("keep only the named subject's count and omit", "omit"),
+            ("retain only the selected subject's count and omit", "omit"),
+            ("keep only the selected subject's count and omit", "omit"),
             ("For two named subjects, use the accurate combined count from their supplied person-type tags, such as 2girls, 2boys or 1girl, 1boy, and omit solo and single-person focus tags.",
              "For two named subjects, omit scene-wide solo and single-person focus tags."),
+            ("For two independently depicted subjects, use the accurate combined count from their supplied person-type tags, such as 2girls, 2boys or 1girl, 1boy, and omit solo and single-person focus tags.",
+             "For two independently depicted subjects, omit scene-wide solo and single-person focus tags."),
             ("Keep the complete scene-wide figure count, placement and interaction in `composition_prompt`;",
              "Keep the placement and interaction in `composition_prompt`;"),
         ):
@@ -541,7 +656,7 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
         mask = re.sub(r"(?m)^Read the full camera[^\n]*", "Read the complete assigned context, resolved profiles, tracked state and visual brief. Decide the visible bodies and their physical relations together with the final image text; never infer geometry from an isolated word.", mask)
         mask = re.sub(r"(?m)^Return exactly one JSON object[^\n]*", "", mask)
         mask = re.sub(r"(?m)^- Emit exactly one region for every input character[^\n]*", "- Emit exactly one region for each independently depicted participant selected under the generation task, including any NPC that task permits. Preserve assigned registered names and their order, then append NPC role labels. An anonymous fragment receives no region.", mask)
-        mask = re.sub(r"(?m)^- Do not output `character_prompt`[^\n]*", "- Each region's `character_prompt` contains that named person's final visible identity, current wardrobe or coverage, pose, action, expression and gaze. Do not output logical outfit records.", mask)
+        mask = re.sub(r"(?m)^- Do not output `character_prompt`[^\n]*", "- Each region's `character_prompt` contains its subject's final visible identity, current wardrobe or coverage, pose, action, expression and gaze, whether registered or NPC. Do not output logical outfit records.", mask)
         mask = mask.replace("Use the validated character data only to infer spatial geometry.",
                             "Keep named character identity and wardrobe only in that region's `character_prompt`.")
         mask = mask.replace("validated positive tags", "final character image tags")
@@ -549,10 +664,10 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
             generation += "\n\nPreserve the requested nsfw classification once in `background_prompt`."
             mask = mask.replace("empty-space information.", "empty-space information, plus the explicitly required scene classification.")
         shape = ('{"keyvis":{"background_prompt":"...","composition_prompt":"...",'
-                 '"regions":[{"name":"canonical name","character_prompt":"final image tags",'
+                 '"regions":[{"name":"canonical name or NPC role label","character_prompt":"final image tags",'
                  '"x":number,"y":number,"width":number,"height":number}]}}'
                  if keyvis else '{"scenes":[{"slot":"Cxxx","background_prompt":"...",'
-                 '"composition_prompt":"...","regions":[{"name":"canonical name",'
+                 '"composition_prompt":"...","regions":[{"name":"canonical name or NPC role label",'
                  '"character_prompt":"final image tags",'
                  '"x":number,"y":number,"width":number,"height":number}]}]}')
         if manga:
@@ -605,7 +720,7 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
              "only outstanding panels on a retry); "
              "the example abbreviates the arrays."
              if manga else
-             "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its named character's visible identity, current wardrobe or coverage and main pose/action. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own.")
+             "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its subject's visible identity, current wardrobe or coverage and main pose/action, whether registered or NPC. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own.")
             + ("" if keyvis else " For a source-supported image with no independently depicted person, return an empty regions array and describe its composition without inventing a person."),
             ("CANVAS\n" + variable(json.dumps(canvas_sizes, ensure_ascii=False), "인물 수별 실제 캔버스 크기")
              + "\nUse the solo canvas for one independently depicted person and the group canvas for two or three, including NPCs. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes and not manga else ""),

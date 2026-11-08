@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from app_paths import config_root, data_root
+from json_store import write_json_atomic
 
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -32,6 +34,7 @@ from .configurator import (
 )
 from .credentials import (
     CredentialStoreError,
+    configure_lora_manager,
     load_civitai_key,
     save_civitai_key,
     save_lora_manager_civitai_key,
@@ -66,8 +69,8 @@ from .install_modes import (
 )
 from .manifest import (
     InstallManifest,
+    default_install_model_ids,
     load_install_manifest,
-    replace_install_manifest,
 )
 from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
@@ -88,8 +91,10 @@ from .execution_profile import (
 )
 from .operations import uv_python_path
 from .pack_cli import collect_workflow_bindings
+from .process_guard import comfy_install_blockers
 from .runtime_state import (
     RuntimeStateError,
+    _remove_tree_force_writable,
     cleanup_old_runtime_transaction_venvs,
     complete_runtime_transaction,
     create_runtime_transaction,
@@ -107,11 +112,13 @@ from .workflow_library import (
     configured_workflow_integrity,
     distribution_e2e_catalog,
     embedded_workflow_base_dir,
-    import_default_user_copies,
-    import_user_copies,
+    install_default_workflows,
+    install_managed_workflows,
+    hide_unready_workflows,
     library_status,
     latest_release_version,
-    migrate_legacy_workflow_layout,
+    basic_workflow_item_ids,
+    managed_workflow_paths,
     release_install_manifest,
     resolve_distribution_selection,
     selection_requirements,
@@ -130,7 +137,7 @@ class InstallerServiceError(RuntimeError):
 _INSTALL_PHASES = (
     ("preflight", "Windows/GPU/디스크/도구 검사"),
     ("source", "매니페스트 고정 ComfyUI 소스 설치"),
-    ("workflows", "선택 워크플로우 사용자 사본 생성"),
+    ("workflows", "설치할 워크플로우 확인"),
     ("credentials", "Civitai 인증 사전 검증"),
     ("venv", "comfy/.venv Python 3.12.11 생성"),
     ("core_dependencies", "PyTorch 및 선택 가속/Comfy 의존성 설치"),
@@ -140,13 +147,14 @@ _INSTALL_PHASES = (
     ("models", "선택 워크플로우 모델 다운로드·검증"),
     ("repatch", "Comfy input 설치 리패치"),
     ("startup", "독립 ComfyUI 기동·노드 로드 확인"),
-    ("config", "config.json 백업·설치 경로 적용"),
+    ("workflow_files", "설치된 워크플로우 파일 추가"),
+    ("config", "settings.json 백업·설치 경로 적용"),
     ("complete", "설치 결과 기록"),
 )
 
 _UPDATE_PHASES = (
     ("transaction_cleanup", "오래된 업데이트 가상환경 백업 정리"),
-    ("config_backup", "config.json 업데이트 전 백업"),
+    ("config_backup", "settings.json 업데이트 전 백업"),
     ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
     ("manifest", "새 설치 매니페스트 로드"),
     ("inventory", "실제 Comfy/Python/노드 설치 상태 조사"),
@@ -185,7 +193,7 @@ _IMAGE_COMPARISON_DIAGNOSTIC_PHASES = (
 )
 
 _MIGRATE_PHASES = (
-    ("migration_backup", "config.json 이사 전 백업"),
+    ("migration_backup", "settings.json 이사 전 백업"),
     ("migration_scan", "기존 사용자 데이터 확인"),
     ("migration_copy", "LoRA와 봇 캐시 병렬 복사"),
     ("migration_config", "설정 경로를 내장 Comfy로 전환"),
@@ -246,7 +254,7 @@ class ComfyInstallerService:
         self.config_path = (
             Path(config_path).resolve()
             if config_path is not None
-            else config_root(self.project_root) / "config.json"
+            else config_root(self.project_root) / "settings.json"
         )
         self.requirements_dir = (
             Path(requirements_dir).resolve()
@@ -305,24 +313,6 @@ class ComfyInstallerService:
                 "workflow_count": self.manifest.latest_workflow_count,
             },
         }
-        try:
-            self._state["workflow_path_migration"] = (
-                migrate_legacy_workflow_layout(
-                    comfy_root=self.comfy_root,
-                    library_root=self.workflow_library_root,
-                    config_path=self.config_path,
-                    backup_dir=self.config_backup_dir,
-                )
-            )
-        except Exception as exc:
-            print(
-                "[COMFY_INSTALL][SERVICE] 워크플로우 ASCII 경로 "
-                f"마이그레이션 실패: {exc}"
-            )
-            traceback.print_exc()
-            self._state["workflow_path_migration"] = {
-                "error": str(exc),
-            }
 
     def _log(
         self,
@@ -399,7 +389,17 @@ class ComfyInstallerService:
             snapshot["last_log_seq"] = self._log_sequence
             snapshot["cancel_requested"] = self._cancel.is_set()
             snapshot["install_root"] = str(self.comfy_root)
-            return snapshot
+            snapshot["comfy_exists"] = os.path.lexists(self.comfy_root)
+        snapshot["install_blockers"] = (
+            comfy_install_blockers(self.comfy_root)
+            if snapshot["state"] != "running" else []
+        )
+        return snapshot
+
+    def _require_comfy_not_in_use(self) -> None:
+        blockers = comfy_install_blockers(self.comfy_root)
+        if blockers:
+            raise InstallerServiceError(" ".join(blockers))
 
     def preflight(
         self,
@@ -491,7 +491,7 @@ class ComfyInstallerService:
         )
         # UI 가 설치 전에 보는 디스크 요구량도 실제 다운로드분 기준이어야 한다.
         # 여기와 _run_install 이 다르면 "통과했는데 설치가 막힌다"가 된다.
-        # 모델 출처는 팩 동봉 매니페스트다 — _run_install 과 같은 것을 봐야 한다.
+        # Use the current project catalog, as _run_install does.
         models_by_id = {
             str(model["id"]): model for model in pack_manifest.models
         }
@@ -508,6 +508,10 @@ class ComfyInstallerService:
             **probe,
             "selection": {
                 **requirements,
+                "model_ids": sorted(
+                    str(model["id"]) for model in (*scope.keep, *scope.skipped)
+                ),
+                "model_bytes": scope.keep_bytes + scope.skipped_bytes,
                 "model_source": scope.model_source,
                 "local_model_ids": [str(m["id"]) for m in scope.keep],
                 "local_model_bytes": int(scope.keep_bytes),
@@ -520,7 +524,8 @@ class ComfyInstallerService:
         self, models: list[dict], *, install_mode: str, manifest: InstallManifest,
     ) -> tuple[dict, ModelScope]:
         # Select hardware before calculating model space; CPU never needs the
-        # generation models merely to pass the preflight disk check.
+        # optional generation models merely to pass the preflight disk check.
+        # Default Anima models and LoRAs count toward disk space on every profile.
         probe = self.preflight(require_disk=False, install_mode=install_mode, manifest=manifest)
         cpu_only = profile_kind(manifest, str(probe["gpu_profile"])) == "cpu"
         scope = self._scope_selected_models(
@@ -540,12 +545,19 @@ class ComfyInstallerService:
         return probe, scope
 
     def workflow_library_status(self) -> dict:
-        return library_status(
-            self.comfy_root,
-            self.workflow_library_root,
-        )
+        with self._lock:
+            library = library_status(self.comfy_root, self.workflow_library_root)
+            if self._thread is None or not self._thread.is_alive():
+                hidden = hide_unready_workflows(comfy_root=self.comfy_root, library_root=self.workflow_library_root,
+                                               library=library, log=self._log)
+                if hidden:
+                    library = library_status(self.comfy_root, self.workflow_library_root)
+            return library
 
-    def workflow_integrity_report(self) -> dict:
+    def workflow_integrity_report(
+        self, *, release_version: str | None = None,
+        selected_item_ids: list[str] | None = None,
+    ) -> dict:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 print(
@@ -556,9 +568,13 @@ class ComfyInstallerService:
                     "진행 중인 ComfyUI 작업이 끝난 뒤 무결성을 검사하세요."
                 )
             try:
+                if release_version is not None and release_version != latest_release_version(self.workflow_library_root):
+                    raise WorkflowLibraryError("배포 버전이 변경되었습니다. 목록을 새로고침하세요.")
                 report = configured_workflow_integrity(
                     config_path=self.config_path,
                     library_root=self.workflow_library_root,
+                    release_version=release_version,
+                    selected_item_ids=selected_item_ids,
                 )
                 self._log(
                     "[무결성 검사] "
@@ -646,7 +662,7 @@ class ComfyInstallerService:
                         + ", ".join(unavailable)
                     )
 
-                selection = import_user_copies(
+                selection = install_managed_workflows(
                     comfy_root=self.comfy_root,
                     library_root=self.workflow_library_root,
                     release_version=release_version,
@@ -731,7 +747,7 @@ class ComfyInstallerService:
                 return {
                     "release_version": release_version,
                     "repaired_item_ids": list(requested),
-                    "user_workflow_files": list(selection.user_files),
+                    "workflow_files": list(selection.workflow_files),
                     "workflow_bindings": dict(selection.workflow_bindings),
                     "config": {
                         "backup_path": str(config_update.backup_path),
@@ -775,6 +791,8 @@ class ComfyInstallerService:
             try:
                 result = set_patch_sage_attention_enabled(
                     workflow_root=embedded_workflow_base_dir(self.comfy_root),
+                    workflow_files=managed_workflow_paths(self.comfy_root),
+                    backup_enabled=False,
                     backup_root=(
                         data_root(self.project_root)
                         / "backups"
@@ -858,14 +876,14 @@ class ComfyInstallerService:
         required: bool = False,
     ) -> WorkflowSelection | None:
         try:
-            selection = import_default_user_copies(
+            selection = install_default_workflows(
                 comfy_root=self.comfy_root,
                 library_root=self.workflow_library_root,
                 release_version=release_version,
                 log=self._log,
             )
             self._log(
-                "[설정] 기본 워크플로우 사용자 사본 준비 완료: "
+                "[설정] 기본 워크플로우 준비 완료: "
                 f"release={selection.release_version}, "
                 f"bindings={len(selection.workflow_bindings)}"
             )
@@ -923,49 +941,36 @@ class ComfyInstallerService:
                 )
         if not workflow_key:
             raise InstallerServiceError("워크플로우 팩 키가 비어 있습니다.")
+        self.manifest = load_install_manifest(self.manifest.source_path)
         result = unpack_to_library(
             pack_path=workflow_pack,
             passphrase=workflow_key,
             library_root=self.workflow_library_root,
             work_root=self.work_root,
+            manifest=self.manifest,
             log=self._log,
         )
-        pack_manifest = release_install_manifest(
-            library_root=self.workflow_library_root,
-            release_version=str(result["release_version"]),
-        )
-        applied_manifest, backup_path = replace_install_manifest(
-            destination=self.manifest.source_path,
-            data=pack_manifest.data,
-            backup_dir=(
-                data_root(self.project_root)
-                / "backups"
-                / "comfy_installer"
-                / "manifests"
-            ),
-        )
-        self.manifest = applied_manifest
+        project_manifest = self.manifest
         with self._lock:
             self._state["manifest"] = {
-                "sha256": applied_manifest.sha256,
-                "comfy_version": applied_manifest.comfy["version"],
-                "model_count": len(applied_manifest.models),
+                "sha256": project_manifest.sha256,
+                "comfy_version": project_manifest.comfy["version"],
+                "model_count": len(project_manifest.models),
                 "model_bytes": sum(
-                    int(model["size"]) for model in applied_manifest.models
+                    int(model["size"]) for model in project_manifest.models
                 ),
-                "custom_node_count": len(applied_manifest.custom_nodes),
-                "workflow_count": applied_manifest.latest_workflow_count,
+                "custom_node_count": len(project_manifest.custom_nodes),
+                "workflow_count": project_manifest.latest_workflow_count,
             }
         self._log(
-            "[워크플로우] 팩 동봉 install_manifest.json 적용 완료: "
-            f"target={applied_manifest.source_path}, backup={backup_path}"
+            "[워크플로우] 프로젝트 설치 명세로 팩 등록 완료: "
+            f"manifest={project_manifest.source_path}"
         )
         return {
             "unpacked": result,
             "install_manifest": {
-                "path": str(applied_manifest.source_path),
-                "sha256": applied_manifest.sha256,
-                "backup_path": str(backup_path) if backup_path else None,
+                "path": str(project_manifest.source_path),
+                "sha256": project_manifest.sha256,
             },
             "library": self.workflow_library_status(),
         }
@@ -1063,7 +1068,7 @@ class ComfyInstallerService:
                 reason="comfy_v4_migrate",
             )
             self._log(
-                "[이사] config.json 백업 완료: "
+                "[이사] settings.json 백업 완료: "
                 f"{config_backup['backup_path']}"
             )
             if cancel_event is not None and cancel_event.is_set():
@@ -1105,10 +1110,10 @@ class ComfyInstallerService:
                 workflow_base_dir=workflow_base_dir,
             )
             if config_update.already_retargeted:
-                self._log("[이사] config.json은 이미 내장 Comfy 경로입니다.")
+                self._log("[이사] settings.json은 이미 내장 Comfy 경로입니다.")
             else:
                 self._log(
-                    "[이사] config.json 내장 Comfy 경로 전환 완료: "
+                    "[이사] settings.json 내장 Comfy 경로 전환 완료: "
                     f"{len(config_update.updated_paths)}개"
                 )
             return {
@@ -1143,7 +1148,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "다른 ComfyUI 작업 중에는 config.json 경로를 변경할 수 없습니다."
+                    "다른 ComfyUI 작업 중에는 settings.json 경로를 변경할 수 없습니다."
                 )
         try:
             default_workflows = self._prepare_default_workflows()
@@ -1167,16 +1172,16 @@ class ComfyInstallerService:
                 workflow_base_dir=workflow_base_dir,
             )
             if config_update.already_retargeted:
-                self._log("[설정] config.json은 이미 내장 Comfy 경로입니다.")
+                self._log("[설정] settings.json은 이미 내장 Comfy 경로입니다.")
             else:
                 self._log(
-                    "[설정] config.json 내장 Comfy 경로 전환 완료: "
+                    "[설정] settings.json 내장 Comfy 경로 전환 완료: "
                     f"{len(config_update.updated_paths)}개"
                 )
             return {"config": self._config_retarget_payload(config_update)}
         except Exception as exc:
             print(
-                "[COMFY_INSTALL][SERVICE] config.json 내장 Comfy 경로 전환 실패: "
+                "[COMFY_INSTALL][SERVICE] settings.json 내장 Comfy 경로 전환 실패: "
                 f"{exc}"
             )
             traceback.print_exc()
@@ -1184,7 +1189,7 @@ class ComfyInstallerService:
             if isinstance(exc, InstallerServiceError):
                 raise
             raise InstallerServiceError(
-                f"config.json 내장 Comfy 경로 전환 실패: {exc}"
+                f"settings.json 내장 Comfy 경로 전환 실패: {exc}"
             ) from exc
 
     def _validate_civitai_access(
@@ -1243,16 +1248,17 @@ class ComfyInstallerService:
             ) from exc
 
     def _read_config(self) -> dict[str, Any]:
-        """config.json 을 읽는다. 없거나 깨졌으면 빈 dict."""
+        """settings.json 을 읽는다. 없거나 깨졌으면 빈 dict."""
 
         try:
             if not self.config_path.is_file():
                 return {}
-            raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+            from configuration import read_config
+            raw = read_config(self.config_path)
             return raw if isinstance(raw, dict) else {}
         except Exception as exc:
             print(
-                "[COMFY_INSTALL][SERVICE] config.json 읽기 실패: "
+                "[COMFY_INSTALL][SERVICE] settings.json 읽기 실패: "
                 f"config={self.config_path}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
@@ -1269,25 +1275,32 @@ class ComfyInstallerService:
         """설치기가 실제로 로컬에 받을 모델을 정한다.
 
         ``cloud_direct`` 에서는 로컬에서 실행되는 작업이 쓰는 모델만 남기고,
-        나머지는 워커가 저장소에서 볼륨으로 직접 받도록 넘긴다. 설정을 읽지
+        나머지는 워커가 저장소에서 볼륨으로 직접 받도록 넘긴다. 기본 제공 Anima 모델과 LoRA는
+        워크플로우 선택과 관계없이 추가하고 CPU·클라우드 환경에서도 로컬에 받는다. 설정을 읽지
         못하면 ``local_first`` 로 본다 — 모르는 상태에서 다운로드를 건너뛰면
         나중에 조용히 실패하기 때문이다.
 
         ``install_mode`` 를 받는 이유는 **순서** 때문이다. 설치는 모델을 먼저 받고
         (`models` 단계) 설정을 나중에 적용한다(`config` 단계). 그래서 클라우드 전용
-        설치가 config.json 에만 반영되면, 정작 다운로드를 정하는 이 시점에는 아직
+        설치가 settings.json 에만 반영되면, 정작 다운로드를 정하는 이 시점에는 아직
         옛 설정(local_first · 전부 로컬)이 보인다 — 모델을 전부 로컬로 받아 놓고
         그 다음에 "클라우드 전용" 이라고 적는 꼴이 된다. 선언된 설치 모드를 직접
         보게 해서 그 창을 없앤다.
 
-        ``manifest`` 는 바인딩→모델 대응을 읽을 매니페스트다. 팩이 자기완결형이
-        된 뒤로 ``models`` 는 팩 동봉 매니페스트에서 오므로, 워크플로우 바인딩도
-        **같은 매니페스트**에서 읽어야 한다. 저장소 매니페스트와 섞으면 팩 버전이
-        다를 때 바인딩이 어긋나, 로컬에 필요한 모델을 조용히 건너뛴다.
+        ``manifest`` combines the current project model catalog with the selected
+        pack's fixed workflow dependencies. Keep those bindings when deciding
+        which fixed dependencies execute locally.
         """
 
         config = self._read_config()
         active_manifest = manifest or self.manifest
+        # Default Anima models and LoRAs do not depend on the selected workflows.
+        default_model_ids = default_install_model_ids(active_manifest.models)
+        models_by_id = {str(model["id"]): model for model in models}
+        for model in active_manifest.models:
+            if str(model["id"]) in default_model_ids:
+                models_by_id.setdefault(str(model["id"]), model)
+        models = list(models_by_id.values())
         if str(install_mode) == INSTALL_MODE_CLOUD_ONLY:
             return scope_models(
                 models,
@@ -1316,12 +1329,11 @@ class ComfyInstallerService:
         try:
             config: dict[str, Any] = {}
             if self.config_path.is_file():
-                raw_config = json.loads(
-                    self.config_path.read_text(encoding="utf-8")
-                )
+                from configuration import read_config
+                raw_config = read_config(self.config_path)
                 if not isinstance(raw_config, dict):
                     raise InstallerServiceError(
-                        "config.json 최상위 값이 객체가 아닙니다."
+                        "settings.json 최상위 값이 객체가 아닙니다."
                     )
                 config = raw_config
             profiles = normalize_comfy_launch_profiles(
@@ -1379,7 +1391,6 @@ class ComfyInstallerService:
             "asset_workflow_source_path": 40,
             "anima_asset_workflow_source_path": 50,
             "anima_only_asset_workflow_source_path": 60,
-            "qwen_edit_workflow_source_path": 70,
             "anima_inpainting_workflow_source_path": 80,
             "tag_analysis_workflow_source_path": 90,
             "asset_tag_analysis_workflow_source_path": 100,
@@ -1389,6 +1400,8 @@ class ComfyInstallerService:
             "lora_training_workflow_source_paths.sdxl": 140,
             "style_lora_training_workflow_source_paths.anima": 150,
             "style_lora_training_workflow_source_paths.sdxl": 160,
+            "workflow_pack_extra_paths.lora_training_anima_v2": 165,
+            "workflow_pack_extra_paths.style_lora_training_anima_v2": 166,
             "debug_workflow_source_path": 170,
             "video_workflow_source_paths.i2v": 180,
             "video_workflow_source_paths.first_last": 190,
@@ -1671,7 +1684,7 @@ class ComfyInstallerService:
                     "install_mode": kwargs.get("install_mode"),
                     "selected_item_ids": (
                         list(kwargs.get("selected_item_ids", []))
-                        if operation == "e2e"
+                        if operation in {"e2e", "workflow_models"}
                         else None
                     ),
                     "phase": None,
@@ -1694,12 +1707,45 @@ class ComfyInstallerService:
             self._thread.start()
         return self.status()
 
+    def start_basic_install(
+        self, *, workflow_key: str, civitai_key: str,
+        install_mode: str = INSTALL_MODE_STANDARD,
+        replace_existing: bool = False,
+    ) -> dict:
+        """Decrypt the shipped pack and install the basic task set with the existing engine."""
+        mode = normalize_install_mode(install_mode)
+        if mode not in {INSTALL_MODE_STANDARD, INSTALL_MODE_NVIDIA_COMPATIBILITY}:
+            raise InstallerServiceError("일반 설치 또는 호환 설치를 선택하세요.")
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise InstallerServiceError("이미 설치 작업이 진행 중입니다.")
+            if not isinstance(replace_existing, bool):
+                raise InstallerServiceError("기존 ComfyUI 삭제 확인 값이 올바르지 않습니다.")
+            if os.path.lexists(self.comfy_root) and not replace_existing:
+                raise InstallerServiceError("기존 comfy 폴더 삭제를 확인한 뒤 설치하세요.")
+            self._require_comfy_not_in_use()
+            result = self.unpack_workflow_pack(
+                workflow_pack=Path(__file__).parent / "resources" / "workflows.soyawfp",
+                workflow_key=workflow_key,
+            )
+            release = str(result["unpacked"]["release_version"])
+            selected = basic_workflow_item_ids(self.workflow_library_root, release)
+            self.set_civitai_key(civitai_key)
+            if not self.config_path.exists():
+                from configuration import write_config
+                write_config(self.config_path, {})
+            return self.start_install(
+                release_version=release, selected_item_ids=selected, install_mode=mode,
+                replace_existing=replace_existing,
+            )
+
     def start_install(
         self,
         *,
         release_version: str,
         selected_item_ids: list[str],
         install_mode: str = INSTALL_MODE_STANDARD,
+        replace_existing: bool = False,
     ) -> dict:
         if not isinstance(release_version, str) or not release_version:
             raise InstallerServiceError("설치할 워크플로우 팩 버전이 비어 있습니다.")
@@ -1709,6 +1755,8 @@ class ComfyInstallerService:
             mode = normalize_install_mode(install_mode)
         except ValueError as exc:
             raise InstallerServiceError(str(exc)) from exc
+        if replace_existing:
+            self._require_comfy_not_in_use()
         return self._start_operation(
             operation="install",
             phases=_INSTALL_PHASES,
@@ -1717,8 +1765,79 @@ class ComfyInstallerService:
                 "release_version": release_version,
                 "selected_item_ids": [str(value) for value in selected_item_ids],
                 "install_mode": mode,
+                "replace_existing": replace_existing,
             },
         )
+
+    def cleanup_workflow_models(self, *, release_version: str, selected_item_ids: list[str], revision: str | None = None) -> dict:
+        from .workflow_cleanup import WorkflowModelCleanup
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise InstallerServiceError("진행 중인 설치·검증 작업이 끝난 뒤 정리하세요.")
+            resolve_distribution_selection(
+                library_root=self.workflow_library_root, release_version=release_version, selected_item_ids=selected_item_ids,
+            )
+            cleanup = WorkflowModelCleanup(comfy_root=self.comfy_root, library_root=self.workflow_library_root)
+            plan = cleanup.plan(release_version=release_version, selected_item_ids=selected_item_ids)
+            if revision is None:
+                return plan
+            if revision != plan["revision"]:
+                raise InstallerServiceError("모델 또는 공유 상태가 변경되었습니다. 정리 목록을 다시 확인하세요.")
+            result = cleanup.delete(plan)
+            hide_unready_workflows(comfy_root=self.comfy_root, library_root=self.workflow_library_root, log=self._log)
+            return result
+
+    def start_workflow_models(self, *, release_version: str, selected_item_ids: list[str], civitai_key: str = "") -> dict:
+        if not (self.comfy_root / "main.py").is_file() or not uv_python_path(self.comfy_root / ".venv").is_file():
+            raise InstallerServiceError("ComfyUI 초기 설치를 먼저 완료하세요.")
+        selection = resolve_distribution_selection(
+            library_root=self.workflow_library_root, release_version=release_version, selected_item_ids=selected_item_ids,
+        )
+        manifest = release_install_manifest(library_root=self.workflow_library_root, release_version=release_version)
+        by_id = {model["id"]: model for model in manifest.models}
+        from .model_installer import missing_models
+        models = missing_models(models=[by_id[identity] for identity in selection.model_ids], comfy_root=self.comfy_root)
+        library = self.workflow_library_status()
+        installed_hashes = {item["sha256"] for item in library["workflow_files"]}
+        if not models and all(hashlib.sha256(Path(path).read_bytes()).hexdigest() in installed_hashes for path in selection.workflow_files):
+            raise InstallerServiceError("워크플로우가 이미 설치되어 있습니다. 목록을 새로고침하세요.")
+        if any(model.get("auth") == "civitai" for model in models) and not civitai_key.strip():
+            raise InstallerServiceError("기타 API 관리에서 Civitai API 키를 입력하세요.")
+        return self._start_operation(
+            operation="workflow_models", phases=(("models", "필수 모델 설치"), ("workflow_files", "워크플로우 파일 추가"), ("complete", "설치 완료")),
+            target=self._run_workflow_models,
+            kwargs={"models": models, "release_version": release_version, "selected_item_ids": selected_item_ids, "civitai_key": civitai_key},
+        )
+
+    def _run_workflow_models(self, *, models: list[dict], release_version: str, selected_item_ids: list[str], civitai_key: str) -> None:
+        try:
+            self._set_phase("models")
+            from llm_settings import LLM_SP
+            if LLM_SP["workflow_binding"] in selected_item_ids:
+                from .gemma4_vision import install_gemma4_backend, install_gemma4_runtime
+                install_gemma4_backend(comfy_root=self.comfy_root, cancel_event=self._cancel, log=self._log)
+                install_gemma4_runtime(comfy_root=self.comfy_root, downloader=self.downloader,
+                                       cancel_event=self._cancel, log=self._log, progress=self._set_progress)
+            from .model_installer import missing_models
+            remaining = missing_models(models=models, comfy_root=self.comfy_root)
+            results = install_models(models=remaining, comfy_root=self.comfy_root, downloader=self.downloader,
+                                     civitai_key=civitai_key, cancel_event=self._cancel, log=self._log, progress=self._set_progress)
+            if self._cancel.is_set():
+                raise InstallerServiceError("모델 설치를 중단했습니다.")
+            self._set_phase("workflow_files")
+            selection = install_managed_workflows(comfy_root=self.comfy_root, library_root=self.workflow_library_root,
+                                                 release_version=release_version, selected_item_ids=selected_item_ids, log=self._log)
+            apply_repaired_workflow_bindings(config_path=self.config_path, backup_dir=self.config_backup_dir,
+                                            comfy_root=self.comfy_root, workflow_bindings=selection.workflow_bindings)
+            self._set_phase("complete")
+            with self._lock:
+                self._state.update(state="succeeded", finished_at=_now_iso(), result={"models": results, "workflow_files": list(selection.workflow_files)}, error=None)
+            self._log(f"[완료] 워크플로우 {len(selection.workflow_files)}개와 필수 모델 설치 완료")
+        except Exception as exc:
+            cancelled = self._cancel.is_set()
+            self._log(f"[{'중단' if cancelled else '실패'}] {exc}", "warning" if cancelled else "error")
+            with self._lock:
+                self._state.update(state="cancelled" if cancelled else "failed", finished_at=_now_iso(), error=str(exc))
 
     def start_update(self) -> dict:
         python = uv_python_path(self.comfy_root / ".venv")
@@ -2377,12 +2496,39 @@ class ComfyInstallerService:
                 f"설치 결과 기록 실패: {exc}"
             ) from exc
 
+    def _clear_comfy_for_install(self) -> None:
+        expected = (data_root(self.project_root) / "comfy").absolute()
+        target = self.comfy_root
+        # Never follow a redirected root when recursively removing the install.
+        if target.absolute() != expected or target.resolve() != expected:
+            raise InstallerServiceError(f"삭제할 comfy 폴더가 프로젝트 내부 경로와 다릅니다: {target}")
+        if self._cancel.is_set():
+            raise DownloadCancelled("설치가 중단되었습니다.")
+        if os.path.lexists(target):
+            # Include unmanaged Comfy instances and tools using its Python/DLLs.
+            # Recheck immediately before the first deletion, not only at request time.
+            self._require_comfy_not_in_use()
+            self._log(f"[ComfyUI] 기존 폴더를 백업 없이 삭제합니다: {target}")
+            try:
+                if target.is_dir():
+                    _remove_tree_force_writable(target)
+                else:
+                    target.unlink()
+            except OSError as exc:
+                failed_path = exc.filename or str(target)
+                raise InstallerServiceError(
+                    f"기존 ComfyUI 파일을 삭제하지 못했습니다: {failed_path}. "
+                    "이 파일을 사용하는 프로그램과 파일 권한을 확인한 뒤 다시 시도하세요."
+                ) from exc
+            self._log("[ComfyUI] 기존 폴더 삭제 완료. 새로 설치합니다.")
+
     def _run_install(
         self,
         *,
         release_version: str,
         selected_item_ids: list[str],
         install_mode: str,
+        replace_existing: bool = False,
     ) -> None:
         process: ComfyProcess | None = None
         config_update: ConfigUpdateResult | None = None
@@ -2409,6 +2555,8 @@ class ComfyInstallerService:
             # cloud_direct 에서 매니페스트 전체를 요구하면 정작 받을 것보다
             # 100 GiB 넘게 과대 산정돼 멀쩡한 머신이 프리플라이트에서 막힌다.
             self._set_phase("preflight")
+            if replace_existing:
+                self._clear_comfy_for_install()
             system, preflight_scope = self._preflight_models(
                 [
                     models_by_id[model_id]
@@ -2439,15 +2587,13 @@ class ComfyInstallerService:
             )
 
             self._set_phase("workflows")
-            selection = import_user_copies(
-                comfy_root=self.comfy_root,
+            selection = resolve_distribution_selection(
                 library_root=self.workflow_library_root,
                 release_version=release_version,
                 selected_item_ids=selected_item_ids,
-                log=self._log,
             )
             self._log(
-                "[워크플로우] 사용자 사본 준비 완료: "
+                "[워크플로우] 배포 원본 선택 완료: "
                 f"release={selection.release_version}, "
                 f"selected={len(selection.selected_item_ids)}"
             )
@@ -2523,6 +2669,7 @@ class ComfyInstallerService:
                 progress=self._set_progress,
                 requirements_dir=self.runtime_backup_dir,
             )
+            configure_lora_manager(self.comfy_root, civitai_key=civitai_key)
 
             self._set_phase("node_dependencies")
             node_requirements = install_node_dependencies(
@@ -2597,6 +2744,12 @@ class ComfyInstallerService:
                     process.stop()
                     process = None
 
+            self._set_phase("workflow_files")
+            selection = install_managed_workflows(
+                comfy_root=self.comfy_root, library_root=self.workflow_library_root,
+                release_version=release_version, selected_item_ids=selected_item_ids, log=self._log,
+                allow_missing_models=bool(model_scope.skipped),
+            )
             self._set_phase("config")
             workflow_base_dir = self._embedded_workflow_base_dir()
             # 설치 모드를 넘긴다. 클라우드 전용 설치는 여기서 배분과 모델 취득
@@ -2645,8 +2798,11 @@ class ComfyInstallerService:
                 "models": model_results,
                 "workflow_release_version": selection.release_version,
                 "selected_workflow_ids": list(selection.selected_item_ids),
-                "selected_model_ids": list(selection.model_ids),
-                "user_workflow_files": list(selection.user_files),
+                "selected_model_ids": sorted(
+                    str(model["id"])
+                    for model in (*model_scope.keep, *model_scope.skipped)
+                ),
+                "workflow_files": list(selection.workflow_files),
                 "workflow_e2e_deferred": True,
                 "workflow_static": None,
                 "workflow_runtime": None,
@@ -2930,6 +3086,7 @@ class ComfyInstallerService:
                 changed_nodes=updated_node_names,
                 requirements_dir=self.runtime_backup_dir,
             )
+            configure_lora_manager(self.comfy_root, civitai_key=load_civitai_key(self.project_root))
             if updated_node_names:
                 self._log(
                     "[업데이트] 실제 변경된 커스텀 노드: "
@@ -3406,6 +3563,10 @@ class ComfyInstallerService:
                 self.config_path,
                 new_manifest,
                 include_optional=False,
+                required_bindings=(
+                    inventory.get("receipt", {}).get("workflows", {}).get("bindings")
+                    if isinstance(inventory.get("receipt"), dict) else None
+                ),
             )
             workflow_bindings = {
                 key: str(path) for key, path in workflow_paths.items()
@@ -3517,6 +3678,7 @@ class ComfyInstallerService:
                 changed_nodes=updated_node_names,
                 requirements_dir=self.runtime_backup_dir,
             )
+            configure_lora_manager(self.comfy_root, civitai_key=load_civitai_key(self.project_root))
             if updated_node_names:
                 nodes_changed = True
                 self._log(
@@ -3762,7 +3924,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "설치 또는 업데이트 중에는 config.json을 복원할 수 없습니다."
+                    "설치 또는 업데이트 중에는 settings.json을 복원할 수 없습니다."
                 )
         result = restore_config_backup(
             config_path=self.config_path,
@@ -3770,6 +3932,6 @@ class ComfyInstallerService:
             backup_path=backup_path,
         )
         self._log(
-            f"[설정] 사용자가 선택한 config.json 백업 복원: {backup_path}"
+            f"[설정] 사용자가 선택한 settings.json 백업 복원: {backup_path}"
         )
         return result

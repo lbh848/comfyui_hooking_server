@@ -1,5 +1,9 @@
 """Windows 전용 ComfyUI 설치·검증 도구."""
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 from .crypto import WorkflowPackError, create_workflow_pack, extract_workflow_pack
 from .manifest import InstallManifest, ManifestError, load_install_manifest
 

@@ -12,6 +12,8 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 """
 
 from app_paths import config_root, data_root
+from llm_token_usage import approx_tokens as _approx_tokens, output_token_stats
+from llm_settings import LLM_SP, LLM_SP_SLOTS, fixed_sp_slot, RuntimeSettingsReader, SLOT_COUNT, SLOT_IDS, SLOT_SUFFIXES, UNCONFIGURED_SERVICE, runtime_config
 
 import asyncio
 import illustration_flow
@@ -30,7 +32,7 @@ import time
 import traceback
 import uuid
 import weakref
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import aiohttp
@@ -48,6 +50,27 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEY_DIR = os.path.join(config_root(BASE_DIR), "key")
 LOG_DIR = os.path.join(data_root(BASE_DIR), "logs")
 DEFAULT_LLM_MAX_OUTPUT_TOKENS = 0
+_settings_reader = RuntimeSettingsReader(config_root(BASE_DIR))
+_fixed_sp_config = runtime_config({"draft": {"llmProviders": [], "llms": [fixed_sp_slot(slot_id) for slot_id in LLM_SP_SLOTS]}, "apiKeys": {}})
+_fixed_sp_config.pop("llm_reasoning_budget_tokens_sp")  # This setting belongs to the saved reasoning slot.
+for _sp_slot_id in LLM_SP_SLOTS:
+    _fixed_sp_config.pop(f"llm_context_size{_sp_slot_id[3:]}")
+_settings_config_ctx: ContextVar[dict | None] = ContextVar("llm_settings_config", default=None)
+
+
+def _shared_settings() -> dict:
+    snapshot = _settings_config_ctx.get()
+    return snapshot if snapshot is not None else _settings_reader.read()
+
+
+@contextmanager
+def settings_context(document: dict):
+    """Keep one validated settings snapshot isolated for the entire request."""
+    token = _settings_config_ctx.set(runtime_config(document))
+    try:
+        yield
+    finally:
+        _settings_config_ctx.reset(token)
 
 
 # Provider Manager 1.9.2 의 providers.json 에 정의된 OpenAI 호환 프리셋.
@@ -134,6 +157,10 @@ def vertex_key_path(slot: str) -> str:
 def _get_vertex_key_path() -> Optional[str]:
     """현재 요청 슬롯의 키만 사용한다. 다른 슬롯이나 임의 JSON은 상속하지 않는다."""
     slot = _llm_slot_ctx.get()
+    shared = _shared_settings()
+    suffix = _slot_suffix(slot)
+    if f"llm_provider_id{suffix}" in shared:
+        return f"provider:{shared[f'llm_provider_id{suffix}']}" if shared.get(f"llm_api_key{suffix}") else None
     path = vertex_key_path(slot)
     if os.path.isfile(path):
         return path
@@ -145,19 +172,18 @@ COPILOT_KEY = _load_copilot_key()
 
 
 # ─── LLM 슬롯 단일 소스 ─────────────────────────────────────
-# 슬롯 수. 슬롯별 config 키(llm_service{N}, llm_model{N}, ...)·라우팅 화이트리스트·
-# 마스킹 키·워커 수 산정이 모두 이 값에서 파생된다. 슬롯을 추가하려면 이 값만 올리면
-# 각 설정 경로가 range() 로 자동 확장된다.
-LLM_SLOT_COUNT = 10
-LLM_SLOT_IDS = tuple(f"llm{i}" for i in range(1, LLM_SLOT_COUNT + 1))
+# Keep the numbered-slot count for legacy callers; use IDs/suffixes for all slots.
+LLM_SLOT_COUNT = SLOT_COUNT
+LLM_SLOT_IDS = SLOT_IDS
+LLM_SLOT_SUFFIXES = SLOT_SUFFIXES
 
 
 # ─── 로깅 ──────────────────────────────────────────────────
 
 # API 키는 메모리에만 존재해야 하므로 로그(파일/stdout)에 절대 평문 노출 금지.
 _REDACTED_KEYS = {
-    *(f"llm_api_key{'' if n == 1 else n}" for n in range(1, LLM_SLOT_COUNT + 1)),
-    *(f"llm_custom_headers{'' if n == 1 else n}" for n in range(1, LLM_SLOT_COUNT + 1)),
+    *(f"llm_api_key{suffix}" for suffix in LLM_SLOT_SUFFIXES),
+    *(f"llm_custom_headers{suffix}" for suffix in LLM_SLOT_SUFFIXES),
     "api_key", "apikey",
     "token", "access_token", "authorization", "x-api-key",
     "key", "secret", "password",
@@ -196,8 +222,7 @@ def _redact_in_text(msg):
     redacted = msg
     candidates = []
     try:
-        for n in range(1, LLM_SLOT_COUNT + 1):
-            suffix = "" if n == 1 else str(n)
+        for suffix in LLM_SLOT_SUFFIXES:
             v = _current_config.get(f"llm_api_key{suffix}", "")
             if isinstance(v, str) and len(v) >= 8:
                 candidates.append(v)
@@ -318,17 +343,21 @@ def _init_vertex(key_path: str | None = None):
         return None
 
     try:
-        stat = os.stat(key_path)
-        signature = (key_path, stat.st_mtime_ns, stat.st_size)
+        shared_key = _base_config_get(f"llm_api_key{_slot_suffix(slot)}", "") if key_path.startswith("provider:") else None
+        if shared_key is not None:
+            signature = (key_path, hashlib.sha256(shared_key.encode()).hexdigest())
+        else:
+            stat = os.stat(key_path)
+            signature = (key_path, stat.st_mtime_ns, stat.st_size)
         cached = _vertex_credentials.get(slot)
         if cached is not None and cached[0] == signature:
             return cached[1:]
 
         from google.oauth2 import service_account
-        credentials = service_account.Credentials.from_service_account_file(
-            key_path,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
+        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+        credentials = (service_account.Credentials.from_service_account_info(json.loads(shared_key), scopes=scopes)
+                       if shared_key is not None else
+                       service_account.Credentials.from_service_account_file(key_path, scopes=scopes))
 
         lock = asyncio.Lock()
         _vertex_credentials[slot] = (signature, credentials, lock)
@@ -439,12 +468,18 @@ class _ContextConfig(dict):
         override = _request_config_override_ctx.get()
         if override is not None and key in override:
             return override[key]
+        shared = _shared_settings()
+        if key in shared:
+            return shared[key]
         return super().__getitem__(key)
 
     def get(self, key, default=None):
         override = _request_config_override_ctx.get()
         if override is not None and key in override:
             return override[key]
+        shared = _shared_settings()
+        if key in shared:
+            return shared[key]
         return super().get(key, default)
 
 
@@ -473,10 +508,9 @@ _current_config = _ContextConfig({
     "llm_routing": {},
 })
 
-# LLM 슬롯 2..N 기본값은 단일 소스(LLM_SLOT_COUNT)에서 자동 생성한다.
+# Generate defaults for numbered and named slots from the shared suffix list.
 # LLM1만 기존 config 계약 때문에 접미사 없는 키를 유지한다.
-for _slot_n in range(2, LLM_SLOT_COUNT + 1):
-    _suffix = str(_slot_n)
+for _suffix in LLM_SLOT_SUFFIXES[1:]:
     _current_config.update({
         f"llm_service{_suffix}": "openai",
         f"llm_model{_suffix}": "",
@@ -507,10 +541,10 @@ def migrate_config(config: dict) -> dict:
       기존 엔드포인트가 끊기지 않게 한다.
     부분 dict (UI 저장 등) 도 안전하게 처리: 키가 없으면 건드리지 않는다.
     """
-    for n in range(1, LLM_SLOT_COUNT + 1):
-        svc_key = "llm_service" if n == 1 else f"llm_service{n}"
-        url_key = "llm_url" if n == 1 else f"llm_url{n}"
-        legacy_url_key = "custom_api_url" if n == 1 else f"custom_api_url{n}"
+    for suffix in LLM_SLOT_SUFFIXES:
+        svc_key = f"llm_service{suffix}"
+        url_key = f"llm_url{suffix}"
+        legacy_url_key = f"custom_api_url{suffix}"
         if config.get(svc_key) in ("openai-compat", "customapi"):
             old = config.get(svc_key)
             config[svc_key] = "openai"
@@ -529,8 +563,8 @@ def update_config(config: dict):
     global _current_config
     migrate_config(config)
     concurrency_changed = any(
-        f"{key}{'' if n == 1 else n}" in config
-        for n in range(1, LLM_SLOT_COUNT + 1)
+        f"{key}{suffix}" in config
+        for suffix in LLM_SLOT_SUFFIXES
         for key in ("llm_max_concurrency", "llm_service", "llm_url", "llm_api_key")
     )
     for key, value in config.items():
@@ -542,7 +576,7 @@ def update_config(config: dict):
 
 
 def get_config() -> dict:
-    return _current_config.copy()
+    return {**_current_config, **_shared_settings(), **_fixed_sp_config}
 
 
 def _normalize_llm_slot(slot: str | None) -> str:
@@ -557,7 +591,7 @@ def _slot_suffix(slot: str | None) -> str:
     """Return the config-key suffix for a normalized LLM slot.
 
     LLM1 keeps the historical unsuffixed config keys.  The remaining slots
-    use their complete numeric suffix; taking only the last character would
+    use their complete suffix; taking only the last character would
     route LLM10 to the LLM0 keys.
     """
     normalized = _normalize_llm_slot(slot)
@@ -571,7 +605,9 @@ def _slot_number(slot: str | None) -> str:
 
 def _base_config_get(key: str, default=None):
     """ContextVar 오버레이를 무시하고 저장된 전역 설정값을 읽는다."""
-    return dict.get(_current_config, key, default)
+    if key in _fixed_sp_config:
+        return _fixed_sp_config[key]
+    return _shared_settings().get(key, dict.get(_current_config, key, default))
 
 
 def _slot_config_overrides(slot: str) -> dict:
@@ -1540,8 +1576,10 @@ def _llm_max_concurrency(slot: str | None = None, *, config: dict | None = None)
 
 def _llm_provider_identity(slot: str, *, config: dict | None = None) -> str:
     """동일 연결을 서비스 별칭이나 모델명과 무관하게 식별한다. 키는 공개하지 않는다."""
-    source = _current_config if config is None else config
+    source = get_config() if config is None else config
     suffix = _slot_suffix(slot)
+    if source.get(f"llm_provider_id{suffix}"):
+        return "settings-provider:" + source[f"llm_provider_id{suffix}"]
 
     def connection_value(key, default=""):
         return dict.get(source, f"{key}{suffix}") or default
@@ -1586,7 +1624,7 @@ def _llm_provider_identity(slot: str, *, config: dict | None = None) -> str:
 
 
 def _llm_provider_slots(slot: str, *, config: dict | None = None) -> list[str]:
-    source = _current_config if config is None else config
+    source = get_config() if config is None else config
     identity = _llm_provider_identity(slot, config=source)
     return [candidate for candidate in LLM_SLOT_IDS
             if (candidate == slot or dict.get(source, f"llm_model{_slot_suffix(candidate)}"))
@@ -1651,7 +1689,12 @@ class _LlmRequestGate:
                               f"active={self.active}, task={metadata.get('task_key')}, "
                               f"call={metadata.get('call_name')}")
                         return None
-                    await self.condition.wait()
+                    # Settings are edited by a separate process. Recheck its limit
+                    # even when all active calls are still waiting on the provider.
+                    try:
+                        await asyncio.wait_for(self.condition.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        pass
             except asyncio.CancelledError:
                 print(f"[LLM_GATE] 대기 요청 취소: slot={self.slot}, priority={priority}, "
                       f"task={metadata.get('task_key')}, call={metadata.get('call_name')}")
@@ -2834,6 +2877,8 @@ def _vertex_project_id() -> str:
     if not key_path:
         return ""
     try:
+        if key_path.startswith("provider:"):
+            return json.loads(_base_config_get(f"llm_api_key{_slot_suffix(_llm_slot_ctx.get())}", "")).get("project_id", "")
         with open(key_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data.get("project_id", "")
@@ -3183,6 +3228,17 @@ async def _dispatch_unlimited(messages: list, service: str, model: str) -> str:
     """동시성 게이트 안에서 실행되는 서비스 라우팅 내부 함수."""
     _llm_log(f"_dispatch: service={service}, model={model}")
 
+    if _llm_slot_ctx.get() in LLM_SP_SLOTS:
+        from llm_sp_workflow import analyze
+        try:
+            return await analyze(messages, slot_id=_llm_slot_ctx.get(),
+                                 reasoning_budget=_base_config_get("llm_reasoning_budget_tokens_sp") or 2048,
+                                 context_size=_base_config_get(f"llm_context_size{_slot_suffix(_llm_slot_ctx.get())}", LLM_SP["context_size"]),
+                                 metadata=_usage_sink_ctx.get())
+        except (ValueError, RuntimeError, OSError, aiohttp.ClientError) as exc:
+            return f"[LLM 실패] {exc}"
+    if service == UNCONFIGURED_SERVICE:
+        return "[LLM 실패] LLM 설정에서 프로바이더를 선택하세요."
     if service == "copilot":
         return await _call_copilot(messages, model)
     elif service == "vertex":
@@ -4033,6 +4089,8 @@ async def callLLMVisionTaskResult(
         "llm8": callLLMVision8,
         "llm9": callLLMVision9,
         "llm10": callLLMVision10,
+        "llm_sp": callLLMVision_sp,
+        "llm_sp2": callLLMVision_sp2,
     }
 
     async def _invoke(slot: str) -> str:
@@ -4277,6 +4335,19 @@ def _public_stream_state(record: dict) -> dict:
         for key, value in record.items()
         if not key.startswith("_")
     }
+    if state.get("status") != "완료":
+        # Providers usually send usage only at the end. Estimate the live
+        # snapshot from received text without replacing the final usage record.
+        end = time.time() if state.get("active") else record.get("last_event_at", record["started_at"])
+        elapsed = max(float(state.get("elapsed") or 0.0), end - record["started_at"])
+        state["elapsed"] = elapsed
+        state["prompt_tokens"] = state.get("prompt_tokens") or record["_prompt_tokens_estimate"]
+        state.update(output_token_stats(
+            str(state.get("text") or ""), str(state.get("reasoning_text") or ""),
+            reasoning_tokens=state.get("reasoning_tokens"),
+        ))
+        state["tps"] = state["completion_tokens"] / elapsed if elapsed > 0 else 0.0
+        state["tokens_estimated"] = True
     coordinator = record.get("_race_coordinator")
     if coordinator is not None:
         try:
@@ -4422,6 +4493,7 @@ def _register_active_stream(
         "_control_action": "",
         "_forced_cancel_reason": "",
         "_race_coordinator": coordinator,
+        "_prompt_tokens_estimate": _approx_input_tokens(coordinator.messages),
     }
     _active_streams[stream_id] = record
     return record
@@ -4551,8 +4623,10 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
         "pdf_pages_after",
         "pdf_prompt_format",
         "reasoning_tokens",
+        "reasoning_tokens_estimated",
         "reasoning_chars",
         "reasoning_text",
+        "tokens_estimated",
         "http_status",
         "http_headers_elapsed",
         "http_request_sent_elapsed",
@@ -5023,6 +5097,9 @@ async def _consume_stream_attempt(
                     done_seen = True
                     final_text = str(event.get("text", "") or "")
                     record["text"] = final_text or "".join(partial_parts)
+                    if isinstance(event.get("reasoning_text"), str):
+                        record["reasoning_text"] = event["reasoning_text"]
+                        record["reasoning_chars"] = len(event["reasoning_text"])
                     record["status"] = "완료"
                 elif event_type == "error":
                     error_msg = str(
@@ -5048,7 +5125,9 @@ async def _consume_stream_attempt(
                     ("pdf_pages_after", "pdf_pages_after"),
                     ("pdf_prompt_format", "pdf_prompt_format"),
                     ("reasoning_tokens", "reasoning_tokens"),
+                    ("reasoning_tokens_estimated", "reasoning_tokens_estimated"),
                     ("reasoning_chars", "reasoning_chars"),
+                    ("tokens_estimated", "tokens_estimated"),
                     ("http_status", "http_status"),
                     ("http_headers_elapsed", "http_headers_elapsed"),
                     ("http_request_sent_elapsed", "http_request_sent_elapsed"),
@@ -5063,11 +5142,10 @@ async def _consume_stream_attempt(
                         record[target_key] = event[source_key]
                 record["last_event_at"] = time.time()
                 if event_type == "delta" and coordinator.active_attempt_ids()[:1] == [stream_id]:
-                    elapsed = max(0.0, record["last_event_at"] - record["started_at"])
                     illustration_flow.llm_metadata(**{
                         key: record[key] for key in LLM_STREAM_TIMING_FIELDS
                     }, last_event_at=record["last_event_at"],
-                        tps=_approx_tokens(record["text"]) / elapsed if elapsed > 0 and record["text"] else None)
+                        tps=_public_stream_state(record)["tps"])
                 payload = {
                     **metadata,
                     **event,
@@ -5110,7 +5188,8 @@ async def _consume_stream_attempt(
             partial_text = "".join(partial_parts)
             if action == "use_partial" and partial_text:
                 elapsed = max(0.0, time.time() - float(record["started_at"]))
-                tokens = _approx_tokens(partial_text)
+                token_stats = output_token_stats(partial_text, str(record.get("reasoning_text") or ""))
+                tokens = token_stats["completion_tokens"]
                 record.update({
                     "status": "완료",
                     "text": partial_text,
@@ -5118,6 +5197,7 @@ async def _consume_stream_attempt(
                     "prompt_tokens": _approx_input_tokens(coordinator.messages),
                     "elapsed": elapsed,
                     "tps": tokens / elapsed if elapsed > 0 else 0.0,
+                    **token_stats,
                 })
                 payload = {
                     **metadata,
@@ -5126,6 +5206,7 @@ async def _consume_stream_attempt(
                     "partial": True,
                     "termination_reason": "manual_partial",
                     "completion_tokens": tokens,
+                    **token_stats,
                     "prompt_tokens": record["prompt_tokens"],
                     "elapsed": elapsed,
                     "tps": record["tps"],
@@ -5576,13 +5657,6 @@ async def callLLMTrackedStream(
             _request_config_override_ctx.reset(config_token)
 
 
-def _approx_tokens(text: str) -> int:
-    """usage 정보가 없을 때 휴리스틱 (영어 4자 = 1토큰, 한글은 더 크게)."""
-    if not text:
-        return 0
-    return max(1, len(text) // 3)
-
-
 def _approx_input_tokens(messages: list) -> int:
     """provider 가 usage 를 주지 않을 때 입력 토큰 근사치.
 
@@ -5614,10 +5688,17 @@ def _fill_usage_sink_fallback(sink: dict | None, result, messages: list) -> None
     """
     if sink is None or _is_llm_failed(result):
         return
-    if "completion_tokens" not in sink:
-        sink["completion_tokens"] = _approx_tokens(result) if isinstance(result, str) else 0
-    if "prompt_tokens" not in sink:
+    stats = output_token_stats(
+        result if isinstance(result, str) else "", str(sink.get("reasoning_text") or ""),
+        completion_tokens=sink.get("completion_tokens"), reasoning_tokens=sink.get("reasoning_tokens"),
+        reasoning_chars=sink.get("reasoning_chars") or 0,
+    )
+    for key, value in stats.items():
+        if sink.get(key) is None:
+            sink[key] = value
+    if sink.get("prompt_tokens") is None:
         sink["prompt_tokens"] = _approx_input_tokens(messages)
+        sink["tokens_estimated"] = True
 
 
 _OPENAI_POST_FINISH_USAGE_GRACE_SECONDS = 1.0
@@ -5774,10 +5855,14 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
-        if completion_tokens is None:
-            completion_tokens = _approx_tokens(full)
+        token_stats = output_token_stats(
+            full, "".join(reasoning_parts), completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+        completion_tokens = token_stats["completion_tokens"]
         if prompt_tokens is None:
             prompt_tokens = _approx_input_tokens(messages)
+            token_stats["tokens_estimated"] = True
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
         reasoning_full = "".join(reasoning_parts)
         _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}, reasoning_chars={len(reasoning_full)}")
@@ -5790,7 +5875,8 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
             "tps": tps,
             "ttft": ttft,
             "reasoning_chars": len(reasoning_full),
-            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
+            "reasoning_text": "".join(reasoning_parts),
+            **token_stats,
         }
     except httpx.TimeoutException:
         _llm_log(f"{service} stream 타임아웃")
@@ -5908,10 +5994,14 @@ async def _stream_copilot(messages: list, model: str):
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
-        if completion_tokens is None:
-            completion_tokens = _approx_tokens(full)
+        token_stats = output_token_stats(
+            full, "".join(reasoning_parts), completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+        completion_tokens = token_stats["completion_tokens"]
         if prompt_tokens is None:
             prompt_tokens = _approx_input_tokens(messages)
+            token_stats["tokens_estimated"] = True
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
         _llm_log(f"copilot stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
@@ -5923,7 +6013,8 @@ async def _stream_copilot(messages: list, model: str):
             "tps": tps,
             "ttft": ttft,
             "reasoning_chars": len("".join(reasoning_parts)),
-            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
+            "reasoning_text": "".join(reasoning_parts),
+            **token_stats,
         }
     except httpx.TimeoutException:
         _llm_log("copilot stream 타임아웃")
@@ -6107,10 +6198,14 @@ async def _stream_gemini(messages: list, model: str, *, service: str = "gemini")
         if not full:
             raise RuntimeError(f"{service} 스트리밍 응답이 비어 있습니다: finish_reason={finish_reason or '없음'}, raw_bytes={transport['raw_bytes']}")
         elapsed = time.time() - t0
-        if completion_tokens is None:
-            completion_tokens = _approx_tokens(full)
+        token_stats = output_token_stats(
+            full, "".join(reasoning_parts), completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+        completion_tokens = token_stats["completion_tokens"]
         if prompt_tokens is None:
             prompt_tokens = _approx_input_tokens(messages)
+            token_stats["tokens_estimated"] = True
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
         _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
@@ -6126,7 +6221,8 @@ async def _stream_gemini(messages: list, model: str, *, service: str = "gemini")
             "finish_message": finish_message,
             "max_output_tokens": max_output_tokens,
             **transport,
-            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
+            "reasoning_text": "".join(reasoning_parts),
+            **token_stats,
         }
     except (httpx.TimeoutException, asyncio.TimeoutError) as e:
         idle = _stream_idle_timeout_seconds()
@@ -6174,6 +6270,7 @@ async def _stream_claude(messages: list, model: str):
     completion_tokens = None
     prompt_tokens = None
     reasoning_parts = []
+    reasoning_tokens = None
     finish_reason = ""
     transport = {"raw_bytes": 0, "first_byte_elapsed": None, "last_raw_elapsed": None}
     event_name = data_str = ""
@@ -6278,10 +6375,14 @@ async def _stream_claude(messages: list, model: str):
         if not full:
             raise RuntimeError(f"Claude 스트리밍 응답이 비어 있습니다: finish_reason={finish_reason or '없음'}")
         elapsed = time.time() - t0
-        if completion_tokens is None:
-            completion_tokens = _approx_tokens(full)
+        token_stats = output_token_stats(
+            full, "".join(reasoning_parts), completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+        completion_tokens = token_stats["completion_tokens"]
         if prompt_tokens is None:
             prompt_tokens = _approx_input_tokens(messages)
+            token_stats["tokens_estimated"] = True
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
         _llm_log(f"claude stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
@@ -6293,6 +6394,8 @@ async def _stream_claude(messages: list, model: str):
             "tps": tps,
             "ttft": ttft,
             "reasoning_chars": len("".join(reasoning_parts)),
+            "reasoning_text": "".join(reasoning_parts),
+            **token_stats,
             "finish_reason": finish_reason,
             "max_output_tokens": body["max_tokens"],
             **transport,
@@ -6379,6 +6482,33 @@ async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
     """동시성 게이트 안에서 실행되는 스트리밍 라우팅."""
     _llm_log(f"_dispatch_stream: service={service}, model={model}")
 
+    if _llm_slot_ctx.get() in LLM_SP_SLOTS:
+        from llm_sp_workflow import stream
+        upstream = stream(messages, slot_id=_llm_slot_ctx.get(),
+                          reasoning_budget=_base_config_get("llm_reasoning_budget_tokens_sp") or 2048,
+                          context_size=_base_config_get(f"llm_context_size{_slot_suffix(_llm_slot_ctx.get())}", LLM_SP["context_size"]))
+        try:
+            async for event in upstream:
+                if event.get("type") == "done":
+                    # Older installed nodes may lack usage; include both visible
+                    # reasoning and answer text, and identify that fallback.
+                    event.update(output_token_stats(
+                        event.get("text", ""), event.get("reasoning_text", ""),
+                        completion_tokens=event.get("completion_tokens"),
+                        reasoning_tokens=event.get("reasoning_tokens"),
+                    ))
+                    if event.get("prompt_tokens") is None:
+                        event["prompt_tokens"] = _approx_input_tokens(messages)
+                        event["tokens_estimated"] = True
+                    elapsed = event.get("elapsed", 0)
+                    event["tps"] = event["completion_tokens"] / elapsed if elapsed > 0 else 0.0
+                yield event
+        finally:
+            await _close_stream_iterator(upstream)
+        return
+    if service == UNCONFIGURED_SERVICE:
+        yield {"type": "error", "error": "LLM 설정에서 프로바이더를 선택하세요."}
+        return
     if service == "copilot":
         async for ev in _stream_copilot(messages, model):
             yield ev
@@ -6397,8 +6527,12 @@ async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
         finally:
             await _close_stream_iterator(stream)
     elif service == "claude":
-        async for ev in _stream_claude(messages, model):
-            yield ev
+        stream = _stream_claude(messages, model)
+        try:
+            async for ev in stream:
+                yield ev
+        finally:
+            await _close_stream_iterator(stream)
     elif service == "vertex-openai":
         async for ev in _stream_vertex_openai(messages, model):
             yield ev
@@ -6408,8 +6542,12 @@ async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
             yield {"type": "error", "error": "openai: llm_api_key 없음"}
             return
         base = _current_config.get("llm_url") or "https://api.openai.com"
-        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="openai"):
-            yield ev
+        stream = _stream_openai_compat(messages, model, base, api_key=api_key, service="openai")
+        try:
+            async for ev in stream:
+                yield ev
+        finally:
+            await _close_stream_iterator(stream)
     elif service == "openrouter":
         api_key = _current_config.get("llm_api_key", "")
         if not api_key:
@@ -6834,6 +6972,58 @@ async def _call_llm_slot_vision_stream(slot, messages, image_b64=None, image_mim
     finally:
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
+
+
+async def callLLM_sp(messages: list, model: str = None, json_mode: bool = False) -> str:
+    return await _call_llm_slot_text("llm_sp", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM_spStream(messages: list, model: str = None, log_history: bool = True,
+                           json_mode: bool = False):
+    async for event in _call_llm_slot_text_stream("llm_sp", messages, model=model,
+                                                 log_history=log_history, json_mode=json_mode):
+        yield event
+
+
+async def callLLMVision_sp(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                          model: str = None, json_mode: bool = False, images: list = None) -> str:
+    return await _call_llm_slot_vision("llm_sp", messages, image_b64, image_mime,
+                                      model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision_spStream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False, images: list = None):
+    async for event in _call_llm_slot_vision_stream("llm_sp", messages, image_b64, image_mime,
+                                                   model=model, log_history=log_history,
+                                                   json_mode=json_mode, images=images):
+        yield event
+
+
+async def callLLM_sp2(messages: list, model: str = None, json_mode: bool = False) -> str:
+    return await _call_llm_slot_text("llm_sp2", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM_sp2Stream(messages: list, model: str = None, log_history: bool = True,
+                           json_mode: bool = False):
+    async for event in _call_llm_slot_text_stream("llm_sp2", messages, model=model,
+                                                 log_history=log_history, json_mode=json_mode):
+        yield event
+
+
+async def callLLMVision_sp2(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                           model: str = None, json_mode: bool = False, images: list = None) -> str:
+    return await _call_llm_slot_vision("llm_sp2", messages, image_b64, image_mime,
+                                      model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision_sp2Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                                 model: str = None, log_history: bool = True,
+                                 json_mode: bool = False, images: list = None):
+    async for event in _call_llm_slot_vision_stream("llm_sp2", messages, image_b64, image_mime,
+                                                   model=model, log_history=log_history,
+                                                   json_mode=json_mode, images=images):
+        yield event
 
 
 # ─── LLM4~LLM10 공개 진입점(얇은 래퍼) ──────────────────────

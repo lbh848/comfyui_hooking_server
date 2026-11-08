@@ -17,12 +17,12 @@ import re
 import traceback
 
 import illustration_flow
-import yaml
 
 from modes import illustration_context_pipeline as pipeline
 from modes import postprocess
 from modes.illustration_prompt_assembly import prompt_join, variable
 from modes import illustration_prompt_builders as prompt_builders
+from modes import illustration_composite
 from modes.visual_profiles import profile_by_id, resolve_visual_base
 
 
@@ -358,6 +358,23 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
 
 def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                         single_char_mask_enabled: bool = True) -> dict:
+    # Registered character names cannot contain double quotes. Normalize only
+    # identity fields, including shared manga cast and nested panel regions;
+    # quoted dialogue and image-prompt text must retain their original content.
+    raw_response = json.dumps(item, ensure_ascii=False) if mask_inline else ""
+    item = deepcopy(item)
+    pending = [item]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if isinstance(value.get("name"), str):
+                original_name = value["name"]
+                value["name"] = original_name.strip().strip('\"“”').strip()
+                if value["name"] != original_name:
+                    print(f"[ILLUST_CONTEXT:DETAIL] 캐릭터 이름 인용부호 정리: {original_name!r} -> {value['name']!r}")
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
     if isinstance(item, dict) and item.get("panels") and (scene.get("panels") or "regions" not in item):
         if item.get("slot") != scene["slot"]:
             _fail("DETAIL-MANGA", "PLAN과 다른 페이지 slot", item)
@@ -437,8 +454,6 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             _fail("CALL2-DETAIL", "PLAN과 다른 slot", {"expected": scene["slot"], "actual": item["slot"]})
         if not isinstance(item["regions"], list):
             _fail("CALL2-DETAIL", "background_prompt/composition_prompt/regions 형식 오류", item)
-        raw_response = json.dumps(item, ensure_ascii=False)
-        item = deepcopy(item)
         for key in ("background_prompt", "composition_prompt"):
             item[key] = pipeline.multi_char_mask._prompt_text(item.get(key), key, required=False)
             if not item[key]:
@@ -498,7 +513,6 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
     required = {"slot"}
     if not isinstance(item, dict) or not required <= set(item):
         _fail("CALL2-DETAIL", "필수 장면 데이터 누락", item)
-    item = deepcopy(item)
     extras = set(item) - required - {"camera", "characters", "scene", "supplement"}
     if extras:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 장면 필드 제외: slot={item['slot']}, fields={extras}")
@@ -559,6 +573,12 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             if not isinstance(character[field], str):
                 _fail("CALL2-DETAIL", f"문자열이 아닌 캐릭터 {field} index={index}", character, warning=True)
                 character[field] = "" if character[field] is None else json.dumps(character[field], ensure_ascii=False)
+        # The compatibility parser above can recover names from JSON strings
+        # or object keys after the initial identity normalization.
+        original_name = character["name"]
+        character["name"] = original_name.strip().strip('\"“”').strip()
+        if character["name"] != original_name:
+            print(f"[ILLUST_CONTEXT:DETAIL] 캐릭터 이름 인용부호 정리: {original_name!r} -> {character['name']!r}")
         usable_characters.append(character)
     characters = [{key: character[key] for key in ("name", "positive", "negative", "position")}
                   for character in usable_characters]
@@ -574,7 +594,7 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
 def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = False,
                        slot_map: dict[str, int] | None = None,
                        streaming: bool = False, mask_inline: bool = False,
-                       single_char_mask_enabled: bool = True) -> list[dict]:
+                       single_char_mask_enabled: bool = True, composite: bool = False) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
     if not streaming and len(blocks) != 1:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
@@ -606,8 +626,12 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                 offset += separator.end()
         elif tail.startswith("{"):
             try:
-                item, _end = json.JSONDecoder().raw_decode(tail)
-                if isinstance(item, dict) and "slot" in item:
+                item, end = json.JSONDecoder().raw_decode(tail)
+                if isinstance(item, dict) and isinstance(item.get("scenes"), list):
+                    # A complete root object carrying backgrounds and scenes.
+                    # Keep it as one document so background ids resolve.
+                    documents.append(tail[:end])
+                elif isinstance(item, dict) and "slot" in item:
                     decoded.append(item)
             except json.JSONDecodeError:
                 pass  # A single-scene document has not closed yet.
@@ -629,7 +653,7 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                             documents.append(tail[:header.end() + siblings[-1].start()])
         if decoded:
             documents.append(json.dumps({"scenes": decoded}, ensure_ascii=False))
-    items = []
+    parsed_documents, backgrounds = [], {}
     for document in documents:
         raw = pipeline._json_object_from_text(document, array_key="scenes")
         if isinstance(raw, dict) and "scenes" not in raw and "slot" in raw:
@@ -640,9 +664,19 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 파싱 불가 장면 문서 제외, 다른 장면 보존: input={document[:500]!r}")
                 continue
             _fail("CALL2-DETAIL", "복구 가능한 scenes 배열 없음", document[:500])
-        if set(raw) != {"scenes"}:
-            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 루트 필드 제외: fields={set(raw) - {'scenes'}}")
-        items.extend(raw["scenes"])
+        if composite:
+            for background_id, positive in illustration_composite.declared_backgrounds(
+                    raw.get("backgrounds")).items():
+                if background_id in backgrounds and backgrounds[background_id] != positive:
+                    print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배경 id 충돌, 첫 선언 유지: "
+                          f"id={background_id!r}")
+                    continue
+                backgrounds[background_id] = positive
+        unused = set(raw) - {"scenes", "backgrounds"}
+        if unused:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 루트 필드 제외: fields={unused}")
+        parsed_documents.append(raw)
+    items = [item for raw in parsed_documents for item in raw["scenes"]]
     expected_by_slot = {scene["slot"]: scene for scene in scenes}
     if len(expected_by_slot) != len(scenes):
         _fail("CALL2-DETAIL", "배정된 장면의 slot 중복", [scene["slot"] for scene in scenes])
@@ -667,8 +701,10 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
             if slot not in expected_by_slot:
                 _fail("CALL2-DETAIL", "배정과 다른 원문 slot", item, warning=True)
                 expected_by_slot[slot] = {"slot": slot}
-            descriptor = _parse_detail_scene(item, expected_by_slot[slot],
-                mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled)
+            descriptor = (illustration_composite.parse_scene(
+                item, expected_by_slot[slot], backgrounds=backgrounds) if composite else
+                _parse_detail_scene(item, expected_by_slot[slot],
+                    mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled))
             if slot in by_slot and descriptor != by_slot[slot]:
                 _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
         except ValueError as exc:
@@ -692,28 +728,6 @@ def parse_detail(text: str, scene: dict) -> dict:
     return parse_detail_batch(text, [scene])[0]
 
 
-def descriptors_to_toon(descriptors: list[dict]) -> str:
-    """Record diagnostic CALL2 output without legacy ordinary-scene fields."""
-    data: dict[str, object] = {"scenes": []}
-    for descriptor in descriptors:
-        raw = {key: deepcopy(descriptor.get(key)) for key in
-               ("camera", "characters", "scene", "supplement")}
-        if descriptor.get("panels"):
-            raw = {"canvas": deepcopy(descriptor.get("canvas")), "panels": [
-                {key: deepcopy(value) for key, value in panel.items()
-                 if key in {"panel", "anchor_segment", "canvas", "x", "y", "width", "height",
-                            "camera", "scene", "characters", "supplement", "dialogue"}}
-                for panel in descriptor["panels"]]}
-        if descriptor.get("kind") == "keyvis":
-            data["keyvis"] = raw
-        else:
-            raw["slot"] = descriptor["slot"]
-            data["scenes"].append(raw)
-    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False,
-                          default_flow_style=False).strip()
-    return f"<lb-xnai>\n{body}\n</lb-xnai>"
-
-
 async def build_from_context(
     payload: dict, toggles: dict | None, extra_reference: str, progress=None,
     stream_notify=None, on_call2_plan_ready=None, on_call2_ready=None,
@@ -722,20 +736,27 @@ async def build_from_context(
     enable_multi_char_layout: bool = False, history_plan: dict | None = None,
     visual_profiles: dict | None = None, profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "", pre_resolved_profile_result: dict | None = None,
+    on_detail_start=None,
+    npc_manager=None, render_npc_image=None, prepare_npc_character=None,
 ) -> dict:
     """Build ordinary descriptors without semantic state/post-DETAIL rewriting."""
     p = pipeline
     toggles = p.merged_toggles(toggles, for_generation=True)
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
+    composite = illustration_composite.enabled(toggles)
+    if composite:
+        enable_multi_char_layout = False
     if manga:
         # Runtime page semantics only; never save these over ordinary-mode settings.
         toggles.update(key_visual=False, speak_enabled=False, supplement=True)
         print(f"[ILLUST_CONTEXT:MANGA] 3~4컷 페이지 · PLANNER={'ON' if toggles['call2_plan_enabled'] else 'OFF'} · DETAIL-MANGA")
     mask_inline = bool(manga or enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled"))
     keyvis_in_detail = bool(toggles.get("key_visual") and toggles.get("keyvis_in_detail_enabled"))
-    prompts = p.load_prompt_files()
+    prompts = p.load_prompt_files("emotion" if composite else "illustration")
     trace: list[str] = []
     token = p._llm_trace_ctx.set(trace)
+    npc_registration_task = None
+    npc_dispatch_tasks = []
     try:
         chats = payload.get("chats") or []
         target_index, narrative = p._latest_narrative(chats)
@@ -774,8 +795,6 @@ async def build_from_context(
         async def track_state():
             if progress:
                 await progress(8, "call1", "OUTFIT 옷·머리 상태 추적")
-            if toggles.get("call1_parallel_enabled"):
-                print("[ILLUST_CONTEXT:OUTFIT] 하나의 누적 상태 타임라인을 위해 OUTFIT shard 병렬 분할 사용하지 않음")
             state_messages = prompt_builders.call1_messages(
                 prompts, names, prior_status, baselines, past_text, segmented,
                 slots=state_slots, slotted=slotted, segment_slots=segment_slots)
@@ -816,6 +835,44 @@ async def build_from_context(
                 table, label="TIME & PLACE", field="time_place_state_table")
             return output, table
 
+        async def generate_npcs():
+            nonlocal npc_registration_task
+            from modes.illustration_npc import generate_cards
+            if progress:
+                await progress(8, "npc_generation", "NPC 생성 노드 · 캐릭터 외형 예측")
+            profiles_ready = asyncio.get_running_loop().create_future()
+            async def on_profiles_ready(result):
+                profiles_ready._illustration_flow_ends = tuple(illustration_flow._frontier.get())
+                profiles_ready.set_result(result)
+            npc_registration_task = illustration_flow.create_task(generate_cards(
+                manager=npc_manager, bot_name=profile_translation_namespace,
+                candidates=profile_result.get("npc_candidates") or [], prompts=prompts,
+                past_text=past_text, segmented=segmented, toggles=toggles,
+                stream_notify=stream_notify, render_image=render_npc_image,
+                on_profiles_ready=on_profiles_ready, prepare_character=prepare_npc_character),
+                flow_label="NPC 생성 노드")
+            await asyncio.wait((profiles_ready, npc_registration_task), return_when=asyncio.FIRST_COMPLETED)
+            if npc_registration_task.done():
+                return await npc_registration_task
+            illustration_flow.absorb([profiles_ready])
+            return profiles_ready.result()
+
+        async def dispatch_ready(callback, ready):
+            npc_names = {entry["name"].casefold() for entry in profile_result.get("npc_candidates") or []}
+            needs_npc = any(str(character.get("name") or "").casefold() in npc_names
+                            for item in ready.get("items") or []
+                            for target in (item.get("panels") or [item])
+                            for character in target.get("characters") or [])
+            if not npc_registration_task or not needs_npc:
+                await callback(ready)
+                return
+            async def after_registration():
+                await asyncio.shield(npc_registration_task)
+                illustration_flow.raise_if_cancel_requested()
+                await callback(ready)
+            # Never occupy a DETAIL worker while its NPC image is on the GPU.
+            npc_dispatch_tasks.append(illustration_flow.create_task(after_registration()))
+
         segment_slots, _catalog, slot_reason = p.build_segment_slot_map(slotted, segments)
         if not segment_slots or slot_reason:
             _fail("CALL2-SELECT", "CURRENT segment-slot 완전 매핑 실패", {"reason": slot_reason, "mapped": segment_slots})
@@ -824,11 +881,6 @@ async def build_from_context(
         if not candidates:
             _fail("CALL2-SELECT", "CURRENT에 선택 가능한 slot 없음", {"segments": list(segments), "mapped": segment_slots})
         single_names = None
-        if toggles["character_limit"] == 1:
-            single_names, source = p.single_subject_candidates(visual_profiles, names)
-            if not single_names:
-                print(f"[ILLUST_CONTEXT:CALL2-SELECT] SINGLE 주체 권위 없음, 등록 CURRENT 이름만 허용: names={names!r}, source={source!r}")
-                single_names = names
         lb_extra_system_prompt = str(extra_instruction or "").strip()
         protected = p.render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles,
                                           include_server_limits=False)
@@ -841,25 +893,6 @@ async def build_from_context(
                 prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
         else:
             print("[ILLUST_CONTEXT:DETAIL/KEYVIS] NSFW OFF: NSFW 및 물리 접촉 지침 제외")
-        # PLAN and manga DETAIL receive the resolved profile timeline.
-        plan_profiles = []
-        for name in names:
-            profile_segments = {
-                str(event.get("segment_id") or "").strip().upper()
-                for event in profile_result.get("profile_events") or []
-                if isinstance(event, dict)
-                and str(event.get("character") or "").casefold() == name.casefold()
-            }
-            unknown_segments = sorted(profile_segments - set(segments) - {"START"})
-            if unknown_segments:
-                _fail("PROFILE_SLICE", "프로필 타임라인의 미등록 구간",
-                      {"character": name, "segments": unknown_segments}, warning=True)
-                profile_segments.difference_update(unknown_segments)
-            for at in ["START", *sorted(profile_segments - {"START"}, key=segment_order.__getitem__)]:
-                plan_profiles.append({"character": name, "from_segment": at,
-                    "profile": profile_for_detail(name, active_profile(
-                        name, at, profile_result, visual_profiles, segment_order),
-                        extra_costume or extra_reference, visual_profiles)})
         selection_output = json.dumps({"scene_plan": profile_result["scene_plan"]}, ensure_ascii=False)
         selected_plan = parse_plan(selection_output, segments=segments, slot_map=segment_slots,
             candidates=candidates, names=names, toggles=toggles,
@@ -868,6 +901,7 @@ async def build_from_context(
         front_stages = (
             (track_state, "OUTFIT", toggles["outfit_enabled"]),
             (track_time_place, "TIME & PLACE", toggles["time_place_enabled"]),
+            (generate_npcs, "NPC 생성 노드", toggles["npc_generation_enabled"] and bool(profile_result.get("npc_candidates"))),
         )
         if progress and any(enabled for _, _, enabled in front_stages):
             await progress(8, "call1", " · ".join(
@@ -880,11 +914,13 @@ async def build_from_context(
                 print(f"[ILLUST_CONTEXT:{label}] OFF; LLM 호출·작업 흐름 노드 생성 생략; "
                       "원문과 이전 문맥으로 후속 LLM이 판단")
                 continue
-            front_workers.append(illustration_flow.create_task(operation(), flow_label=label))
+            front_workers.append(illustration_flow.create_task(operation(),
+                flow_label=None if label == "NPC 생성 노드" else label))
         try:
             front_results = iter(await illustration_flow.gather(*front_workers))
             call1_output, state_table = next(front_results) if toggles["outfit_enabled"] else ("", None)
             time_place_output, time_place_table = next(front_results) if toggles["time_place_enabled"] else ("", None)
+            npc_result = next(front_results) if front_stages[2][2] else {"characters": [], "created": [], "output": ""}
         except BaseException as exc:
             print(f"[ILLUST_CONTEXT:STATE_TRACKING] 병렬 단계 종료: "
                   f"session={payload.get('session_id')!r}, error={exc!r}, "
@@ -895,6 +931,32 @@ async def build_from_context(
                     worker.cancel()
             await illustration_flow.gather(*front_workers, return_exceptions=True)
             raise
+        # Join predictions only. PLAN/DETAIL can use the exact pending card tags
+        # while representative generation and data preparation continue on GPU.
+        if npc_result["characters"]:
+            if visual_profiles is None:
+                visual_profiles = {}
+            for character in npc_result["characters"]:
+                visual_profiles[character["name"]] = character
+            extra_names = ",".join(dict.fromkeys([*(name.strip() for name in extra_names.split(",") if name.strip()),
+                                                *(character["name"] for character in npc_result["characters"])]))
+        plan_profiles = []
+        for name in names:
+            profile_segments = {
+                str(event.get("segment_id") or "").strip().upper()
+                for event in profile_result.get("profile_events") or []
+                if isinstance(event, dict) and str(event.get("character") or "").casefold() == name.casefold()
+            }
+            unknown_segments = sorted(profile_segments - set(segments) - {"START"})
+            if unknown_segments:
+                _fail("PROFILE_SLICE", "프로필 타임라인의 미등록 구간",
+                      {"character": name, "segments": unknown_segments}, warning=True)
+                profile_segments.difference_update(unknown_segments)
+            for at in ["START", *sorted(profile_segments - {"START"}, key=segment_order.__getitem__)]:
+                plan_profiles.append({"character": name, "from_segment": at,
+                    "profile": profile_for_detail(name, active_profile(
+                        name, at, profile_result, visual_profiles, segment_order),
+                        extra_costume or extra_reference, visual_profiles)})
         tracking = state_table["states"] if state_table is not None else None
         time_place_tracking = time_place_table["states"] if time_place_table is not None else None
         call1_result = {"state_table": deepcopy(state_table),
@@ -1052,7 +1114,7 @@ async def build_from_context(
                     early = deepcopy(descriptor)
                     early.update(raw_positive=keyvis_positive, raw_negative=keyvis_negative)
                     try:
-                        await on_keyvis_ready({"session_id": payload["session_id"], "context": downstream_context,
+                        await dispatch_ready(on_keyvis_ready, {"session_id": payload["session_id"], "context": downstream_context,
                                                "prompt_format": str(toggles.get("prompt_format") or "v3"),
                                                "total_count": 1 + len(selected_plan), "items": [early]})
                     except Exception as exc:
@@ -1073,7 +1135,7 @@ async def build_from_context(
                        for batch in detail_batches]
         detail_system = prompt_join("\n\n", (part for part in
                                   (role_context, explicit_policy,
-                                   prompts["manga_detail" if manga else "call2_detail"]) if part))
+                                   prompts["composite_detail" if composite else "manga_detail" if manga else "call2_detail"]) if part))
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
             nonlocal keyvis_descriptor, keyvis_output
@@ -1087,6 +1149,8 @@ async def build_from_context(
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 모든 장면 스트림 확정, 중복 요청 생략: slots={list(completed)}")
                 return {"raw": "", "descriptors": [completed[scene["slot"]] for scene in batch]
                         + ([completed[-1]] if owns_keyvis else [])}
+            if on_detail_start:
+                await on_detail_start()
             needs_source = manga or not all(toggles[key] for key in
                                    ("outfit_enabled", "time_place_enabled", "call2_plan_enabled"))
             messages = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
@@ -1113,7 +1177,7 @@ async def build_from_context(
                         keyvis_descriptor, keyvis_output = descriptor, response
                 try:
                     results = parse_detail_batch(response, batch, allow_partial=True, slot_map=segment_slots,
-                        mask_inline=mask_inline,
+                        mask_inline=mask_inline, composite=composite,
                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
                 except ValueError as exc:
                     print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 파싱 실패, 보존 장면 유지: completed={list(completed)}, error={exc}")
@@ -1173,7 +1237,7 @@ async def build_from_context(
                 validated["output"] = response
                 validated["results"] = list(completed.values())
                 return True, ""
-            call_name = "DETAIL-MANGA" if manga else "CALL2-DETAIL"
+            call_name = "DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL"
             if attempt_kind == "duplicate":
                 call_name += f" {batch_index}/{total} [느리다고? 다시해!]"
             try:
@@ -1226,7 +1290,7 @@ async def build_from_context(
                 if not pending:
                     return
                 results = parse_detail_batch(stream_state["text"], batch, allow_partial=True, streaming=True, slot_map=segment_slots,
-                    mask_inline=mask_inline,
+                    mask_inline=mask_inline, composite=composite,
                     single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
             else:
                 results = value["descriptors"]
@@ -1321,7 +1385,7 @@ async def build_from_context(
                     item.update(raw_positive=pos, raw_negative=neg)
                     if progress:
                         await progress(52, "enqueue", f"DETAIL 장면 준비 완료 · slot={descriptor['slot']} 이미지 조기 등록")
-                    await on_call2_ready({"session_id": payload["session_id"], "context": downstream_context,
+                    await dispatch_ready(on_call2_ready, {"session_id": payload["session_id"], "context": downstream_context,
                                           "prompt_format": str(toggles.get("prompt_format") or "v3"),
                                           "total_count": len(selected_plan) + int(bool(toggles.get("key_visual"))),
                                           "items": [item]})
@@ -1407,7 +1471,7 @@ async def build_from_context(
         workers = [illustration_flow.create_task(expand_plans()), illustration_flow.create_task(
             p._run_parallel_pipeline_jobs(
                 detail_jobs, group_id="manga_detail" if manga else "call2_detail",
-                group_label="DETAIL-MANGA 페이지 묘사" if manga else "DETAIL 장면 묘사",
+                group_label="DETAIL 합성 삽화" if composite else "DETAIL-MANGA 페이지 묘사" if manga else "DETAIL 장면 묘사",
                 max_concurrency=detail_request_limit,
                 slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),
@@ -1461,7 +1525,6 @@ async def build_from_context(
         detail_outputs = [value["raw"] for value in expanded]
         descriptors = ([keyvis_descriptor] if keyvis_descriptor else []) + ordinary
         p.attach_descriptor_anchors(descriptors, original_slotted)
-        call2_output = descriptors_to_toon(descriptors)
         states_after = p.apply_initial_visual_bases(
             (history or {}).get("state_before") or {},
             profile_result.get("initial_visual_bases") or [],
@@ -1536,19 +1599,24 @@ async def build_from_context(
             item = deepcopy(descriptor)
             item.update(raw_positive=pos, raw_negative=neg)
             raw_items.append(item)
+        if npc_registration_task:
+            npc_result = await illustration_flow.join(npc_registration_task)
+        if npc_dispatch_tasks:
+            await illustration_flow.gather(*npc_dispatch_tasks)
         return {
             "session_id": payload["session_id"], "context": downstream_context,
             "narrative": narrative, "enhanced_narrative": enhanced,
             "call1_output": call1_output, "call1_result": call1_result,
             "time_place_output": time_place_output,
             "time_place_result": {"state_table": deepcopy(time_place_table)},
+            "npc_generation_result": npc_result,
             "profile_output": profile_output, "profile_result": profile_result,
             "reference_provenance": p.build_reference_provenance(history),
             "last_visual_reference_classification": {}, "reference_variables": {},
             "profile_events": list(profile_result.get("profile_events") or []),
             "initial_visual_bases": list(profile_result.get("initial_visual_bases") or []),
             "visual_base_events": list(profile_result.get("visual_base_events") or []),
-            "call2_output": call2_output, "call2_select_output": selection_output,
+            "call2_select_output": selection_output,
             "call2_plan_output": plan_output, "call2_plan_outputs": plan_outputs,
             "call2_keyvis_output": keyvis_output, "call2_detail_outputs": detail_outputs,
             "call3_output": call3_output, "call3_initial_output": str(call3_state.get("initial_output") or ""),
@@ -1569,4 +1637,10 @@ async def build_from_context(
         traceback.print_exc()
         raise
     finally:
+        pending_npc_tasks = [task for task in [npc_registration_task, *npc_dispatch_tasks] if task is not None]
+        for task in pending_npc_tasks:
+            if not task.done():
+                task.cancel()
+        if pending_npc_tasks:
+            await asyncio.gather(*pending_npc_tasks, return_exceptions=True)
         p._llm_trace_ctx.reset(token)

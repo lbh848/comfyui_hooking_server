@@ -49,20 +49,12 @@ class FrontendWsConnectionManager:
             self.connections.clear()
             self.connections[client_id] = {"ws": ws, "last_pong": time.time()}
 
-            if replaced:
-                replaced_ids = [old_id[:8] for old_id, _entry in replaced]
-                print(
-                    f"[FE-WS] 기존 연결 {len(replaced)}개를 새 연결로 교체: "
-                    f"old={replaced_ids} new={client_id[:8]}"
-                )
-
             for old_id, entry in replaced:
                 old_ws = entry.get("ws")
                 if old_ws is None:
                     print(f"[FE-WS] 기존 연결에 ws 누락 client={old_id[:8]} entry={entry}")
                     continue
                 if old_ws.closed:
-                    print(f"[FE-WS] 기존 연결이 이미 닫힘 client={old_id[:8]}")
                     continue
                 try:
                     await old_ws.send_json({

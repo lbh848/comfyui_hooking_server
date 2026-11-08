@@ -20,6 +20,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     scenario = scenario or {}
     toggles = pipeline.merged_toggles(snapshot["illustration_context_toggles"], for_generation=True)
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
+    composite = toggles["illustration_output_mode"] in ("composite", "composite_both")
     if manga:
         toggles.update(key_visual=False, speak_enabled=False, supplement=True)
     illustration = toggles["illustration_enabled"]
@@ -137,11 +138,14 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     )
     hits, misses = cache_summary["cache_hits"], cache_summary["cache_misses"]
     profile_condition = "CURRENT에 해당 다중 프로필 캐릭터가 등장할 때"
+    translate_enabled = toggles["profile_context_translate"]
     translate = card("PROFILE-CONTEXT-TRANSLATE", 1,
-                     f"등록 문맥 미스 최대 {misses}개 · CURRENT 등장인물의 문맥만 한 요청으로 번역" if misses else "캐시 미스가 없어 호출 생략",
-                     enabled=bool(multiple and misses) and not prompt_batch, condition=profile_condition)
-    cache_card = card("PROFILE-CONTEXT-CACHE", 1, f"등록 문맥 캐시: 적중 {hits} · 미스 {misses}",
-                      enabled=bool(multiple) and not prompt_batch, condition=profile_condition)
+                     f"등록 문맥 미스 최대 {misses}개 · CURRENT 등장인물의 문맥만 한 요청으로 번역" if translate_enabled and misses
+                     else "프로필 영어 컨텍스트 번역 OFF" if not translate_enabled else "캐시 미스가 없어 호출 생략",
+                     enabled=translate_enabled and bool(multiple and misses) and not prompt_batch, condition=profile_condition)
+    cache_card = card("PROFILE-CONTEXT-CACHE", 1,
+                      f"등록 문맥 캐시: 적중 {hits} · 미스 {misses}" if translate_enabled else "프로필 영어 컨텍스트 번역 OFF",
+                      enabled=translate_enabled and bool(multiple) and not prompt_batch, condition=profile_condition)
     profile_cards = [card("PROFILE-RESOLVE", 1, f"{name} 프로필 판정", group="profile_resolve",
                           index=index, count=len(multiple), condition=profile_condition)
                      for index, name in enumerate(multiple, 1)] if multiple and not prompt_batch else []
@@ -195,11 +199,17 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
 
     scenes = [{"slot": i} for i in range(scene_count)]
     front = list(context)
+    npc_prediction = None
     for name, desc, enabled in [("OUTFIT", "하나의 복장·헤어 상태 타임라인", toggles["outfit_enabled"]),
-                                ("TIME & PLACE", "독립적인 캐릭터별 시간·장소 타임라인", toggles["time_place_enabled"])]:
-        node = card(name, 2, desc, enabled=illustration and not prompt_batch and enabled, group="call1_select")
+                                ("TIME & PLACE", "독립적인 캐릭터별 시간·장소 타임라인", toggles["time_place_enabled"]),
+                                ("NPC 생성 노드", "미등록 인물의 성별·외모·복장·얼굴·눈 예측 · 예측 후 PLAN·DETAIL 진행", toggles["npc_generation_enabled"])]:
+        node = card(name, 2, desc, enabled=illustration and not prompt_batch and enabled, group="call1_select",
+                    condition="미등록 등장인물이 있을 때" if name == "NPC 생성 노드" else "")
         if node["enabled"]:
-            front.append(job(node, context, output="상태 타임라인"))
+            prediction = job(node, context, output="NPC 외형" if name == "NPC 생성 노드" else "상태 타임라인")
+            front.append(prediction)
+            if name == "NPC 생성 노드":
+                npc_prediction = prediction
     plan_batches = pipeline._balanced_call2_scene_plan_batches(
         scenes, toggles["call2_parallel_max_concurrency"] if toggles["call2_parallel_enabled"] else 1)
     plans = []
@@ -228,8 +238,8 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 description += " · MULTI-CHAR-MASK 함께 예측"
             if keyvis_in_detail and i == 1:
                 description += " · KEYVIS 대표 이미지 1장 함께 예측"
-            detail_sources.append((job(card("DETAIL-MANGA" if manga else "CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
-                                            group="manga_detail" if manga else "call2_detail", index=i, count=len(detail_batches)),
+            detail_sources.append((job(card("DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
+                                            group="composite_detail" if composite else "manga_detail" if manga else "call2_detail", index=i, count=len(detail_batches)),
                                        [plans[index] for index in sources] if plans else front,
                                        output=f"장면 {len(batch)}개 묘사" + ("·마스크" if mask_inline else "")), batch, False))
     else:
@@ -268,14 +278,21 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 capacities[lane] = capacity
                 image_lanes.append([lane])
     lane_label = " / ".join(f"{lane[0]} 최대 {capacities[lane[0]]}개" for lane in image_lanes)
+    npc_image = None
+    if npc_prediction:
+        npc_image = job(card("NPC 대표 이미지", 2,
+            "PLAN·DETAIL과 병렬 생성 · 생성 시 마스크 추적 결과로 FACE 저장 · 카드 등록 후 해당 NPC 삽화 생성",
+            condition="미등록 등장인물이 있을 때", group="npc_generation_image", task_key=""),
+            [npc_prediction], resources=image_lanes, output="NPC 카드·참조 데이터", priority=0)
     scene_ready, normal_ready, images = [], [], []
     image_slots = {}
-    image_count = sum(len(batch) for _descriptor, batch, _keyvis in detail_sources) * (4 if manga else 1)
+    composite_count = 1 + min(toggles["character_limit"], len(current_profiles)) if composite else 1
+    image_count = sum(len(batch) for _descriptor, batch, _keyvis in detail_sources) * (4 if manga else composite_count)
     keyvis_images = set()
     for descriptor_id, batch, is_keyvis in detail_sources:
         descriptor_card = next((node for node in nodes if any(
             entry["id"] == descriptor_id and entry["card"] == node["id"] for entry in jobs)), None)
-        for scene in ([{**scene, "panel": panel} for scene in batch for panel in range(1, 5)] if manga else batch):
+        for scene in ([{**scene, "composite_layer": layer} for scene in batch for layer in range(composite_count)] if composite else [{**scene, "panel": panel} for scene in batch for panel in range(1, 5)] if manga else batch):
             current_mask = (card(f"MULTI-CHAR-MASK slot={scene['slot']}", 5,
                                 (f"자체 생성 · {'KEYVIS' if is_keyvis else 'DETAIL'}의 장면 {scene['slot']} 마스크 사용 · 추가 LLM 호출 없음"
                                  if mask_inline else f"장면 {scene['slot']} 캐릭터 영역 계산"), group="pipeline",
@@ -290,11 +307,11 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 normal_ready.extend(filter(None, ready))
             queue_index = 1 if is_keyvis else scene["slot"] + 1 + int(keyvis_card["enabled"])
             image_card = card(f"삽화 {queue_index}/{image_count} · slot {scene['slot']}"
-                              + (f" · 컷 {scene['panel']}" if manga else ""), 6,
+                              + ((" · 배경" if scene["composite_layer"] == 0 else f" · 캐릭터 {scene['composite_layer']}") if composite else f" · 컷 {scene['panel']}" if manga else ""), 6,
                               (lane_label or "활성 생성 레인이 없어 큐 대기") + " · 같은 큐 노드가 대기 후 생성",
                               group="illustration_images")
             connect(current_mask, image_card)
-            image = job(image_card, ready, resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
+            image = job(image_card, [*ready, *([npc_image] if npc_image else [])], resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
                         priority=1 if mask_job and not is_keyvis else 0)
             images.append(image)
             image_slots[image] = scene["slot"]
@@ -334,27 +351,19 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     # The original-asset operation reads its selected files internally; the
     # recorded flow has no separate file-read node or queue job.
     connect(asset_card, recovery_card)
-    # Only this read-only preview inspects settings; it never loads/migrates bot
-    # data through the runtime setters or resolves/downloads render fonts.
+    # Read the same shared settings as rendering without resolving render fonts.
     from modes import postprocess as postprocess_settings
-    defaults = {"vn": postprocess_settings._default_vn,
-                "bubble": postprocess_settings._default_bubble,
-                "subtitle": postprocess_settings._default_subtitle}
-    stored = (bot or {}).get(f"postprocess_{postprocess_mode}")
-    selected_settings = {**defaults[postprocess_mode](), **(stored if isinstance(stored, dict) else {})}
-    if postprocess_mode == "subtitle":
-        from modes.subtitle_render import normalize_subtitle_settings
-        selected_settings = normalize_subtitle_settings(selected_settings)
+    selected_settings = postprocess_settings.get_postprocess_config(config)[postprocess_mode]
     composition_enabled = bool(dialogue and postprocess_settings.is_postprocess_active(config)
                                and selected_settings.get("enabled", False))
     composition_reason = ("일반 삽화 OFF" if not illustration else
                           "POST PROCESS 대사 생성 OFF" if not dialogue else
                           "후처리 마스터 설정 OFF" if not postprocess_settings.is_postprocess_active(config) else
-                          f"활성 봇의 {mode} 후처리 OFF" if not selected_settings.get("enabled", False) else
-                          f"렌더링 이미지와 POST PROCESS 대사를 합성 · 봇의 {mode} 후처리")
+                          f"{mode} 후처리 OFF" if not selected_settings.get("enabled", False) else
+                          f"렌더링 이미지와 POST PROCESS 대사를 합성 · {mode} 후처리")
     saved_images = []
     for index, image in enumerate(images, 1):
-        if prompt_batch or manga:
+        if prompt_batch or manga or composite:
             # Complete prompt batches save inside their image queue operation.
             saved_images.append(image)
             continue
@@ -371,7 +380,13 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                             [image for image in images if image_slots[image] == slot], output="완성 만화 페이지")
                         for slot in dict.fromkeys(image_slots.values())]
         notes.append("만화 미리보기는 페이지당 4컷을 가정합니다. 실제 컷 수는 계획자가 3~4컷으로 정합니다.")
-    output_parts = (["만화 페이지" if manga else "일반 이미지"] if images else []) + ([f"{mode} 대사 기록"] if dialogue else []) + (["원본 에셋"] if asset_job else [])
+    if composite:
+        saved_images = [job(card(f"최종 조립 · 합성 삽화 · slot {slot}", 7,
+                            "DUAL_VAE 배경·캐릭터 RGBA → 배경 높이에 맞춰 가로 위치로 배치 → 대사 후처리·저장. 항상 실행합니다.",
+                            group="illustration_postprocess"),
+                            [*[image for image in images if image_slots[image] == slot], *([dialogue] if dialogue else [])],
+                            output="완성 합성 삽화") for slot in dict.fromkeys(image_slots.values())]
+    output_parts = (["합성 삽화" if composite else "만화 페이지" if manga else "일반 이미지"] if images else []) + ([f"{mode} 대사 기록"] if dialogue else []) + (["원본 에셋"] if asset_job else [])
     final = card("결과 반환", 7, "·".join(output_parts) + " 반환" if output_parts else "출력 결과가 없어 실행 실패",
                  enabled=bool(images or asset_job))
     if final["enabled"]:
@@ -384,7 +399,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 group="illustration_inspection", task_key=inspection.TASK_KEY),
                 [saved_image], output="개별 이미지 평가") for image, saved_image in zip(
                     [next(image for image in images if image_slots[image] == slot)
-                     for slot in dict.fromkeys(image_slots.values())] if manga else images, saved_images)]
+                     for slot in dict.fromkeys(image_slots.values())] if manga or composite else images, saved_images)]
             overall_card = card(f"생성 이미지 전체 품질 검사 · {len(saved_images)}장", 7,
                                 "게시 가능한 이미지와 개별 검사 결과를 모아 전체 검사 · 원본 에셋 제외",
                                 task_key=inspection.TASK_KEY, group="illustration_inspection_overall")

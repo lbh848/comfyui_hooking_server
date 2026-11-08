@@ -33,6 +33,7 @@ done
 
 # Keep a complete inventory; updates compare shipped content with local edits.
 cp "$REPO_ROOT/src/packaging/macos/update_payload.py" "$APP/Contents/Resources/update_payload.py"
+cp "$REPO_ROOT/src/update_policy.py" "$APP/Contents/Resources/update_policy.py"
 command -v uv >/dev/null || { echo "[BUILD] uv is required" >&2; exit 1; }
 uv run --no-project --no-config --python 3.12 python \
     "$APP/Contents/Resources/update_payload.py" "$APP/Contents/Resources/app"

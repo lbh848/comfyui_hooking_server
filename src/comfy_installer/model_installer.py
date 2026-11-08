@@ -7,6 +7,7 @@ from threading import Event
 from typing import Callable
 
 from .downloader import ProgressCallback, ResumableDownloader
+from .model_previews import install_model_sidecars
 
 
 class ModelInstallError(RuntimeError):
@@ -27,6 +28,20 @@ def _safe_model_target(comfy_root: Path, relative_path: str) -> Path:
     return target
 
 
+def missing_models(*, models: list[dict], comfy_root: Path) -> list[dict]:
+    """Use complete files at their manifest locations for installation readiness."""
+    missing = []
+    for model in models:
+        target = _safe_model_target(comfy_root, str(model["relative_path"]))
+        try:
+            complete = target.is_file() and target.stat().st_size == int(model["size"])
+        except FileNotFoundError:
+            complete = False
+        if not complete:
+            missing.append(model)
+    return missing
+
+
 def install_models(
     *,
     models: list[dict],
@@ -38,6 +53,10 @@ def install_models(
     progress: ProgressCallback | None = None,
 ) -> list[dict]:
     try:
+        from .gemma4_vision import gemma4_models, install_gemma4_runtime
+        if {model["id"] for model in models} & {model["id"] for model in gemma4_models()}:
+            install_gemma4_runtime(comfy_root=comfy_root, downloader=downloader,
+                                   cancel_event=cancel_event, log=log, progress=progress)
         if any(model.get("auth") == "civitai" for model in models):
             if not isinstance(civitai_key, str) or not civitai_key.strip():
                 print(
@@ -105,6 +124,15 @@ def install_models(
                 cancel_event=cancel_event,
                 progress=_item_progress,
             )
+            if log:
+                log(f"[메타데이터·썸네일] 확인: {model_id}")
+            warning = install_model_sidecars(
+                url=str(model["url"]), target=result.path, root=comfy_root / "models",
+                civitai_key=civitai_key, cancel_event=cancel_event,
+                sha256=result.sha256,
+            )
+            if warning and log:
+                log(f"[메타데이터·썸네일] {model_id}: {warning}")
             completed_bytes += expected_size
             installed.append(
                 {

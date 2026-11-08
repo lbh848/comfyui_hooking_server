@@ -1,0 +1,112 @@
+.modal.illust-tag-editor-modal { width: min(1460px, calc(100vw - 40px)); max-width: none; height: min(960px, calc(100dvh - 40px)); max-height: calc(100dvh - 40px); overflow: hidden; }
+.illust-tag-editor-modal > .modal-content { height: 100%; display: flex; flex-direction: column; min-height: 0; padding: 20px; }
+.illust-tag-editor-modal > .modal-content > header { flex-shrink: 0; margin-bottom: 14px; }
+.illust-tag-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding-bottom: 12px; flex-shrink: 0; }
+.illust-tag-feedback { flex-shrink: 0; }
+.illust-tag-feedback:empty { display: none; }
+.illust-tag-feedback > :last-child { margin-bottom: 12px; }
+.illust-tag-view { display: flex; gap: 3px; border: 1px solid var(--line); border-radius: 7px; padding: 3px; background: var(--lavender); }
+.illust-tag-view button { border: 0; border-radius: 4px; background: transparent; color: var(--muted); padding: 6px 13px; cursor: pointer; font: inherit; font-size: 12px; }
+.illust-tag-view button[aria-pressed=true] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px #00000012; }
+.illust-tag-workspace { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "images source board"; gap: 16px; flex: 1; min-height: 0; }
+.illust-tag-board { grid-area: board; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.illust-tag-board-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; color: var(--muted); font-size: 12px; }
+.illust-tag-board-heading p { margin: 0; }
+.illust-tag-board-heading span { color: var(--rose-dark); }
+.illust-tag-group-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--lavender); flex-shrink: 0; }
+.illust-tag-group-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1 0 auto; min-height: 40px; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.illust-tag-group-tabs .badge { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.illust-tag-group-tabs button[aria-selected=true] { background: var(--panel); border-color: var(--rose); color: var(--rose-dark); font-weight: 650; box-shadow: 0 1px 3px #0000000d; }
+.illust-tag-panel { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; overflow-y: auto; }
+.illust-tag-panel[hidden] { display: none; }
+.illust-tag-board-note { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+.illust-tag-images { grid-area: images; min-width: 0; min-height: 0; overflow: hidden; }
+.illust-tag-image { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.illust-tag-original { grid-area: source; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.illust-tag-original > .illust-tag-source { min-height: 0; overflow-y: auto; flex: 1; padding: 14px; }
+.illust-tag-original .field-help, .illust-tag-images .field-help { font-size: 12px; line-height: 1.65; }
+.illust-tag-original .illust-edit-chip { font-size: 12px; }
+.illust-tag-section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.illust-tag-section-heading h3 { margin: 0; font-size: 13px; }
+.illust-tag-section-heading > .field-help { margin: 0; }
+.illust-tag-section-heading > :is(button, .field-help):last-child { margin-left: auto; }
+.illust-tag-image > .illust-tag-section-heading { flex-shrink: 0; margin-bottom: 6px; }
+.illust-tag-photo { position: relative; flex: 1; min-height: 0; width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--lavender); overflow: hidden; cursor: zoom-in; display: block; }
+.illust-tag-photo img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.illust-tag-photo.empty { display: grid; place-items: center; padding: 12px; text-align: center; color: var(--muted); font-size: 12px; cursor: default; }
+.illust-tag-image-nav { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
+.illust-tag-source { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--lavender); }
+.illust-tag-source > .field-help { margin: 0 0 14px; line-height: 1.6; }
+.illust-source-group + .illust-source-group { margin-top: 15px; }
+.illust-source-group h4 { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
+.illust-tag-source-text { margin: 0; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; user-select: text; }
+.illust-edit-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-height: 28px; }
+.illust-edit-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 7px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; font-size: 11px; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+.illust-edit-chip[draggable=true] { cursor: grab; }
+.illust-edit-chip > button { display: inline-flex; align-items: center; min-width: 0; border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.illust-edit-chip > button:last-child:not(:first-child) { color: var(--muted); flex-shrink: 0; }
+.illust-edit-chip > button:disabled { cursor: default; }
+.illust-edit-chip.used { opacity: .48; }
+.illust-edit-chip.locked { background: var(--lavender); color: var(--muted); border-style: dashed; }
+.illust-source-group.appearance .illust-edit-chip:not(.locked), .illust-tag-edit.appearance .illust-edit-chip:not(.locked), .face_tags .illust-edit-chip:not(.locked) { background: #eaf1fc; border-color: #c8d8f0; color: #355680; }
+.outfit .illust-edit-chip:not(.locked), .absolute_tags .illust-edit-chip:not(.locked) { background: #f9edf3; border-color: #e7cddc; color: #82516d; }
+.eye_tags .illust-edit-chip:not(.locked) { background: #eaf5f0; border-color: #c5e2d4; color: #376a53; }
+.illust-tag-edited { margin-top: 20px; }
+.illust-tag-edit { display: flex; flex-direction: column; min-width: 0; min-height: 160px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel); transition: border-color .15s, background .15s; }
+.illust-tag-edit.active { border-color: var(--rose); box-shadow: inset 0 2px var(--rose); }
+.illust-tag-panel > .illust-tag-edit { min-height: 280px; }
+.illust-tag-board .illust-tag-section-heading h3 { font-size: 14px; }
+.illust-tag-active-label { margin-left: auto; font-size: 11px; color: var(--rose-dark); }
+.illust-tag-board .illust-edit-chip { font-size: 13px; padding: 5px 8px; }
+.illust-tag-board .illust-tag-edit > .illust-edit-chips { flex: 1; align-content: flex-start; min-height: 70px; overflow-y: auto; }
+.illust-tag-board .illust-tag-edit > .field { flex: 1; display: flex; flex-direction: column; }
+.illust-tag-board textarea { font-size: 13px; line-height: 1.6; }
+.illust-tag-board .illust-tag-edit > .field textarea { flex: 1; min-height: 160px; resize: vertical; }
+.illust-tag-edit.drag-over { background: var(--rose-soft); outline: 2px solid var(--rose); }
+.illust-tag-edit .illust-tag-section-heading .button { min-height: 26px; padding: 4px 8px; font-size: 10px; }
+.illust-tag-add { display: flex; gap: 6px; align-items: flex-end; margin-top: 10px; flex-shrink: 0; }
+.illust-tag-add > .field { flex: 1; min-width: 0; }
+.illust-tag-add textarea { min-height: 34px; resize: vertical; width: 100%; }
+.illust-tag-edit > .field { margin-top: 8px; }
+.illust-tag-edit textarea { width: 100%; }
+.illust-tag-options { margin-top: 16px; }
+.illust-tag-options .field-help { margin: 0; line-height: 1.7; }
+.illust-tag-footer { display: flex; align-items: center; gap: 14px; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; flex-shrink: 0; }
+.illust-tag-footer p { margin: 0; line-height: 1.7; flex: 1; }
+.illust-tag-history { margin: 0; }
+.illust-tag-history-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.illust-tag-history-grid article { display: grid; gap: 6px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.illust-tag-history-grid strong { font-size: 12px; }
+.illust-tag-history-grid time { font-size: 10px; color: var(--muted); }
+.illust-tag-history-grid .button { font-size: 11px; }
+.illust-tag-history-image { border: 0; background: var(--lavender); padding: 0; cursor: zoom-in; }
+.illust-tag-history-image img { width: 100%; height: 130px; object-fit: contain; display: block; }
+.illust-tag-prompt-preview { max-height: 55vh; padding: 14px; background: var(--lavender); border-radius: 8px; }
+@media (min-width: 1001px) and (max-width: 1200px) {
+  .illust-tag-workspace { gap: 12px; }
+  .illust-tag-group-tabs button { font-size: 12px; }
+}
+@media (max-width: 1000px) {
+  .illust-tag-workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); grid-template-areas: "images source" "board board"; overflow-y: auto; align-content: start; }
+  .illust-tag-images { height: min(68dvh, 620px); }
+  .illust-tag-original { overflow: visible; }
+  .illust-tag-original > .illust-tag-source { max-height: 300px; flex: auto; }
+  .illust-tag-board { min-height: 380px; }
+  .illust-tag-panel { overflow: visible; }
+}
+@media (max-width: 760px) {
+  .modal.illust-tag-editor-modal { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
+  .illust-tag-editor-modal > .modal-content { padding: 14px; }
+  .illust-tag-workspace { display: flex; flex-direction: column; }
+  .illust-tag-images, .illust-tag-original, .illust-tag-board { flex-shrink: 0; }
+  .illust-tag-board { min-height: 0; }
+  .illust-tag-board .illust-tag-edit { min-height: 220px; }
+  .illust-tag-group-tabs button { font-size: 12px; }
+  .illust-tag-toolbar { align-items: flex-start; }
+  .illust-tag-toolbar > .illust-actions { gap: 6px; }
+  .illust-tag-toolbar .button { padding: 8px; font-size: 11px; }
+  .illust-tag-footer { flex-wrap: wrap; gap: 7px; padding-top: 10px; margin-top: 10px; }
+  .illust-tag-footer > .field-help { display: none; }
+  .illust-tag-footer > .button { font-size: 11px; padding: 8px; }
+  .illust-tag-footer > .button:first-child { margin-right: auto; }
+}

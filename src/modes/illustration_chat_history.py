@@ -31,6 +31,7 @@ HISTORY_ROOT = os.path.join(data_root(BASE_DIR), "workflow_backup", "illustratio
 RECORDS_DIR = os.path.join(HISTORY_ROOT, "records")
 TRASH_DIR = os.path.join(HISTORY_ROOT, "trash")
 SETTINGS_PATH = os.path.join(HISTORY_ROOT, "settings.json")
+SETTINGS_PATH_EMOTION = os.path.join(HISTORY_ROOT, "settings_emotion.json")
 REQUIREMENTS_BACKUP_DIR = os.path.join(
     data_root(BASE_DIR),
     "backups",
@@ -190,22 +191,28 @@ def normalize_settings(value: dict | None) -> dict:
     return out
 
 
-def load_settings() -> dict:
+def _settings_path(workshop: str = "illustration") -> str:
+    return SETTINGS_PATH_EMOTION if str(workshop or "").strip().lower() == "emotion" else SETTINGS_PATH
+
+
+def load_settings(workshop: str = "illustration") -> dict:
+    path = _settings_path(workshop)
     with _IO_LOCK:
         _ensure_dirs()
-        value = _load_json(SETTINGS_PATH)
+        value = _load_json(path)
         if value is None:
             return deepcopy(DEFAULT_SETTINGS)
         return normalize_settings(value)
 
 
-def save_settings(value: dict) -> dict:
+def save_settings(value: dict, workshop: str = "illustration") -> dict:
+    path = _settings_path(workshop)
     with _IO_LOCK:
         _ensure_dirs()
         settings = normalize_settings(value)
-        _backup_existing(SETTINGS_PATH, "settings.json")
+        _backup_existing(path, "settings_emotion.json" if path == SETTINGS_PATH_EMOTION else "settings.json")
         try:
-            _atomic_write_json(SETTINGS_PATH, settings)
+            _atomic_write_json(path, settings)
             _trim_all_records_locked(settings["storage_max_chars"])
             print(
                 f"[ILLUST_HISTORY] 설정 저장 완료: max_chars={settings['storage_max_chars']}, "
@@ -661,6 +668,7 @@ def prepare_history(
     target_index: int,
     bot_name: str = "",
     trace_id: str = "",
+    workshop: str = "illustration",
 ) -> dict:
     """Build an uncommitted history view for OUTFIT/CALL2/CALL3."""
     total_started_at = time.perf_counter()
@@ -677,7 +685,7 @@ def prepare_history(
     current_hash = incoming_current["full_content_hash"]
     perf["input_prepare_ms"] = (time.perf_counter() - input_started_at) * 1000.0
     settings_started_at = time.perf_counter()
-    settings = load_settings()
+    settings = load_settings(workshop)
     perf["settings_load_ms"] = (time.perf_counter() - settings_started_at) * 1000.0
 
     lock_wait_started_at = time.perf_counter()
@@ -825,6 +833,7 @@ def prepare_history(
             "settings": settings,
             "match": match,
             "bot_name": str(bot_name or ""),
+            "workshop": "emotion" if str(workshop or "").strip().lower() == "emotion" else "illustration",
             "prepared_at": now,
         }
         perf["plan_build_ms"] = (time.perf_counter() - plan_started_at) * 1000.0
@@ -891,10 +900,10 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
         "error": str(error or "")[:2_000],
         "call1_result": deepcopy(value.get("call1_result") or {}),
         "time_place_result": deepcopy(value.get("time_place_result") or {}),
+        "npc_generation_result": deepcopy(value.get("npc_generation_result") or {}),
         "profile_result": deepcopy(value.get("profile_result") or {}),
         **({"wardrobe_events": deepcopy(value["wardrobe_events"])}
            if "wardrobe_events" in value else {}),
-        "call2_out": str(value.get("call2_output") or ""),
         "call3_initial_out": str(value.get("call3_initial_output") or ""),
         "call3_out": str(value.get("call3_output") or ""),
         "call3_correction_used": bool(value.get("call3_correction_used")),
@@ -907,6 +916,7 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
 def finalize_history(plan: dict, result: dict | None = None, error: str = "") -> dict:
     """Commit original CHAT after the pipeline reaches a terminal state."""
     history_id = str(plan.get("history_id") or "")
+    workshop = "emotion" if str(plan.get("workshop") or "").strip().lower() == "emotion" else "illustration"
     path = _record_path(history_id)
     with _IO_LOCK:
         _ensure_dirs()
@@ -994,6 +1004,7 @@ def finalize_history(plan: dict, result: dict | None = None, error: str = "") ->
             "source": {
                 "bot_name": str(plan.get("bot_name") or (record.get("source") or {}).get("bot_name") or ""),
                 "branch_id": str((record.get("source") or {}).get("branch_id") or "main"),
+                "workshop": "emotion" if str(workshop or "").strip().lower() == "emotion" else "illustration",
             },
             "revision": int(record.get("revision") or 0) + 1,
             "created_at": float(record.get("created_at") or time.time()),
@@ -1079,13 +1090,17 @@ def _trim_all_records_locked(max_chars: int) -> None:
         )
 
 
-def list_histories(query: str = "", limit: int = 100) -> list[dict]:
+def list_histories(query: str = "", limit: int = 100, workshop: str = "illustration") -> list[dict]:
     normalized_query = str(query or "").strip().casefold()
+    target_workshop = "emotion" if str(workshop or "").strip().lower() == "emotion" else "illustration"
     safe_limit = max(1, min(500, int(limit)))
     with _IO_LOCK:
         records = _iter_records_locked()
     summaries = []
     for record in records:
+        record_workshop = str((record.get("source") or {}).get("workshop") or "illustration").strip().lower()
+        if record_workshop != target_workshop:
+            continue
         message_text = "\n".join(str(item.get("content") or "") for item in record.get("messages") or [])
         character_names = " ".join(
             str((value or {}).get("canonical_name") or key)

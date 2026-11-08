@@ -6,10 +6,11 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 from urllib.parse import quote
+from lora_paths import ASSET_LORA_FOLDER, MANAGED_LORA_ROOT, bot_lora_load_path
 
 
-MANAGED_LORA_ROOT = "SOYA_CHAR_LORA"
 _CATEGORY_PREFIXES = {
+    "asset": (MANAGED_LORA_ROOT, ASSET_LORA_FOLDER),
     "bot": (MANAGED_LORA_ROOT, "SOYA_BOT_LORA"),
     "instance": (MANAGED_LORA_ROOT, "SOYA_INSTANCE_LORA"),
     "style": (MANAGED_LORA_ROOT, "SOYA_STYLE_LORA"),
@@ -169,9 +170,9 @@ def _asset_items(
                     )
                     continue
                 remote_path = (
-                    f"{MANAGED_LORA_ROOT}/{safe_character}/Lora/{safe_entry}/{source.name}"
+                    f"{MANAGED_LORA_ROOT}/{ASSET_LORA_FOLDER}/{safe_character}/Lora/{safe_entry}/{source.name}"
                     if local_path
-                    else f"{MANAGED_LORA_ROOT}/{PurePosixPath(str(lora.get('path') or '').replace(chr(92), '/')).as_posix()}"
+                    else f"{MANAGED_LORA_ROOT}/{ASSET_LORA_FOLDER}/{PurePosixPath(str(lora.get('path') or '').replace(chr(92), '/')).as_posix()}"
                 )
                 files.append(
                     _file_spec(
@@ -183,15 +184,15 @@ def _asset_items(
                 )
             if not files:
                 continue
-            scope = f"{MANAGED_LORA_ROOT}/{safe_character}/Lora/{safe_entry}"
+            scope = f"{MANAGED_LORA_ROOT}/{ASSET_LORA_FOLDER}/{safe_character}/Lora/{safe_entry}"
             items.append(
                 _new_item(
                     key=_item_key("asset", safe_character, safe_entry),
                     category="asset",
                     name=entry_name,
-                    subtitle=character,
-                    display_name=character,
-                    display_subtitle=entry_name,
+                    subtitle="프로젝트" if group.get("standalone") else character,
+                    display_name=entry_name if group.get("standalone") else character,
+                    display_subtitle="프로젝트" if group.get("standalone") else entry_name,
                     detail=str(entry.get("description") or entry.get("trigger") or ""),
                     scopes=[scope],
                     files=files,
@@ -208,10 +209,7 @@ def _bot_items(
 ) -> list[dict[str, Any]]:
     from modes.bot_lora_mode import _safe_dirname, list_bot_lora_for_picker
 
-    root_raw = str(config.get("bot_lora_load_path") or "").strip()
-    if not root_raw:
-        asset_root = str(config.get("lora_load_path") or "").strip()
-        root_raw = os.path.join(asset_root, "SOYA_BOT_LORA") if asset_root else ""
+    root_raw = bot_lora_load_path(config)
     root = Path(root_raw).resolve() if root_raw else None
     items: list[dict[str, Any]] = []
     for bot in list_bot_lora_for_picker(root_raw):
@@ -441,8 +439,8 @@ def _remote_identity(path_value: str) -> dict[str, Any] | None:
                 for profile in ("anima", "sdxl")
             ],
         }
-    if len(parts) >= 5 and parts[2] == "Lora":
-        character, entry = parts[1], parts[3]
+    if len(parts) >= 6 and parts[1] == ASSET_LORA_FOLDER and parts[3] == "Lora":
+        character, entry = parts[2], parts[4]
         return {
             "key": _item_key("asset", character, entry),
             "category": "asset",
@@ -451,7 +449,7 @@ def _remote_identity(path_value: str) -> dict[str, Any] | None:
             "display_name": character,
             "display_subtitle": f"{entry} · 원격에만 있음",
             "detail": "로컬 현재 사용본에서 찾을 수 없습니다.",
-            "scopes": [f"{MANAGED_LORA_ROOT}/{character}/Lora/{entry}"],
+            "scopes": [f"{MANAGED_LORA_ROOT}/{ASSET_LORA_FOLDER}/{character}/Lora/{entry}"],
         }
     return None
 
