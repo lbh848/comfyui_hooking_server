@@ -351,8 +351,6 @@ runtime_image = (
     .env({"SOYA_MODAL_VRAM_MODE": DEPLOY_VRAM_MODE})
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
     .add_local_file(IMAGE_INSTALL_LOCAL, "/opt/soya/image_install.py", copy=True)
-    .add_local_file(MANIFEST_LOCAL.parent.parent / "illustration_v2_nodes.py", "/opt/soya/illustration_v2_nodes.py", copy=True)
-    .add_local_dir(MANIFEST_LOCAL.parent / "illustration_v2", "/opt/soya/illustration_v2", copy=True)
 )
 
 image_install_nodes: list[dict] = []

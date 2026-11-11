@@ -120,7 +120,7 @@ def main():
     info = json.load(urllib.request.urlopen(args.comfy_url + "/object_info", timeout=30))
     request = urllib.request.Request(args.comfy_url + "/workflow/convert", data=json.dumps(workflow).encode(), headers={"Content-Type": "application/json"})
     api = json.load(urllib.request.urlopen(request, timeout=30))
-    spec_path = Path(__file__).resolve().parents[1] / "comfy_installer/resources/illustration_v2/illustration_v2_specs.json"
+    spec_path = Path(__file__).resolve().parents[1] / "comfy_installer/illustration_v2_specs.json"
     specs = json.loads(spec_path.read_text(encoding="utf-8"))
     result = migrate_asset(workflow, api, info, specs)
     args.output.parent.mkdir(parents=True, exist_ok=True)

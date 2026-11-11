@@ -75,6 +75,13 @@ class ResourceLibraryTests(unittest.TestCase):
         self.file("loras/new.pt")
         self.assertEqual(len(self.library.scan()["loras"]), 1)
 
+    def test_internal_loras_are_not_listed_as_external_models(self):
+        self.file("loras/external.safetensors")
+        self.file("loras/SOYA_CHAR_LORA/SOYA_ASSET_LORA/character/session/model.safetensors")
+        self.file("loras/SOYA_CHAR_LORA/SOYA_BOT_LORA/bot/character/model.safetensors")
+        inventory = self.library.scan()
+        self.assertEqual([item["path"] for item in inventory["loras"]], ["loras/external.safetensors"])
+
     def test_installed_lora_opens_its_model_version_page_without_changing_download(self):
         self.file("loras/managed.safetensors")
         metadata = self.file("loras/managed.metadata.json", json.dumps({

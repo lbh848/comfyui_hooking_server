@@ -46,16 +46,23 @@ def is_generated_image(filename: str, metadata: dict, *, npc_generated: bool = F
     )
 
 
-def character_image_descriptor(root: dict) -> dict:
-    """Use the current card for both the first image and explicit regeneration."""
+def character_image_descriptor(root: dict, *, emotion_tags=None) -> dict:
+    """Use the current card for both the first image and explicit regeneration.
+
+    ``emotion_tags`` carries the emotion workshop's starred outfit-representative
+    expression so a new NPC representative is not rendered in a free pose.
+    """
     card = root["visual_cards"][0]
     animal = card["gender_tag"] == "animal"
     camera = "solo, full body, animal focus, no humans, looking at viewer" if animal else "solo, cowboy shot, looking at viewer"
+    tags = [
+        card["gender_tag"], root["name"], *tag_values(card["appearance"]),
+        *tag_values(card["default_outfit"]), card.get("face_tags", ""), card.get("eye_tags", ""),
+        *(emotion_tags or []),
+    ]
     return {"slot": -1, "kind": "npc", "camera": camera,
             "scene": "simple background, even lighting", "supplement": "",
-            "characters": [{"name": root["name"], "positive": ", ".join(filter(None, [
-                card["gender_tag"], root["name"], *tag_values(card["appearance"]),
-                *tag_values(card["default_outfit"]), card.get("face_tags", ""), card.get("eye_tags", "")]))}]}
+            "characters": [{"name": root["name"], "positive": ", ".join(filter(None, tags))}]}
 
 
 def character_tracking_context(root: dict) -> dict:
@@ -238,7 +245,8 @@ async def advance_lifetimes(manager, bot_name: str, used_names: list[str], flow_
 
 async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                          segmented, toggles, stream_notify, render_image,
-                         on_profiles_ready=None, prepare_character=None):
+                         on_profiles_ready=None, prepare_character=None,
+                         render_gate=None, workshop: str = "illustration"):
     storage = import_module("modes.bot_mode")
     from modes import illustration_context_pipeline as pipeline
     from modes import illustration_prompt_builders as builders
@@ -279,6 +287,10 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                 for candidate in candidates
                 if (entry := predicted.get(candidate["name"].casefold())) and entry.get("visual_cards")
             ], "created": [], "output": output})
+        if roots and render_gate is not None:
+            # "NPC 생성은 나중에": 외형 예측은 즉시 넘겨 DETAIL이 참조할 수 있게 하고,
+            # 대표 이미지 Comfy 호출은 이미지 생성 단계(STEP 6)까지 기다린다.
+            await render_gate.wait()
         if roots:
             for root in roots:
                 illustration_flow.raise_if_cancel_requested()
@@ -305,7 +317,10 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                     filename = f"npc_{uuid.uuid4().hex}.png"
                     card = root["visual_cards"][0]
                     metadata = PngImagePlugin.PngInfo()
-                    prompt = character_image_descriptor(root)["characters"][0]["positive"]
+                    prompt = character_image_descriptor(
+                        root,
+                        emotion_tags=pipeline.npc_representative_emotion_tags(toggles, workshop),
+                    )["characters"][0]["positive"]
                     metadata.add_text("prompt", prompt)
                     image.save(directory / filename, format="PNG", pnginfo=metadata)
                     save_tracked_face(directory=directory, source_filename=filename, character_name=root["name"],

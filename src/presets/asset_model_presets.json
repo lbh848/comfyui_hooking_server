@@ -7,7 +7,7 @@
       "config": {
         "asset_workflow_type": "anima_only",
         "asset_workflow_source_paths": {
-          "anima_only": "@configured:anima_only",
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA_V4.json",
           "anima_ilxl": "@configured:anima_ilxl"
         }
       },
@@ -92,7 +92,7 @@
         "asset_workflow_type": "anima_ilxl",
         "asset_workflow_source_paths": {
           "anima_only": "@configured:anima_only",
-          "anima_ilxl": "@configured:anima_ilxl"
+          "anima_ilxl": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA+ILXL_V4.json"
         }
       },
       "workflows": {

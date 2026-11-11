@@ -17,7 +17,7 @@ import torch
 
 from illustration_json import build_illustration_json
 
-RESOURCES = Path(__file__).resolve().parents[1] / "comfy_installer/resources/illustration_v2"
+RESOURCES = Path(__file__).resolve().parents[2] / "data/comfy/custom_nodes/comfyui-soya-custom-nodes"
 package = ModuleType("spatial_test_nodes")
 package.__path__ = [str(RESOURCES)]
 sys.modules[package.__name__] = package

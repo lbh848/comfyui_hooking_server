@@ -5,7 +5,7 @@ import { ResourceThumbnail } from "./ResourceThumbnail";
 import { resourceDisplayName, type Resources } from "./useResources";
 import type { IllustrationData } from "./illustration";
 import { httpUrl } from "./urls";
-import { defaultLoraTrigger as defaultTrigger, incompatibleLora, isInternalLora, loraPath, mergeLoraLibrary, searchLoras, selectedLora, selectedLoraPath, type PickerLora } from "./loraPicker";
+import { defaultLoraTrigger as defaultTrigger, incompatibleLora, internalLoraFilterLabels, isInternalLora, loraPath, mergeLoraLibrary, searchLoras, selectedLora, selectedLoraPath, type InternalLoraFilter, type PickerLora } from "./loraPicker";
 import { useInternalLoraPicker } from "./useInternalLoraPicker";
 import { mediaUrl } from "./internalLora";
 
@@ -20,17 +20,21 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [source, setSource] = useState("external");
+  const [internalSource, setInternalSource] = useState<InternalLoraFilter>("style");
   const tabsId = useId();
+  const internalTabsId = useId();
   const internal = useInternalLoraPicker(pickerOpen && source === "internal", value.some(item => isInternalLora({ path: selectedLoraPath(item) })));
   const [message, setMessage] = useState("");
   const [dragging, setDragging] = useState<{ index: number; name: string } | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const library = mergeLoraLibrary(inventory.loras, internal.loras);
-  const results = searchLoras(library, source, query);
+  const results = searchLoras(library, source, query, internalSource);
   const loading = source === "internal" ? internal.loading || inventory.loading : inventory.loading;
   const error = source === "internal" ? [internal.error, inventory.error].filter(Boolean).join("\n") : inventory.error;
   const added = (item: PickerLora) => value.some(current => selectedLoraPath(current) === loraPath(item.path));
   const incompatibleBase = (item: PickerLora) => incompatibleLora(item, profile);
+  const panelId = source === "internal" ? `${internalTabsId}-panel-${internalSource}` : `${tabsId}-panel-${source}`;
+  const panelLabelledBy = source === "internal" ? `${internalTabsId}-tab-${internalSource}` : `${tabsId}-tab-${source}`;
   function refresh() {
     void inventory.refresh();
     if (source === "internal") void internal.refresh();
@@ -107,8 +111,9 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
     {pickerOpen && <Modal title="LoRA 추가" className="illust-lora-picker-modal" backgroundable={false} onClose={() => setPickerOpen(false)}>
       <div className="illust-form">
         <SettingsTabs id={tabsId} label="LoRA 검색 위치" values={{ external: "외부 LoRA", internal: "내부 LoRA" }} value={source} onChange={setSource} />
-        <div className="illust-form" role="tabpanel" id={`${tabsId}-panel-${source}`} aria-labelledby={`${tabsId}-tab-${source}`}>
-        <p className="field-help">{source === "internal" ? "프로그램에서 학습한 에셋·봇·그림체 LoRA를 검색합니다." : "외부 LoRA 관리에 설치하거나 업로드한 LoRA를 검색합니다."}</p>
+        <div className="illust-form" role="tabpanel" id={panelId} aria-labelledby={panelLabelledBy}>
+        {source === "internal" && <SettingsTabs id={internalTabsId} label="내부 LoRA 종류" values={internalLoraFilterLabels} value={internalSource} onChange={value => setInternalSource(value as InternalLoraFilter)} />}
+        <p className="field-help">{source === "internal" ? `프로그램에서 학습한 ${internalSource === "all" ? "에셋·봇·그림체" : internalLoraFilterLabels[internalSource]} LoRA를 검색합니다.` : "외부 LoRA 관리에 설치하거나 업로드한 LoRA를 검색합니다."}</p>
         <div className="illust-lora-search">
           <label className="field">LoRA 검색<input type="search" value={query} placeholder={source === "internal" ? "이름, 프로젝트, 캐릭터, 트리거로 검색" : "이름, 별칭, 트리거로 검색"} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") event.preventDefault(); }} /></label>
           <button type="button" className="button" disabled={loading} onClick={refresh}><RefreshCw size={14} />LoRA 목록 새로고침</button>
@@ -125,7 +130,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
               <div className="illust-lora-summary"><strong>{name} <LoraPageLink name={name} url={item.sourceUrl} /></strong><small>{item.family}{incompatible ? ` · ${profile === "ilxl" ? "ANIMA" : "ILXL"} 지원 그림 모델에서 사용` : ""}</small>{isInternalLora(item) && <small>{item.detail || loraPath(item.path)}</small>}<span title={defaultTrigger(item)}>{defaultTrigger(item) || "기본 트리거 없음"}</span></div>
               <button type="button" className="button" disabled={isAdded || incompatible} aria-label={`${name} 선택`} onClick={() => add(item)}><Plus size={14} />{isAdded ? "추가됨" : "선택"}</button>
             </li>;
-          })}</ul> : !error && <Empty title="검색된 LoRA가 없습니다">{query.trim() ? "검색어를 바꿔보세요." : source === "internal" ? "로라 작업 공간에서 학습을 완료한 뒤 목록을 새로고침하세요." : "설정의 외부 LoRA 관리에 LoRA를 등록한 뒤 목록을 새로고침하세요."}</Empty>}
+          })}</ul> : !error && <Empty title="검색된 LoRA가 없습니다">{query.trim() ? "검색어를 바꿔보세요." : source === "internal" ? internalSource === "all" ? "로라 작업 공간에서 학습을 완료한 뒤 목록을 새로고침하세요." : `${internalLoraFilterLabels[internalSource]} LoRA가 없습니다. 다른 탭을 확인하거나 로라 작업 공간에서 학습을 완료한 뒤 새로고침하세요.` : "설정의 외부 LoRA 관리에 LoRA를 등록한 뒤 목록을 새로고침하세요."}</Empty>}
         </>}
         </div>
         <div className="modal-actions"><button type="button" className="button" onClick={() => setPickerOpen(false)}>취소</button></div>

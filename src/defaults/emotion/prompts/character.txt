@@ -1,0 +1,28 @@
+Resolve which registered identities participate in CURRENT for Profile/LoRA matching. When scene selection is requested, independently choose source-supported visible subjects, illustration anchors, and each selected subject's short emotion in the same response. Registration does not determine scene priority or eligibility; follow the active image policy and visible-subject limit.
+
+You receive the complete registered character roster, optional existing card-authored identity references, and numbered CURRENT CONTEXT SEGMENTS. Read CURRENT semantically. Never use keyword matching, substring rules, filename conventions, visual-profile assumptions, or a hardcoded list of narrative situations. Card references may connect an alias, localized name, title, or description to a canonical roster name, but they never establish CURRENT participation, story state, wardrobe, or action. Earlier context and saved state may clarify the selected event; never infer participation from prior events or saved continuity alone. Only CURRENT establishes who participates and which passages can be selected.
+
+Every item in `characters` must be one registered character who is present, acting, speaking, being addressed, visually depicted, or clearly participating in CURRENT. Resolve aliases, titles, pronouns, delayed identity reveals, and implicit participants from the full discourse, but output only the exact supplied canonical name.
+
+Canonical names are machine identifiers. Copy each `name` verbatim from COMPLETE REGISTERED CHARACTER ROSTER. Never translate, transliterate, localize, re-spell, or replace a canonical name with a narrative alias. Do not force an unidentified or unregistered narrative person onto the most similar roster character based on role, appearance, outfit, profile, or name resemblance. If the discourse does not establish an exact registered identity, omit that person from the registered characters array; a depicted NPC subject may still be selected under its exact npc_candidates name, which is the NPC's personal name and never the name combined with a role or class word. When you create an npc_candidates entry, its `name` is that person's personal name only: put the role, job, class or title in `description`, never in the name. A maid named Ella is "Ella", never "Ella_maid" or "Maid_Ella".
+
+Keep every registered CURRENT participant in the top-level characters even when no image selects them. Return `characters: []` when CURRENT contains no registered participant, including when only unregistered people or creatures participate.
+
+SCENE AND EMOTION SELECTION FOR EMOTION ILLUSTRATIONS
+
+Each scene_plan item is ONE anchor with exactly ONE depicted subject and ONE emotion. Put the subject's name — an exact registered name, or a source-established NPC depicted at that anchor — in `character`, and that subject's emotion at the anchor in `emotion`. For an NPC, use the exact name returned in npc_candidates; that name is the character's own name, never the name combined with a role or class word.
+
+Choose anchors where a single character visibly expresses an emotion: a reaction, a held expression, a telling pose. Do not combine two people in one scene; when the same event supports two characters, use separate anchors, and the same character may appear at several anchors with different emotions. The emotion asset is one character at one source moment; it is not a full scene reconstruction.
+
+Use ONE lowercase English emotion word, or a short label of at most three words (for example: joy, sadness, anger, surprise, fear, disgust, embarrassment, affection, determination, forced smile). An emotion label carries only the emotion: do not write a sentence, scene description, action summary, appearance, outfit, visual tags, or a mood that CURRENT does not support inside the label. If CURRENT gives no source-supported emotion for the subject, omit that anchor instead of inventing one.
+
+Return only the JSON shape requested at the end of the user message. When scene selection is requested, return characters and scene_plan; each scene contains anchor_segment, character, and emotion. Otherwise return:
+{
+  "characters": [
+    {
+      "name": "exact supplied canonical name"
+    }
+  ]
+}
+
+Keep characters in first-participation order. Do not add `in_history`, profiles, outfit, confidence, evidence, analysis, prose, Markdown fences, or fields beyond the requested shape.

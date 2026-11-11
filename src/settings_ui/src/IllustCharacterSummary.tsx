@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check, ChevronLeft, ChevronRight, FolderOpen, ImageOff, Minus, RefreshCw, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronLeft, ChevronRight, FolderOpen, ImageOff, Minus, Pencil, RefreshCw, X } from "lucide-react";
 import { Badge } from "./components";
 import { type IllustrationData } from "./illustration";
 import { useBotApi } from "./BotApiScope";
@@ -23,13 +23,13 @@ function LoraStatus({ entries }: { entries: IllustrationData[] }) {
   })}</ul>;
 }
 
-export function IllustCharacterSummary({ characterName, card, render, index, count, isDefault, references, imagesLoaded, imagesError, hasFace, saved, patch, patchLoading, patchError, readOnly, persona, dirty, busy, onChangeProfile, onPreview, onShowDetails, onEnter, onDelete, onRegenerate, npc }: {
+export function IllustCharacterSummary({ characterName, card, render, index, count, isDefault, references, imagesLoaded, imagesError, hasFace, saved, patch, patchLoading, patchError, readOnly, persona, dirty, busy, onChangeProfile, onPreview, onShowDetails, onEnter, onDelete, onRegenerate, npc, onRename }: {
   characterName: string; card: IllustrationData; render: IllustrationData; index: number; count: number; isDefault: boolean;
   references: IllustrationData[]; imagesLoaded: boolean; imagesError: string; hasFace: boolean; saved: boolean;
   patch?: IllustrationData; patchLoading: boolean; patchError: string; readOnly: boolean; persona: boolean; dirty: boolean; busy: boolean;
   onChangeProfile: (index: number) => void; onPreview: (image: IllustrationData) => void; onShowDetails: () => void; onEnter?: () => void;
   onDelete?: () => void; npc?: IllustrationData;
-  onRegenerate?: (image: IllustrationData) => void;
+  onRegenerate?: (image: IllustrationData) => void; onRename?: () => void;
 }) {
   const api = useBotApi();
   const [selection, setSelection] = useState({ profileId: card.id, index: 0 });
@@ -45,7 +45,7 @@ export function IllustCharacterSummary({ characterName, card, render, index, cou
   const patchHint = `FACE 이미지 ${patchReady ? "있음" : "없음"}`;
   return <>
     <header className="illust-summary-heading">
-      <div><h2>{characterName}</h2><p>{card.label}{isDefault && <Badge>기본</Badge>}</p></div>
+      <div><div className="illust-summary-title"><h2>{characterName}</h2>{onRename && <button type="button" className="icon-button illust-character-rename" aria-label={`${characterName} 캐릭터 이름 변경`} title={dirty ? "변경 사항을 먼저 저장하세요" : "캐릭터 이름 변경"} disabled={readOnly || busy || dirty} onClick={onRename}><Pencil size={14} aria-hidden="true" /></button>}</div><p>{card.label}{isDefault && <Badge>기본</Badge>}</p></div>
       <div className="illust-summary-heading-actions">
         <div className="illust-summary-badges">{npc && <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, npc.npc_lifetime - npc.npc_idle_calls)}회</Badge>}{persona && <Badge tone="lavender">페르소나</Badge>}{readOnly && <Badge>읽기 전용</Badge>}{dirty && <Badge tone="rose">미저장 변경</Badge>}</div>
         {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
@@ -73,7 +73,6 @@ export function IllustCharacterSummary({ characterName, card, render, index, cou
         <div><dt>기본 복장</dt><dd><Setting set={outfit} /></dd></div>
         <div className="illust-summary-setting-divider"><dt>얼굴 LoRA</dt><dd><LoraStatus entries={render.face_loras || []} /></dd></div>
         <div><dt>캐릭터 LoRA</dt><dd><LoraStatus entries={render.loras || []} /></dd></div>
-        <div><dt>스타일 LoRA</dt><dd><LoraStatus entries={render.style_loras || []} /></dd></div>
         <div className="illust-summary-setting-divider"><dt>데이터 패치</dt><dd>{!saved ? <Status tone="missing">저장 전</Status> : patchError ? <Status tone="pending" title={patchError}>확인 실패</Status> : patchLoading ? <Status tone="pending">확인 중</Status> : <Status tone={patchReady ? "ready" : "missing"} title={patchHint}>{patchReady ? "패치됨" : "패치 안 됨"}</Status>}</dd></div>
       </dl>
     </div>

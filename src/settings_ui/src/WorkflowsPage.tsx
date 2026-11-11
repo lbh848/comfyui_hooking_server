@@ -147,7 +147,7 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
 
   async function act(action: "e2e" | "integrity" | "install" | "cancel", item?: WorkflowItem) {
     if (pending) return;
-    if (action !== "cancel" && (!item || item.source !== "pack" || disabled)) return;
+    if (action !== "cancel" && (!item || disabled || (item.source !== "pack" && action !== "install"))) return;
     if (action === "e2e" && (item?.e2eBlockedReason || e2eReasons.length)) return;
     if (action === "integrity" && item?.integrityBlockedReason) return;
     if (action === "install" && ((item?.modelsInstalled && item?.workflowInstalled) || item?.missingModelCount == null || item?.installBlockedReason)) return;
@@ -278,7 +278,8 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
         <Workflow size={19} className="workflow-symbol" />
         <span className="workflow-row-content"><strong>{item.name}</strong><small>{item.filename}</small>
           <small>{item.source === "local" ? `JSON · ${bytes(item.fileBytes ?? 0)}` : `모델 ${item.modelCount}개 · ${bytes(item.modelBytes ?? NaN)}`}</small>
-          {item.source === "pack" && item.missingModelCount != null && <small>{item.modelsInstalled ? item.workflowInstalled ? "설치 완료" : "필수 모델 준비 완료 · 워크플로우 설치 필요" : `설치 필요 ${item.missingModelCount}개 · ${bytes(item.missingModelBytes ?? 0)}`}</small>}
+          {item.source === "local" && item.modelCount != null && <small>모델 {item.modelCount}개 · {bytes(item.modelBytes ?? 0)}</small>}
+          {item.missingModelCount != null && <small>{item.modelsInstalled ? item.workflowInstalled ? "설치 완료" : "필수 모델 준비 완료 · 워크플로우 설치 필요" : `설치 필요 ${item.missingModelCount}개 · ${bytes(item.missingModelBytes ?? 0)}`}</small>}
           {item.workflowInstalled && item.cleanupFileCount > 0 && <small>정리 가능 모델 {item.cleanupFileCount}개 · {bytes(item.cleanupBytes)}</small>}
           {item.source === "pack" && !!item.localPaths?.length && <small>폴더: {item.localPaths.join(", ")}</small>}
           {item.source !== "local" && item.e2eBlockedReason && <small className="field-error">E2E: {item.e2eBlockedReason}</small>}
@@ -289,7 +290,7 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
           {item.source === "local" ? <Badge tone="lavender">사용자</Badge> : <Badge tone={item.e2eBlockedReason ? "neutral" : "green"}>{item.e2eBlockedReason ? "E2E 불가" : "E2E 가능"}</Badge>}
           <div className="workflow-item-buttons">
             <button type="button" className="button secondary" disabled={disabled || (item.modelsInstalled && item.workflowInstalled) || item.missingModelCount == null || !!item.installBlockedReason}
-              title={item.installBlockedReason || (item.modelsInstalled ? item.workflowInstalled ? "워크플로우와 필수 모델이 모두 설치되어 있습니다." : "워크플로우 파일 설치" : `누락된 필수 모델 ${item.missingModelCount}개와 워크플로우 설치`)}
+              title={item.installBlockedReason || (item.modelsInstalled ? item.workflowInstalled ? "워크플로우와 필수 모델이 모두 설치되어 있습니다." : "워크플로우 파일 설치" : item.source === "local" ? `누락된 필수 모델 ${item.missingModelCount}개 설치` : `누락된 필수 모델 ${item.missingModelCount}개와 워크플로우 설치`)}
               onClick={() => void act("install", item)} aria-label={`${item.name} 설치`}><Download size={14} />{installingModels && running && status.selected_item_ids?.includes(item.id) ? "설치 중…" : pending === "install" && validationItem?.id === item.id ? "시작 중…" : "설치"}</button>
             {item.source === "local" ? <button type="button" className="button secondary" disabled={disabled || !item.fileRevision}
               title="사용자 워크플로우 JSON 파일만 삭제합니다. 모델 파일은 유지합니다."

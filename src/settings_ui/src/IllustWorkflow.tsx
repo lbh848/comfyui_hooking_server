@@ -4,7 +4,7 @@ import { Badge, Empty, Panel, SettingsTabs, Toggle } from "./components";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { enc, type IllustrationData } from "./illustration";
 import { resourceDisplayName, useResources, type Resources } from "./useResources";
-import { isDualVaeWorkflow, useIllustrationModels, workflowPathKey } from "./illustrationModels";
+import { isDualVaeWorkflow, isMossWorkflow, useIllustrationModels, workflowPathKey } from "./illustrationModels";
 import { ResourceThumbnail } from "./ResourceThumbnail";
 import { IllustLoras } from "./IllustLoras";
 import { defaultSamplingOptions } from "./comfySampling";
@@ -14,13 +14,18 @@ import { useModelSettingsRequest, useModelSettingsResource, useModelSettingsScop
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 const stageLabels: Record<string, string> = {
+  "workflow.sampling": "MOSS · 기본 생성",
+  MOSS_FIRST_SAMPLER: "MOSS · 기본 생성",
   ANIMA_FIRST_SAMPLER: "ANIMA · 기본 생성", ANIMA_HIRESFIX: "ANIMA · 고해상도 보정", ILXL_HIRESFIX: "ILXL · 고해상도 보정",
   ANIMA_FACE_DETAILER: "ANIMA · 얼굴 보정", ANIMA_HAND_DETAILER: "ANIMA · 손 보정", ANIMA_EYE_DETAILER: "ANIMA · 눈 보정",
   ILXL_FACE_DETAILER: "ILXL · 얼굴 보정", ILXL_HAND_DETAILER: "ILXL · 손 보정", ILXL_EYE_DETAILER: "ILXL · 눈 보정",
 };
 // Keep sampling sections in generation order, regardless of the workflow JSON's key order.
 const stageOrder = new Map(Object.keys(stageLabels).map((key, index) => [key, index]));
-const modelLabels: Record<string, string> = { ANIMA_DIFFUSION_MODEL: "ANIMA 모델", ILXL_CHECKPOINT: "ILXL 체크포인트" };
+const modelLabels: Record<string, string> = {
+  "workflow.model": "MOSS 모델", "workflow.clip": "MOSS 텍스트 인코더", "workflow.vae": "MOSS VAE",
+  MOSS_DIFFUSION_MODEL: "MOSS 모델", ANIMA_DIFFUSION_MODEL: "ANIMA 모델", ILXL_CHECKPOINT: "ILXL 체크포인트",
+};
 const fieldLabels: Record<string, string> = { steps: "STEP", cfg: "CFG", sampler_mode: "샘플러 종류", sampler_name: "샘플링 알고리즘", scheduler: "스케줄러", denoise: "Denoise", sage_attention: "SAGE ATTN", spd_scale: "SPD scale", spd_sigma: "SPD sigma" };
 const samplerModeLabels: Record<string, string> = { KSampler: "KSampler · 기본", FAST: "FAST · Spectrum SPD/SPEED", SpectrumKSamplerModGuidance: "Spectrum · Mod Guidance" };
 const fastFieldOptions: Record<string, { min: number; max: number; step: number }> = {
@@ -75,11 +80,25 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
   const dirty = pretty(draft) !== pretty(baseline);
   const hybrid = draft?.[scope.typeKey] === "chansub_v3_anima";
   const profile = draft?.[scope.typeKey] === "chansub" ? "" : hybrid ? "v3_anima" : draft?.[scope.typeKey];
-  const model = catalog.models.find(item => item.profile === profile);
   const path = profile ? draft?.[scope.pathsKey][profile] || "" : "";
+  // The model picker follows the stored family selection, falling back to the
+  // workflow file for presets saved before that selection existed. MOSS keeps
+  // the ANIMA workflow profile but appears as its own model choice.
+  const family = scope.familyKey ? String(draft?.[scope.familyKey] || "") : "";
+  const moss = !!scope.familyKey && profile === "v3_anima"
+    && (family === "moss" || (!family && isMossWorkflow(path)));
+  const selection = moss ? "moss" : draft?.[scope.typeKey];
+  const model = catalog.models.find(item => item.profile === selection)
+    || catalog.models.find(item => item.profile === profile);
   // DUAL_VAE is exclusive to the emotion illustration workshop, so hide it
   // from the illustration workshop's picker and do not fall back to it.
-  const workflowOptions = (model?.workflows || []).filter(item => showsWorkflow(item.path));
+  const workflowOptions = (model?.workflows || []).filter(item => showsWorkflow(item.path)
+    && (!scope.familyKey || moss === isMossWorkflow(item.path)));
+  // Keep a MOSS preset's current workflow selectable even when its file name
+  // does not contain "moss" and the catalog cannot classify it.
+  if (moss && path && !workflowOptions.some(item => workflowPathKey(item.path) === workflowPathKey(path))) {
+    workflowOptions.unshift({ path, label: `${path.replaceAll("\\", "/").split("/").pop()?.replace(/\.json$/i, "")} · 현재 설정` });
+  }
   const selectedWorkflow = workflowOptions.find(item => workflowPathKey(item.path) === workflowPathKey(path));
   const autosave = useWorkflowAutosave({ label: `${preset.presets.find((item: IllustrationData) => item.id === preset.active_id)?.name || "그림 모델 프리셋"} · 그림 모델 선택`, value: pretty(draft), dirty,
     validation: readOnly ? "배포 프리셋은 읽기 전용입니다." : catalog.loading ? "모델 목록을 불러오는 중입니다." : catalog.error || (profile && !selectedWorkflow ? "선택한 그림 모델의 워크플로우를 먼저 설치하고 선택하세요." : ""),
@@ -94,15 +113,20 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
   });
   useEffect(() => { onPendingChange(dirty || autosave.busy || Object.values(editorPending).some(Boolean)); }, [dirty, autosave.busy, editorPending, onPendingChange]);
   useEffect(() => () => onPendingChange(false), [onPendingChange]);
-  function selectModel(type: string) {
+  function selectModel(modelKey: string) {
     if (readOnly) return;
+    // MOSS is stored as the ANIMA workflow profile plus an explicit family so
+    // the drawing settings can follow the model choice without filename guesses.
+    const type = scope.modelAliases?.[modelKey] || modelKey;
+    const moss = modelKey === "moss";
     const nextProfile = type === "chansub_v3_anima" ? "v3_anima" : type;
-    const workflows = (catalog.models.find(item => item.profile === nextProfile)?.workflows || [])
-      .filter(item => showsWorkflow(item.path));
+    const workflows = (catalog.models.find(item => item.profile === (moss ? "moss" : nextProfile))?.workflows || [])
+      .filter(item => showsWorkflow(item.path) && (!scope.familyKey || moss === isMossWorkflow(item.path)));
     const currentPath = draft![scope.pathsKey][nextProfile] || "";
     const nextPath = workflows.find(item => workflowPathKey(item.path) === workflowPathKey(currentPath)) ? currentPath : workflows[0]?.path || "";
     setDraft({ ...draft, [scope.typeKey]: type,
       [scope.pathsKey]: { ...draft![scope.pathsKey], ...(type !== "chansub" ? { [nextProfile]: nextPath } : {}) },
+      ...(scope.familyKey ? { [scope.familyKey]: moss ? "moss" : "anima" } : {}),
       ...(type === "chansub_v3_anima" ? { chansub_workflow_type: "anima" } : {}),
     });
   }
@@ -110,8 +134,8 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
     <Panel title="그림 모델 선택" aside={<div className="illust-actions"><span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span><button className="button" disabled={catalog.loading || autosave.busy} onClick={catalog.reload}><RefreshCw size={14} />목록 새로고침</button></div>}><div className="illust-body">
       <form className="illust-form" onSubmit={event => { event.preventDefault(); void autosave.retry(); }}><fieldset className="illust-form" disabled={readOnly || Object.values(editorPending).some(Boolean)}>
         <p className="field-help">설정의 워크플로우 관리 → {scope.category}에 등록된 모델과 워크플로우를 선택합니다. 변경 사항은 자동 저장됩니다.</p>
-        <div className="illust-fields"><label className="field">그림 모델 선택<select value={draft[scope.typeKey]} disabled={readOnly || catalog.loading || !!catalog.error} onChange={event => selectModel(event.target.value)}>
-          {!catalog.models.some(item => item.profile === draft[scope.typeKey]) && !draft[scope.typeKey].includes("chansub") && <option value={draft[scope.typeKey]}>{catalog.loading ? "모델 목록을 불러오는 중…" : "현재 그림 모델"}</option>}
+        <div className="illust-fields"><label className="field">그림 모델 선택<select value={selection} disabled={readOnly || catalog.loading || !!catalog.error} onChange={event => selectModel(event.target.value)}>
+          {!catalog.models.some(item => item.profile === selection) && !draft[scope.typeKey].includes("chansub") && <option value={draft[scope.typeKey]}>{catalog.loading ? "모델 목록을 불러오는 중…" : "현재 그림 모델"}</option>}
           {catalog.models.map(item => <option key={item.profile} value={item.profile}>{item.label}</option>)}
           {scope.allowChansub && <optgroup label="챈섭"><option value="chansub">챈섭</option><option value="chansub_v3_anima">챈섭 + ANIMA</option></optgroup>}
         </select></label>
@@ -192,7 +216,8 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
         <div hidden={section !== "models"}><div className="illust-form">
           <div className="illust-actions"><p className="field-help">설정의 모델 관리에 등록된 모델을 선택합니다.</p><button type="button" className="button" disabled={inventory.loading} onClick={() => void inventory.refresh()}><RefreshCw size={14} />모델 목록 새로고침</button></div>
           <div className="illust-fields">{Object.entries(fields).filter(([, value]) => typeof value === "string").map(([key, value]) => {
-            const entries = inventory.models.filter(item => item.path && item.kind === (key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion"));
+            const kind = key === "workflow.clip" ? "Text encoder" : key === "workflow.vae" ? "VAE" : key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion";
+            const entries = inventory.models.filter(item => item.path && item.kind === kind);
             const models = [...entries].sort((a, b) => resourceDisplayName(a).localeCompare(resourceDisplayName(b), "ko"));
             const selected = entries.find(item => modelPath(item.path) === modelPath(value));
             const currentName = selected ? resourceDisplayName(selected) : String(value).replaceAll("\\", "/").split("/").pop()?.replace(/\.(safetensors|sft|ckpt|pt|pth|bin|gguf)$/i, "");
@@ -204,12 +229,12 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
             }}>
               {(!selected || !models.some(item => item.id === selected.id)) && <option value={selected?.id || ""} disabled>{inventory.loading ? "모델 목록을 불러오는 중…" : currentName ? `${currentName} · 현재 모델` : "모델 선택"}</option>}
               {models.map(item => <option key={item.id} value={item.id}>{resourceDisplayName(item)}</option>)}
-            </select>{!inventory.loading && !inventory.error && !models.length && <span className="field-help">모델 관리에 {key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion"} 모델을 등록한 뒤 목록을 새로고침하세요.</span>}</label></div>;
+            </select>{!inventory.loading && !inventory.error && !models.length && <span className="field-help">모델 관리에 {kind} 모델을 등록한 뒤 목록을 새로고침하세요.</span>}</label></div>;
           })}</div>
         </div></div>
         <div hidden={section !== "sampling"}><fieldset className="illust-form" disabled={readOnly}>
           <div className="illust-actions"><p className="field-help">{sampling.data?.source === "comfyui" ? "연결된 ComfyUI의 샘플러·스케줄러 목록입니다." : "ComfyUI 기본 샘플러·스케줄러 목록입니다. 연결되면 설치된 목록을 불러옵니다."}</p><button type="button" className="button" onClick={sampling.reload}><RefreshCw size={14} />샘플링 목록 새로고침</button></div>
-          {groupSamplingStages(fields).map(group => <details className="illust-sampling-group" data-group={group.key} key={group.key} open={group.key === "ANIMA_FIRST_SAMPLER"}>
+          {groupSamplingStages(fields).map(group => <details className="illust-sampling-group" data-group={group.key} key={group.key} open={group.key === "ANIMA_FIRST_SAMPLER" || group.key === "workflow.sampling"}>
             <summary>{group.label}</summary>
             <div className={`illust-sampling-group-body ${group.stages.length > 1 ? "illust-sampling-grid" : ""}`}>
               {group.stages.map(([key, value]) => <section className={group.stages.length > 1 ? "illust-history-state" : undefined} key={key}>

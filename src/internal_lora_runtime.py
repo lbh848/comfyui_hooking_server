@@ -157,8 +157,18 @@ def main() -> None:
     register_illustration_config(server)
     register_asset_runtime(server)
     register_data_preparation(server)
-    from settings_illustration_regeneration import register_character_image_regeneration
+    from settings_illustration_regeneration import (
+        register_character_image_regeneration,
+        register_emotion_bulk_generation,
+        register_emotion_image_regeneration,
+        register_emotion_outfit_regeneration,
+        register_emotion_profile_outfit_generation,
+    )
     register_character_image_regeneration(server)
+    register_emotion_outfit_regeneration(server)
+    register_emotion_image_regeneration(server)
+    register_emotion_bulk_generation(server)
+    register_emotion_profile_outfit_generation(server)
     register_external_connection_control(server)
     server.app.router.add_get("/api/internal-lora/status", status)
     server.app.router.add_get("/api/internal-lora/config", config)

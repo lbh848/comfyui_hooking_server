@@ -12,6 +12,7 @@
         'CHARACTER-RESOLVE': 'illustration_character_resolve',
         'PROFILE-CONTEXT-TRANSLATE': 'illustration_profile_context_translate',
         'PROFILE-RESOLVE': 'illustration_profile_resolve',
+        'EMOTION-RESOLVE': 'illustration_emotion_resolve',
         'OUTFIT': 'illustration_call1',
         'CALL1': 'illustration_call1',
         'TIME & PLACE': 'illustration_time_place',
@@ -122,6 +123,7 @@
         const labels = {call1_select: 'OUTFIT + TIME & PLACE + NPC',
             call2_plan: 'PLAN 배치', call2_detail: 'DETAIL 배치', composite_detail: 'DETAIL 합성 삽화', keyvis: 'KEYVIS',
             original_asset: 'Original Asset', profile_resolve: 'PROFILE-RESOLVE',
+            emotion_resolve: 'EMOTION-RESOLVE',
             illustration_images: '삽화', illustration_postprocess: '이미지 후처리',
             illustration_inspection: '생성 이미지 자동 검사'};
         const nodeHTML = node => `<article class="illust-flow-preview-node${node.enabled ? '' : ' is-disabled'}${node.group === activeGroup || (activeGroup === 'call2_plan_detail' && ['call2_plan', 'call2_detail'].includes(node.group)) ? ' is-current' : ''}"

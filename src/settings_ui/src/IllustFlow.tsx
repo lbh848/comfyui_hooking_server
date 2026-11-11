@@ -49,8 +49,27 @@ function useFlowMaskResults(flow?: IllustrationFlow | null) {
   return results;
 }
 
+function FinalResultPreview({ result }: { result: IllustrationData }) {
+  const blocks: IllustrationData[] = Array.isArray(result?.blocks) ? result.blocks : [];
+  if (!blocks.length) return <span className="field-help">최종 결과 본문이 없습니다.</span>;
+  return <section className="illust-flow-final-result">
+    <h3>최종 결과 · 본문 삽입 위치</h3>
+    <div className="illust-flow-final-body">
+      {blocks.map((block, index) => block?.type === "image"
+        ? <figure className="illust-flow-final-figure" key={`image:${index}:${block.slot}`}>
+            <figcaption>
+              {[`slot ${block.slot}`, block.anchor, block.character, block.emotion, block.outfit].filter(Boolean).join(" · ")}
+            </figcaption>
+            <IllustrationPreviewImage path={String(block.image_url || "")} alt={`${block.anchor || `slot ${block.slot}`} 최종 결과`} />
+          </figure>
+        : <p key={`text:${index}`}>{String(block?.text || "")}</p>)}
+    </div>
+  </section>;
+}
+
 function FlowNodePreview({ node, flow, masks, sizes, onSize, onOpen }: { node: FlowNode; flow: IllustrationFlow; masks: Record<string, MaskResult>; sizes: PreviewSizes; onSize: (path: string, width: number, height: number) => void; onOpen: (id: string) => void }) {
-  const [showOverlay, setShowOverlay] = useState(false);
+  // MOSS has no generated mask to toggle; show its layout boxes immediately.
+  const [showOverlay, setShowOverlay] = useState(() => !!node.moss_layout?.regions?.length);
   if (node.kind === "reference") return <div className="illust-flow-preview"><strong>전처리 결과</strong>
     {node.image_url ? <IllustrationPreviewImage path={node.image_url} alt={`${node.label} 전처리 결과`} onOpen={() => onOpen(node.id)} /> : <span className="field-help">{node.error || "레퍼런스 전처리 중…"}</span>}
   </div>;
@@ -71,11 +90,13 @@ function FlowNodePreview({ node, flow, masks, sizes, onSize, onOpen }: { node: F
   })}</div>;
   const maskNode = node.task_key === "illustration_visual_selection" ? undefined : imageMaskNode(node, flow);
   const result = maskNode && masks[maskResultKey(flow.id, maskNode)];
+  // MOSS has no MULTI-CHAR-MASK node; its boxes come from the submitted layout.
+  const mossLayout = node.moss_layout?.regions?.length ? node.moss_layout : null;
   // An explicitly empty mask_url records an intentional mask bypass.
   const recordedMask = Object.hasOwn(node, "mask_url");
-  const layout = node.mask_url || !recordedMask ? result?.layout : null;
+  const layout = mossLayout || (node.mask_url || !recordedMask ? result?.layout : null);
   const available = !!(node.mask_url || layout?.regions?.length || node.face_positions?.length);
-  const toggle = !!(node.mask_url || (!recordedMask && maskNode) || node.face_positions?.length);
+  const toggle = !!(node.mask_url || (!recordedMask && maskNode) || mossLayout || node.face_positions?.length);
   return <div className="illust-flow-preview"><strong>{node.task_key === "illustration_visual_selection" ? "선택된 이미지" : "생성 이미지"}</strong>
     {node.image_url ? <>{toggle && <div className="illust-mask-controls"><label title={result?.error || "인물 영역 마스크와 얼굴 위치·캐릭터 이름을 겹쳐 표시합니다."}><input type="checkbox" checked={showOverlay} disabled={!available || !sizes[node.image_url]} onChange={event => setShowOverlay(event.target.checked)} aria-label={`${node.label} MASK & 얼굴 보이기`} />MASK & 얼굴 보이기</label></div>}
       <IllustrationPreviewImage path={node.image_url} alt={`${node.label} 생성 결과`} maskPath={node.mask_url} layout={layout} faces={node.face_positions} showMask={showOverlay} showFaces={showOverlay} onOpen={() => onOpen(node.id)} onSize={(width, height) => onSize(node.image_url, width, height)} />
@@ -125,9 +146,10 @@ function FlowNodeDetails({ runId, nodeId, onClose }: { runId: string; nodeId: st
     {node && <div className="illust-stack">
       <div className="illust-actions"><Badge>{labels[node.status] || node.status}</Badge><span>{executors[executor(node)] || executor(node)}{node.kind !== "reference" && ` · ${elapsed(node)}`}</span><span>{node.model || node.service || ""}</span></div>
       <IllustrationFlowResults node={node} />
+      {node.final_result?.blocks?.length ? <FinalResultPreview result={node.final_result} /> : null}
       {(node.image_url || node.mask_url) && <div className="illust-flow-detail-images">
         {node.source_image_url && <div><h3>원본 레퍼런스</h3><IllustrationPreviewImage path={node.source_image_url} alt="원본 레퍼런스" /></div>}
-        {node.image_url && <div>{node.kind === "reference" && <h3>전처리 결과</h3>}<IllustrationPreviewImage path={node.image_url} alt={node.kind === "reference" ? "전처리 결과" : "생성 이미지"} /></div>}
+        {node.image_url && <div>{node.kind === "reference" && <h3>전처리 결과</h3>}<IllustrationPreviewImage path={node.image_url} alt={node.kind === "reference" ? "전처리 결과" : "생성 이미지"} layout={node.moss_layout} showMask={!!node.moss_layout?.regions?.length} /></div>}
         {node.mask_url && <IllustrationPreviewImage path={node.mask_url} alt="생성 마스크" />}
       </div>}
       {node.submitted_prompt && <IllustrationPrompt value={node.submitted_prompt} />}
@@ -137,10 +159,10 @@ function FlowNodeDetails({ runId, nodeId, onClose }: { runId: string; nodeId: st
   </Modal>;
 }
 
-export function IllustFlow() {
+export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" }) {
   const history = useIllustrationFlowHistory();
   const [runId, setRunId] = useState("");
-  const resource = useFlowPoll(runId ? `illustration_flow?${query({ run: runId })}` : "illustration_flow");
+  const resource = useFlowPoll(runId ? `illustration_flow?${query({ run: runId })}` : `illustration_flow?${query({ scope })}`);
   useEffect(() => {
     if (runId && history.data && !history.history.some(run => run.id === runId)) setRunId("");
   }, [runId, history.data]);

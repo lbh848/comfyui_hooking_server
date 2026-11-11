@@ -1,15 +1,8 @@
 """CPU smoke checks against installed SOYA hooks; no model loading or generation."""
 import ast
-import importlib.util
 from pathlib import Path
 from typing import Optional
 import unittest
-
-spec = importlib.util.spec_from_file_location("soya_attention_installer",
-    Path(__file__).resolve().parents[1] / "comfy_installer/illustration_v2_nodes.py")
-installer = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(installer)
-patch_soya_attention_source = installer.patch_soya_attention_source
 
 try:
     import torch
@@ -21,12 +14,8 @@ COMFY = Path(__file__).resolve().parents[2] / "data" / "comfy"
 SOYA = COMFY / "custom_nodes" / "comfyui-soya-custom-nodes"
 
 
-def definitions(path, names, namespace, *, patch_source=False):
+def definitions(path, names, namespace):
     source = path.read_text(encoding="utf-8")
-    if patch_source:
-        source = patch_soya_attention_source(path.name, source)
-        if patch_soya_attention_source(path.name, source) != source:
-            raise AssertionError("Compatibility installation must be idempotent")
     tree = ast.parse(source)
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
     if len(nodes) != len(names):
@@ -40,8 +29,8 @@ class SoyaAttentionCompatibilityTests(unittest.TestCase):
     def setUpClass(cls):
         namespace = {"torch": torch, "F": F, "Optional": Optional}
         definitions(COMFY / "comfy/ldm/modules/attention.py", {"AttentionTensorContainer"}, namespace)
-        definitions(SOYA / "anima_regional_conditioning.py", {"_masked_attn_op"}, namespace, patch_source=True)
-        definitions(SOYA / "soya_snapref.py", {"_reference_attention", "_masked_reference_attention"}, namespace, patch_source=True)
+        definitions(SOYA / "anima_regional_conditioning.py", {"_masked_attn_op"}, namespace)
+        definitions(SOYA / "soya_snapref.py", {"_reference_attention", "_masked_reference_attention"}, namespace)
         cls.hooks = namespace
 
     def setUp(self):

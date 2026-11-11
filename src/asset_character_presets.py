@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from asset_preset_scope import AssetPresetLock, write_scope_documents
+from asset_preset_scope import AssetPresetLock, write_scope_documents, without_local_reference_images
 from configuration import settings_lock
 from lora_paths import validate_lora_storage_name
 
@@ -25,7 +25,7 @@ class AssetCharacterPresets:
         return value
 
     def builtin(self):
-        return self._read_file(self.builtin_file)["characters"]
+        return without_local_reference_images(self._read_file(self.builtin_file)["characters"])
 
     def catalog(self):
         with settings_lock(self.path):
@@ -50,7 +50,7 @@ class AssetCharacterPresets:
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("캐릭터 이름을 입력하세요.")
             local = self._read_file(self.path)
-            builtin = self._read_file(self.builtin_file)
+            builtin = without_local_reference_images(self._read_file(self.builtin_file))
             builtin["version"] = 1
             documents = {"local": local, "builtin": builtin}
             if action in {"create", "duplicate"}:
@@ -103,7 +103,8 @@ class AssetCharacterPresets:
                         character.update({key: settings["values"].get(key, "") for key in ("appearance", "outfit", "expression")})
                     if "group" in fields:
                         character["group"] = fields["group"].strip()
-            write_scope_documents({self.builtin_file if scope == "builtin" else self.path: documents[scope]
+            write_scope_documents({self.builtin_file if scope == "builtin" else self.path:
+                                   without_local_reference_images(documents[scope]) if scope == "builtin" else documents[scope]
                                    for scope in ("builtin", "local") if scope in scopes})
             return {"success": True, **self.catalog(), "name": name}
 

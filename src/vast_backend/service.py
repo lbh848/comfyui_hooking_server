@@ -4624,11 +4624,6 @@ class VastService:
         return {
             "manifest_bytes": manifest_path.read_bytes(),
             "script_bytes": script_path.read_bytes(),
-            "illustration_v2_files": {
-                "illustration_v2_nodes.py": (self.project_root / "comfy_installer/illustration_v2_nodes.py").read_bytes(),
-                **{f"illustration_v2/{file.name}": file.read_bytes()
-                   for file in (self.project_root / "comfy_installer/resources/illustration_v2").iterdir() if file.is_file()},
-            },
             "env_json": env_json,
             "local_nodes": local_nodes,
         }
@@ -4679,10 +4674,6 @@ class VastService:
             fh.write(payload["script_bytes"].decode("utf-8"))
         with sftp.open("/opt/soya/extra_nodes.json", "w") as fh:
             fh.write(payload["env_json"])
-        ssh.exec_command("mkdir -p /opt/soya/illustration_v2")
-        for name, data in payload["illustration_v2_files"].items():
-            with sftp.open("/opt/soya/" + name, "wb") as fh:
-                fh.write(data)
         stdin, stdout, stderr = ssh.exec_command(
             'SOYA_MODAL_IMAGE_CUSTOM_NODES="$(cat /opt/soya/extra_nodes.json)" '
             "python /opt/soya/image_install.py"

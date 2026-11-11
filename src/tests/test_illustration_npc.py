@@ -28,7 +28,17 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
         cls.pipeline = importlib.import_module("modes.illustration_context_pipeline")
         cls.scenes = importlib.import_module("modes.illustration_scene_pipeline")
         cls.builders = importlib.import_module("modes.illustration_prompt_builders")
-        cls.prompts = {key: (Path(__file__).resolve().parents[1] / "prompts/lighbd" / name).read_text(encoding="utf-8")
+        root = Path(__file__).resolve().parents[1]
+
+        def prompt_text(name):
+            # 감정 삽화 전용 지침은 defaults/emotion/prompts 에만 배포된다.
+            for folder in (root / "prompts/lighbd", root / "defaults/emotion/prompts"):
+                path = folder / name
+                if path.is_file():
+                    return path.read_text(encoding="utf-8")
+            raise FileNotFoundError(name)
+
+        cls.prompts = {key: prompt_text(name)
                        for key, name in cls.pipeline.PROMPT_FILES.items()}
 
     def setUp(self):
@@ -128,6 +138,21 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(again["created"], [])
             self.assertEqual(llm.await_count, 1)
 
+    async def test_rename_generated_character_moves_directory_and_portable_entry(self):
+        data = self.read()
+        data["bots"][0]["characters"].append({"name": "Porter", "npc_generated": True, "npc_idle_calls": 0})
+        self.write(data)
+        (self.directory / "bot/Story/Porter").mkdir(parents=True)
+        self.extra = [{"name": "Porter", "outfit": [{"tag": "blue coat"}]}]
+        response = await self.manager._rename_character(self.read(), {
+            "bot_name": "Story", "old_name": "Porter", "new_name": "Courier",
+        })
+        self.assertEqual(response.status, 200)
+        self.assertEqual([entry["name"] for entry in self.read()["bots"][0]["characters"]], ["Manual", "Courier"])
+        self.assertFalse((self.directory / "bot/Story/Porter").exists())
+        self.assertTrue((self.directory / "bot/Story/Courier").is_dir())
+        self.assertEqual(self.extra[0]["name"], "Courier")
+
     async def test_representative_failure_does_not_register_partial_character(self):
         with patch.object(self.pipeline, "_call_pipeline_llm", AsyncMock(return_value=json.dumps(self.response))):
             with self.assertRaisesRegex(RuntimeError, "render failed"):
@@ -198,6 +223,15 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mask.getpixel((8, 8)), (255, 0, 0))
         self.assertEqual(context["characters"], self.npc.character_image_descriptor(root)["characters"])
 
+    async def test_representative_descriptor_can_carry_preset_emotion_tags(self):
+        root = self.npc.parse_cards(self.response, self.candidates)[0]
+        default = self.npc.character_image_descriptor(root)["characters"][0]["positive"]
+        tagged = self.npc.character_image_descriptor(
+            root, emotion_tags=["smile-tag", "pose-tag"])["characters"][0]["positive"]
+        self.assertIn("smile-tag", tagged)
+        self.assertIn("pose-tag", tagged)
+        self.assertNotIn("smile-tag", default)
+
     async def test_generated_face_is_embedded_alongside_original_representative(self):
         import shutil
         from modes.illust_prompt_builder import IllustPromptBuilder
@@ -257,6 +291,7 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
             faces.clear()
             prompts.clear()
         namespace = {"illustration_context_pipeline": self.pipeline,
+            "runtime_snapshot": {"workshop": "illustration"},
             "illust_toggles": {"prompt_format": "v3"}, "_enqueue_child": enqueue,
             "_await_child": AsyncMock(return_value=(self.pixels, "", False)),
             "prompts": prompts, "copy": copy, "asyncio": asyncio,
@@ -270,6 +305,33 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["face_positions"], [{"name": "Porter", "bbox": [.1, .2, .4, .6]}])
         self.assertEqual(enqueue.await_args.kwargs["npc_render_bot"], render_bot)
         self.assertEqual(prompts, {})
+
+    async def test_render_injects_preset_representative_emotion_in_emotion_workshop(self):
+        import ast
+        import copy
+        from test_illustration_submission import TREE, SOURCE
+        root = self.npc.parse_cards(self.response, self.candidates)[0]
+        render_bot = {"characters": [root]}
+        enqueue = AsyncMock(return_value=("representative", SimpleNamespace()))
+        namespace = {"illustration_context_pipeline": self.pipeline,
+            "runtime_snapshot": {"workshop": "emotion"},
+            "illust_toggles": {"prompt_format": "v3", "emotion_representative": {
+                "preset": "smile", "name": "기쁨", "rating": "sfw"}},
+            "_enqueue_child": enqueue,
+            "_await_child": AsyncMock(return_value=(self.pixels, "", False)),
+            "prompts": {}, "copy": copy, "asyncio": asyncio,
+            "_discard_deferred_illustration_prompt": lambda *args: None}
+        node = copy.deepcopy(next(node for node in ast.walk(TREE)
+                                   if isinstance(node, ast.AsyncFunctionDef) and node.name == "render_npc_image"))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), namespace)
+        with patch.object(self.pipeline, "_emotion_expression_catalog",
+                          return_value={"smile": ["smile-tag", "pose-tag"]}), \
+             patch.object(self.pipeline, "load_prompt_files", return_value=self.prompts):
+            await namespace["render_npc_image"](root, render_bot)
+        descriptor = enqueue.await_args.args[0]
+        positive = descriptor["characters"][0]["positive"]
+        self.assertIn("smile-tag", positive)
+        self.assertIn("pose-tag", positive)
 
     async def test_npc_preparation_stages_representative_without_face_utility(self):
         import ast
@@ -386,7 +448,7 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
         toggles = {"character_limit": 1, "nsfw": False, "illustration_output_mode": "illustration"}
         selection = self.builders.selection_messages(self.prompts, "role context", "2", toggles, {}, "", "")
         messages = self.builders.resolution_messages(False, ["Manual"], {}, "", "current", "", "", "character system",
-            selection=selection, anchors=["C001"], npc_generation_enabled=True)
+            selection=selection, anchors=["C001"])
         self.assertNotIn("# NPC REGISTRATION EXTENSION", messages[0]["content"])
         self.assertIn("npc_candidates is a required top-level array", messages[0]["content"])
         self.assertEqual(messages[1]["content"].count("# NPC REGISTRATION EXTENSION"), 1)
@@ -491,6 +553,189 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output["npc_generation_result"]["created"], ["Porter"])
         self.assertEqual(output["items"][0]["characters"][0]["name"], "Porter")
         self.assertEqual(len(dispatched), 1)
+
+    async def test_npc_representative_comfy_waits_for_render_gate(self):
+        gate = asyncio.Event()
+        render = AsyncMock(return_value={
+            "image_bytes": self.pixels,
+            "face_positions": [{"name": "Porter", "bbox": [.25, .25, .75, .75]}]})
+        predicted = []
+
+        async def on_profiles_ready(result):
+            predicted.extend(result["characters"])
+
+        with patch.object(self.pipeline, "_call_pipeline_llm",
+                          AsyncMock(return_value=json.dumps(self.response))):
+            task = asyncio.create_task(self.npc.generate_cards(
+                manager=self.manager, bot_name="Story", candidates=self.candidates,
+                prompts=self.prompts, past_text="",
+                segmented="[C001] A porter hands over a key.",
+                toggles={}, stream_notify=None, render_image=render,
+                on_profiles_ready=on_profiles_ready, render_gate=gate))
+            for _ in range(100):
+                if predicted:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual([profile["name"] for profile in predicted], ["Porter"])
+            render.assert_not_awaited()
+            self.assertEqual(
+                [entry["name"] for entry in self.read()["bots"][0]["characters"]],
+                ["Manual"])
+            gate.set()
+            result = await asyncio.wait_for(task, 5)
+        self.assertEqual(result["created"], ["Porter"])
+        render.assert_awaited_once()
+
+    async def test_npc_node_runs_before_emotion_asset_with_same_card_tags(self):
+        order = []
+        captured = {}
+        character_response = {
+            "characters": [],
+            "npc_candidates": self.candidates,
+            "scene_plan": [{"anchor_segment": "C001", "character": "Porter", "emotion": "weary"}],
+        }
+
+        async def llm(name, messages, *args, **kwargs):
+            order.append(name)
+            if name == "CHARACTER-RESOLVE":
+                return json.dumps(character_response)
+            if name == "NPC 생성 노드":
+                return json.dumps(self.response)
+            if name == "EMOTION-RESOLVE":
+                return json.dumps({"C001": {"character": "Porter", "outfit": "blue coat"}})
+            if name == "EMOTION-ASSET":
+                captured["asset"] = "\n".join(
+                    str(message.get("content") or "") for message in messages)
+                return json.dumps({"C001": {"emotion": "", "rating": "sfw"}})
+            raise AssertionError(f"Unexpected stage: {name}")
+
+        render = AsyncMock(return_value={
+            "image_bytes": self.pixels,
+            "face_positions": [{"name": "Porter", "bbox": [.25, .25, .75, .75]}]})
+        payload = {"session_id": "emotion-order",
+                   "target_slotted": "A porter hands over a key.\n\n[Slot 0]",
+                   "chats": [{"role": "char", "data": "A porter hands over a key."}]}
+        with patch.object(self.pipeline, "_call_pipeline_llm", llm), \
+             patch.object(self.pipeline, "load_prompt_files", return_value=self.prompts):
+            _, result = await self.pipeline.resolve_profiles_before_generation(
+                payload=payload,
+                toggles={"npc_generation_enabled": True,
+                         "npc_generation_deferred": True,
+                         "illustration_enabled": True},
+                history_plan=None, visual_profiles={},
+                profile_translation_namespace="Story", workshop="emotion",
+                npc_manager=self.manager, render_npc_image=render)
+        self.assertLess(order.index("NPC 생성 노드"), order.index("EMOTION-RESOLVE"))
+        self.assertLess(order.index("NPC 생성 노드"), order.index("EMOTION-ASSET"))
+        # 예측한 NPC 카드 태그가 등록 캐릭터와 같은 입력 레벨로 EMOTION-ASSET에 들어간다.
+        self.assertIn("1male", captured["asset"])
+        self.assertIn("brown hair", captured["asset"])
+        token = result["_npc_registration_token"]
+        run = self.pipeline.take_emotion_npc_run(token)
+        self.assertIsNotNone(run)
+        render.assert_not_awaited()
+        run["gate"].set()
+        registered = await asyncio.wait_for(run["task"], 5)
+        self.assertEqual(registered["created"], ["Porter"])
+        self.assertTrue(self.root()["npc_generated"])
+
+    async def test_deferred_emotion_npc_renders_before_asset_and_sets_reference(self):
+        result = self.pipeline._empty_profile_result()
+        result.update(
+            npc_candidates=self.candidates,
+            scene_plan=[{"anchor_segment": "C001", "character": "Porter", "emotion": "weary"}],
+            emotion_assets=[{
+                "anchor": "C001", "character": "Porter", "profile_id": "card_1",
+                "gender": "", "appearance": [], "default_outfit": [],
+                "outfit": "default outfit", "outfit_folder": "default outfit",
+                "outfit_tags": ["blue coat"], "new_outfit_tags": False,
+                "rating": "sfw", "emotion_id": "E1", "emotion_name": "weary",
+                "emotion_tags": ["tired"], "emotion_folder": "weary",
+                "target_dir": str(self.directory / "asset"), "reuse_path": "",
+            }],
+            current_characters=[{"name": "Porter", "confidence": 1.0}],
+            characters=[{"name": "Porter", "in_history": False, "profile_timeline": []}],
+        )
+        render = AsyncMock(return_value={
+            "image_bytes": self.pixels,
+            "face_positions": [{"name": "Porter", "bbox": [.25, .25, .75, .75]}]})
+        with patch.object(self.pipeline, "_call_pipeline_llm",
+                          AsyncMock(return_value=json.dumps(self.response))), \
+             patch.object(self.pipeline, "load_prompt_files", return_value=self.prompts):
+            output = await asyncio.wait_for(self.pipeline.build_from_context(
+                {"session_id": "emotion-npc",
+                 "target_slotted": "A porter hands over a key.\n\n[Slot 0]",
+                 "chats": [{"role": "char", "data": "A porter hands over a key."}]},
+                {"npc_generation_enabled": True, "npc_generation_deferred": True,
+                 "illustration_output_mode": "illustration"},
+                "", visual_profiles={}, profile_translation_namespace="Story",
+                pre_resolved_profile_result=result, npc_manager=self.manager,
+                render_npc_image=render, prepare_npc_character=AsyncMock(),
+                workshop="emotion"), 10)
+        self.assertEqual(output["npc_generation_result"]["created"], ["Porter"])
+        asset = output["items"][0]["emotion_asset"]
+        self.assertEqual(asset["profile_id"], "card_1")
+        self.assertIn("brown hair", asset["appearance"])
+        self.assertIn("broad shoulders", asset["appearance"])
+        self.assertEqual(
+            output["items"][0]["visual_base_snapshot"],
+            {"Porter": {"visual_profile_id": "card_1"}})
+        render.assert_awaited_once()
+
+    async def test_emotion_npc_registers_even_without_deferred_render(self):
+        """npc_generation_deferred가 꺼져 있어도 감정 에셋용 NPC는 생성됨으로 등록된다."""
+        result = self.pipeline._empty_profile_result()
+        result.update(
+            npc_candidates=self.candidates,
+            scene_plan=[{"anchor_segment": "C001", "character": "Porter", "emotion": "weary"}],
+            emotion_assets=[{
+                "anchor": "C001", "character": "Porter", "profile_id": "card_1",
+                "gender": "", "appearance": [], "default_outfit": [],
+                "outfit": "default outfit", "outfit_folder": "default outfit",
+                "outfit_tags": ["blue coat"], "new_outfit_tags": False,
+                "rating": "sfw", "emotion_id": "E1", "emotion_name": "weary",
+                "emotion_tags": ["tired"], "emotion_folder": "weary",
+                "target_dir": str(self.directory / "asset"), "reuse_path": "",
+            }],
+            current_characters=[{"name": "Porter", "confidence": 1.0}],
+            characters=[{"name": "Porter", "in_history": False, "profile_timeline": []}],
+            emotion_asset_updates=[{
+                "character": "Porter", "profile_id": "card_1",
+                "label": "default outfit", "tags": ["blue coat"],
+            }],
+        )
+        render = AsyncMock(return_value={
+            "image_bytes": self.pixels,
+            "face_positions": [{"name": "Porter", "bbox": [.25, .25, .75, .75]}]})
+        with patch.object(self.pipeline, "_call_pipeline_llm",
+                          AsyncMock(return_value=json.dumps(self.response))), \
+             patch.object(self.pipeline, "load_prompt_files", return_value=self.prompts):
+            output = await asyncio.wait_for(self.pipeline.build_from_context(
+                {"session_id": "emotion-npc-immediate",
+                 "target_slotted": "A porter hands over a key.\n\n[Slot 0]",
+                 "chats": [{"role": "char", "data": "A porter hands over a key."}]},
+                {"npc_generation_enabled": True, "npc_generation_deferred": False,
+                 "illustration_output_mode": "illustration"},
+                "", visual_profiles={}, profile_translation_namespace="Story",
+                pre_resolved_profile_result=result, npc_manager=self.manager,
+                render_npc_image=render, prepare_npc_character=AsyncMock(),
+                workshop="emotion"), 10)
+        self.assertEqual(output["npc_generation_result"]["created"], ["Porter"])
+        root = self.root()
+        self.assertTrue(root["npc_generated"])
+        self.assertEqual(root["npc_idle_calls"], 0)
+        self.assertEqual(root["gender_tag"], "1male")
+        presets = {
+            str(preset.get("label") or "").casefold(): [
+                entry.get("tag") for entry in preset.get("tags") or []
+            ]
+            for preset in root["visual_cards"][0].get("outfit_presets") or []
+        }
+        self.assertEqual(presets.get("default outfit"), ["blue coat"])
+        asset = output["items"][0]["emotion_asset"]
+        self.assertEqual(asset["gender"], "1male")
+        self.assertIn("brown hair", asset["appearance"])
+        render.assert_awaited_once()
 
 
 if __name__ == "__main__":

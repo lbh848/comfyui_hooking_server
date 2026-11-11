@@ -1066,7 +1066,7 @@
                                  <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:58px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
                              </div>
                              <fieldset id="illust-local-advanced-after" style="border:0; margin:0; padding:0; min-width:0;">
-                            <div id="illust-snapref-group" role="group" aria-labelledby="illust-snapref-title" data-illust-capability="anima" style="margin-top:8px; padding:8px; border:1px solid var(--border); border-radius:8px; background:rgba(100,150,255,0.04);">
+                            <div id="illust-snapref-group" role="group" aria-labelledby="illust-snapref-title" data-illust-capability="reference" style="margin-top:8px; padding:8px; border:1px solid var(--border); border-radius:8px; background:rgba(100,150,255,0.04);">
                               <div style="display:flex; align-items:center; gap:6px;">
                                 <span id="illust-snapref-title" style="flex:0 0 auto; margin-right:auto; font-size:0.72rem; font-weight:600;">대표 이미지 레퍼런스</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
@@ -10647,38 +10647,19 @@
                     </div>
                     <input type="hidden" id="setting-face-extract-workflow-source-path">
 
-                    <!-- 로라 로드 경로 -->
+                    <!-- 로라 폴더 (경로 고정: 관리형 ComfyUI 설치) -->
                     <div class="setting-row" style="margin-top: 16px;">
                         <div class="setting-label">
-                            <div class="title">📂 로라 로드 경로</div>
-                            <div class="desc">LoRA 모델 파일(.safetensors)을 로드할 폴더의 절대 경로</div>
+                            <div class="title">📂 로라 폴더</div>
+                            <div class="desc">관리형 ComfyUI 설치의 models/loras 아래에 고정 저장됩니다</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
-                        <div style="display: flex; flex-direction: column; gap: 0;">
-                            <div style="display: flex; align-items: center; gap: 0;">
-                                <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 0;">
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 0;">
-                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_BOT_LORA</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 0;">
-                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_INSTANCE_LORA</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 0;">
-                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_STYLE_LORA</span>
-                            </div>
-                        </div>
+                        <div id="setting-lora-folder-path" style="padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; font-size: 12px; color: var(--text-secondary, #aaa); word-break: break-all;">-</div>
                         <div class="hint" style="line-height: 1.6;">
-                            다음 항목이 자동 추가됩니다:<br>
-                            · 에셋 LoRA → \SOYA_CHAR_LORA<br>
-                            · 봇 LoRA → \SOYA_CHAR_LORA\SOYA_BOT_LORA<br>
-                            · 인스턴스 LoRA → \SOYA_CHAR_LORA\SOYA_INSTANCE_LORA<br>
-                            · 스타일(그림체) LoRA → \SOYA_CHAR_LORA\SOYA_STYLE_LORA
+                            에셋 → SOYA_ASSET_LORA<br>
+                            봇 → SOYA_BOT_LORA<br>
+                            스타일(그림체) → SOYA_STYLE_LORA
                         </div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>

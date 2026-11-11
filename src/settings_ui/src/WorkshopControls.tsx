@@ -8,7 +8,7 @@ import "./workshop-controls.css";
 const workspaces = [
   { id: "setting", label: "설정", description: "설치 · 실행 · 리소스 관리", href: "/setting/", icon: Settings },
   { id: "illust", label: "삽화", description: "삽화 백업 · 그림 모델 · 봇", href: "/illust/", icon: Images },
-  { id: "emotion", label: "감정 삽화", description: "합성 삽화 · DETAIL 합성 삽화 지침", href: "/emotion/", icon: Blend },
+  { id: "emotion", label: "감정 삽화", description: "감정 삽화 · 배경 합성 모드", href: "/emotion/", icon: Blend },
   { id: "asset", label: "에셋", description: "에셋 생성 · 에셋 일괄 생성", href: "/asset/", icon: Layers },
   { id: "lora", label: "로라", description: "에셋 · 봇 · 그림체 LoRA", href: "/lora/", icon: WandSparkles },
 ] as const;

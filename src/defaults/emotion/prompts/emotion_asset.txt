@@ -1,0 +1,28 @@
+Build the drawable description of one emotion character asset for each already-selected scene anchor. The character and emotion are already decided by earlier stages. Do not change the character or invent a different subject.
+
+Each anchor row supplies the character, the decided emotion, the character's gender, appearance and default outfit tags, whether that outfit already has tags, and the scene context. Registered characters and generated NPC cards supply these fields at the same level. When the outfit has no tags yet, the row also supplies the outfit label and whether that outfit folder already exists.
+
+For every anchor, choose the rating/emotion preset and the outfit, then echo two identifiers.
+
+1. Rating and emotion preset.
+The preset list contains only the emotions the user defined, each with a stable ID, a name, a rating (sfw or nsfw) and the expression tags that belong to that emotion. Pick the single preset whose name and tags are closest to the decided emotion in the scene. Return its ID exactly as supplied and the rating it belongs to. Use nsfw only when the scene itself clearly requires it and nsfw presets are present; otherwise use sfw. Never invent an ID.
+
+2. Outfit tags.
+- When outfit_tags_ready is true, the outfit tags already exist; omit outfit_tags from the response.
+- When outfit_tags_ready is false, write new outfit tags for outfit_label so it can be drawn: garment type, color, material, fit, worn accessories, and legwear or footwear when visible. Use 3 to 8 concise English comma-separated Danbooru-style tags.
+- Describe worn clothing only. Never include emotion, expression, pose, action, background, camera, quality, artist or style tags, and never write a sentence.
+- Keep the new outfit consistent with the supplied gender, appearance and default outfit tags. Never change the character's established identity.
+- If outfit_saved is true, the new tags must describe that same outfit.
+- Keep one character's outfit consistent across that character's anchors unless the scene establishes a wardrobe change.
+
+3. Echoed identifiers.
+Always include both. character copies the anchor's character verbatim. emotion_name copies the chosen preset's name verbatim; it is not the scene's decided emotion. Never translate or rename either value.
+
+Use the supplied scene context only to read the emotion, modesty and setting. Do not add scene description to the output.
+
+Return only one JSON object keyed by the exact anchor identifier. Every supplied anchor appears exactly once. Each value has exactly character, rating, emotion, emotion_name and, only when needed, outfit_tags. No prose, no nested wrapper, no extra fields.
+
+{
+  "C001": {"character": "Aria", "rating": "sfw", "emotion": "E2", "emotion_name": "sad", "outfit_tags": ["black nightgown", "lace trim", "bare shoulders", "barefoot"]},
+  "C002": {"character": "Mina", "rating": "sfw", "emotion": "E5", "emotion_name": "calm"}
+}

@@ -66,6 +66,43 @@ def _extra_block(reference: str, name: str) -> str:
     return ""
 
 
+def _emotion_outfit_override(
+    profile_result: dict | None, name: str, anchor: str | None = None,
+) -> str:
+    """Return the EMOTION-RESOLVE outfit prediction for one character at an anchor."""
+    source = profile_result or {}
+    by_anchor = source.get("anchor_outfits")
+    wanted = str(name or "").strip().casefold()
+    if anchor and isinstance(by_anchor, dict):
+        for key, value in by_anchor.items():
+            if str(key or "").strip().casefold() != wanted or not isinstance(value, dict):
+                continue
+            for at, outfit in value.items():
+                if str(at or "").strip().upper() == str(anchor).strip().upper():
+                    short = pipeline._short_emotion_outfit(outfit)
+                    if short:
+                        return short
+    outfits = source.get("character_outfits")
+    if not isinstance(outfits, dict):
+        return ""
+    for key, value in outfits.items():
+        if str(key or "").strip().casefold() == wanted:
+            return pipeline._short_emotion_outfit(value)
+    return ""
+
+
+def _emotion_last_anchor(profile_result: dict | None, name: str) -> str:
+    """Return the last selected scene anchor for a character, if recorded."""
+    anchors = (profile_result or {}).get("outfit_last_anchor")
+    if not isinstance(anchors, dict):
+        return ""
+    wanted = str(name or "").strip().casefold()
+    for key, value in anchors.items():
+        if str(key or "").strip().casefold() == wanted:
+            return str(value or "").strip().upper()
+    return ""
+
+
 def active_profile(
     name: str, anchor: str, profile_result: dict, visual_profiles: dict | None,
     segment_order: dict[str, int],
@@ -98,11 +135,17 @@ def active_profile(
               {"name": name, "profile_id": profile_id}, warning=True)
         return {}
     try:
-        return resolve_visual_base(character_profiles, profile_id)
+        base = resolve_visual_base(character_profiles, profile_id)
     except Exception as exc:
         print(f"[ILLUST_CONTEXT:PROFILE_SLICE] 활성 프로필 조회 실패: character={name!r}, anchor={anchor!r}, id={profile_id!r}, error={exc}")
         traceback.print_exc()
         raise
+    outfit = _emotion_outfit_override(profile_result, name, anchor)
+    if outfit:
+        # EMOTION-RESOLVE가 앵커별로 고른 짧은 복장을 카드 기본 복장
+        # 대신 렌더 기준으로 사용한다. 일반 삽화 결과에는 이 키가 없다.
+        base = {**base, "outfit": [{"tag": outfit}]}
+    return base
 
 
 def profile_for_detail(name: str, base: dict, extra_reference: str,
@@ -287,6 +330,15 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
             slot = slot_map[anchor]
             if slot not in candidates or slot in used_slots:
                 _fail(stage, "연결할 수 없거나 이미 사용한 slot", scene)
+            # 감정 삽화는 앵커마다 캐릭터 한 명(character)과 감정(emotion) 하나만 담는다.
+            if "characters" not in scene and "character" in scene:
+                character = scene.pop("character")
+                if not isinstance(character, str) or not character.strip():
+                    _fail(stage, "읽을 수 없는 character", scene)
+                scene["characters"] = [character.strip()]
+                label = scene.pop("emotion", None)
+                if isinstance(label, str) and label.strip():
+                    scene["emotions"] = {character.strip(): label.strip()}
             participants = scene.get("characters", [])
             if not isinstance(participants, list) or any(not isinstance(name, str) for name in participants):
                 _fail(stage, "읽을 수 없는 characters 배열", scene)
@@ -303,9 +355,12 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
             rank = list(segments).index(anchor)
             if rank <= last_rank:
                 _fail(stage, "원문 순서와 다른 anchor", scene, warning=True)
-            if stage != "CALL2-SELECT" and not str(scene.get("scene_brief") or "").strip():
+            # 감정 삽화 장면은 장면 묘사 대신 캐릭터 한 명의 감정만 담는다.
+            if (stage != "CALL2-SELECT" and not str(scene.get("scene_brief") or "").strip()
+                    and not scene.get("emotions")):
                 _fail(stage, "비어 있는 장면 brief", scene, warning=True)
-            if set(scene) - {"anchor_segment", "characters", "scene_brief", "canvas", "panels"}:
+            if set(scene) - {"anchor_segment", "characters", "scene_brief", "emotions",
+                             "character", "emotion", "cast", "canvas", "panels"}:
                 _fail(stage, "추가 장면 필드; 원문 유지", scene, warning=True)
             used_slots.add(slot)
             last_rank = rank
@@ -327,6 +382,9 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     scene = {"anchor_segment": anchor, "slot": int(slot_map[anchor]), "characters": []}
     if "scene_brief" in plan:
         scene["brief"] = plan["scene_brief"]
+    if isinstance(plan.get("emotions"), dict) and plan["emotions"]:
+        # 감정 삽화는 앵커마다 선택된 캐릭터 한 명의 짧은 감정을 DETAIL에 전달한다.
+        scene["emotions"] = deepcopy(plan["emotions"])
     if plan.get("panels"):
         from modes.bubble_render import compose_bubble
         scene["canvas"] = deepcopy(plan.get("canvas") or [1728, 1728])
@@ -340,6 +398,11 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
                                max(16, round(math.sqrt(746496 / ratio) / 16) * 16)]
             panel.update(compose_bubble(None, "", {}, "", planned_entries=panel.get("dialogue") or [],
                                         canvas_size=panel["canvas"]))
+    candidate_by_name = {
+        str(candidate.get("name") or "").strip().casefold(): candidate
+        for candidate in (profile_result.get("npc_candidates") or [])
+        if isinstance(candidate, dict) and str(candidate.get("name") or "").strip()
+    }
     bases = {}
     for name in plan["characters"]:
         base = active_profile(name, anchor, profile_result, visual_profiles,
@@ -348,6 +411,14 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
             bases[name] = base
         character = {"name": name, "profile": profile_for_detail(name, base, extra_reference,
                                                                visual_profiles)}
+        candidate = candidate_by_name.get(str(name).casefold())
+        if candidate and not character["profile"].get("id"):
+            # Card first, candidate second. The caption from DETAIL fills the
+            # remaining case at parse time.
+            character["candidate"] = {
+                "name": str(candidate.get("name") or "").strip(),
+                "description": str(candidate.get("description") or "").strip(),
+            }
         if tracking is not None:
             character["state"] = deepcopy(tracking.get(f"SLOT{scene['slot']}", {}).get(name, {}))
         if time_place is not None:
@@ -356,8 +427,130 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     return scene, bases
 
 
+def _moss_bbox(value, field: str, width: int, height: int) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError(f"DETAIL-MOSS {field}는 [y0,x0,y1,x1] 4개 숫자여야 합니다")
+    numbers = []
+    for entry in value:
+        if isinstance(entry, bool):
+            raise ValueError(f"DETAIL-MOSS {field}에 bool 좌표가 있습니다")
+        try:
+            number = float(entry)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"DETAIL-MOSS {field} 좌표가 숫자가 아닙니다: {entry!r}") from exc
+        if not math.isfinite(number):
+            raise ValueError(f"DETAIL-MOSS {field} 좌표가 유한수가 아닙니다: {entry!r}")
+        numbers.append(int(round(number)))
+    y0, x0, y1, x1 = numbers
+    if y0 > y1:
+        y0, y1 = y1, y0
+    if x0 > x1:
+        x0, x1 = x1, x0
+    half_w, half_h = width // 2, height // 2
+    return [max(-half_h, min(half_h, y0)), max(-half_w, min(half_w, x0)),
+            max(-half_h, min(half_h, y1)), max(-half_w, min(half_w, x1))]
+
+
+def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
+                             kind: str = "scene") -> dict:
+    """Parse one DETAIL-MOSS document: absolute centered yxyx items + captions."""
+    if not isinstance(item, dict):
+        raise ValueError("DETAIL-MOSS 장면이 object가 아닙니다")
+    layout = item.get("moss") if isinstance(item.get("moss"), dict) else item
+    summary = layout.get("summary") if isinstance(layout.get("summary"), dict) else {}
+    caption = pipeline.multi_char_mask._prompt_text(
+        summary.get("caption"), "summary.caption", required=False)
+    if not caption:
+        caption = " ".join(
+            text for text in (
+                pipeline.multi_char_mask._prompt_text(item.get("background_prompt"), "background_prompt", required=False),
+                pipeline.multi_char_mask._prompt_text(item.get("composition_prompt"), "composition_prompt", required=False),
+            ) if text
+        )
+    raw_items = layout.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("DETAIL-MOSS items가 list가 아닙니다")
+    # The supplied canvas is authoritative. The model echoes it, but a wrong
+    # echo must not move absolute bboxes onto a different coordinate space.
+    # Key Visual has no prepared scene: pick the canvas from its own cast size.
+    image_size = scene.get("image_size") if isinstance(scene.get("image_size"), dict) else {}
+    if not image_size and isinstance(canvas_sizes, dict):
+        character_count = sum(
+            1 for raw in raw_items if isinstance(raw, dict)
+            and str(raw.get("label") or "").strip().lower() == "character")
+        size = canvas_sizes.get("group" if character_count >= 2 else "solo")
+        if size:
+            image_size = {"width": int(size[0]), "height": int(size[1])}
+    if not image_size and isinstance(item.get("image_size"), dict):
+        image_size = item["image_size"]
+    try:
+        width = int(image_size.get("width") or 1024)
+        height = int(image_size.get("height") or 1024)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"DETAIL-MOSS image_size가 올바르지 않습니다: {image_size!r}") from exc
+    if width < 16 or height < 16:
+        raise ValueError(f"DETAIL-MOSS image_size 범위 오류: {width}x{height}")
+    parsed_items = []
+    used_names = set()
+    for index, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"DETAIL-MOSS items[{index}]가 object가 아닙니다")
+        label = str(raw_item.get("label") or "").strip().lower()
+        if label not in {"character", "object"}:
+            # Text items have no character caption; the MOSS layout node owns them.
+            if label == "text":
+                continue
+            raise ValueError(f"DETAIL-MOSS items[{index}] label이 올바르지 않습니다: {label!r}")
+        text = pipeline.multi_char_mask._prompt_text(
+            raw_item.get("caption"), f"items[{index}].caption", required=False)
+        if not text:
+            raise ValueError(f"DETAIL-MOSS items[{index}] caption이 비어 있습니다")
+        name = str(raw_item.get("name") or "").strip().strip('\"“”').strip()
+        if label == "character":
+            # DETAIL owns the depicted cast. Card/profile or candidate data is
+            # supplied by the scene input; when neither exists the caption
+            # itself is enough to create the temporary character.
+            name = name or f"character {len(used_names) + 1}"
+            key = name.casefold()
+            if key in used_names:
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] DETAIL-MOSS 중복 캐릭터 항목 유지: "
+                      f"slot={item['slot']}, name={name!r}")
+                continue
+            used_names.add(key)
+        parsed_items.append({
+            "label": label,
+            **({"name": name} if name else {}),
+            "caption": text,
+            "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
+        })
+    moss_layout = {
+        "summary": {"caption": caption},
+        "items": parsed_items,
+        "bbox_coord_space": "abs_centralized",
+        "bbox_format": "yxyx",
+        "image_size": {"width": width, "height": height},
+    }
+    character_items = [entry for entry in parsed_items if entry["label"] == "character"]
+    descriptor = {
+        "kind": kind, "slot": item["slot"],
+        "camera": caption, "scene": "", "supplement": "", "speak": "",
+        "characters": [
+            {"name": entry["name"], "positive": entry["caption"],
+             "negative": "", "position": ""}
+            for entry in character_items
+        ],
+        "moss_layout": moss_layout,
+        "moss_image_size": {"width": width, "height": height},
+    }
+    if not caption and not character_items:
+        raise ValueError("DETAIL-MOSS 생성에 사용할 프롬프트가 없습니다")
+    return descriptor
+
+
 def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
-                        single_char_mask_enabled: bool = True) -> dict:
+                        single_char_mask_enabled: bool = True, moss: bool = False) -> dict:
+    if moss:
+        return _parse_detail_moss_scene(item, scene)
     # Registered character names cannot contain double quotes. Normalize only
     # identity fields, including shared manga cast and nested panel regions;
     # quoted dialogue and image-prompt text must retain their original content.
@@ -594,7 +787,8 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
 def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = False,
                        slot_map: dict[str, int] | None = None,
                        streaming: bool = False, mask_inline: bool = False,
-                       single_char_mask_enabled: bool = True, composite: bool = False) -> list[dict]:
+                       single_char_mask_enabled: bool = True, composite: bool = False,
+                       moss: bool = False) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
     if not streaming and len(blocks) != 1:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
@@ -704,7 +898,8 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
             descriptor = (illustration_composite.parse_scene(
                 item, expected_by_slot[slot], backgrounds=backgrounds) if composite else
                 _parse_detail_scene(item, expected_by_slot[slot],
-                    mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled))
+                    mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled,
+                    moss=moss))
             if slot in by_slot and descriptor != by_slot[slot]:
                 _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
         except ValueError as exc:
@@ -728,6 +923,156 @@ def parse_detail(text: str, scene: dict) -> dict:
     return parse_detail_batch(text, [scene])[0]
 
 
+def _emotion_asset_tags(asset: dict) -> list[str]:
+    """Assemble the drawable character tags for one emotion asset."""
+    tags = []
+    for value in (
+        asset.get("gender"),
+        *(asset.get("appearance") or []),
+        *(asset.get("outfit_tags") or []),
+        *(asset.get("emotion_tags") or []),
+    ):
+        tag = str(value or "").strip().strip(",")
+        if tag:
+            tags.append(tag)
+    return list(dict.fromkeys(tags))
+
+
+def _emotion_asset_descriptor(
+    asset: dict, slot: int, prompts: dict, toggles: dict,
+) -> dict:
+    """One character-only V3 descriptor; asset mode settings supply style and canvas."""
+    name = str(asset.get("character") or "").strip()
+    profile_id = str(asset.get("profile_id") or "").strip()
+    descriptor = {
+        "kind": "emotion_asset",
+        "slot": slot,
+        # 본 복장은 에셋 생성 모드, 변주 복장은 캐릭터 자동 생성 모드로 그린다.
+        "generation_mode": str(asset.get("generation_mode") or "illustration"),
+        "camera": "",
+        "scene": "",
+        "supplement": "",
+        "characters": [{
+            "name": name,
+            "positive": ", ".join(_emotion_asset_tags(asset)),
+            "negative": "",
+        }],
+        "visual_base_snapshot": (
+            {name: {"visual_profile_id": profile_id}} if name and profile_id else {}
+        ),
+        "emotion_asset": deepcopy(asset),
+    }
+    descriptor["raw_positive"], descriptor["raw_negative"] = pipeline.build_raw_prompt(
+        descriptor, "", prompts, toggles)
+    return descriptor
+
+
+def _emotion_asset_result(
+    *, payload: dict, toggles: dict, prompts: dict, profile_output: str,
+    profile_result: dict, assets: list[dict], chats: list, narrative: str,
+    enhanced: str, segments: dict, segment_order: dict[str, int],
+    visual_profiles: dict | None, history: dict | None, trace: list[str],
+) -> dict:
+    """Return the emotion workshop's final descriptors: one character asset per folder."""
+    profiles = visual_profiles or {}
+    history = history if isinstance(history, dict) else None
+    items = []
+    for index, asset in enumerate(assets, start=1):
+        if not isinstance(asset, dict):
+            continue
+        # 결과 삽입 위치는 에셋 순번이 아니라 선택된 앵커의 원문 삽입 슬롯이다.
+        # 순번을 쓰면 앵커가 뒤쪽(C061 등)이어도 이미지가 본문 앞부분에 몰린다.
+        anchor = str(asset.get("anchor") or "").strip().upper()
+        slot = (segments.get(anchor) or {}).get("slot")
+        if type(slot) is not int:
+            print(
+                "[ILLUST_CONTEXT:EMOTION_ASSET] 앵커 삽입 위치 없음, 순번 사용: "
+                f"anchor={anchor!r}, index={index}"
+            )
+            slot = index
+        items.append(_emotion_asset_descriptor(asset, slot, prompts, toggles))
+    # 복장 대표 표정은 씬 결과(slot)에 섞지 않고, 씬 에셋보다 먼저 생성할 별도 목록으로 넘긴다.
+    representative_items = []
+    for index, asset in enumerate(
+            profile_result.get("emotion_representative_assets") or [], start=1):
+        if not isinstance(asset, dict):
+            continue
+        anchor = str(asset.get("anchor") or "").strip().upper()
+        slot = (segments.get(anchor) or {}).get("slot")
+        if type(slot) is not int:
+            slot = index
+        representative_items.append(
+            _emotion_asset_descriptor(asset, slot, prompts, toggles))
+    names = _roster(profile_result, "", profiles)
+    states_after = pipeline.apply_initial_visual_bases(
+        (history or {}).get("state_before") or {},
+        profile_result.get("initial_visual_bases") or [],
+        str((history or {}).get("current_message_id") or ""), profiles)
+    states_after = pipeline.apply_visual_base_events(
+        states_after, profile_result.get("current_characters") or [],
+        profile_result.get("visual_base_events") or [],
+        str((history or {}).get("current_message_id") or ""), profiles)
+    for name in names:
+        key = next((key for key, value in states_after.items()
+                    if isinstance(value, dict) and
+                    str(value.get("canonical_name") or key).casefold() == name.casefold()), name.casefold())
+        stored = states_after.setdefault(key, {})
+        stored["canonical_name"] = name
+        last_anchor = _emotion_last_anchor(profile_result, name)
+        predicted_outfit = _emotion_outfit_override(profile_result, name, last_anchor or None)
+        if predicted_outfit:
+            stored["call1_status"] = json.dumps(
+                {"outfit": predicted_outfit}, ensure_ascii=False)
+        if history:
+            stored["last_seen_message_id"] = str(history.get("current_message_id") or "")
+        if profiles:
+            final_anchor = _emotion_last_anchor(profile_result, name) or list(segments)[-1]
+            final_base = active_profile(
+                name, final_anchor, profile_result, profiles, segment_order)
+            if final_base:
+                stored["active_visual_profile_id"] = final_base["visual_profile_id"]
+    print(
+        "[ILLUST_CONTEXT:EMOTION_ASSET] 감정 에셋 최종 출력: "
+        f"session={payload.get('session_id')!r}, assets={len(items)}, "
+        f"representatives={len(representative_items)}, "
+        f"reuse={sum(bool((item['emotion_asset'] or {}).get('reuse_path')) for item in items)}"
+    )
+    return {
+        "session_id": payload["session_id"], "context": pipeline.context_text(chats),
+        "narrative": narrative, "enhanced_narrative": enhanced,
+        "call1_output": "",
+        "call1_result": {
+            "state_table": None,
+            "current_characters": deepcopy(profile_result.get("current_characters") or []),
+            "history_characters": deepcopy(profile_result.get("history_characters") or []),
+        },
+        "time_place_output": "",
+        "time_place_result": {"state_table": None},
+        "npc_generation_result": {"characters": [], "created": [], "output": ""},
+        "profile_output": profile_output, "profile_result": profile_result,
+        "reference_provenance": pipeline.build_reference_provenance(history),
+        "last_visual_reference_classification": {}, "reference_variables": {},
+        "profile_events": list(profile_result.get("profile_events") or []),
+        "initial_visual_bases": list(profile_result.get("initial_visual_bases") or []),
+        "visual_base_events": list(profile_result.get("visual_base_events") or []),
+        "call2_select_output": json.dumps(
+            {"scene_plan": profile_result.get("scene_plan") or []}, ensure_ascii=False),
+        "call2_plan_output": "", "call2_plan_outputs": [],
+        "call2_keyvis_output": "", "call2_detail_outputs": [],
+        "call3_output": "", "call3_initial_output": "",
+        "call3_correction_used": False, "call3_partial_recovery_used": False,
+        "call3_dialogue_drop_recovery_used": False,
+        "call3_dropped_dialogue_entries": [], "call3_silent_slots": [],
+        "call3_failure_reason": "",
+        "character_states_after": states_after, "last_visual_by_character": {},
+        "history_input_hash": hashlib.sha256((str((history or {}).get("base_context_hash") or "")
+            + ":" + str((history or {}).get("current_context_hash") or "")).encode("utf-8")).hexdigest() if history else "",
+        "prompt_format": str(toggles.get("prompt_format") or "v3").lower(),
+        "items": items, "representative_items": representative_items,
+        "llm_trace": list(trace),
+    }
+
+
 async def build_from_context(
     payload: dict, toggles: dict | None, extra_reference: str, progress=None,
     stream_notify=None, on_call2_plan_ready=None, on_call2_ready=None,
@@ -738,25 +1083,34 @@ async def build_from_context(
     pre_resolved_profile_output: str = "", pre_resolved_profile_result: dict | None = None,
     on_detail_start=None,
     npc_manager=None, render_npc_image=None, prepare_npc_character=None,
+    workshop: str = "illustration",
 ) -> dict:
     """Build ordinary descriptors without semantic state/post-DETAIL rewriting."""
     p = pipeline
     toggles = p.merged_toggles(toggles, for_generation=True)
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
     composite = illustration_composite.enabled(toggles)
+    emotion = p.normalize_workshop(workshop) == "emotion"
     if composite:
         enable_multi_char_layout = False
     if manga:
         # Runtime page semantics only; never save these over ordinary-mode settings.
         toggles.update(key_visual=False, speak_enabled=False, supplement=True)
         print(f"[ILLUST_CONTEXT:MANGA] 3~4컷 페이지 · PLANNER={'ON' if toggles['call2_plan_enabled'] else 'OFF'} · DETAIL-MANGA")
-    mask_inline = bool(manga or enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled"))
-    keyvis_in_detail = bool(toggles.get("key_visual") and toggles.get("keyvis_in_detail_enabled"))
-    prompts = p.load_prompt_files("emotion" if composite else "illustration")
+    moss = toggles.get("illustration_model_family") == "moss"
+    # MOSS emits its own absolute bbox layout, so the V3 mask is not used.
+    # Its DETAIL also always writes the key visual, so KEYVIS is not separate.
+    mask_inline = bool(not moss and (manga or enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled")))
+    keyvis_in_detail = bool(toggles.get("key_visual")
+                            and (moss or toggles.get("keyvis_in_detail_enabled")))
+    prompts = p.load_prompt_files("emotion" if emotion or composite else "illustration")
     trace: list[str] = []
     token = p._llm_trace_ctx.set(trace)
     npc_registration_task = None
     npc_dispatch_tasks = []
+    # "NPC 생성은 나중에"가 켜져 있으면 NPC 대표 이미지 Comfy 호출을
+    # 이미지 생성 단계(STEP 6)까지 붙잡아 두는 게이트.
+    npc_render_gate = None
     try:
         chats = payload.get("chats") or []
         target_index, narrative = p._latest_narrative(chats)
@@ -775,6 +1129,10 @@ async def build_from_context(
                 extra_instruction=extra_instruction,
                 character_names=character_names or extra_names or ",".join(
                     item["name"] for item in (pre_resolved_profile_result or {}).get("current_characters") or []),
+                workshop=workshop,
+                npc_manager=npc_manager,
+                render_npc_image=render_npc_image,
+                prepare_npc_character=prepare_npc_character,
             )
         else:
             profile_output = str(pre_resolved_profile_output or "")
@@ -783,15 +1141,188 @@ async def build_from_context(
         prior_status = previous_statuses(names, history)
         prior_time_place = previous_time_places(names, history)
         segment_order = {sid: index for index, sid in enumerate(segments)}
-        baselines = {name: profile_for_detail(
-            name, active_profile(name, "START", profile_result, visual_profiles, segment_order),
-            extra_costume or extra_reference, visual_profiles,
-        ) for name in names}
         if history:
             history_slice = history.get("call1_history") or []
         else:
             history_slice = chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]
         past_text = p._history_messages_text(history_slice)
+
+        async def prepare_emotion_npc_assets(emotion_assets, npc_run=None):
+            """감정 에셋용 NPC를 카드로 등록하고 태그를 에셋에 반영한다.
+
+            NPC 생성 노드가 EMOTION-ASSET 이전에 이미 시작됐다면 그 예측 결과를
+            그대로 쓰고, Comfy 대표 이미지 호출만 npc_generation_deferred에 따라
+            STEP 6까지 미룬다. 시작된 노드가 없으면 여기서 예측부터 시작한다.
+            등록된 NPC 대표 이미지는 감정 에셋 생성의 레퍼런스로 쓰인다.
+            """
+            nonlocal npc_registration_task
+            if npc_run is not None:
+                npc_registration_task = npc_run.get("task")
+                gate = npc_run.get("gate")
+                predicted = list(npc_run.get("profiles") or [])
+            else:
+                candidates_by_name = {
+                    str(candidate.get("name") or "").strip().casefold(): candidate
+                    for candidate in profile_result.get("npc_candidates") or []
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("name") or "").strip()
+                }
+                selected = list({
+                    candidate["name"].casefold(): candidate
+                    for candidate in (
+                        candidates_by_name.get(str(asset.get("character") or "").strip().casefold())
+                        for asset in emotion_assets if isinstance(asset, dict)
+                    )
+                    if candidate is not None
+                }.values())
+                if not selected or npc_manager is None or render_npc_image is None:
+                    if selected:
+                        print(
+                            "[ILLUST_CONTEXT:NPC] 감정 에셋용 NPC 생성 경로 없음: "
+                            f"session={payload.get('session_id')!r}, candidates={len(selected)}")
+                    return deepcopy(emotion_assets), None
+                from modes.illustration_npc import generate_cards
+                deferred = bool(toggles.get("npc_generation_deferred"))
+                gate = asyncio.Event() if deferred else None
+                profiles_ready = asyncio.get_running_loop().create_future()
+                async def on_profiles_ready(result):
+                    profiles_ready._illustration_flow_ends = tuple(illustration_flow._frontier.get())
+                    profiles_ready.set_result(result)
+                npc_registration_task = illustration_flow.create_task(generate_cards(
+                    manager=npc_manager, bot_name=profile_translation_namespace,
+                    candidates=selected, prompts=prompts, past_text=past_text,
+                    segmented=segmented, toggles=toggles, stream_notify=stream_notify,
+                    render_image=render_npc_image, on_profiles_ready=on_profiles_ready,
+                    prepare_character=prepare_npc_character, render_gate=gate,
+                    workshop="emotion"),
+                    flow_label="NPC 생성 노드")
+                await asyncio.wait(
+                    (profiles_ready, npc_registration_task),
+                    return_when=asyncio.FIRST_COMPLETED)
+                if npc_registration_task.done():
+                    predicted = (await npc_registration_task).get("characters") or []
+                else:
+                    illustration_flow.absorb([profiles_ready])
+                    predicted = profiles_ready.result().get("characters") or []
+            enriched = deepcopy(emotion_assets)
+            if npc_run is None:
+                # EMOTION-ASSET 이후에 노드를 시작한 폴백 경로에서만 예측 카드
+                # 태그를 채운다. 정상 경로는 EMOTION-ASSET이 이미 등록 캐릭터와
+                # 같은 레벨로 NPC 프로필을 받았으므로 다시 덮어쓰지 않는다.
+                by_name = {
+                    str(profile.get("name") or "").casefold(): profile
+                    for profile in predicted if isinstance(profile, dict)
+                }
+                def enrich(asset):
+                    if not isinstance(asset, dict):
+                        return
+                    profile = by_name.get(str(asset.get("character") or "").casefold())
+                    if not profile:
+                        return
+                    cards = profile.get("profiles") or []
+                    card = cards[0] if cards and isinstance(cards[0], dict) else {}
+                    asset["profile_id"] = str(
+                        profile.get("default_visual_profile_id")
+                        or asset.get("profile_id") or "")
+                    if card.get("appearance"):
+                        asset["appearance"] = list(p.visual_tag_values(card["appearance"]))
+                    if card.get("default_outfit"):
+                        asset["default_outfit"] = list(
+                            p.visual_tag_values(card["default_outfit"]))
+                    gender_tag = str(
+                        (card.get("render_overrides") or {}).get("gender_tag") or "").strip()
+                    if gender_tag:
+                        asset["gender"] = gender_tag
+
+                for asset in enriched:
+                    enrich(asset)
+                # 새 복장의 대표 표정 사전 생성 목록도 같은 NPC 카드 레퍼런스를 쓴다.
+                for asset in profile_result.get("emotion_representative_assets") or []:
+                    enrich(asset)
+
+            async def render_representatives():
+                if progress:
+                    await progress(
+                        69, "npc_generation",
+                        "NPC 대표 이미지 생성 · 감정 에셋 레퍼런스 준비")
+                if gate is not None:
+                    gate.set()
+                result = await illustration_flow.join(npc_registration_task)
+                print(
+                    "[ILLUST_CONTEXT:NPC] 감정 에셋용 NPC 대표 이미지 준비: "
+                    f"session={payload.get('session_id')!r}, "
+                    f"created={result.get('created') if isinstance(result, dict) else []}")
+                return result
+
+            return enriched, render_representatives
+
+        if emotion:
+            npc_token = str(profile_result.get("_npc_registration_token") or "")
+            npc_run = p.take_emotion_npc_run(npc_token) if npc_token else None
+            emotion_assets = profile_result.get("emotion_assets")
+            if isinstance(emotion_assets, list) and emotion_assets:
+                assets_for_output = emotion_assets
+                render_representatives = None
+                if npc_run is not None or toggles.get("npc_generation_enabled"):
+                    assets_for_output, render_representatives = (
+                        await prepare_emotion_npc_assets(emotion_assets, npc_run))
+                if progress:
+                    await progress(
+                        30, "emotion_asset",
+                        f"감정 에셋 {len(assets_for_output)}개 준비")
+                npc_result = None
+                if render_representatives is not None:
+                    npc_result = await render_representatives()
+                    if isinstance(npc_result, dict):
+                        # EMOTION-ASSET의 새 복장 태그는 NPC 등록 전에 저장을
+                        # 시도해 실패한다. 등록이 끝난 새 NPC 카드에 다시
+                        # 저장해야 UI의 복장 태그가 비어 있지 않다.
+                        created = {
+                            str(name or "").strip().casefold()
+                            for name in npc_result.get("created") or []
+                            if str(name or "").strip()
+                        }
+                        retry_updates = [
+                            entry
+                            for entry in profile_result.get("emotion_asset_updates") or []
+                            if isinstance(entry, dict)
+                            and str(entry.get("character") or "").strip().casefold() in created
+                        ]
+                        if retry_updates:
+                            from modes.bot_mode import save_emotion_outfit_presets
+                            save_result = await asyncio.to_thread(
+                                save_emotion_outfit_presets,
+                                profile_translation_namespace,
+                                retry_updates)
+                            if not save_result.get("success"):
+                                print(
+                                    "[ILLUST_CONTEXT:EMOTION_ASSET] 새 NPC 복장 태그 저장 실패: "
+                                    f"bot={profile_translation_namespace!r}, "
+                                    f"error={save_result.get('error')!r}"
+                                )
+                built = _emotion_asset_result(
+                    payload=payload, toggles=toggles, prompts=prompts,
+                    profile_output=profile_output, profile_result=profile_result,
+                    assets=assets_for_output, chats=chats, narrative=narrative,
+                    enhanced=enhanced, segments=segments, segment_order=segment_order,
+                    visual_profiles=visual_profiles, history=history, trace=trace,
+                )
+                if isinstance(npc_result, dict):
+                    built["npc_generation_result"] = npc_result
+                return built
+            if npc_run is not None:
+                # 에셋이 없어도 먼저 시작한 NPC 노드가 gate에서 멈춰 있지 않게 한다.
+                if npc_run.get("gate") is not None:
+                    npc_run["gate"].set()
+                await illustration_flow.join(npc_run["task"])
+            print(
+                "[ILLUST_CONTEXT:EMOTION_ASSET] 결정된 에셋 없음; "
+                "기존 감정 삽화 흐름을 유지합니다"
+            )
+        baselines = {name: profile_for_detail(
+            name, active_profile(name, "START", profile_result, visual_profiles, segment_order),
+            extra_costume or extra_reference, visual_profiles,
+        ) for name in names}
         async def track_state():
             if progress:
                 await progress(8, "call1", "OUTFIT 옷·머리 상태 추적")
@@ -836,7 +1367,7 @@ async def build_from_context(
             return output, table
 
         async def generate_npcs():
-            nonlocal npc_registration_task
+            nonlocal npc_registration_task, npc_render_gate
             from modes.illustration_npc import generate_cards
             if progress:
                 await progress(8, "npc_generation", "NPC 생성 노드 · 캐릭터 외형 예측")
@@ -844,12 +1375,15 @@ async def build_from_context(
             async def on_profiles_ready(result):
                 profiles_ready._illustration_flow_ends = tuple(illustration_flow._frontier.get())
                 profiles_ready.set_result(result)
+            npc_render_gate = (
+                asyncio.Event() if toggles.get("npc_generation_deferred") else None)
             npc_registration_task = illustration_flow.create_task(generate_cards(
                 manager=npc_manager, bot_name=profile_translation_namespace,
                 candidates=profile_result.get("npc_candidates") or [], prompts=prompts,
                 past_text=past_text, segmented=segmented, toggles=toggles,
                 stream_notify=stream_notify, render_image=render_npc_image,
-                on_profiles_ready=on_profiles_ready, prepare_character=prepare_npc_character),
+                on_profiles_ready=on_profiles_ready, prepare_character=prepare_npc_character,
+                render_gate=npc_render_gate),
                 flow_label="NPC 생성 노드")
             await asyncio.wait((profiles_ready, npc_registration_task), return_when=asyncio.FIRST_COMPLETED)
             if npc_registration_task.done():
@@ -863,7 +1397,7 @@ async def build_from_context(
                             for item in ready.get("items") or []
                             for target in (item.get("panels") or [item])
                             for character in target.get("characters") or [])
-            if not npc_registration_task or not needs_npc:
+            if not npc_registration_task or not needs_npc or npc_render_gate is not None:
                 await callback(ready)
                 return
             async def after_registration():
@@ -1056,10 +1590,14 @@ async def build_from_context(
                             extra_costume or extra_reference, visual_profiles),
                     })
             # Preserve independent Key Visual prompt/decoder/routing; ordinary
-            # DETAIL's tiny scene input is not used here.
+            # DETAIL's tiny scene input is not used here. The combined MOSS call
+            # already carries the compatibility envelope and explicit policy
+            # from DETAIL, so KEYVIS contributes only its own instructions.
             keyvis_system = p.render_call2_prompt("\n\n".join([
-                prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""),
-                prompts.get("call2_common", ""), explicit_policy,
+                "" if moss else prompts.get("call2_jailbreak", ""),
+                prompts.get("call2_job", ""),
+                prompts.get("call2_common", ""),
+                "" if moss else explicit_policy,
                 prompts.get("call2_keyvis", ""),
             ]), toggles, include_scene_count_limit=False, include_server_limits=False)
             keyvis_messages = prompt_builders.keyvis_context_messages(
@@ -1069,12 +1607,15 @@ async def build_from_context(
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
                 canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""),
-                toggles=toggles, genre_prompt=prompts.get("genre", ""))
+                toggles=toggles, genre_prompt=prompts.get("genre", ""), moss=moss)
             if keyvis_in_detail:
-                keyvis_messages.append(prompt_builders.keyvis_task_message(
-                    toggles["character_limit"], json.dumps(names, ensure_ascii=False), names,
-                    mask_inline=mask_inline))
-                print("[ILLUST_CONTEXT:CALL2_KEYVIS] DETAIL 첫 배치에서 함께 예측; 별도 KEYVIS LLM 호출 생략")
+                if not moss:
+                    # DETAIL-MOSS writes its own combined keyvis contract.
+                    keyvis_messages.append(prompt_builders.keyvis_task_message(
+                        toggles["character_limit"], json.dumps(names, ensure_ascii=False), names,
+                        mask_inline=mask_inline))
+                print("[ILLUST_CONTEXT:CALL2_DETAIL] DETAIL 첫 배치에서 KEYVIS까지 함께 작성; "
+                      f"별도 KEYVIS LLM 호출 생략 (MOSS={moss})")
             async def expand_keyvis(descriptor=None, output=""):
                 if descriptor is None:
                     try:
@@ -1133,9 +1674,12 @@ async def build_from_context(
         detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch),
                         "completed": {}, "scene_workers": {}}
                        for batch in detail_batches]
+        detail_prompt_key = ("detail_moss" if moss else
+                             "composite_detail" if composite else
+                             "manga_detail" if manga else "call2_detail")
         detail_system = prompt_join("\n\n", (part for part in
                                   (role_context, explicit_policy,
-                                   prompts["composite_detail" if composite else "manga_detail" if manga else "call2_detail"]) if part))
+                                   prompts[detail_prompt_key]) if part))
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
             nonlocal keyvis_descriptor, keyvis_output
@@ -1162,7 +1706,7 @@ async def build_from_context(
                 prior_status=prior_status if tracking is None else None,
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
-                canvas_sizes=payload.get("canvas_sizes"),
+                canvas_sizes=payload.get("canvas_sizes"), moss=moss,
                 keyvis_messages=keyvis_messages if owns_keyvis and -1 not in completed else None))
             validated = {}
             def validate_detail(response):
@@ -1171,13 +1715,14 @@ async def build_from_context(
                 if owns_keyvis and -1 not in completed:
                     descriptor, keyvis_reason = p._parse_call2_keyvis_output(
                         response, toggles, names, "CALL2-DETAIL-KEYVIS",
-                        mask_inline=mask_inline, allow_scenes=True)
+                        mask_inline=mask_inline, allow_scenes=True, moss=moss,
+                        canvas_sizes=payload.get("canvas_sizes"))
                     if descriptor:
                         completed[-1] = descriptor
                         keyvis_descriptor, keyvis_output = descriptor, response
                 try:
                     results = parse_detail_batch(response, batch, allow_partial=True, slot_map=segment_slots,
-                        mask_inline=mask_inline, composite=composite,
+                        mask_inline=mask_inline, composite=composite, moss=moss,
                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
                 except ValueError as exc:
                     print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 파싱 실패, 보존 장면 유지: completed={list(completed)}, error={exc}")
@@ -1231,13 +1776,15 @@ async def build_from_context(
                         prior_status=prior_status if tracking is None else None,
                         prior_time_place=prior_time_place if time_place_tracking is None else None,
                         mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
-                        canvas_sizes=payload.get("canvas_sizes"),
+                        canvas_sizes=payload.get("canvas_sizes"), moss=moss,
                         keyvis_messages=keyvis_messages if missing_keyvis else None))
                     return False, f"CALL2-DETAIL: {reason}"
                 validated["output"] = response
                 validated["results"] = list(completed.values())
                 return True, ""
-            call_name = "DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL"
+            call_name = ("DETAIL-MOSS" if moss else
+                         "DETAIL-COMPOSITE" if composite else
+                         "DETAIL-MANGA" if manga else "CALL2-DETAIL")
             if attempt_kind == "duplicate":
                 call_name += f" {batch_index}/{total} [느리다고? 다시해!]"
             try:
@@ -1290,7 +1837,7 @@ async def build_from_context(
                 if not pending:
                     return
                 results = parse_detail_batch(stream_state["text"], batch, allow_partial=True, streaming=True, slot_map=segment_slots,
-                    mask_inline=mask_inline, composite=composite,
+                    mask_inline=mask_inline, composite=composite, moss=moss,
                     single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
             else:
                 results = value["descriptors"]
@@ -1358,7 +1905,7 @@ async def build_from_context(
                     segment_slots=segment_slots,
                     prior_time_place=prior_time_place if time_place_tracking is None else None,
                     mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
-                    canvas_sizes=payload.get("canvas_sizes"),
+                    canvas_sizes=payload.get("canvas_sizes"), moss=moss,
                     keyvis_messages=keyvis_messages if keyvis_in_detail and batch_index == 1
                         and -1 not in state["completed"] else None))
                 return
@@ -1553,6 +2100,15 @@ async def build_from_context(
                 # A pre-CURRENT checkpoint is not an updated current state.
                 stored.pop("call1_status_history", None)
                 stored.pop("call1_status", None)
+            if emotion:
+                # 감정 삽화는 OUTFIT 단계가 없으므로 EMOTION-RESOLVE가 고른
+                # 마지막 앵커의 복장을 다음 CURRENT의 이어짐 근거로 보관한다.
+                last_anchor = _emotion_last_anchor(profile_result, name)
+                predicted_outfit = _emotion_outfit_override(
+                    profile_result, name, last_anchor or None)
+                if predicted_outfit:
+                    stored["call1_status"] = json.dumps(
+                        {"outfit": predicted_outfit}, ensure_ascii=False)
             if time_place_tracking is not None:
                 stored["time_place"] = deepcopy(time_place_tracking[f"SLOT{state_slots[-1]}"][name])
             else:
@@ -1560,7 +2116,10 @@ async def build_from_context(
             if history:
                 stored["last_seen_message_id"] = str(history.get("current_message_id") or "")
             if visual_profiles:
-                final_base = active_profile(name, list(segments)[-1], profile_result,
+                final_anchor = list(segments)[-1]
+                if emotion:
+                    final_anchor = _emotion_last_anchor(profile_result, name) or final_anchor
+                final_base = active_profile(name, final_anchor, profile_result,
                                             visual_profiles, segment_order)
                 if final_base:
                     stored["active_visual_profile_id"] = final_base["visual_profile_id"]
@@ -1599,6 +2158,13 @@ async def build_from_context(
             item = deepcopy(descriptor)
             item.update(raw_positive=pos, raw_negative=neg)
             raw_items.append(item)
+        if npc_render_gate is not None:
+            # 이미지 생성 단계(STEP 6) 진입: 예측만 끝낸 NPC 대표 이미지 생성을 시작한다.
+            print(
+                "[ILLUST_CONTEXT:NPC] 대표 이미지 생성 시작(나중에): "
+                f"session={payload.get('session_id')!r}, "
+                f"items={len(raw_items)}")
+            npc_render_gate.set()
         if npc_registration_task:
             npc_result = await illustration_flow.join(npc_registration_task)
         if npc_dispatch_tasks:

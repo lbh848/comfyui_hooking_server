@@ -296,7 +296,7 @@ def main():
     info = json.load(urllib.request.urlopen(args.comfy_url + "/object_info"))
     request = urllib.request.Request(args.comfy_url + "/workflow/convert", data=json.dumps(workflow).encode(), headers={"Content-Type": "application/json"})
     api = json.load(urllib.request.urlopen(request))
-    spec_path = Path(__file__).resolve().parents[1] / "comfy_installer/resources/illustration_v2/illustration_v2_specs.json"
+    spec_path = Path(__file__).resolve().parents[1] / "comfy_installer/illustration_v2_specs.json"
     specs = json.loads(spec_path.read_text(encoding="utf-8")) if spec_path.exists() else {}
     if args.sampling_settings or args.model_settings:
         result = migrate_settings(workflow, api, specs, kind="model" if args.model_settings else "sampling")

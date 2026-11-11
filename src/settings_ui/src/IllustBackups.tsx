@@ -43,6 +43,10 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
   const [drawBot, setDrawBot] = useWorkSession(manualDrawSession, "");
   const restoredDraw = useRef(!!drawBot);
   const { entries: openModals } = useModalWorkspace();
+  // 보관(백그라운드)된 모달은 갤러리 조작을 막지 않는다. 수동 그리기처럼 오래
+  // 백그라운드에 남는 작업까지 잠금 대상에 넣으면 목록은 계속 보이는데
+  // "더 불러오기"만 영구히 비활성화된다. 전면 다이얼로그만 일시 정지한다.
+  const blockingModals = openModals.filter(entry => !entry.backgrounded);
   const filters = useIllustrationResource(`backups/filters?${query({ scope })}`);
   const filterBuildPending = useRef(false);
   const flowHistory = useIllustrationFlowHistory();
@@ -55,10 +59,9 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
   useEffect(() => {
     if (!filters.data) return;
     if (!filters.data.building) {
-      if (filterBuildPending.current) {
-        filterBuildPending.current = false;
-        setRevision(value => value + 1);
-      }
+      // 폴더 분리 후에는 목록이 캐시 완성 여부와 무관하게 그대로다.
+      // 필터 집계 완료로 목록을 다시 조회하면 이미지만 두 번 로딩된다.
+      filterBuildPending.current = false;
       return;
     }
     filterBuildPending.current = true;
@@ -67,8 +70,8 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
     return () => window.clearTimeout(timer);
   }, [filters.data, filters.reload]);
   useEffect(() => {
-    // 필터 인덱스가 완성되면 범위 분리 결과도 다시 적용한다.
-    const ready = () => { filters.reload(); setRevision(value => value + 1); };
+    // 필터 인덱스가 완성되면 드롭다운 집계만 갱신한다(목록/이미지 재조회 없음).
+    const ready = () => { filters.reload(); };
     window.addEventListener("illustration-backup-filters-ready", ready);
     return () => window.removeEventListener("illustration-backup-filters-ready", ready);
   }, [filters.reload]);
@@ -148,9 +151,11 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
         </section>}
         <IllustrationFeedback error={error || filters.error || reschedule.error || flowHistory.error} />
         {error && <button className="button" onClick={reload}>다시 시도</button>}
-        {!loading && !error && !backups.length && <Empty title={searchQuery ? "검색 결과가 없습니다" : selectedFlow ? "이 흐름에 저장된 삽화가 없습니다" : "아직 삽화 백업이 없습니다"}>{searchQuery ? "다른 파일 이름으로 검색하세요." : selectedFlow?.active ? "이미지가 저장되면 이 그룹에 자동으로 나타납니다." : selectedFlow ? "다른 흐름이나 전체 보기를 선택해 주세요." : "활성 봇을 선택하고 수동 그리기로 첫 삽화를 만들어 보세요."}</Empty>}
-        <WindowedGallery key={`${filter}:${searchQuery}`} items={backups}>{batch => <div className="illust-gallery">{batch.map(item => <BackupCard key={item.name} item={item} scheduled={reschedule.data ? scheduledName === item.name : !!item.is_scheduled} onOpen={view => { setDetailView(view); setSelected(item); }} />)}</div>}</WindowedGallery>
-        <InfiniteScrollTrigger hasMore={hasMore} loading={loading} paused={!!error || searchPending || !!openModals.length} onLoad={() => {
+        {!loading && !error && !backups.length && (filters.error || (filters.data && !filters.data.building)
+          ? <Empty title={searchQuery ? "검색 결과가 없습니다" : selectedFlow ? "이 흐름에 저장된 삽화가 없습니다" : "아직 삽화 백업이 없습니다"}>{searchQuery ? "다른 파일 이름으로 검색하세요." : selectedFlow?.active ? "이미지가 저장되면 이 그룹에 자동으로 나타납니다." : selectedFlow ? "다른 흐름이나 전체 보기를 선택해 주세요." : "활성 봇을 선택하고 수동 그리기로 첫 삽화를 만들어 보세요."}</Empty>
+          : <p className="field-help" role="status">백업 목록을 정리하는 중입니다… 완료되면 자동으로 표시됩니다.</p>)}
+        <WindowedGallery key={`${filter}:${searchQuery}`} items={backups}>{batch => <div className="illust-gallery">{batch.map(item => <BackupCard key={item.name} item={item} transparent={emotionScope} scheduled={reschedule.data ? scheduledName === item.name : !!item.is_scheduled} onOpen={view => { setDetailView(view); setSelected(item); }} />)}</div>}</WindowedGallery>
+        <InfiniteScrollTrigger hasMore={hasMore} loading={loading} paused={!!error || searchPending || !!blockingModals.length} onLoad={() => {
           if (requestBusy.current) return;
           const controller = new AbortController(); activeRequest.current = controller;
           void load(nextOffset, controller.signal);
@@ -200,7 +205,7 @@ function BackupRetentionSettings() {
   </form>;
 }
 
-function BackupCard({ item, scheduled, onOpen }: { item: IllustrationData; scheduled: boolean; onOpen: (view: string) => void }) {
+function BackupCard({ item, transparent, scheduled, onOpen }: { item: IllustrationData; transparent: boolean; scheduled: boolean; onOpen: (view: string) => void }) {
   const action = useIllustrationAction();
   const [preview, setPreview] = useState(false);
   const [animated, setAnimated] = useState(false);
@@ -210,21 +215,28 @@ function BackupCard({ item, scheduled, onOpen }: { item: IllustrationData; sched
   const prompt = useIllustrationResource(showPrompt ? `backup_prompt/${enc(item.name)}?view=submitted` : null);
   const flow = useIllustrationResource(showFlow ? `backups/${enc(item.name)}/llm_trace` : null);
   const info = item.conversion_info || {};
+  // 감정 삽화 백업은 장면 이미지 대신 캐릭터 에셋이다. 어떤 캐릭터의 어떤
+  // 프로필·복장·감정으로 저장됐는지 카드에서 바로 보여준다.
+  const asset = (info.emotion_asset && typeof info.emotion_asset === "object" ? info.emotion_asset : null) as IllustrationData | null;
+  const assetRating = String(asset?.rating || "").toUpperCase();
+  const assetLabel = asset ? [asset.character, asset.outfit, asset.emotion_name].filter(Boolean).join(" · ") : "";
+  const assetTitle = asset ? [assetLabel, asset.profile_id && `프로필 ${asset.profile_id}`, asset.outfit_folder, asset.saved_path || asset.target_dir].filter(Boolean).join("\n") : "";
   const executionSource = String(info.execution_source || "").toLowerCase();
   const source = ["modal", "vast", "chansub"].includes(executionSource) ? executionSource : String(info.provider || "").toLowerCase() === "chansub" ? "chansub" : "";
   const sourceLabel = { modal: "Modal", vast: "Vast", chansub: "챈섭" }[source];
   const disabledReason = item.is_animated ? "움직이는 삽화에는 사용할 수 없습니다." : !item.has_prompt ? "저장된 프롬프트가 없습니다." : "";
   const submittedPrompt = prompt.data?.submitted_prompt;
-  return <article className="illust-image-card" data-gallery-retain={action.busy || !!action.error || showPrompt || showFlow || preview} aria-label={`${item.name} 삽화 백업`}>
-    <button className="illust-image-button" onClick={() => setPreview(true)} aria-label={`${item.name} 이미지 확대`}
+  return <article className="illust-image-card" data-gallery-retain={action.busy || !!action.error || showPrompt || showFlow || preview} aria-label={`${item.name} ${asset ? "감정 에셋" : "삽화"} 백업`}>
+    <button className={`illust-image-button${transparent ? " illust-checkerboard" : ""}`} onClick={() => setPreview(true)} aria-label={`${item.name} 이미지 확대`}
       onMouseEnter={() => setAnimated(true)} onMouseLeave={() => setAnimated(false)} onFocus={() => setAnimated(true)} onBlur={() => setAnimated(false)}>
-      <img src={illustrationMedia(animated && item.is_animated ? item.image_url : item.poster_url || item.image_url)} loading="lazy" decoding="async" alt={info.bot_name ? `${info.bot_name} 삽화` : item.name} />
+      <img src={illustrationMedia(animated && item.is_animated ? item.image_url : item.poster_url || item.image_url)} loading="lazy" decoding="async" alt={assetLabel || (info.bot_name ? `${info.bot_name} 삽화` : item.name)} />
       <span className="illust-backup-badges">{sourceLabel && <Badge>{sourceLabel}</Badge>}{item.is_animated && <Badge>움직이는 삽화</Badge>}</span>
       <span className="illust-backup-zoom"><ZoomIn size={14} />확대</span>
     </button>
     <div className="illust-backup-body">
       <div className="illust-card-meta">
         <strong>{info.bot_name || "삽화"}</strong>{info.gen_method && <Badge tone="lavender">{info.gen_method}</Badge>}
+        {asset && <>{assetRating === "NSFW" || assetRating === "SFW" ? <Badge tone={assetRating === "NSFW" ? "rose" : "green"}>{assetRating}</Badge> : null}<span className="illust-backup-asset" title={assetTitle}>{assetLabel || asset.character || "감정 에셋"}</span></>}
         <time dateTime={new Date(item.mtime * 1000).toISOString()}>{new Date(item.mtime * 1000).toLocaleString("ko-KR")}</time><span aria-hidden="true">—</span><span className="illust-backup-filename" title={item.name}>{item.name}</span>{typeof info.generation_time === "number" && <span className="illust-backup-duration" aria-label={`생성 시간 ${info.generation_time.toFixed(1)}초`}>· <Clock3 size={12} />{info.generation_time.toFixed(1)}초</span>}
       </div>
       <div className="illust-backup-actions">
@@ -246,7 +258,7 @@ function BackupCard({ item, scheduled, onOpen }: { item: IllustrationData; sched
       </section> : <p className="field-help">저장된 프롬프트가 없습니다.</p>}
     </div>
     {showFlow && <Modal title="LLM 흐름" onClose={() => setShowFlow(false)} className="illust-detail-modal"><div className="illust-form"><p className="field-help">{item.name}</p>{!flow.data ? <IllustrationLoading error={flow.error} retry={flow.reload} /> : <>{flow.data.note && <p className="field-help">{flow.data.note}</p>}{(flow.data.records || []).map((record: IllustrationData, index: number) => <details className="illust-section" key={record.id || index} open={index === 0}><summary>{record.label || record.task || record.type || `단계 ${index + 1}`}</summary><pre className="illust-text" tabIndex={0}>{JSON.stringify(record, null, 2)}</pre></details>)}{flow.data.missing?.length > 0 && <p className="field-help">일부 단계의 기록이 보관 기간을 지나 남아 있지 않습니다.</p>}</>}</div></Modal>}
-    {preview && <Modal title={`${item.name} 이미지 확대`} onClose={() => setPreview(false)} backgroundable={false} showHeader={false} className="illust-lightbox-modal illust-backup-lightbox"><img className="illust-asset-preview" src={illustrationMedia(item.image_url)} alt={item.name} /><button type="button" className="icon-button illust-lightbox-close" aria-label="닫기" title="닫기" onClick={() => setPreview(false)}><X size={22} /></button></Modal>}
+    {preview && <Modal title={`${item.name} 이미지 확대`} onClose={() => setPreview(false)} backgroundable={false} showHeader={false} className="illust-lightbox-modal illust-backup-lightbox"><img className={`illust-asset-preview${transparent ? " illust-checkerboard" : ""}`} src={illustrationMedia(item.image_url)} alt={item.name} /><button type="button" className="icon-button illust-lightbox-close" aria-label="닫기" title="닫기" onClick={() => setPreview(false)}><X size={22} /></button></Modal>}
   </article>;
 }
 

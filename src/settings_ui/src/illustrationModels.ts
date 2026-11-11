@@ -5,8 +5,21 @@ type WorkflowGroup = { category: string; name: string; itemIds: string[] };
 type WorkflowCatalog = { items: WorkflowItem[]; defaultGroups: WorkflowGroup[]; workflowFolder: string; folderError: string };
 type WorkflowGroups = { groups: WorkflowGroup[]; useDefaults: boolean };
 export type IllustrationModel = { profile: string; label: string; workflows: { path: string; label: string }[]; uninstalledWorkflows: { id: string; label: string }[] };
-const modelLabels: Record<string, string> = { v3_anima: "ANIMA", v3: "ANIMA+ILXL" };
+const modelLabels: Record<string, string> = { moss: "MOSS", v3_anima: "ANIMA", v3: "ANIMA+ILXL" };
 export const illustrationModelLabel = (profile: string) => modelLabels[profile] || ({ chansub: "챈섭", chansub_v3_anima: "챈섭 + ANIMA" } as Record<string, string>)[profile] || profile;
+
+// MOSS runs on the ANIMA profile but is a distinct entry in the model picker.
+export function isMossWorkflow(path: string): boolean {
+  return /moss/i.test(path.replaceAll("\\", "/").split("/").pop() || "");
+}
+
+export function illustrationPresetFamily(preset: { config?: Record<string, unknown> } | null | undefined): "moss" | "anima" {
+  const selected = String(preset?.config?.illustration_model_family || "").toLowerCase();
+  if (selected === "moss" || selected === "anima") return selected;
+  // Presets saved before the model selection existed fall back to the file name.
+  const paths = Object.values((preset?.config?.illustration_workflow_source_paths || {}) as Record<string, unknown>);
+  return paths.some(value => isMossWorkflow(String(value))) ? "moss" : "anima";
+}
 
 export function workflowPathKey(path: string): string {
   const normalized = path.replaceAll("\\", "/");
@@ -17,6 +30,13 @@ export function workflowPathKey(path: string): string {
 export function isDualVaeWorkflow(path: string): boolean {
   return /dual[_\s-]?vae/i.test(path);
 }
+
+const pathLabel = (path: string) => `${path.replaceAll("\\", "/").split("/").pop()?.replace(/\.json$/i, "")} · 현재 설정`;
+const addWorkflow = (model: IllustrationModel, path: string, label: string, unshift = false) => {
+  if (model.workflows.some(workflow => workflowPathKey(workflow.path) === workflowPathKey(path))) return;
+  const entry = { path, label: label.replace(/\.json$/i, "") };
+  if (unshift) model.workflows.unshift(entry); else model.workflows.push(entry);
+};
 
 export function illustrationModels(catalog: WorkflowCatalog, saved: WorkflowGroups, configured: Record<string, string>, category: string | readonly string[] = "삽화", labels = modelLabels, bindings: Record<string, string> = {}): IllustrationModel[] {
   const groups = saved.useDefaults ? catalog.defaultGroups : saved.groups;
@@ -39,22 +59,44 @@ export function illustrationModels(catalog: WorkflowCatalog, saved: WorkflowGrou
       }
     }
     for (const item of items) for (const relative of item.localPaths) {
-      const path = `${catalog.workflowFolder.replace(/[\\/]+$/, "")}/${relative}`;
-      if (!model.workflows.some(workflow => workflowPathKey(workflow.path) === workflowPathKey(path))) {
-        model.workflows.push({ path, label: (item.localPaths.length > 1 ? relative : item.name || item.filename).replace(/\.json$/i, "") });
-      }
+      addWorkflow(model, `${catalog.workflowFolder.replace(/[\\/]+$/, "")}/${relative}`,
+        item.localPaths.length > 1 ? relative : item.name || item.filename);
     }
     models.set(profile, model);
+  }
+  // MOSS is a separate model choice. Pick up its workflows even when they are
+  // registered outside a group named MOSS.
+  if (labels.moss && !models.has("moss")) {
+    const itemIds = new Set(groups.filter(group => matchesCategory(group.category)).flatMap(group => group.itemIds));
+    const items = catalog.items.filter(item => itemIds.has(item.id) && isMossWorkflow(item.filename || item.name));
+    const model: IllustrationModel = { profile: "moss", label: labels.moss, workflows: [], uninstalledWorkflows: [] };
+    for (const item of items) {
+      if (item.localPaths.length) continue;
+      if (!model.uninstalledWorkflows.some(workflow => workflow.id === item.id)) {
+        model.uninstalledWorkflows.push({ id: item.id, label: (item.name || item.filename).replace(/\.json$/i, "") });
+      }
+    }
+    for (const item of items) for (const relative of item.localPaths) {
+      addWorkflow(model, `${catalog.workflowFolder.replace(/[\\/]+$/, "")}/${relative}`,
+        item.localPaths.length > 1 ? relative : item.name || item.filename);
+    }
+    if (model.workflows.length || model.uninstalledWorkflows.length) models.set("moss", model);
   }
   // Keep an existing selection usable when an edited workflow no longer matches its pack hash.
   for (const [profile, label] of Object.entries(labels)) {
     const path = configured[profile];
     if (!path) continue;
     const model = models.get(profile) || { profile, label, workflows: [], uninstalledWorkflows: [] };
-    if (!model.workflows.some(workflow => workflowPathKey(workflow.path) === workflowPathKey(path))) {
-      model.workflows.unshift({ path, label: `${path.replaceAll("\\", "/").split("/").pop()?.replace(/\.json$/i, "")} · 현재 설정` });
-    }
+    addWorkflow(model, path, pathLabel(path), true);
     models.set(profile, model);
+  }
+  // A MOSS preset stores its workflow on the ANIMA profile, so carry that
+  // selection into the MOSS model entry.
+  if (labels.moss) {
+    const paths = Object.values(configured).filter(isMossWorkflow);
+    const model = models.get("moss") || { profile: "moss", label: labels.moss, workflows: [], uninstalledWorkflows: [] };
+    for (const path of paths) addWorkflow(model, path, pathLabel(path), true);
+    if (model.workflows.length || model.uninstalledWorkflows.length) models.set("moss", model);
   }
   return [...models.values()];
 }

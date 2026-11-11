@@ -3,6 +3,12 @@
 *.sh text eol=lf
 
 # Preserve the bundled CSV and original license notices byte for byte.
-src/auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv -text
+src/auto_complete/danbooru-tags-anima-kr-2026-11-10.csv -text
 src/auto_complete/LICENSE.danbooru-tags-kr.txt -text
 src/auto_complete/CC-BY-SA-4.0.txt -text
+
+# Development-only inputs must not enter release archives.
+src/updater_dev export-ignore
+src/tools export-ignore
+src/customprompt/tag_collector export-ignore
+src/opencode.json export-ignore

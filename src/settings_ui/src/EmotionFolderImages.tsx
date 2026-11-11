@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Trash2, Upload } from "lucide-react";
 import { Empty, Modal } from "./components";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
@@ -21,6 +21,12 @@ export function EmotionFolderImages({ botName, character, profile, outfit, emoti
   const [deletingImage, setDeletingImage] = useState<IllustrationData | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const location = profile ? `${profile} · ${outfit} · ${emotion}` : "전체 이미지";
+  useEffect(() => {
+    // 생성 작업이 백업으로 저장되면 열려 있는 이미지 그리드도 즉시 다시 읽는다.
+    const reload = () => assets.reload();
+    window.addEventListener("emotion-store-changed", reload);
+    return () => window.removeEventListener("emotion-store-changed", reload);
+  }, [assets.reload]);
 
   async function upload(files: FileList | null) {
     if (!files?.length || readOnly || !allowUpload) return;

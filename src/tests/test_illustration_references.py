@@ -20,9 +20,8 @@ from PIL import Image
 SRC = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SRC))
 from illustration_json import build_illustration_json
-from comfy_installer.illustration_v2_nodes import patch_illustration_detailer_source, patch_illustration_hand_source, patch_illustration_sampler_source
 
-RESOURCES = SRC / "comfy_installer/resources/illustration_v2"
+RESOURCES = SRC.parent / "data/comfy/custom_nodes/comfyui-soya-custom-nodes"
 SOYA = SRC.parent / "data/comfy/custom_nodes/comfyui-soya-custom-nodes"
 spec = importlib.util.spec_from_file_location("illustration_json_nodes", RESOURCES / "soya_illustration_json_v2.py")
 json_nodes = importlib.util.module_from_spec(spec)
@@ -245,11 +244,10 @@ class StageModelTests(unittest.TestCase):
         self.assertEqual(kwargs["snapref"].images, {1: ["alice reference"]})
 
 
-@unittest.skipUnless((SOYA / "soya_first_sampler.py").is_file(), "Requires installed SOYA sampler source")
+@unittest.skipUnless((SOYA / "soya_first_sampler_v2_core.py").is_file(), "Requires installed SOYA sampler source")
 class RegionalNaturalLanguageTests(unittest.TestCase):
     def setUp(self):
-        source = patch_illustration_sampler_source((SOYA / "soya_first_sampler.py").read_text(encoding="utf-8"))
-        self.assertEqual(patch_illustration_sampler_source(source), source)
+        source = (SOYA / "soya_first_sampler_v2_core.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {"_as_prompt_parts", "_parse_multi_char"}]
         sampler = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "SoyaFirstSampler_mdsoya")
@@ -389,14 +387,11 @@ class JsonNodeRoutingTests(unittest.TestCase):
 
 class WorkflowReferenceTests(unittest.TestCase):
     @unittest.skipUnless(SOYA.is_dir(), "Installed SOYA package required")
-    def test_installed_detailer_hooks_compile_without_modifying_legacy_classes(self):
-        for stem in ("soya_char_lora_face_detailer", "soya_char_lora_eye_detailer", "soya_hand_detailer_toggle"):
+    def test_installed_detailer_hooks_compile(self):
+        for stem in ("soya_char_lora_face_detailer_v2_core", "soya_char_lora_eye_detailer_v2_core",
+                     "soya_hand_detailer_toggle_v2_core"):
             source = (SOYA / f"{stem}.py").read_text(encoding="utf-8")
-            patcher = patch_illustration_hand_source if "hand" in stem else patch_illustration_detailer_source
-            updated = patcher(source)
-            compile(updated, stem, "exec")
-            self.assertEqual(patcher(updated), updated)
-            self.assertNotEqual(source, updated)
+            compile(source, stem, "exec")
 
     @unittest.skipUnless(SOYA.is_dir(), "Installed distribution workflows required")
     def test_both_distribution_ui_workflows_have_valid_links(self):

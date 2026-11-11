@@ -670,9 +670,17 @@ class QueueManager:
             depends_on=normalized_dependencies,
         )
         # 봇 저장소 스코프(삽화/감정 삽화)를 작업 실행까지 따라가게 한다.
+        # 모듈/브릿지 요청은 workshop 을 params 로 넘기므로 HTTP 요청 스코프가
+        # 아니라 그 값을 우선한다.
         try:
             from importlib import import_module
-            item._bot_scope = import_module("modes.bot_mode").bot_scope()
+            scope = import_module("modes.bot_mode").bot_scope()
+            workshop = params.get("workshop") if isinstance(params, dict) else None
+            if not workshop and isinstance(params, dict) and isinstance(params.get("payload"), dict):
+                workshop = params["payload"].get("workshop")
+            if str(workshop or "").strip().lower() == "emotion":
+                scope = "emotion"
+            item._bot_scope = scope
         except Exception:
             item._bot_scope = "illust"
         if runtime_handler is not None:
@@ -4073,6 +4081,7 @@ class QueueManager:
         seed = params.get("seed")
         multi_char_context = params.get("illustration_multi_char")
         visual_states = params.get("illustration_visual_states")
+        workshop = str(params.get("workshop") or "").strip().lower()
         mask_bytes = None
 
         if not self.generate_image_with_prompt:
@@ -4080,15 +4089,20 @@ class QueueManager:
 
         try:
             from modes import multi_char_mask
+            from illustration_json import is_moss_prompt
 
-            prompt_multi_payload = multi_char_mask.extract_multi_char_prompt_payload(
-                positive
+            # MOSS carries its bbox layout inside the prompt document; the V3
+            # [MULTI_CHAR] region-mask checks do not apply.
+            moss_prompt = is_moss_prompt(positive)
+            prompt_multi_payload = (
+                None if moss_prompt
+                else multi_char_mask.extract_multi_char_prompt_payload(positive)
             )
             prompt_multi_enabled = (
                 isinstance(prompt_multi_payload, dict)
                 and prompt_multi_payload.get("enable") is True
             )
-            if multi_char_context is not None:
+            if multi_char_context is not None and not moss_prompt:
                 multi_char_context = multi_char_mask.validate_multi_char_prompt_context(
                     positive,
                     multi_char_context,
@@ -4160,6 +4174,14 @@ class QueueManager:
             generation_call_kwargs["seed"] = int(seed)
         if provider == "comfy":
             generation_call_kwargs["comfy_task_key"] = "restore_regenerate"
+            # Replay the same model preset/workflow the image was generated with.
+            # Falling back to the default preset swaps the emotion workshop's
+            # transparent character workflow for the illustration one.
+            if isinstance(params.get("illustration_model_preset"), dict):
+                generation_call_kwargs["model_preset"] = params["illustration_model_preset"]
+            if str(params.get("illustration_workflow_type") or "").strip():
+                generation_call_kwargs["illustration_workflow_type"] = str(
+                    params["illustration_workflow_type"]).strip()
             if params.get("illustration_prompt_json") is not None:
                 from illustration_json import merge_illustration_edit_document
                 # Keep embedded references and queue-side mask policy together.
@@ -4186,9 +4208,19 @@ class QueueManager:
         regen_id = uuid.uuid4().hex
         saved_backup_name = ""
         if self.save_backup:
+            # 워크플로 백업 폴더는 두 공방이 공유한다. 작업에 실린 workshop을
+            # 그대로 넘겨 감정 삽화 재생성 결과가 '삽화 백업'으로 새지 않게 한다.
+            # 감정 에셋은 원본 _info.json의 저장소 경로/얼굴 정보도 물려받아
+            # 다음 재생성이 같은 감정 이미지를 찾을 수 있게 한다.
+            backup_kwargs = {}
+            if workshop == "emotion":
+                source_info = params.get("source_conversion_info")
+                if isinstance(source_info, dict):
+                    backup_kwargs["conversion_info_snapshot"] = source_info
             saved_backup_name, img_bytes = await self.save_backup(
                 img_bytes, regen_id, positive, negative,
                 generation_time=elapsed_time, bot_name=bot_name,
+                workshop=workshop,
                 postprocess_settings=postprocess_settings,
                 speak_text=speak_text,
                 provider=provider,
@@ -4197,6 +4229,7 @@ class QueueManager:
                 generation_params=generation_params,
                 illustration_multi_char=multi_char_context,
                 illustration_visual_states=visual_states,
+                **backup_kwargs,
             )
         print(
             f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"

@@ -56,10 +56,18 @@ PROMPTS_DIR_EMOTION = os.path.join(data_root(BASE_DIR), "prompts", "lighbd_emoti
 PROMPT_BACKUP_DIR_EMOTION = os.path.join(
     data_root(BASE_DIR), "backups", "prompt_files_emotion"
 )
+# 감정 삽화 공방의 기본 지침. 감정 삽화 character-resolve는 장면 설명 대신
+# 캐릭터별 짧은 감정을 예측하므로 공용 지침과 다른 기본값을 쓴다.
+EMOTION_PROMPT_DEFAULTS_DIR = os.path.join(BASE_DIR, "defaults", "emotion", "prompts")
 WORKSHOPS = ("illustration", "emotion")
 _prompt_seed_lock = threading.Lock()
+_emotion_prompt_upgrade_done = False
 SESSION_DIR = os.path.join(data_root(BASE_DIR), "logs", "illustration_context_sessions")
 WORKFLOW_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "workflow_backup")
+# 감정 삽화 백업은 감정 전용 폴더에 저장되므로, 이름 기반 지연 복원은
+# 두 워크숍 폴더를 모두 확인한다.
+EMOTION_WORKFLOW_BACKUP_DIR = os.path.join(data_root(BASE_DIR), "emotion_workflow_backup")
+BACKUP_SEARCH_DIRS = (WORKFLOW_BACKUP_DIR, EMOTION_WORKFLOW_BACKUP_DIR)
 
 _BACKUP_IMAGE_EXTENSIONS = (".webp", ".avif", ".png", ".gif")
 _BACKUP_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
@@ -104,9 +112,14 @@ PROMPT_FILES = {
     "call1_enhance": "enhance.txt",
     "time_place": "time_place.txt",
     "npc_generation": "npc_generation.txt",
+    # MOSS 전용 NPC 카드 지침. 기존 ANIMA 지침은 그대로 두고, MOSS 대표
+    # 이미지가 bbox 없이 하나의 요약 캡션으로 그려지는 계약만 추가한다.
+    "npc_generation_moss": "npc_generation_moss.txt",
     "genre": "genre.txt",
     "character_resolve": "character.txt",
     "profile_resolve": "profile.txt",
+    "emotion_resolve": "emotion_resolve.txt",
+    "emotion_asset": "emotion_asset.txt",
     "call2_jailbreak": "jailbreak.txt",
     "call2_job": "job.txt",
     "call2_prefill": "prefill.txt",
@@ -115,6 +128,7 @@ PROMPT_FILES = {
     "call2_select": "scene_select.txt",
     "call2_plan": "plan.txt",
     "call2_detail": "detail.txt",
+    "detail_moss": "detail_moss.txt",
     "manga_select": "manga_select.txt",
     "manga_plan": "manga_plan.txt",
     "manga_detail": "manga_detail.txt",
@@ -177,6 +191,9 @@ DEFAULT_TOGGLES = {
     "outfit_enabled": False,
     "time_place_enabled": False,
     "npc_generation_enabled": False,
+    # NPC 대표 이미지(Comfy 호출)를 이미지 생성 단계(STEP 6)까지 미룬다.
+    # 감정 삽화 공방에서는 EMOTION-ASSET 이후에 해당한다. 외형 예측은 그대로 먼저 진행한다.
+    "npc_generation_deferred": False,
     "npc_lifetime": 30,
     "call2_plan_enabled": False,
     "visual_correction_enabled": False,
@@ -213,6 +230,15 @@ DEFAULT_TOGGLES = {
     "speak_emotion_enabled": False,
     "speak_emotions": "",
     "nsfw": True,
+    # 감정 삽화 공방 전용: 캐릭터의 NSFW 복장·감정 에셋을 함께 생성한다.
+    "nsfw_asset_generation_enabled": False,
+    # 감정 삽화 공방 전용 표정 프리셋 연결. 각 항목은
+    # {"preset": 저장소 표정 프리셋 이름, "name": 표시할 감정 이름}이다.
+    "emotion_presets_sfw": [],
+    "emotion_presets_nsfw": [],
+    # 프리셋 설정에서 지정한 복장 대표 표정. 새 복장(새 NPC 포함)의
+    # 대표 이미지를 먼저 생성할 때 사용한다. 복장별 지정이 있으면 그쪽이 우선.
+    "emotion_representative": {},
     "profile_context_translate": True,
     "supplement": True,
     "key_visual": True,
@@ -236,6 +262,13 @@ DEFAULT_TOGGLES = {
     "manga_focus": "",
     "manga_direction": "",
     "prompt_format": "v3",
+    # Active illustration model family. DETAIL-MOSS uses its own layout contract
+    # because MOSS accepts absolute centered bboxes for objects as well.
+    "illustration_model_family": "anima",
+    # CharRef v2 reference mode for MOSS. The names list lets DETAIL-MOSS write
+    # reference-friendly appearance words for characters that have a card.
+    "moss_reference": False,
+    "moss_reference_names": [],
     "positive_note": "",
     "negative_note": "",
     "compat_comfy": True,
@@ -348,6 +381,7 @@ def _persist_session_metadata(session: dict) -> None:
         os.makedirs(SESSION_DIR, exist_ok=True)
         data = {
             "session_id": session.get("session_id", ""),
+            "workshop": session.get("workshop"),
             "lookup_key": session.get("lookup_key", ""),
             "status": session.get("status", "ready"),
             "context": session.get("context", ""),
@@ -403,6 +437,42 @@ def _load_session_metadata(session_id: str) -> dict | None:
         return None
 
 
+def _emotion_preset_rows(value) -> list[dict]:
+    """감정 삽화 표정 프리셋 행을 UI가 저장한 형태로 정규화한다.
+
+    빈 행도 유지한다. UI의 + 버튼으로 추가한 행이 자동 저장 직후 사라지지
+    않도록 하기 위해서다. 이름과 프리셋은 문자열만 허용한다.
+    """
+    if not isinstance(value, list):
+        return []
+    rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        preset, name = item.get("preset"), item.get("name")
+        if not isinstance(preset, str) or not isinstance(name, str):
+            continue
+        rows.append({"preset": preset.strip()[:200], "name": name.strip()[:120]})
+        if len(rows) >= 500:
+            break
+    return rows
+
+
+def _emotion_representative_value(value) -> dict:
+    """프리셋 설정에서 지정한 복장 대표 표정을 정규화한다. 비어 있으면 {}."""
+    if not isinstance(value, dict):
+        return {}
+    name = str(value.get("name") or "").strip()[:120]
+    rating = str(value.get("rating") or "").strip().lower()
+    if not name or rating not in {"sfw", "nsfw"}:
+        return {}
+    return {
+        "preset": str(value.get("preset") or "").strip()[:200],
+        "name": name,
+        "rating": rating,
+    }
+
+
 def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     out = deepcopy(DEFAULT_TOGGLES)
     if isinstance(value, dict):
@@ -454,11 +524,16 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
                     f"{legacy_preset!r}, V3로 전환"
                 )
                 out["prompt_format"] = "v3"
-    for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "call2_plan_enabled", "call2_parallel_enabled",
+    for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "npc_generation_deferred", "call2_plan_enabled", "call2_parallel_enabled",
                 "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled",
                 "single_char_mask_skip_enabled", "visual_correction_enabled", "profile_context_translate",
+                "nsfw_asset_generation_enabled",
                 "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
+    for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):
+        out[key] = _emotion_preset_rows(out.get(key))
+    out["emotion_representative"] = _emotion_representative_value(
+        out.get("emotion_representative"))
     from modes.illustration_npc import get_npc_lifetime
     out["npc_lifetime"] = get_npc_lifetime(out)
     try:
@@ -674,35 +749,184 @@ def prompts_dir_for(workshop: str | None = None) -> str:
     return PROMPTS_DIR_EMOTION if normalize_workshop(workshop) == "emotion" else PROMPTS_DIR
 
 
-def _seed_emotion_prompt_files() -> None:
-    """감정 삽화 지침 폴더를 삽화 지침의 최초 스냅샷으로 한 번만 채운다."""
-    os.makedirs(PROMPTS_DIR_EMOTION, exist_ok=True)
-    if os.listdir(PROMPTS_DIR_EMOTION):
-        return
+def _seed_shared_prompt_files() -> None:
+    """공용 지침 폴더에서 빠진 파일만 배포본으로 채운다.
+
+    새 단계가 PROMPT_FILES에 추가되면 기존 설치본에는 해당 파일이 없으므로
+    로드 시마다 실패 로그가 찍힌다. 사용자 편집본은 덮어쓰지 않고 누락분만
+    보충한다. 호출자가 _prompt_seed_lock을 보유한다.
+    """
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    seeded = []
     for filename in PROMPT_FILES.values():
-        source = os.path.join(PROMPTS_DIR, filename)
+        target = os.path.join(PROMPTS_DIR, filename)
+        if os.path.isfile(target):
+            continue
+        source = os.path.join(BASE_DIR, "prompts", "lighbd", filename)
+        if not os.path.isfile(source):
+            continue
+        try:
+            shutil.copyfile(source, target)
+            seeded.append(filename)
+        except OSError as e:
+            print(
+                f"[ILLUST_CONTEXT] 공용 지침 초기화 실패: "
+                f"source={source}, error={type(e).__name__}: {e}"
+            )
+    if seeded:
+        print(f"[ILLUST_CONTEXT] 공용 지침 보충: {', '.join(seeded)}")
+
+
+def _emotion_prompt_default(filename: str) -> str:
+    """감정 삽화 기본 지침 파일 경로. 없으면 빈 문자열."""
+    path = os.path.join(EMOTION_PROMPT_DEFAULTS_DIR, filename)
+    return path if os.path.isfile(path) else ""
+
+
+def _prompt_source(filename: str) -> str:
+    """감정 삽화 지침을 채울 원본: 감정 전용 기본값 우선, 없으면 공용 지침."""
+    return _emotion_prompt_default(filename) or os.path.join(PROMPTS_DIR, filename)
+
+
+def _backup_emotion_prompt(target: str, filename: str, stamp: str, *, suffix: str = "") -> None:
+    if not os.path.isfile(target):
+        return
+    try:
+        backup = os.path.join(
+            PROMPT_BACKUP_DIR_EMOTION,
+            f"lighbd_emotion_{filename}.{stamp}{suffix}.bak",
+        )
+        shutil.copyfile(target, backup)
+    except OSError as e:
+        print(f"[ILLUST_CONTEXT] 감정 삽화 지침 백업 실패: {target}: {e}")
+
+
+def _seed_emotion_prompt_files() -> None:
+    """감정 삽화 지침 폴더에서 빠진 파일만 기본값으로 채운다.
+
+    기존 파일은 사용자 편집본일 수 있으므로 덮어쓰지 않는다. 새 단계가 추가될
+    때마다 기존 설치본에도 지침 파일이 자동으로 보충된다. 호출자가
+    _prompt_seed_lock을 보유한다.
+    """
+    os.makedirs(PROMPTS_DIR_EMOTION, exist_ok=True)
+    seeded = []
+    for filename in PROMPT_FILES.values():
         target = os.path.join(PROMPTS_DIR_EMOTION, filename)
+        if os.path.isfile(target):
+            continue
+        source = _prompt_source(filename)
         try:
             if os.path.isfile(source):
                 shutil.copyfile(source, target)
+                seeded.append(filename)
         except Exception as e:
             print(
                 f"[ILLUST_CONTEXT] 감정 삽화 지침 초기화 실패: "
                 f"source={source}, error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
-    print(
-        f"[ILLUST_CONTEXT] 감정 삽화 전용 지침 폴더 준비 완료: "
-        f"{PROMPTS_DIR_EMOTION}"
-    )
+    if seeded:
+        print(
+            "[ILLUST_CONTEXT] 감정 삽화 전용 지침 보충: "
+            f"{', '.join(seeded)}"
+        )
+
+
+# 감정 삽화 PROFILE-RESOLVE가 프로필+복장을 함께 예측하던 시절의 기본 지침.
+# 새 timeline 스키마로 자동 이전할 때만 식별자로 사용한다.
+_LEGACY_EMOTION_PROFILE_MARKER = (
+    "Resolve one CURRENT character's visual profile and outfit for emotion-asset rendering."
+)
+
+
+def _migrate_legacy_emotion_profile_prompt(stamp: str) -> bool:
+    """legacy 복장 예측 profile.txt를 공용 timeline 지침으로 교체한다."""
+    target = os.path.join(PROMPTS_DIR_EMOTION, "profile.txt")
+    shared = os.path.join(PROMPTS_DIR, "profile.txt")
+    if not os.path.isfile(target) or not os.path.isfile(shared):
+        return False
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            current = f.read()
+        with open(shared, "r", encoding="utf-8") as f:
+            timeline_prompt = f.read()
+    except OSError as e:
+        print(f"[ILLUST_CONTEXT] 감정 삽화 profile 지침 확인 실패: {target}: {e}")
+        return False
+    if (
+        _LEGACY_EMOTION_PROFILE_MARKER not in current
+        # legacy 지침도 "Do not add `profile_timeline`" 문장으로 필드명을
+        # 언급하므로, 새 스키마의 실제 JSON 키(`"profile_timeline":`)가
+        # 있을 때만 사용자 편집본으로 본다.
+        or '"profile_timeline"' in current
+        or not timeline_prompt
+    ):
+        return False
+    try:
+        _backup_emotion_prompt(target, "profile.txt", stamp, suffix=".legacy")
+        with open(target, "w", encoding="utf-8", newline="\n") as f:
+            f.write(timeline_prompt)
+        return True
+    except OSError as e:
+        print(f"[ILLUST_CONTEXT] 감정 삽화 profile 지침 이전 실패: {target}: {e}")
+        return False
+
+
+def _upgrade_emotion_prompt_files() -> None:
+    """감정 삽화 지침을 새 단계 기본값으로 한 번 갱신한다.
+
+    공용 지침을 그대로 복사한 파일만 감정 전용 기본값으로 교체한다.
+    사용자가 편집한 지침은 덮어쓰지 않는다. 호출자가 _prompt_seed_lock을 보유한다.
+    """
+    global _emotion_prompt_upgrade_done
+    if _emotion_prompt_upgrade_done:
+        return
+    _emotion_prompt_upgrade_done = True
+    os.makedirs(PROMPT_BACKUP_DIR_EMOTION, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    upgraded = []
+    for filename in ("character.txt", "scene_select.txt"):
+        template_path = _emotion_prompt_default(filename)
+        target = os.path.join(PROMPTS_DIR_EMOTION, filename)
+        shared = os.path.join(PROMPTS_DIR, filename)
+        if not template_path or not os.path.isfile(target) or not os.path.isfile(shared):
+            continue
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                current = f.read()
+            with open(shared, "r", encoding="utf-8") as f:
+                generic = f.read()
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+        except OSError as e:
+            print(f"[ILLUST_CONTEXT] 감정 삽화 지침 확인 실패: {target}: {e}")
+            continue
+        if not template or current != generic:
+            continue
+        try:
+            _backup_emotion_prompt(target, filename, stamp)
+            with open(target, "w", encoding="utf-8", newline="\n") as f:
+                f.write(template)
+            upgraded.append(filename)
+        except OSError as e:
+            print(f"[ILLUST_CONTEXT] 감정 삽화 지침 갱신 실패: {target}: {e}")
+    if _migrate_legacy_emotion_profile_prompt(stamp):
+        upgraded.append("profile.txt(legacy→timeline)")
+    if upgraded:
+        print(
+            "[ILLUST_CONTEXT] 감정 삽화 전용 지침으로 갱신: "
+            f"{', '.join(upgraded)}"
+        )
 
 
 def load_prompt_files(workshop: str | None = None) -> dict:
     """지침 파일을 읽는다. 감정 삽화 공방은 자체 폴더를 사용한다."""
     normalized = normalize_workshop(workshop)
-    if normalized == "emotion":
-        with _prompt_seed_lock:
+    with _prompt_seed_lock:
+        _seed_shared_prompt_files()
+        if normalized == "emotion":
             _seed_emotion_prompt_files()
+            _upgrade_emotion_prompt_files()
     directory = prompts_dir_for(normalized)
     result = {}
     for key, filename in PROMPT_FILES.items():
@@ -724,8 +948,9 @@ def save_prompt_files(values: dict, workshop: str | None = None) -> list[str]:
     backup_dir = (
         PROMPT_BACKUP_DIR_EMOTION if normalized == "emotion" else PROMPT_BACKUP_DIR
     )
-    if normalized == "emotion":
-        with _prompt_seed_lock:
+    with _prompt_seed_lock:
+        _seed_shared_prompt_files()
+        if normalized == "emotion":
             _seed_emotion_prompt_files()
     os.makedirs(directory, exist_ok=True)
     os.makedirs(backup_dir, exist_ok=True)
@@ -816,6 +1041,8 @@ def parse_context_request(positive: str) -> dict | None:
     payload["target_slotted"] = target_slotted
     payload["action"] = action
     payload["slot"] = slot
+    if "workshop" in payload:
+        payload["workshop"] = normalize_workshop(payload["workshop"])
     return payload
 
 
@@ -915,11 +1142,14 @@ def parse_prompt_batch_request(positive: str) -> dict | None:
             "source": "risu_module_prompt_batch_v1",
         })
 
-    return {
+    result = {
         "protocol": "prompt_batch_v1",
         "session_id": session_id,
         "items": items,
     }
+    if "workshop" in payload:
+        result["workshop"] = normalize_workshop(payload["workshop"])
+    return result
 
 
 def parse_regenerate_request(positive: str) -> dict | None:
@@ -966,10 +1196,11 @@ def parse_easy_edit_request(positive: str) -> dict | None:
     return {"session_id": session_id, "slot": slot, "direction": direction}
 
 
-def create_session(session_id: str, context: str) -> dict:
+def create_session(session_id: str, context: str, *, workshop: str | None = None) -> dict:
     lookup_key = _register_lookup_key(session_id)
     session = {
         "session_id": session_id,
+        "workshop": normalize_workshop(workshop) if workshop is not None else None,
         "lookup_key": lookup_key,
         "status": "building",
         "context": context,
@@ -1247,6 +1478,18 @@ def set_session_error(session_id: str, error: str) -> None:
     session["updated_at"] = time.time()
 
 
+def _session_bot_root(session: dict) -> str:
+    """세션을 만든 워크숍의 봇 저장소 경로. 요청 스코프에 기대지 않는다."""
+    from modes.bot_mode import BOT_DIR, reset_bot_scope, set_bot_scope
+    token = set_bot_scope(
+        "emotion" if normalize_workshop(session.get("workshop")) == "emotion" else "illust"
+    )
+    try:
+        return os.fspath(BOT_DIR)
+    finally:
+        reset_bot_scope(token)
+
+
 def session_image(session_id: str, index: int) -> bytes | None:
     session = get_session(session_id)
     if not session or session.get("status") != "ready":
@@ -1261,7 +1504,7 @@ def session_image(session_id: str, index: int) -> bytes | None:
         descriptor = session["items"][index - 1]
         if str(descriptor.get("kind") or "") == "original_asset":
             image = illustration_original_assets.load_original_asset_bytes(
-                os.path.join(data_root(BASE_DIR), "bot"),
+                _session_bot_root(session),
                 descriptor,
             )
             if image:
@@ -1308,7 +1551,8 @@ def _load_session_backup_image(
         return None
 
     candidates = [
-        os.path.join(WORKFLOW_BACKUP_DIR, backup_name + extension)
+        os.path.join(directory, backup_name + extension)
+        for directory in BACKUP_SEARCH_DIRS
         for extension in _BACKUP_IMAGE_EXTENSIONS
     ]
     image_path = next((path for path in candidates if os.path.isfile(path)), "")
@@ -1361,7 +1605,7 @@ def session_image_by_slot(session_id: str, slot: int) -> bytes | None:
             image = images[index]
             if image is None and str(item.get("kind") or "") == "original_asset":
                 image = illustration_original_assets.load_original_asset_bytes(
-                    os.path.join(data_root(BASE_DIR), "bot"),
+                    _session_bot_root(session),
                     item,
                 )
                 if image:
@@ -3451,16 +3695,17 @@ def _materialize_profile_character_records(
                     f"character={name!r}, at={segment_id!r}, profile_id={profile_id!r}"
                 )
                 continue
-            profile_events.append({
+            event_record = {
                 "segment_id": segment_id,
                 "character": name,
                 "profile": profile_id,
                 "profile_id": profile_id,
                 "state": reason,
                 "confidence": 1.0,
-            })
+            }
+            profile_events.append(event_record)
             if segment_id == "START":
-                initial_visual_bases.append({
+                initial = {
                     "character": name,
                     "target_visual_profile_id": profile_id,
                     "visual_profile_name": profile_id,
@@ -3468,9 +3713,10 @@ def _materialize_profile_character_records(
                     "anchor_segment": "START",
                     "evidence": [reason] if reason else [],
                     "confidence": 1.0,
-                })
+                }
+                initial_visual_bases.append(initial)
             else:
-                visual_base_events.append({
+                visual_base_event = {
                     "segment_id": segment_id,
                     "character": name,
                     "target_visual_profile_id": profile_id,
@@ -3478,7 +3724,8 @@ def _materialize_profile_character_records(
                     "visual_change": reason,
                     "evidence": reason,
                     "confidence": 1.0,
-                })
+                }
+                visual_base_events.append(visual_base_event)
 
     normalized_warnings = list(warnings or [])
     normalized_uncertainties = [
@@ -3730,11 +3977,12 @@ def parse_profile_resolution(
                     )
                     warnings.append(warning)
                     print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
-                normalized_timeline.append({
+                normalized_event = {
                     "at": at,
                     "profile_id": profile_id,
                     "reason": reason,
-                })
+                }
+                normalized_timeline.append(normalized_event)
 
             normalized_timeline.sort(
                 key=lambda event: (
@@ -3747,11 +3995,12 @@ def parse_profile_resolution(
             if start_count != 1:
                 invalid_reasons.append(f"START 개수 오류: {start_count}")
 
-        normalized_characters.append({
+        normalized_character = {
             "name": name,
             "in_history": in_history,
             "profile_timeline": normalized_timeline,
-        })
+        }
+        normalized_characters.append(normalized_character)
         if invalid_reasons:
             request = {
                 "character": name,
@@ -3963,11 +4212,10 @@ def _apply_profile_resolution_fallbacks(
             visual_profiles or {},
             name,
         )
-        if (
-            not name
-            or not isinstance(character_profiles, dict)
-            or len(character_profiles.get("profiles") or []) <= 1
-        ):
+        if not name or not isinstance(character_profiles, dict):
+            character["profile_timeline"] = []
+            continue
+        if len(character_profiles.get("profiles") or []) <= 1:
             character["profile_timeline"] = []
             continue
         timeline = list(character.get("profile_timeline") or [])
@@ -3992,17 +4240,15 @@ def _apply_profile_resolution_fallbacks(
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
         timeline = [event for event in timeline if event.get("at") != "START"]
-        character["profile_timeline"] = [
-            {
-                "at": "START",
-                "profile_id": profile_id,
-                "reason": (
-                    "프로필 응답이 유효한 START를 제공하지 않아 이전 추적 상태 또는 "
-                    "등록 기본 프로필을 안전 폴백으로 적용했다."
-                ),
-            },
-            *timeline,
-        ]
+        start_event = {
+            "at": "START",
+            "profile_id": profile_id,
+            "reason": (
+                "프로필 응답이 유효한 START를 제공하지 않아 이전 추적 상태 또는 "
+                "등록 기본 프로필을 안전 폴백으로 적용했다."
+            ),
+        }
+        character["profile_timeline"] = [start_event, *timeline]
         reason = "추론 OFF 기본 프로필" if default_only else "교정 실패 안전 폴백"
         warning = f"{reason} 적용: character={name}, profile_id={profile_id}"
         warnings.append(warning)
@@ -4085,6 +4331,23 @@ def _filter_profile_result_for_characters(
             for item in source.get("visual_base_events") or []
             if belongs(item)
         ],
+        "anchor_outfits": {
+            str(name).strip(): deepcopy(by_anchor)
+            for name, by_anchor in (source.get("anchor_outfits") or {}).items()
+            if str(name).strip().casefold() in selected and isinstance(by_anchor, dict)
+        },
+        "character_outfits": {
+            str(name).strip(): str(outfit).strip()
+            for name, outfit in (source.get("character_outfits") or {}).items()
+            if str(name).strip().casefold() in selected and str(outfit).strip()
+        },
+        "outfit_last_anchor": {
+            str(name).strip(): str(anchor).strip()
+            for name, anchor in (source.get("outfit_last_anchor") or {}).items()
+            if str(name).strip().casefold() in selected and str(anchor).strip()
+        },
+        **({"emotion_state_table": deepcopy(source["emotion_state_table"])}
+           if "emotion_state_table" in source else {}),
         "validation_warnings": list(source.get("validation_warnings") or []),
         "validation_errors": list(source.get("validation_errors") or []),
         "repair_requests": [
@@ -4148,7 +4411,11 @@ def profile_authority_text(
         }:
             appearance_values.insert(0, gender_tag)
         appearance = ", ".join(appearance_values) or "(none)"
-        outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
+        outfit = (
+            _short_emotion_outfit(event.get("outfit"))
+            or ", ".join(visual_tag_values(base.get("outfit") or []))
+            or "(none)"
+        )
         lines.append(f"### {segment_id} · {name} · {profile['id']}")
         if state:
             lines.append(f"- profile state: {state}")
@@ -4201,7 +4468,10 @@ def profile_start_reference(
         }:
             appearance_values.insert(0, gender_tag)
         appearance = ", ".join(appearance_values)
-        outfit = ", ".join(visual_tag_values(base.get("outfit") or []))
+        outfit = (
+            _short_emotion_outfit(initial.get("outfit"))
+            or ", ".join(visual_tag_values(base.get("outfit") or []))
+        )
         blocks.append(
             f"### {name}\n-Name\n{name}\n-Appearance\n{appearance}"
             f"\n-default_outfit\n{outfit}"
@@ -4963,7 +5233,11 @@ def apply_initial_visual_bases(
             (changed and bool(tracked_profile_id))
             or not _outfit_state_is_known(current_wardrobe)
         ):
-            worn = visual_tag_values(base.get("outfit") or [])
+            predicted_outfit = _short_emotion_outfit(initial.get("outfit"))
+            worn = (
+                [predicted_outfit] if predicted_outfit
+                else visual_tag_values(base.get("outfit") or [])
+            )
             state["current_wardrobe"] = {
                 "body_state": "clothed" if worn else "unknown",
                 "worn": worn,
@@ -5827,6 +6101,8 @@ def _parse_call2_keyvis_output(
     *,
     mask_inline: bool = False,
     allow_scenes: bool = False,
+    moss: bool = False,
+    canvas_sizes: dict | None = None,
 ) -> tuple[dict | None, str]:
     """Read one KEYVIS; candidate names guide generation without rejecting output."""
     local_toggles = deepcopy(toggles)
@@ -5838,7 +6114,7 @@ def _parse_call2_keyvis_output(
     })
     raw = None
     composite = toggles.get("illustration_output_mode") in ("composite", "composite_both")
-    if mask_inline or allow_scenes or composite:
+    if mask_inline or allow_scenes or composite or moss:
         documents = (re.findall(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
                      if allow_scenes else []) or [text]
         for document in documents:
@@ -5873,6 +6149,22 @@ def _parse_call2_keyvis_output(
             descriptors = [descriptor]
         except (KeyError, TypeError, ValueError) as exc:
             return None, f"DETAIL-COMPOSITE KEYVIS: {exc}"
+    elif moss:
+        # DETAIL-MOSS writes the key visual as the same absolute layout shape.
+        from modes import illustration_scene_pipeline
+        if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
+            reason = "DETAIL-MOSS 응답에 keyvis object가 없습니다"
+            print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
+            return None, reason
+        try:
+            descriptor = illustration_scene_pipeline._parse_detail_moss_scene(
+                {**raw["keyvis"], "slot": -1}, {"slot": -1},
+                canvas_sizes=canvas_sizes, kind="keyvis")
+            descriptors = [descriptor]
+        except (ValueError, TypeError) as exc:
+            print(f"[ILLUST_CONTEXT:{source}] DETAIL-MOSS KEYVIS 파싱 실패: input={raw!r}, error={exc}")
+            traceback.print_exc()
+            return None, str(exc)
     elif mask_inline:
         from modes import illustration_scene_pipeline
         if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
@@ -6860,6 +7152,8 @@ _CALL_TASK_KEYS = {
     "CHARACTER-RESOLVE-REPAIR": "illustration_character_resolve",
     "PROFILE-RESOLVE": "illustration_profile_resolve",
     "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
+    "EMOTION-RESOLVE": "illustration_emotion_resolve",
+    "EMOTION-ASSET": "illustration_emotion_resolve",
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: PROFILE_CONTEXT_TRANSLATE_TASK_KEY,
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2_plan",
@@ -6900,6 +7194,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     ),
     "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 캐릭터별 병렬 결정"),
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
+    "EMOTION-RESOLVE": ("emotion_resolve", "CURRENT 장면별 복장 결정"),
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: (
         "profile_context_translation",
         "프로필 영어 컨텍스트 번역",
@@ -7846,6 +8141,1381 @@ async def _run_parallel_pipeline_jobs(
     return [resolved[index]["value"] for index in range(1, len(jobs) + 1)]
 
 
+def _short_emotion_outfit(value) -> str:
+    """Normalize any outfit shape to one short label without rejecting it."""
+    if isinstance(value, dict):
+        for key in ("outfit", "name", "label", "value", "description", "text"):
+            if key in value:
+                text = _short_emotion_outfit(value[key])
+                if text:
+                    return text
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        parts: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = _short_emotion_outfit(item)
+            folded = text.casefold()
+            if text and folded not in seen:
+                seen.add(folded)
+                parts.append(text)
+        value = ", ".join(parts)
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().strip("\"'“”‘’").lstrip("#").strip()
+    text = re.sub(r"\s+", " ", text)
+    if not text:
+        return ""
+    words = text.split(" ")
+    if len(words) > 8:
+        text = " ".join(words[:8])
+    return text[:80].strip()
+
+
+def _emotion_saved_outfit_name(value) -> str:
+    """Read one saved-outfit entry as its display name."""
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("label") or "").strip()
+    return str(value or "").strip()
+
+
+def _emotion_saved_outfit_entry(value) -> dict:
+    """Normalize one saved outfit to ``{"name", "tags"}`` for prompts."""
+    if isinstance(value, dict):
+        name = _emotion_saved_outfit_name(value)
+        try:
+            tags = visual_tag_values(value.get("tags") or [])
+        except Exception:
+            tags = []
+        return {"name": name, "tags": tags}
+    return {"name": _emotion_saved_outfit_name(value), "tags": []}
+
+
+def _emotion_outfit_catalog(
+    bot_name: str,
+    visual_profiles: dict[str, dict] | None,
+) -> dict[str, dict[str, list[dict]]]:
+    """Read saved outfit names and their tags for each profile card.
+
+    The emotion-resolve prompt needs the tags of a saved outfit, not only its
+    folder name, so the model can recognize an existing outfit and reuse its
+    concrete clothing instead of inventing a near-duplicate.
+    """
+    bot_name = str(bot_name or "").strip()
+    if not bot_name:
+        return {}
+    try:
+        from modes.bot_mode import BOT_DIR
+        bot_root = str(BOT_DIR)
+    except Exception as exc:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 감정 복장 저장소 경로 확인 실패: "
+            f"error={exc}"
+        )
+        return {}
+    catalog: dict[str, dict[str, list[dict]]] = {}
+    for name, character in (visual_profiles or {}).items():
+        if not isinstance(character, dict):
+            continue
+        character_name = str(name or "").strip()
+        if not character_name:
+            continue
+        tags_by_profile: dict[str, dict[str, list[str]]] = {}
+        for profile in character.get("profiles") or []:
+            if not isinstance(profile, dict):
+                continue
+            profile_id = str(profile.get("id") or "").strip()
+            if not profile_id:
+                continue
+            by_label: dict[str, list[str]] = {}
+            for preset in profile.get("outfit_presets") or []:
+                if not isinstance(preset, dict):
+                    continue
+                label = str(preset.get("label") or "").strip().casefold()
+                if not label:
+                    continue
+                try:
+                    by_label[label] = visual_tag_values(preset.get("tags") or [])
+                except Exception:
+                    by_label[label] = []
+            tags_by_profile[profile_id] = by_label
+        by_profile: dict[str, list[dict]] = {}
+        for profile in character.get("profiles") or []:
+            if not isinstance(profile, dict):
+                continue
+            profile_id = str(profile.get("id") or "").strip()
+            if not profile_id:
+                continue
+            profile_dir = os.path.join(
+                bot_root, bot_name, character_name, profile_id)
+            try:
+                if not os.path.isdir(profile_dir):
+                    continue
+                outfit_names = sorted(
+                    entry for entry in os.listdir(profile_dir)
+                    if not entry.startswith((".", "_"))
+                    and os.path.isdir(os.path.join(profile_dir, entry))
+                )
+            except OSError as exc:
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_RESOLVE] 감정 복장 폴더 확인 실패: "
+                    f"path={profile_dir!r}, error={exc}"
+                )
+                continue
+            if outfit_names:
+                by_profile[profile_id] = [
+                    {
+                        "name": entry,
+                        "tags": tags_by_profile.get(profile_id, {}).get(
+                            entry.casefold(), []),
+                    }
+                    for entry in outfit_names
+                ]
+        if by_profile:
+            catalog[character_name] = by_profile
+    return catalog
+
+
+def _emotion_previous_outfit(previous_state: dict | None, name: str) -> str:
+    """Read the tracked outfit saved by the previous CURRENT illustration."""
+    states = previous_state if isinstance(previous_state, dict) else {}
+    wanted = str(name or "").strip().casefold()
+    if not wanted:
+        return ""
+    for key, tracked in states.items():
+        if not isinstance(tracked, dict):
+            continue
+        tracked_name = str(tracked.get("canonical_name") or key).strip()
+        if tracked_name.casefold() != wanted:
+            continue
+        status = tracked.get("call1_status")
+        if isinstance(status, str) and status.lstrip().startswith("{"):
+            try:
+                value = json.loads(status)
+            except json.JSONDecodeError:
+                value = None
+            if isinstance(value, dict):
+                outfit = _short_emotion_outfit(value.get("outfit"))
+                if outfit:
+                    return outfit
+        outfit = _short_emotion_outfit(status)
+        if outfit:
+            return outfit
+        break
+    return ""
+
+
+def _emotion_scene_anchors(
+    scene_plan: list | None,
+    current_segments: dict[str, dict] | None,
+) -> list[dict]:
+    """Return ordered selected anchors with their already-decided subject and emotion."""
+    segments = current_segments or {}
+    anchors = []
+    seen = set()
+    for item in scene_plan or []:
+        if not isinstance(item, dict):
+            continue
+        anchor = str(
+            item.get("anchor_segment") or item.get("anchor") or ""
+        ).strip().upper()
+        if not anchor or anchor in seen:
+            continue
+        if anchor not in segments:
+            print(
+                "[ILLUST_CONTEXT:EMOTION_RESOLVE] CURRENT 구간에 없는 선택 앵커 제외: "
+                f"anchor={anchor!r}"
+            )
+            continue
+        name = str(item.get("character") or "").strip()
+        if not name and isinstance(item.get("characters"), list):
+            name = next((
+                str(value).strip()
+                for value in item["characters"]
+                if str(value or "").strip()
+            ), "")
+        if not name:
+            print(
+                "[ILLUST_CONTEXT:EMOTION_RESOLVE] 대상 캐릭터 없는 선택 앵커 제외: "
+                f"anchor={anchor!r}"
+            )
+            continue
+        emotion = ""
+        if isinstance(item.get("emotion"), str):
+            emotion = item["emotion"].strip()
+        elif isinstance(item.get("emotions"), dict):
+            emotion = next((
+                str(value).strip()
+                for value in item["emotions"].values()
+                if str(value or "").strip()
+            ), "")
+        seen.add(anchor)
+        anchors.append({
+            "anchor": anchor,
+            "character": name,
+            "emotion": emotion,
+            "text": str((segments.get(anchor) or {}).get("text") or "").strip(),
+        })
+    return anchors
+
+
+def _profile_id_at_anchor(
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    name: str,
+    anchor: str,
+    segment_order: dict[str, int],
+) -> str:
+    """Return the profile active at one anchor using START/Cxxx numeric order."""
+    character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+    if not isinstance(character_profiles, dict):
+        return ""
+    anchor_key = str(anchor or "").strip().upper()
+    anchor_rank = -1 if anchor_key == "START" else (segment_order or {}).get(anchor_key)
+    if anchor_rank is None:
+        return ""
+    profile_id = str(character_profiles.get("default_visual_profile_id") or "").strip()
+    selected_rank = -2
+    for event in (profile_result or {}).get("profile_events") or []:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("character") or "").strip().casefold() != str(name).strip().casefold():
+            continue
+        at = str(event.get("segment_id") or "").strip().upper()
+        rank = -1 if at == "START" else (segment_order or {}).get(at)
+        if rank is None:
+            continue
+        if rank <= anchor_rank and rank >= selected_rank:
+            selected_rank = rank
+            profile_id = str(event.get("profile_id") or "").strip()
+    return profile_id
+
+
+def _emotion_anchor_rows(
+    anchors: list[dict],
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    outfit_catalog: dict,
+    previous_state: dict | None,
+    segment_order: dict[str, int],
+) -> list[dict]:
+    """Describe each selected anchor for the outfit-only LLM call."""
+    rows = []
+    for item in anchors:
+        name = item["character"]
+        anchor = item["anchor"]
+        profile_id = _profile_id_at_anchor(
+            profile_result, visual_profiles, name, anchor, segment_order)
+        profile_name = profile_id
+        default_outfit = ""
+        character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+        if profile_id and isinstance(character_profiles, dict):
+            try:
+                profile = profile_by_id(character_profiles, profile_id)
+                if isinstance(profile, dict):
+                    profile_name = str(profile.get("name") or profile.get("id") or profile_id)
+                base = resolve_visual_base(character_profiles, profile_id)
+                if isinstance(base, dict):
+                    default_outfit = ", ".join(
+                        visual_tag_values(base.get("outfit") or []))
+            except Exception as exc:
+                print(
+                    "[ILLUST_CONTEXT:EMOTION_RESOLVE] 활성 프로필 해석 실패: "
+                    f"character={name!r}, anchor={anchor!r}, profile_id={profile_id!r}, "
+                    f"error={exc}"
+                )
+        saved = []
+        character_catalog = (
+            outfit_catalog.get(name) if isinstance(outfit_catalog, dict) else None
+        )
+        if not isinstance(character_catalog, dict):
+            character_catalog = next((
+                value for key, value in (outfit_catalog or {}).items()
+                if str(key or "").strip().casefold() == name.casefold()
+            ), None)
+        if isinstance(character_catalog, dict):
+            saved = [
+                _emotion_saved_outfit_entry(entry)
+                for entry in (character_catalog.get(profile_id) or [])
+                if _emotion_saved_outfit_name(entry)
+            ]
+        rows.append({
+            "anchor": anchor,
+            "character": name,
+            "emotion": item["emotion"],
+            "profile_id": profile_id,
+            "profile_name": profile_name,
+            "default_outfit": default_outfit,
+            "saved_outfits": saved,
+            "previous_outfit": _emotion_previous_outfit(previous_state, name),
+            "context": item["text"],
+        })
+    return rows
+
+
+def _parse_emotion_resolution(
+    raw_text: str,
+    scene_plan: list | None,
+    current_segments: dict[str, dict] | None,
+    current_names: list[str],
+    previous_state: dict | None,
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+) -> dict:
+    """Normalize anchor-keyed outfit labels into render and persistence state."""
+    from modes.illustration_scene_pipeline import fill_state_table
+
+    anchors = _emotion_scene_anchors(scene_plan, current_segments)
+    raw = _json_object_from_text(raw_text)
+    if not isinstance(raw, dict):
+        print("[ILLUST_CONTEXT:EMOTION_RESOLVE] JSON object 파싱 실패")
+        raw = {}
+    for wrapper in ("outfits", "scenes", "anchors"):
+        inner = raw.get(wrapper)
+        if isinstance(inner, dict):
+            raw = inner
+            break
+    by_anchor = {
+        str(key or "").strip().upper(): value
+        for key, value in raw.items()
+    }
+    warnings: list[str] = []
+    anchor_outfits: dict[str, dict[str, str]] = {}
+    character_outfits: dict[str, str] = {}
+    outfit_last_anchor: dict[str, str] = {}
+    changes: dict[str, dict[str, dict]] = {}
+    for item in anchors:
+        anchor = item["anchor"]
+        name = item["character"]
+        entry = by_anchor.get(anchor)
+        outfit = ""
+        if entry is None:
+            warning = (
+                "EMOTION-RESOLVE 응답에 선택 앵커가 없어 이전 저장 복장 사용: "
+                f"anchor={anchor}, character={name}"
+            )
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:EMOTION_RESOLVE] {warning}")
+        elif isinstance(entry, str):
+            outfit = _short_emotion_outfit(entry)
+        elif isinstance(entry, dict):
+            returned_name = str(entry.get("character") or "").strip()
+            if returned_name and returned_name.casefold() != name.casefold():
+                warning = (
+                    "EMOTION-RESOLVE 캐릭터 불일치로 앵커 복장 무시: "
+                    f"anchor={anchor}, expected={name!r}, returned={returned_name!r}"
+                )
+                warnings.append(warning)
+                print(f"[ILLUST_CONTEXT:EMOTION_RESOLVE] {warning}")
+            else:
+                outfit = _short_emotion_outfit(entry.get("outfit"))
+        else:
+            warnings.append(
+                f"EMOTION-RESOLVE 앵커 항목 형식 오류: anchor={anchor}, item={entry!r}")
+        if not outfit:
+            outfit = _emotion_previous_outfit(previous_state, name)
+        if not outfit:
+            continue
+        anchor_outfits.setdefault(name, {})[anchor] = outfit
+        character_outfits.setdefault(name, outfit)
+        outfit_last_anchor[name] = anchor
+        changes.setdefault(anchor, {})[name] = {"outfit": outfit}
+    selected_anchors = [item["anchor"] for item in anchors]
+    state_table = fill_state_table(
+        changes, list(dict.fromkeys(current_names)), selected_anchors)
+    for warning in warnings:
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "EMOTION-RESOLVE",
+            "reason": warning,
+            "input": {"raw": raw, "anchors": selected_anchors},
+        }])
+    print(
+        "[ILLUST_CONTEXT:EMOTION_RESOLVE] 장면별 복장 결정 완료: "
+        f"anchors={selected_anchors}, characters={list(character_outfits)}, "
+        f"warnings={len(warnings)}"
+    )
+    return {
+        "anchor_outfits": anchor_outfits,
+        "character_outfits": character_outfits,
+        "outfit_last_anchor": outfit_last_anchor,
+        "state_table": state_table,
+        "uncertainties": [],
+        "validation_warnings": warnings,
+    }
+
+
+def _merge_emotion_resolution(
+    profile_result: dict | None,
+    emotion_result: dict | None,
+) -> dict:
+    """Attach anchor outfits to the resolved profile timeline without changing profiles."""
+    result = deepcopy(profile_result or {})
+    emotion_result = emotion_result or {}
+    anchor_outfits = deepcopy(emotion_result.get("anchor_outfits") or {})
+    character_outfits = deepcopy(emotion_result.get("character_outfits") or {})
+    result["anchor_outfits"] = anchor_outfits
+    result["character_outfits"] = character_outfits
+    result["outfit_last_anchor"] = deepcopy(
+        emotion_result.get("outfit_last_anchor") or {})
+    if "state_table" in emotion_result:
+        result["emotion_state_table"] = deepcopy(emotion_result["state_table"])
+
+    def outfit_for(name: str, anchor: str) -> str:
+        wanted = str(name or "").strip().casefold()
+        by_anchor = next((
+            value for key, value in anchor_outfits.items()
+            if str(key or "").strip().casefold() == wanted
+        ), None)
+        if isinstance(by_anchor, dict):
+            for at, value in by_anchor.items():
+                if str(at or "").strip().upper() == str(anchor or "").strip().upper():
+                    short = _short_emotion_outfit(value)
+                    if short:
+                        return short
+        return next((
+            str(value).strip() for key, value in character_outfits.items()
+            if str(key or "").strip().casefold() == wanted and str(value).strip()
+        ), "")
+
+    for key in ("profile_events", "visual_base_events"):
+        for event in result.get(key) or []:
+            if not isinstance(event, dict):
+                continue
+            outfit = outfit_for(
+                str(event.get("character") or ""),
+                str(event.get("segment_id") or ""),
+            )
+            if outfit:
+                event["outfit"] = outfit
+    for initial in result.get("initial_visual_bases") or []:
+        if not isinstance(initial, dict):
+            continue
+        outfit = outfit_for(
+            str(initial.get("character") or ""),
+            str(initial.get("anchor_segment") or "START"),
+        )
+        if outfit:
+            initial["outfit"] = outfit
+    return result
+
+
+async def _run_emotion_resolution(
+    *,
+    emotion_system: str,
+    segmented_current: str,
+    current_context: str,
+    current_segments: dict[str, dict],
+    scene_plan: list | None,
+    profile_result: dict | None,
+    previous_state: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    outfit_catalog: dict,
+    stream_notify,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Decide one short outfit per already-selected scene anchor."""
+    anchors = _emotion_scene_anchors(scene_plan, current_segments)
+    empty = {
+        "anchor_outfits": {},
+        "character_outfits": {},
+        "outfit_last_anchor": {},
+        "state_table": {"slots": [], "characters": [], "changes": {}, "states": {}},
+        "uncertainties": [],
+        "validation_warnings": [],
+    }
+    if not anchors:
+        print(
+            "[ILLUST_CONTEXT:EMOTION_RESOLVE] 선택 장면 앵커가 없어 호출 건너뜀"
+        )
+        return "", empty
+    segment_order = {
+        str(segment_id).strip().upper(): index
+        for index, segment_id in enumerate(current_segments or {}, start=1)
+    }
+    rows = _emotion_anchor_rows(
+        anchors, profile_result, visual_profiles, outfit_catalog,
+        previous_state, segment_order)
+    messages = _normalize_messages(prompt_builders.emotion_resolve_messages(
+        emotion_system, rows, segmented_current))
+
+    def validate_shape(result):
+        raw = _json_object_from_text(result)
+        if raw is None:
+            return False, "EMOTION-RESOLVE JSON object 없음"
+        return True, ""
+
+    raw_output = await _call_pipeline_llm(
+        "EMOTION-RESOLVE",
+        messages,
+        stream_notify,
+        result_validator=validate_shape,
+        json_mode=True,
+        history_ids_sink=history_ids_sink,
+    )
+    parsed = _parse_emotion_resolution(
+        raw_output,
+        scene_plan,
+        current_segments,
+        [item["character"] for item in anchors],
+        previous_state,
+        profile_result,
+        visual_profiles,
+    )
+    illustration_flow.record_state_table(
+        parsed["state_table"], label="EMOTION-RESOLVE",
+        field="emotion_state_table")
+    return raw_output, parsed
+
+
+def _emotion_folder_name(value) -> str:
+    """Turn a user label into one safe emotion-store folder segment."""
+    text = _short_emotion_outfit(value)
+    if not text:
+        return ""
+    text = re.sub(r"[\\/:\x00]+", "-", text)
+    return text.strip(" .-_")[:80].strip()
+
+
+def _emotion_expression_catalog() -> dict[str, list[str]]:
+    """Read the same expression catalog the emotion preset settings show.
+
+    The settings API merges the distributed ``presets.json`` expressions with the
+    local ``data/asset_data/tags.json`` (local entries win) and folds
+    ``composition_presets`` into ``expressions``. Preset rows reference a name from
+    that catalog, so the pipeline must resolve it the same way.
+    """
+    from preset_catalog import (
+        load_builtin_presets,
+        merge_expression_presets,
+        preset_catalog_only,
+    )
+
+    try:
+        expressions = dict(load_builtin_presets().get("expressions") or {})
+    except Exception as exc:
+        print(f"[ILLUST_CONTEXT:EMOTION_ASSET] 배포 표정 프리셋 로드 실패: {exc}")
+        expressions = {}
+    path = os.path.join(data_root(BASE_DIR), "asset_data", "tags.json")
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                local = json.load(handle)
+            local = merge_expression_presets(preset_catalog_only(local))
+            expressions.update(local.get("expressions") or {})
+        except Exception as exc:
+            print(f"[ILLUST_CONTEXT:EMOTION_ASSET] 사용자 표정 프리셋 로드 실패: {path}: {exc}")
+    return {
+        str(name): [str(tag) for tag in tags if str(tag or "").strip()]
+        for name, tags in expressions.items()
+        if isinstance(tags, list)
+    }
+
+
+def _emotion_preset_options(toggles: dict) -> tuple[list[dict], list[str]]:
+    """Build ID-only emotion choices carrying the user emotion name and tags."""
+    catalog = _emotion_expression_catalog()
+    nsfw_enabled = bool(toggles.get("nsfw")) and bool(
+        toggles.get("nsfw_asset_generation_enabled"))
+    options: list[dict] = []
+    warnings: list[str] = []
+    for key, rating in (("emotion_presets_sfw", "sfw"), ("emotion_presets_nsfw", "nsfw")):
+        if rating == "nsfw" and not nsfw_enabled:
+            rows = toggles.get(key) or []
+            if rows:
+                print(
+                    "[ILLUST_CONTEXT:EMOTION_ASSET] NSFW 프리셋 제외: "
+                    f"nsfw={bool(toggles.get('nsfw'))}, "
+                    f"nsfw_asset_generation_enabled={bool(toggles.get('nsfw_asset_generation_enabled'))}"
+                )
+            continue
+        for row in toggles.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()
+            preset = str(row.get("preset") or "").strip()
+            if not name:
+                if preset:
+                    warnings.append(
+                        f"{rating} 프리셋 {preset!r}에 감정 이름이 없어 후보에서 제외")
+                continue
+            tags = catalog.get(preset) if preset else []
+            if preset and tags is None:
+                warnings.append(f"{rating} 프리셋 {preset!r}을 저장소에서 찾지 못해 태그 없이 사용")
+                tags = []
+            options.append({
+                "id": f"E{len(options) + 1}",
+                "rating": rating,
+                "name": name,
+                "tags": list(tags or []),
+            })
+    return options, warnings
+
+
+def _emotion_anchor_outfit(profile_result: dict | None, name: str, anchor: str) -> str:
+    """Read the short outfit EMOTION-RESOLVE chose for one anchor."""
+    by_anchor = (profile_result or {}).get("anchor_outfits")
+    wanted = str(name or "").strip().casefold()
+    if isinstance(by_anchor, dict):
+        for key, value in by_anchor.items():
+            if str(key or "").strip().casefold() != wanted or not isinstance(value, dict):
+                continue
+            for at, outfit in value.items():
+                if str(at or "").strip().upper() == str(anchor or "").strip().upper():
+                    short = _short_emotion_outfit(outfit)
+                    if short:
+                        return short
+    outfits = (profile_result or {}).get("character_outfits")
+    if isinstance(outfits, dict):
+        for key, value in outfits.items():
+            if str(key or "").strip().casefold() == wanted:
+                return _short_emotion_outfit(value)
+    return ""
+
+
+def _emotion_outfit_pool(base: dict, label: str) -> list[str]:
+    """Return the card's registered tags for one outfit label."""
+    wanted = str(label or "").strip().casefold()
+    if not wanted:
+        return []
+    for entry in base.get("outfit_presets") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("label") or "").strip().casefold() == wanted:
+            try:
+                return visual_tag_values(entry.get("tags") or [])
+            except Exception as exc:
+                print(
+                    f"[ILLUST_CONTEXT:EMOTION_ASSET] 복장 풀 태그 해석 실패: "
+                    f"label={label!r}, error={exc}"
+                )
+                return []
+    return []
+
+
+def _emotion_outfit_tag_key(value) -> str:
+    """Compare outfit spellings regardless of spacing or underscore style."""
+    return re.sub(r"\s+", " ", str(value or "").replace("_", " ")).strip().casefold()
+
+
+def _emotion_outfit_name_from_presets(base: dict, tags: list[str]) -> str:
+    """Return the saved outfit name whose tags best match ``tags``.
+
+    Presets whose label is only a joined tag list are legacy auto-names, not
+    outfit names, so they are never chosen as an answer.
+    """
+    wanted = {key for key in (_emotion_outfit_tag_key(tag) for tag in tags) if key}
+    if not wanted:
+        return ""
+    best_label = ""
+    best_score = 0.0
+    for entry in base.get("outfit_presets") or []:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label or "," in label:
+            continue
+        try:
+            entry_tags = {
+                key for key in (
+                    _emotion_outfit_tag_key(tag)
+                    for tag in visual_tag_values(entry.get("tags") or []))
+                if key
+            }
+        except Exception:
+            continue
+        if not entry_tags:
+            continue
+        score = len(entry_tags & wanted) / len(entry_tags | wanted)
+        if score > best_score:
+            best_label, best_score = label, score
+    return best_label if best_score >= 0.5 else ""
+
+
+def emotion_profile_base_outfit(card: dict, folders: list[str]) -> tuple[str, str]:
+    """Pick the card's default outfit among saved presets and existing folders.
+
+    A default outfit often overlaps a preset without an exact label match
+    (``plain work apron`` vs ``work apron``), so score tag overlap instead of
+    requiring the strict preset threshold. Existing folders win ties because
+    they already represent the outfit in the emotion store.
+    """
+    default_tags = visual_tag_values(card.get("default_outfit") or [])
+    wanted = {
+        key for key in (
+            _emotion_outfit_tag_key(tag) for tag in default_tags)
+        if key
+    }
+    folder_keys = {folder.casefold() for folder in folders}
+    candidates: dict[str, dict] = {}
+    for entry in card.get("outfit_presets") or []:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label or "," in label:
+            continue
+        folder = _emotion_folder_name(label)
+        if not folder:
+            continue
+        tags = {
+            key for key in (
+                _emotion_outfit_tag_key(tag)
+                for tag in visual_tag_values(entry.get("tags") or []))
+            if key
+        }
+        candidates[folder] = {
+            "label": label,
+            "tags": tags,
+            "existing": folder.casefold() in folder_keys,
+        }
+    for folder in folders:
+        candidate = candidates.setdefault(
+            folder, {"label": folder, "tags": set(), "existing": True})
+        candidate["existing"] = True
+        if not candidate["tags"]:
+            candidate["tags"] = {_emotion_outfit_tag_key(folder)} - {""}
+    scored = []
+    for candidate in candidates.values():
+        if not candidate["tags"]:
+            continue
+        score = len(candidate["tags"] & wanted) / len(candidate["tags"] | wanted)
+        if score <= 0:
+            continue
+        scored.append((score, candidate["existing"], candidate["label"]))
+    if scored:
+        best_score = max(item[0] for item in scored)
+        # Near-equal existing folders win: a saved folder with the same outfit
+        # must not be duplicated under a slightly different preset label.
+        floor = max(0.5, best_score - 0.25)
+        preferred = [
+            item for item in scored if item[1] and item[0] >= floor]
+        label = max(preferred or scored, key=lambda item: (item[0], item[1]))[2]
+        return label, _emotion_folder_name(label)
+    label = _emotion_outfit_name_from_presets(card, default_tags)
+    if label:
+        return label, _emotion_folder_name(label)
+    if folders:
+        return folders[0], folders[0]
+    return "default outfit", "default outfit"
+
+
+def _emotion_outfit_label(base: dict, raw: str) -> str:
+    """Turn EMOTION-RESOLVE's outfit value into one outfit name.
+
+    The model is asked for a short label, but it sometimes returns the profile's
+    raw tag list. A comma list is matched back to a saved outfit name (or reduced
+    to its leading garment) so the emotion store never names a folder after tags.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return _emotion_outfit_name_from_presets(
+            base, visual_tag_values(base.get("outfit") or [])) or "default outfit"
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if len(parts) > 1:
+        return (
+            _emotion_outfit_name_from_presets(base, parts)
+            or re.sub(r"\s+", " ", parts[0].replace("_", " ")).strip()
+            or "default outfit"
+        )
+    key = _emotion_outfit_tag_key(text)
+    for entry in base.get("outfit_presets") or []:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label or "," in label:
+            continue
+        if _emotion_outfit_tag_key(label) == key:
+            return label
+        try:
+            entry_tags = {
+                _emotion_outfit_tag_key(tag)
+                for tag in visual_tag_values(entry.get("tags") or [])
+            }
+        except Exception:
+            continue
+        if key in entry_tags:
+            return label
+    return re.sub(r"\s+", " ", text.replace("_", " ")).strip()
+
+
+def _emotion_outfit_representative(base: dict, label: str) -> dict | None:
+    """Return the card's designated cover expression for one outfit label."""
+    wanted = str(label or "").strip().casefold()
+    wanted_folder = _emotion_folder_name(label).casefold()
+    if not wanted:
+        return None
+    for entry in base.get("outfit_presets") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_label = str(entry.get("label") or "").strip()
+        if not entry_label:
+            continue
+        matches = entry_label.casefold() == wanted
+        if not matches and wanted_folder:
+            matches = _emotion_folder_name(entry_label).casefold() == wanted_folder
+        if not matches:
+            continue
+        value = entry.get("representative_emotion")
+        if not isinstance(value, dict):
+            return None
+        name = str(value.get("name") or "").strip()
+        rating = str(value.get("rating") or "").strip().lower()
+        if not name or rating not in {"sfw", "nsfw"}:
+            return None
+        return {
+            "preset": str(value.get("preset") or "").strip(),
+            "name": name,
+            "rating": rating,
+        }
+    return None
+
+
+def _emotion_representative_setting(toggles: dict | None) -> dict | None:
+    """프리셋 설정에서 별표로 지정한 복장 대표 표정을 반환한다."""
+    value = _emotion_representative_value((toggles or {}).get("emotion_representative"))
+    return value or None
+
+
+def npc_representative_emotion(toggles: dict | None, workshop: str = "") -> dict | None:
+    """감정 삽화의 NPC 대표 이미지에 쓸 복장 대표 표정 설정을 반환한다.
+
+    프리셋 설정에서 별표한 복장 대표 표정은 새 복장·새 NPC의 대표 이미지를
+    먼저 생성할 때 쓴다. 감정 삽화 공방에서만 적용하고 NSFW 대표는 NSFW
+    에셋 생성이 켜져 있을 때만 쓴다.
+    """
+    if str(workshop or "").strip().lower() != "emotion":
+        return None
+    representative = _emotion_representative_setting(toggles)
+    if not representative:
+        return None
+    config = toggles or {}
+    if representative["rating"] == "nsfw" and not (
+            bool(config.get("nsfw"))
+            and bool(config.get("nsfw_asset_generation_enabled"))):
+        return None
+    return representative
+
+
+def npc_representative_emotion_tags(toggles: dict | None, workshop: str = "") -> list[str]:
+    """감정 삽화의 NPC 대표 이미지에 쓸 복장 대표 표정 태그를 반환한다.
+
+    대표 표정의 표정·구도 태그가 없으면 NPC가 자유 포즈로 생성되므로,
+    생성 경로가 같은 태그를 직접 넣어 준다.
+    """
+    representative = npc_representative_emotion(toggles, workshop)
+    if not representative:
+        return []
+    preset = representative.get("preset") or ""
+    if not preset:
+        return []
+    tags = _emotion_expression_catalog().get(preset)
+    if tags is None:
+        print(
+            "[ILLUST_CONTEXT:NPC] 복장 대표 표정 프리셋을 저장소에서 찾지 못함: "
+            f"preset={preset!r}, name={representative.get('name')!r}"
+        )
+        return []
+    return [str(tag).strip() for tag in tags if str(tag or "").strip()]
+
+
+def _emotion_asset_rows(
+    anchors: list[dict],
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    outfit_catalog: dict,
+    segment_order: dict[str, int],
+    toggles: dict | None = None,
+) -> list[dict]:
+    """Describe each selected anchor for the asset decision call."""
+    rows = []
+    for item in anchors:
+        name = item["character"]
+        anchor = item["anchor"]
+        profile_id = _profile_id_at_anchor(
+            profile_result, visual_profiles, name, anchor, segment_order)
+        character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+        base: dict = {}
+        if profile_id and isinstance(character_profiles, dict):
+            try:
+                base = resolve_visual_base(character_profiles, profile_id) or {}
+            except Exception as exc:
+                print(
+                    "[ILLUST_CONTEXT:EMOTION_ASSET] 활성 프로필 해석 실패: "
+                    f"character={name!r}, anchor={anchor!r}, profile_id={profile_id!r}, "
+                    f"error={exc}"
+                )
+        outfit_label = _emotion_outfit_label(
+            base, _emotion_anchor_outfit(profile_result, name, anchor))
+        saved = []
+        character_catalog = (
+            outfit_catalog.get(name) if isinstance(outfit_catalog, dict) else None
+        )
+        if not isinstance(character_catalog, dict):
+            character_catalog = next((
+                value for key, value in (outfit_catalog or {}).items()
+                if str(key or "").strip().casefold() == name.casefold()
+            ), None)
+        if isinstance(character_catalog, dict):
+            saved = [
+                _emotion_saved_outfit_entry(entry)
+                for entry in (character_catalog.get(profile_id) or [])
+                if _emotion_saved_outfit_name(entry)
+            ]
+        saved_names = [
+            saved_name for saved_name in (
+                _emotion_saved_outfit_name(entry) for entry in saved) if saved_name
+        ]
+        base_label = emotion_profile_base_outfit({
+            "default_outfit": base.get("outfit") or [],
+            "outfit_presets": base.get("outfit_presets") or [],
+        }, saved_names)[0]
+        is_base_outfit = bool(outfit_label) and (
+            outfit_label.casefold() == str(base_label).casefold())
+        if not is_base_outfit and outfit_label:
+            # 새 NPC는 복장 프리셋이 아직 없어 기본 복장 이름이 해석되지 않는다.
+            # 카드 기본 복장 태그와 겹치면 본 복장으로 본다.
+            default_keys = {
+                key for key in (
+                    _emotion_outfit_tag_key(tag)
+                    for tag in visual_tag_values(base.get("outfit") or []))
+                if key
+            }
+            outfit_keys = {
+                key for key in (
+                    _emotion_outfit_tag_key(tag)
+                    for tag in [outfit_label, *_emotion_outfit_pool(base, outfit_label)])
+                if key
+            }
+            is_base_outfit = bool(default_keys & outfit_keys)
+        outfit_saved = any(
+            _emotion_saved_outfit_name(folder).casefold() == outfit_label.casefold()
+            for folder in saved
+        ) if outfit_label else False
+        # 저장된 복장 폴더 중 본 복장이 아닌 것만 변주 복장이다. 복장 이미지가
+        # 없는 새 복장을 변주 복장으로 강제하지 않는다(얼굴 크롭 레퍼런스 방지).
+        variation_outfit = outfit_saved and not is_base_outfit
+        rows.append({
+            "anchor": anchor,
+            "character": name,
+            "profile": profile_id,
+            "generation_mode": "character_auto" if variation_outfit else "illustration",
+            "gender": str((base.get("render_overrides") or {}).get("gender_tag") or ""),
+            "appearance": visual_tag_values(base.get("appearance") or []),
+            "default_outfit": visual_tag_values(base.get("outfit") or []),
+            "outfit_label": outfit_label,
+            "outfit_tags": _emotion_outfit_pool(base, outfit_label),
+            # 프리셋 설정의 복장 대표 표정이 우선. 새 NPC처럼 복장별 지정이
+            # 없는 경우에도 대표 이미지를 만들 수 있다.
+            "representative_emotion": (
+                _emotion_representative_setting(toggles)
+                or _emotion_outfit_representative(base, outfit_label)),
+            "outfit_saved": outfit_saved,
+            "saved_outfits": saved,
+            "decided_emotion": item["emotion"],
+            "context": item["text"],
+        })
+    return rows
+
+
+def _emotion_asset_store_paths(
+    bot_name: str,
+    character: str,
+    profile_id: str,
+    outfit: str,
+    emotion: str,
+) -> tuple[str, str]:
+    """Resolve one emotion asset folder and its first reusable image, if any."""
+    from modes.bot_mode import BOT_DIR, IMAGE_EXTENSIONS, reset_bot_scope, set_bot_scope
+
+    token = set_bot_scope("emotion")
+    try:
+        root = os.path.abspath(os.fspath(BOT_DIR))
+    finally:
+        reset_bot_scope(token)
+    parts = [
+        str(part or "").strip()
+        for part in (bot_name, character, profile_id, outfit, emotion)
+    ]
+    if not all(parts):
+        return "", ""
+    target = os.path.abspath(os.path.join(root, *parts))
+    try:
+        if os.path.commonpath([root, target]) != root:
+            return "", ""
+    except ValueError:
+        return "", ""
+    if not os.path.isdir(target):
+        return target, ""
+    try:
+        names = sorted(
+            entry for entry in os.listdir(target)
+            if not entry.startswith((".", "_"))
+            and os.path.splitext(entry)[1].lower() in IMAGE_EXTENSIONS
+            and os.path.isfile(os.path.join(target, entry))
+        )
+    except OSError as exc:
+        print(
+            f"[ILLUST_CONTEXT:EMOTION_ASSET] 감정 에셋 폴더 확인 실패: "
+            f"path={target!r}, error={exc}"
+        )
+        return target, ""
+    return target, (os.path.join(target, names[0]) if names else "")
+
+
+def _emotion_outfit_has_images(
+    bot_name: str,
+    character: str,
+    profile_id: str,
+    outfit: str,
+) -> bool:
+    """True when the outfit folder already holds any generated asset image."""
+    from modes.bot_mode import BOT_DIR, IMAGE_EXTENSIONS, reset_bot_scope, set_bot_scope
+
+    parts = [
+        str(part or "").strip()
+        for part in (bot_name, character, profile_id, outfit)
+    ]
+    if not all(parts):
+        return False
+    token = set_bot_scope("emotion")
+    try:
+        root = os.path.abspath(os.fspath(BOT_DIR))
+    finally:
+        reset_bot_scope(token)
+    folder = os.path.abspath(os.path.join(root, *parts))
+    try:
+        if os.path.commonpath([root, folder]) != root or not os.path.isdir(folder):
+            return False
+    except ValueError:
+        return False
+    for _dirpath, _dirnames, filenames in os.walk(folder):
+        for filename in filenames:
+            if filename.startswith((".", "_")):
+                continue
+            if os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS:
+                return True
+    return False
+
+
+def _emotion_representative_assets(
+    rows: list[dict],
+    assets: list[dict],
+    toggles: dict,
+    bot_name: str,
+    warnings: list[str],
+) -> list[dict]:
+    """Build one cover-first asset per new outfit with a designated expression."""
+    nsfw_enabled = bool(toggles.get("nsfw")) and bool(
+        toggles.get("nsfw_asset_generation_enabled"))
+    catalog = _emotion_expression_catalog()
+    groups: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        representative = row.get("representative_emotion")
+        if not isinstance(representative, dict):
+            continue
+        name = str(row.get("character") or "").casefold()
+        asset = next(
+            (item for item in assets
+             if item.get("anchor") == row.get("anchor")
+             and str(item.get("character") or "").casefold() == name),
+            None,
+        )
+        if asset is None:
+            continue
+        key = (
+            name,
+            str(asset.get("profile_id") or ""),
+            str(asset.get("outfit_folder") or ""),
+        )
+        groups.setdefault(
+            key,
+            {"row": row, "asset": asset, "representative": representative},
+        )
+    result: list[dict] = []
+    seen_targets: set[str] = set()
+    for (_character, profile_id, outfit_folder), group in groups.items():
+        representative = group["representative"]
+        asset = group["asset"]
+        row = group["row"]
+        character = str(row.get("character") or "")
+        rating = str(representative.get("rating") or "").strip().lower()
+        name = str(representative.get("name") or "").strip()
+        if not character or not name or rating not in {"sfw", "nsfw"}:
+            continue
+        if rating == "nsfw" and not nsfw_enabled:
+            warnings.append(
+                "복장 대표 표정 제외: NSFW 대표는 NSFW 에셋 생성이 켜져야 합니다: "
+                f"character={character!r}, outfit={outfit_folder!r}, name={name!r}"
+            )
+            continue
+        if _emotion_outfit_has_images(bot_name, character, profile_id, outfit_folder):
+            continue
+        emotion_folder = _emotion_folder_name(name)
+        if not emotion_folder:
+            continue
+        target_dir, reuse_path = _emotion_asset_store_paths(
+            bot_name, character, profile_id, outfit_folder, emotion_folder)
+        if not target_dir or target_dir in seen_targets:
+            continue
+        preset = str(representative.get("preset") or "").strip()
+        tags = catalog.get(preset) if preset else []
+        if preset and tags is None:
+            warnings.append(
+                "복장 대표 표정 프리셋을 저장소에서 찾지 못해 태그 없이 생성: "
+                f"preset={preset!r}"
+            )
+            tags = []
+        seen_targets.add(target_dir)
+        result.append({
+            "anchor": asset.get("anchor"),
+            "character": character,
+            "profile_id": asset.get("profile_id"),
+            "gender": str(asset.get("gender") or ""),
+            "appearance": list(asset.get("appearance") or []),
+            "default_outfit": list(asset.get("default_outfit") or []),
+            "outfit": asset.get("outfit"),
+            "outfit_folder": outfit_folder,
+            "outfit_tags": list(asset.get("outfit_tags") or []),
+            "new_outfit_tags": False,
+            "rating": rating,
+            "emotion_id": "",
+            "emotion_name": name,
+            "emotion_tags": list(tags or []),
+            "emotion_folder": emotion_folder,
+            "generation_mode": str(row.get("generation_mode") or "illustration"),
+            "target_dir": target_dir,
+            "reuse_path": reuse_path,
+            "representative": True,
+        })
+    return result
+
+
+def _parse_emotion_asset_resolution(
+    raw_text: str,
+    rows: list[dict],
+    options: list[dict],
+    *,
+    bot_name: str,
+    toggles: dict | None = None,
+) -> dict:
+    """Resolve preset IDs to user emotion names and build one asset per store path."""
+    raw = _json_object_from_text(raw_text)
+    if not isinstance(raw, dict):
+        print("[ILLUST_CONTEXT:EMOTION_ASSET] JSON object 파싱 실패")
+        raw = {}
+    for wrapper in ("assets", "anchors", "scenes"):
+        inner = raw.get(wrapper)
+        if isinstance(inner, dict):
+            raw = inner
+            break
+    by_anchor = {str(key or "").strip().upper(): value for key, value in raw.items()}
+    warnings: list[str] = []
+    assets: list[dict] = []
+    updates: list[dict] = []
+    seen_targets: set[str] = set()
+    seen_updates: set[str] = set()
+    for row in rows:
+        anchor = row["anchor"]
+        entry = by_anchor.get(anchor)
+        if entry is None:
+            warnings.append(f"EMOTION-ASSET 응답에 앵커 없음: {anchor}")
+            entry = {}
+        elif not isinstance(entry, dict):
+            warnings.append(f"EMOTION-ASSET 앵커 형식 오류: anchor={anchor}, value={entry!r}")
+            entry = {}
+        requested_id = str(entry.get("emotion") or "").strip().upper()
+        chosen = next(
+            (option for option in options if option["id"].upper() == requested_id), None)
+        if chosen is None:
+            rating = str(entry.get("rating") or "").strip().lower()
+            chosen = next(
+                (option for option in options if option["rating"] == rating), None)
+            if chosen is None and options:
+                chosen = options[0]
+            if requested_id and options:
+                warnings.append(
+                    f"EMOTION-ASSET 알 수 없는 감정 프리셋 ID: anchor={anchor}, id={requested_id!r}")
+        if chosen is not None:
+            rating = chosen["rating"]
+            emotion_name = chosen["name"]
+            emotion_tags = list(chosen["tags"])
+            emotion_id = chosen["id"]
+        else:
+            rating = "sfw"
+            emotion_name = _short_emotion_outfit(row.get("decided_emotion")) or "neutral"
+            emotion_tags = []
+            emotion_id = ""
+            warnings.append(
+                f"EMOTION-ASSET 사용 가능한 감정 프리셋이 없어 장면 감정 사용: anchor={anchor}")
+        outfit_label = str(row.get("outfit_label") or "").strip()
+        default_outfit = list(row.get("default_outfit") or [])
+        if not outfit_label:
+            outfit_label = "default outfit"
+        pool_tags = list(row.get("outfit_tags") or [])
+        if pool_tags:
+            outfit_tags = pool_tags
+            new_pool_tags = False
+        else:
+            supplied = entry.get("outfit_tags")
+            outfit_tags = []
+            if isinstance(supplied, str):
+                supplied = [part.strip() for part in supplied.split(",")]
+            if isinstance(supplied, list):
+                outfit_tags = [
+                    _short_emotion_outfit(tag) for tag in supplied
+                    if _short_emotion_outfit(tag)
+                ][:12]
+            if not outfit_tags:
+                # A default outfit keeps its real tags; any other label is its
+                # own tag source until the model supplies a tag list.
+                outfit_tags = (
+                    default_outfit if outfit_label == "default outfit" else [outfit_label]
+                )[:12]
+                warnings.append(
+                    f"EMOTION-ASSET 복장 태그가 없어 이름으로 대체: anchor={anchor}, label={outfit_label!r}")
+            new_pool_tags = True
+        profile_id = str(row.get("profile") or "").strip() or "card_1"
+        outfit_folder = next(
+            (
+                _emotion_saved_outfit_name(folder)
+                for folder in row.get("saved_outfits") or []
+                if _emotion_saved_outfit_name(folder).casefold() == outfit_label.casefold()
+            ),
+            "",
+        ) or _emotion_folder_name(outfit_label) or "default outfit"
+        emotion_folder = _emotion_folder_name(emotion_name) or "neutral"
+        target_dir, reuse_path = _emotion_asset_store_paths(
+            bot_name, row["character"], profile_id, outfit_folder, emotion_folder)
+        if not target_dir:
+            warnings.append(
+                f"EMOTION-ASSET 저장 경로 해석 실패: anchor={anchor}, character={row['character']!r}")
+            continue
+        if target_dir in seen_targets:
+            # 같은 저장 경로는 같은 이미지를 재사용한다. 앵커를 버리면 결과 목록이
+            # 한 칸씩 밀려 다른 앵커의 에셋이 이 위치에 표시된다.
+            reused = next(
+                (asset for asset in assets if asset["target_dir"] == target_dir), None)
+            if reused is not None:
+                duplicate = deepcopy(reused)
+                duplicate["anchor"] = anchor
+                duplicate["reused_anchor"] = reused["anchor"]
+                assets.append(duplicate)
+                warnings.append(
+                    "EMOTION-ASSET 같은 저장 경로 재사용: "
+                    f"anchor={anchor}, reused_anchor={reused['anchor']}, dir={target_dir!r}")
+            continue
+        seen_targets.add(target_dir)
+        assets.append({
+            "anchor": anchor,
+            "character": row["character"],
+            "profile_id": profile_id,
+            "gender": str(row.get("gender") or ""),
+            "appearance": list(row.get("appearance") or []),
+            "default_outfit": default_outfit,
+            "outfit": outfit_label,
+            "outfit_folder": outfit_folder,
+            "outfit_tags": outfit_tags,
+            "new_outfit_tags": new_pool_tags,
+            "rating": rating,
+            "emotion_id": emotion_id,
+            "emotion_name": emotion_name,
+            "emotion_tags": emotion_tags,
+            "emotion_folder": emotion_folder,
+            "generation_mode": str(row.get("generation_mode") or "illustration"),
+            "target_dir": target_dir,
+            "reuse_path": reuse_path,
+        })
+        key = f"{row['character'].casefold()}|{profile_id}|{outfit_label.casefold()}"
+        if new_pool_tags and key not in seen_updates:
+            seen_updates.add(key)
+            updates.append({
+                "character": row["character"],
+                "profile_id": profile_id,
+                "label": outfit_label,
+                "tags": outfit_tags,
+            })
+    representative_assets = _emotion_representative_assets(
+        rows, assets, toggles or {}, bot_name, warnings)
+    for warning in warnings:
+        print(f"[ILLUST_CONTEXT:EMOTION_ASSET] {warning}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "EMOTION-ASSET",
+            "reason": warning,
+            "input": {"raw": raw, "anchors": [row["anchor"] for row in rows]},
+        }])
+    print(
+        "[ILLUST_CONTEXT:EMOTION_ASSET] 감정 에셋 결정 완료: "
+        f"assets={len(assets)}, reuse={sum(bool(asset['reuse_path']) for asset in assets)}, "
+        f"representatives={len(representative_assets)}, "
+        f"new_outfit_pools={len(updates)}, warnings={len(warnings)}"
+    )
+    return {
+        "assets": assets,
+        "representative_assets": representative_assets,
+        "updates": updates,
+        "uncertainties": [],
+        "validation_warnings": warnings,
+    }
+
+
+async def _run_emotion_asset_resolution(
+    *,
+    asset_system: str,
+    anchors: list[dict],
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    outfit_catalog: dict,
+    segment_order: dict[str, int],
+    toggles: dict,
+    bot_name: str,
+    stream_notify,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Decide rating, closest emotion preset and any missing outfit tags per anchor."""
+    empty = {"assets": [], "updates": [], "uncertainties": [], "validation_warnings": []}
+    if not anchors:
+        return "", empty
+    rows = _emotion_asset_rows(
+        anchors, profile_result, visual_profiles, outfit_catalog, segment_order,
+        toggles)
+    options, warnings = _emotion_preset_options(toggles)
+    if not options:
+        warnings.append("감정 프리셋이 비어 있어 장면 감정 이름으로 에셋을 만듭니다")
+    messages = _normalize_messages(prompt_builders.emotion_asset_messages(
+        asset_system, rows, options))
+
+    def validate_shape(result):
+        if _json_object_from_text(result) is None:
+            return False, "EMOTION-ASSET JSON object 없음"
+        return True, ""
+
+    raw_output = await _call_pipeline_llm(
+        "EMOTION-ASSET",
+        messages,
+        stream_notify,
+        result_validator=validate_shape,
+        json_mode=True,
+        history_ids_sink=history_ids_sink,
+    )
+    parsed = _parse_emotion_asset_resolution(
+        raw_output, rows, options, bot_name=bot_name, toggles=toggles)
+    parsed["validation_warnings"] = [*warnings, *parsed["validation_warnings"]]
+    return raw_output, parsed
+
+
+def _merge_emotion_asset_resolution(
+    profile_result: dict | None,
+    asset_result: dict | None,
+) -> dict:
+    """Attach asset decisions and pending outfit-pool updates to the profile result."""
+    result = deepcopy(profile_result or {})
+    asset_result = asset_result or {}
+    result["emotion_assets"] = deepcopy(asset_result.get("assets") or [])
+    result["emotion_representative_assets"] = deepcopy(
+        asset_result.get("representative_assets") or [])
+    result["emotion_asset_updates"] = deepcopy(asset_result.get("updates") or [])
+    return result
+
+
 async def _run_resolution_stage(
     *,
     profile_system: str,
@@ -7860,7 +9530,7 @@ async def _run_resolution_stage(
     history_ids_sink: list[str] | None = None,
     selection_messages: list[dict] | None = None,
     call_name: str = "",
-    npc_generation_enabled: bool = False,
+    emotion: bool = False,
 ) -> tuple[str, dict]:
     """Run one separated CHARACTER or PROFILE resolution stage.
 
@@ -7913,7 +9583,7 @@ async def _run_resolution_stage(
         profile_inference_enabled, selected_names, tracked_state, catalog,
         segmented_current, card_identity_context, persona_context, profile_system,
         selection=selection_messages, anchors=list(current_segments),
-        npc_generation_enabled=npc_generation_enabled))
+        emotion=emotion))
 
     def validate_shape(result):
         raw = _json_object_from_text(result)
@@ -7934,6 +9604,7 @@ async def _run_resolution_stage(
     normalized_raw = _json_object_from_text(raw_output) or {}
     normalized_uncertainties = normalized_raw.get("uncertainties", [])
     if profile_inference_enabled:
+        normalized_characters = []
         selected_name_set = set(selected_names)
         returned_by_name = {
             str(item.get("name") or "").strip(): item
@@ -7941,7 +9612,6 @@ async def _run_resolution_stage(
             if isinstance(item, dict)
             and str(item.get("name") or "").strip() in selected_name_set
         }
-        normalized_characters = []
         for name in selected_names:
             returned = returned_by_name.get(name) or {}
             normalized_characters.append({
@@ -7990,7 +9660,7 @@ async def _run_resolution_stage(
             default_only=False,
         )
     else:
-        if npc_generation_enabled and selection_messages is not None:
+        if selection_messages is not None:
             from modes.illustration_npc import parse_candidates
             raw_candidates = normalized_raw.get("npc_candidates", [])
             if "npc_candidates" not in normalized_raw:
@@ -8003,8 +9673,8 @@ async def _run_resolution_stage(
                 f"kept={len(parsed['npc_candidates'])}"
             )
             # A dropped candidate must not invalidate scenes that mention it; the
-            # scene_brief still describes the subject, only the stale identity
-            # reference is removed.
+            # scene keeps its emotion, only the stale identity reference is
+            # removed from a characters array.
             if isinstance(raw_candidates, list):
                 retained = {candidate["name"].casefold() for candidate in parsed["npc_candidates"]}
                 dropped = {
@@ -8042,9 +9712,8 @@ async def _run_resolution_stage(
 
         changes = {}
         for event in parsed.get("profile_events") or []:
-            changes.setdefault(event["segment_id"], {})[event["character"]] = {
-                "profile": event["profile_id"], "reason": event["state"],
-            }
+            cell = {"profile": event["profile_id"], "reason": event["state"]}
+            changes.setdefault(event["segment_id"], {})[event["character"]] = cell
         parsed["state_table"] = fill_state_table(changes, current_result_names, ["START", *current_segments])
         illustration_flow.record_state_table(
             parsed["state_table"], label="PROFILE-RESOLVE", field="profile_state_table")
@@ -8069,6 +9738,7 @@ async def _run_character_resolution(
     history_ids_sink: list[str] | None = None,
     selection_messages: list[dict] | None = None,
     toggles: dict | None = None,
+    emotion: bool = False,
 ) -> tuple[str, dict]:
     """Resolve CURRENT participation and optional source-anchor selection together."""
     raw_output, parsed = await _run_resolution_stage(
@@ -8085,7 +9755,7 @@ async def _run_character_resolution(
         selection_messages=selection_messages,
         call_name=("MANGA-CHARACTER-RESOLVE" if (toggles or {}).get("illustration_output_mode")
                    in ("manga", "manga_both") else ""),
-        npc_generation_enabled=merged_toggles(toggles).get("npc_generation_enabled", False),
+        emotion=emotion,
     )
     if selection_messages is None:
         return raw_output, parsed
@@ -8131,7 +9801,7 @@ async def _run_profile_resolution(
     if not selected_profiles:
         print(
             "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] "
-            "판정할 CURRENT 다중 프로필 캐릭터가 없어 호출 건너뜀"
+            "판정할 CURRENT 캐릭터가 없어 호출 건너뜀"
         )
         return "", _empty_profile_result()
 
@@ -8279,10 +9949,11 @@ async def _run_profile_resolution(
                 "reason": str(event.get("reason") or "").strip(),
             }
             raw_timeline.append(raw_event)
-        raw_characters.append({
+        raw_character = {
             "name": name,
             "profile_timeline": raw_timeline,
-        })
+        }
+        raw_characters.append(raw_character)
     raw_output = json.dumps({
         "characters": raw_characters,
         "uncertainties": list(merged.get("uncertainties") or []),
@@ -8291,9 +9962,8 @@ async def _run_profile_resolution(
 
     changes = {}
     for event in merged.get("profile_events") or []:
-        changes.setdefault(event["segment_id"], {})[event["character"]] = {
-            "profile": event["profile_id"], "reason": event["state"],
-        }
+        cell = {"profile": event["profile_id"], "reason": event["state"]}
+        changes.setdefault(event["segment_id"], {})[event["character"]] = cell
     merged["state_table"] = fill_state_table(changes, list(selected_profiles), ["START", *current_segments])
     print(
         "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] 캐릭터별 병렬 판정 병합 완료: "
@@ -8322,13 +9992,14 @@ def _merge_character_and_profile_stage_results(
         if not name:
             continue
         profile_character = profile_by_name.get(name.casefold()) or {}
-        merged_characters.append({
+        merged_character = {
             "name": name,
             "in_history": bool(character.get("in_history")),
             "profile_timeline": deepcopy(
                 profile_character.get("profile_timeline") or []
             ),
-        })
+        }
+        merged_characters.append(merged_character)
     result = _materialize_profile_character_records(
         merged_characters,
         visual_profiles,
@@ -8643,6 +10314,85 @@ async def _record_profile_context_cache_summary(summary: dict) -> dict:
     return normalized
 
 
+_EMOTION_NPC_RUNS: dict[str, dict] = {}
+
+
+def take_emotion_npc_run(token: str) -> dict | None:
+    """감정 삽화에서 먼저 시작한 NPC 생성 노드를 STEP 6에서 회수한다."""
+    return _EMOTION_NPC_RUNS.pop(str(token or ""), None)
+
+
+async def _start_emotion_npc_prediction(
+    *,
+    bot_name: str,
+    candidates: list[dict],
+    prompts: dict,
+    chats: list,
+    target_index: int,
+    history_plan: dict | None,
+    segmented: str,
+    toggles: dict,
+    stream_notify,
+    npc_manager,
+    render_npc_image,
+    prepare_npc_character,
+    current_profiles: dict[str, dict],
+    progress=None,
+    session_id: str = "",
+) -> str:
+    """EMOTION-ASSET보다 먼저 NPC 카드 태그를 예측한다.
+
+    Comfy 대표 이미지 호출은 npc_generation_deferred가 켜져 있으면 gate로
+    STEP 6까지 미루고, 꺼져 있으면 생성과 동시에 진행한다. 어느 쪽이든
+    예측된 카드 프로필은 EMOTION-ASSET 입력에 즉시 반영된다.
+    """
+    from modes.illustration_npc import generate_cards
+
+    history_slice = (
+        (history_plan or {}).get("call1_history") or []
+        if history_plan
+        else chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]
+    )
+    past_text = _history_messages_text(history_slice)
+    gate = asyncio.Event() if toggles.get("npc_generation_deferred") else None
+    profiles_ready = asyncio.get_running_loop().create_future()
+
+    async def on_profiles_ready(result):
+        profiles_ready._illustration_flow_ends = tuple(illustration_flow._frontier.get())
+        profiles_ready.set_result(result)
+
+    if progress:
+        await progress(3.5, "npc_generation", "NPC 생성 노드 · 미등록 인물 태그 예측")
+    task = illustration_flow.create_task(generate_cards(
+        manager=npc_manager, bot_name=bot_name, candidates=candidates,
+        prompts=prompts, past_text=past_text, segmented=segmented,
+        toggles=toggles, stream_notify=stream_notify,
+        render_image=render_npc_image, on_profiles_ready=on_profiles_ready,
+        prepare_character=prepare_npc_character, render_gate=gate,
+        workshop="emotion"),
+        flow_label="NPC 생성 노드")
+    await asyncio.wait(
+        (profiles_ready, task), return_when=asyncio.FIRST_COMPLETED)
+    if task.done():
+        predicted = (await task).get("characters") or []
+    else:
+        illustration_flow.absorb([profiles_ready])
+        predicted = profiles_ready.result().get("characters") or []
+    for profile in predicted:
+        name = str(profile.get("name") or "").strip() if isinstance(profile, dict) else ""
+        if name:
+            current_profiles[name] = profile
+    token = uuid.uuid4().hex
+    _EMOTION_NPC_RUNS[token] = {
+        "task": task, "gate": gate, "profiles": predicted,
+    }
+    print(
+        "[ILLUST_CONTEXT:NPC] EMOTION-ASSET 이전 NPC 카드 예측 완료: "
+        f"session={session_id!r}, predicted={[p.get('name') for p in predicted if isinstance(p, dict)]}, "
+        f"deferred={bool(toggles.get('npc_generation_deferred'))}")
+    return token
+
+
 async def resolve_profiles_before_generation(
     *,
     payload: dict,
@@ -8656,6 +10406,10 @@ async def resolve_profiles_before_generation(
     stage_runner=None,
     extra_instruction: str = "",
     character_names: str = "",
+    workshop: str = "illustration",
+    npc_manager=None,
+    render_npc_image=None,
+    prepare_npc_character=None,
 ) -> tuple[str, dict]:
     """Resolve CURRENT characters and every applicable multi-profile timeline."""
     # The preview supplies side-effect-free stage implementations. The actual
@@ -8697,7 +10451,8 @@ async def resolve_profiles_before_generation(
         current_context, slotted_context=current_slotted)
     if progress:
         await progress(1, "character_resolve", "CURRENT 등장인물·장면 선택" if toggles["illustration_enabled"] else "CURRENT 등장인물 판별")
-    prompts = load_prompt_files()
+    emotion = normalize_workshop(workshop) == "emotion"
+    prompts = load_prompt_files(workshop)
     selection = None
     if toggles["illustration_enabled"]:
         from modes import illustration_scene_pipeline as scenes
@@ -8714,7 +10469,8 @@ async def resolve_profiles_before_generation(
                 protected, extra_instruction, genre=toggles.get("genre", ""),
                 genre_prompt=prompts.get("genre", "")),
             render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
-            scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "")
+            scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "",
+            emotion=emotion)
     character_output, character_result = await run_stage(_run_character_resolution,
         character_system=prompts.get("character_resolve", ""),
         segmented_current=segmented_current,
@@ -8726,6 +10482,7 @@ async def resolve_profiles_before_generation(
         history_ids_sink=history_ids_sink,
         selection_messages=selection,
         toggles=toggles,
+        emotion=emotion,
     )
     previous_state = (history_plan or {}).get("state_before") or {}
     character_result = _mark_current_characters_with_tracked_history(
@@ -8748,54 +10505,178 @@ async def resolve_profiles_before_generation(
         for name in current_names
         if len((current_profiles.get(name) or {}).get("profiles") or []) > 1
     ]
-    if not multi_profile_names:
+    profile_stage_names = multi_profile_names
+    profile_output = ""
+    translated_profiles = current_profiles
+    if profile_stage_names:
+        profile_resolution_inputs = _selected_visual_profiles(
+            current_profiles,
+            profile_stage_names,
+            multiple_only=True,
+        )
+        if toggles["profile_context_translate"]:
+            if progress:
+                await progress(2, "profile_context_translation", "프로필 영어 컨텍스트 준비")
+            translated_profiles, _translation_summary = (
+                await run_stage(prepare_profile_context_translations,
+                    profile_resolution_inputs,
+                    cache_namespace=profile_translation_namespace,
+                    stream_notify=stream_notify,
+                    history_ids_sink=history_ids_sink,
+                )
+            )
+            await run_stage(_record_profile_context_cache_summary, _translation_summary)
+        else:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 토글 OFF, 프로필 영어 번역 생략: "
+                f"characters={profile_stage_names}"
+            )
+            translated_profiles = profile_resolution_inputs
+        if progress:
+            await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
+        profile_output, profile_result = await run_stage(_run_profile_resolution,
+            profile_system=prompts.get("profile_resolve", ""),
+            segmented_current=segmented_current,
+            current_context=current_context,
+            current_segments=current_segments,
+            candidate_names=profile_stage_names,
+            previous_state=previous_state,
+            visual_profiles=translated_profiles,
+            stream_notify=stream_notify,
+            history_ids_sink=history_ids_sink,
+        )
+        base_result = _merge_character_and_profile_stage_results(
+            character_result,
+            profile_result,
+            current_profiles,
+        )
+    else:
         print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] CURRENT 다중 프로필 캐릭터가 없어 "
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] CURRENT 다중 프로필 판정 대상이 없어 "
             f"프로필 LLM 호출 건너뜀: characters={current_names}"
         )
-        return character_output, character_result
+        base_result = character_result
 
-    profile_resolution_inputs = _selected_visual_profiles(
-        current_profiles,
-        multi_profile_names,
-        multiple_only=True,
-    )
-    if toggles["profile_context_translate"]:
-        if progress:
-            await progress(2, "profile_context_translation", "프로필 영어 컨텍스트 준비")
-        translated_profiles, _translation_summary = (
-            await run_stage(prepare_profile_context_translations,
-                profile_resolution_inputs,
-                cache_namespace=profile_translation_namespace,
+    if emotion and toggles["illustration_enabled"]:
+        emotion_scene_plan = base_result.get("scene_plan") or []
+        emotion_anchors = _emotion_scene_anchors(emotion_scene_plan, current_segments)
+        # NPC 카드 태그(성별·외모·복장·얼굴·눈)를 EMOTION-ASSET 전에 예측해
+        # 등록 캐릭터 카드와 동일한 레벨로 전달한다. Comfy 대표 이미지 호출만
+        # 설정에 따라 STEP 6으로 미룬다.
+        anchor_names = {
+            str(item.get("character") or "").strip().casefold()
+            for item in emotion_anchors if isinstance(item, dict)
+        }
+        npc_candidates = [
+            candidate for candidate in (base_result.get("npc_candidates") or [])
+            if isinstance(candidate, dict)
+            and str(candidate.get("name") or "").strip().casefold() in anchor_names
+        ]
+        if (emotion_anchors and toggles.get("npc_generation_enabled")
+                and npc_candidates and npc_manager is not None
+                and render_npc_image is not None and stage_runner is None):
+            base_result["_npc_registration_token"] = (
+                await _start_emotion_npc_prediction(
+                    bot_name=profile_translation_namespace,
+                    candidates=npc_candidates,
+                    prompts=prompts,
+                    chats=chats,
+                    target_index=target_index,
+                    history_plan=history_plan,
+                    segmented=segmented_current,
+                    toggles=toggles,
+                    stream_notify=stream_notify,
+                    npc_manager=npc_manager,
+                    render_npc_image=render_npc_image,
+                    prepare_npc_character=prepare_npc_character,
+                    current_profiles=current_profiles,
+                    progress=progress,
+                    session_id=str(payload.get("session_id") or ""),
+                )
+            )
+        if not emotion_anchors:
+            print(
+                "[ILLUST_CONTEXT:EMOTION_RESOLVE] 선택 장면이 없어 복장 결정 건너뜀: "
+                f"scenes={len(emotion_scene_plan) if isinstance(emotion_scene_plan, list) else 'invalid'}"
+            )
+        else:
+            from modes.bot_mode import (
+                reset_bot_scope,
+                save_emotion_outfit_presets,
+                set_bot_scope,
+            )
+            # 감정 복장 저장소는 워크숍 스코프와 무관하게 감정 봇 경로를 읽어야 한다.
+            scope_token = set_bot_scope("emotion")
+            try:
+                outfit_catalog = _emotion_outfit_catalog(
+                    profile_translation_namespace, current_profiles)
+            finally:
+                reset_bot_scope(scope_token)
+            if progress:
+                await progress(4, "emotion_resolve", "CURRENT 장면별 복장 결정")
+            emotion_output, emotion_result = await run_stage(
+                _run_emotion_resolution,
+                emotion_system=prompts.get("emotion_resolve", ""),
+                segmented_current=segmented_current,
+                current_context=current_context,
+                current_segments=current_segments,
+                scene_plan=emotion_scene_plan,
+                profile_result=base_result,
+                previous_state=previous_state,
+                # 앵커 대상에는 단일 프로필 캐릭터도 있으므로 프로필 판정 대상만
+                # 담긴 translated_profiles 대신 CURRENT 전체 프로필을 넘긴다.
+                visual_profiles=current_profiles,
+                outfit_catalog=outfit_catalog,
                 stream_notify=stream_notify,
                 history_ids_sink=history_ids_sink,
             )
-        )
-        await run_stage(_record_profile_context_cache_summary, _translation_summary)
-    else:
-        print(
-            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 토글 OFF, 프로필 영어 번역 생략: "
-            f"characters={multi_profile_names}"
-        )
-        translated_profiles = profile_resolution_inputs
-    if progress:
-        await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
-    profile_output, profile_result = await run_stage(_run_profile_resolution,
-        profile_system=prompts.get("profile_resolve", ""),
-        segmented_current=segmented_current,
-        current_context=current_context,
-        current_segments=current_segments,
-        candidate_names=multi_profile_names,
-        previous_state=previous_state,
-        visual_profiles=translated_profiles,
-        stream_notify=stream_notify,
-        history_ids_sink=history_ids_sink,
-    )
-    return profile_output, _merge_character_and_profile_stage_results(
-        character_result,
-        profile_result,
-        current_profiles,
-    )
+            base_result = _merge_emotion_resolution(base_result, emotion_result)
+            base_result["emotion_output"] = emotion_output
+            if progress:
+                await progress(5, "emotion_asset", "CURRENT 장면별 감정 에셋 결정")
+            segment_order = {
+                str(segment_id).strip().upper(): index
+                for index, segment_id in enumerate(current_segments or {}, start=1)
+            }
+            asset_output, asset_result = await run_stage(
+                _run_emotion_asset_resolution,
+                asset_system=prompts.get("emotion_asset", ""),
+                anchors=emotion_anchors,
+                profile_result=base_result,
+                visual_profiles=current_profiles,
+                outfit_catalog=outfit_catalog,
+                segment_order=segment_order,
+                toggles=toggles,
+                bot_name=profile_translation_namespace,
+                stream_notify=stream_notify,
+                history_ids_sink=history_ids_sink,
+            )
+            base_result = _merge_emotion_asset_resolution(base_result, asset_result)
+            base_result["emotion_asset_output"] = asset_output
+            pending_npc_names = {
+                str(candidate.get("name") or "").strip().casefold()
+                for candidate in npc_candidates
+            }
+            # 새 NPC는 아직 카드가 등록되기 전이라 여기서는 저장할 수 없다.
+            # 등록이 끝난 뒤 STEP 6에서 같은 업데이트를 다시 저장한다.
+            early_updates = [
+                entry for entry in asset_result.get("updates") or []
+                if str(entry.get("character") or "").strip().casefold()
+                not in pending_npc_names
+            ]
+            if early_updates:
+                save_result = await asyncio.to_thread(
+                    save_emotion_outfit_presets,
+                    profile_translation_namespace,
+                    early_updates,
+                )
+                if not save_result.get("success"):
+                    print(
+                        "[ILLUST_CONTEXT:EMOTION_ASSET] 새 복장 태그를 프로필 카드에 "
+                        f"저장하지 못했습니다: bot={profile_translation_namespace!r}, "
+                        f"error={save_result.get('error')!r}"
+                    )
+    return profile_output, base_result
 
 
 def _parse_multi_char_layout_response(
@@ -9170,6 +11051,7 @@ async def build_from_context(
     npc_manager=None,
     render_npc_image=None,
     prepare_npc_character=None,
+    workshop: str = "illustration",
 ) -> dict:
     # Ordinary scenes use the streaming PLAN -> DETAIL implementation exclusively.
     # TOON decoding remains shared with Key Visual and the ENQUEUE endpoint.
@@ -9190,4 +11072,5 @@ async def build_from_context(
         profile_translation_namespace=profile_translation_namespace,
         pre_resolved_profile_output=pre_resolved_profile_output,
         pre_resolved_profile_result=pre_resolved_profile_result,
+        workshop=workshop,
     )

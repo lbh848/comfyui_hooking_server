@@ -1437,5 +1437,284 @@
     ],
     "input_is_list": false,
     "output_node": false
+  },
+  "SoyaEmptyFlux2LatentImageV2_c95de07e_mdsoya": {
+    "name": "SoyaEmptyFlux2LatentImageV2_c95de07e_mdsoya",
+    "base": "EmptyFlux2LatentImage",
+    "display_name": "Empty Flux 2 Latent V2 (Soya JSON)",
+    "json_inputs": {
+      "width": {
+        "key": "IMG_W",
+        "type": "INT"
+      },
+      "height": {
+        "key": "IMG_H",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaKSamplerV2_720e4d13_mdsoya": {
+    "name": "SoyaKSamplerV2_720e4d13_mdsoya",
+    "base": "KSampler",
+    "display_name": "KSampler V2 (Soya JSON)",
+    "json_inputs": {
+      "seed": {
+        "key": "SEED",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "MOSS_FIRST_SAMPLER",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaUNETLoaderV2_moss_mdsoya": {
+    "name": "SoyaUNETLoaderV2_moss_mdsoya",
+    "base": "UNETLoader",
+    "display_name": "Load Diffusion Model (MOSS JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "MODEL"
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "model": {
+      "input": "unet_name",
+      "key": "workflow.model"
+    }
+  },
+  "SoyaCLIPLoaderV2_moss_mdsoya": {
+    "name": "SoyaCLIPLoaderV2_moss_mdsoya",
+    "base": "CLIPLoader",
+    "display_name": "Load CLIP (MOSS JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {
+      "type": "moss_image",
+      "device": "default"
+    },
+    "output": [
+      "CLIP"
+    ],
+    "output_name": [
+      "CLIP"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "model": {
+      "input": "clip_name",
+      "key": "workflow.clip"
+    }
+  },
+  "SoyaVAELoaderV2_moss_mdsoya": {
+    "name": "SoyaVAELoaderV2_moss_mdsoya",
+    "base": "VAELoader",
+    "display_name": "Load VAE (MOSS JSON)",
+    "json_inputs": {},
+    "fixed_inputs": {},
+    "output": [
+      "VAE"
+    ],
+    "output_name": [
+      "VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "model": {
+      "input": "vae_name",
+      "key": "workflow.vae"
+    }
+  },
+  "SoyaEmptyFlux2LatentImageV2_moss_mdsoya": {
+    "name": "SoyaEmptyFlux2LatentImageV2_moss_mdsoya",
+    "base": "EmptyFlux2LatentImage",
+    "display_name": "Empty Flux 2 Latent (MOSS JSON)",
+    "json_inputs": {
+      "width": {
+        "key": "workflow.width",
+        "type": "INT"
+      },
+      "height": {
+        "key": "workflow.height",
+        "type": "INT"
+      },
+      "batch_size": {
+        "key": "workflow.batch_size",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaKSamplerV2_moss_mdsoya": {
+    "name": "SoyaKSamplerV2_moss_mdsoya",
+    "base": "KSampler",
+    "display_name": "KSampler (MOSS JSON)",
+    "json_inputs": {
+      "seed": {
+        "key": "workflow.seed",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "workflow.sampling",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaCLIPTextEncodeV2_moss_prompt_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_moss_prompt_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (MOSS layout)",
+    "json_inputs": {
+      "text": {
+        "key": "moss",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_moss_negative_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_moss_negative_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (MOSS negative)",
+    "json_inputs": {
+      "text": {
+        "key": "workflow.negative",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaBatchLoraLoaderV2_moss_mdsoya": {
+    "name": "SoyaBatchLoraLoaderV2_moss_mdsoya",
+    "base": "SoyaBatchLoraLoader_mdsoya",
+    "display_name": "Batch LoRA Loader (MOSS JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "workflow.loras.activate",
+        "type": "STRING"
+      },
+      "lora_list": {
+        "key": "workflow.loras",
+        "type": "STRING",
+        "preset_key": "STYLE_LORA_DATA"
+      },
+      "base_filter": {
+        "key": "workflow.loras.filter",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {
+      "apply_clip": "false"
+    },
+    "output": [
+      "MODEL",
+      "CLIP",
+      "STRING"
+    ],
+    "output_name": [
+      "model",
+      "clip",
+      "info"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
   }
 }

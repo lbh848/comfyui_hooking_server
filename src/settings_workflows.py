@@ -21,6 +21,9 @@ WORKFLOW_GROUPS = {
     "anima_asset_workflow_source_path": ("에셋", "ANIMA+ILXL"),
     "anima_only_asset_workflow_source_path": ("에셋", "ANIMA"),
     "workflow_pack_extra_paths.anima_rgba_asset": ("에셋", "ANIMA"),
+    "workflow_pack_extra_paths.illustration_dual_vae": ("삽화", "ANIMA"),
+    "workflow_pack_extra_paths.illustration_moss_8step": ("삽화", "MOSS"),
+    "workflow_pack_extra_paths.illustration_moss_4step": ("삽화", "MOSS"),
     "anima_inpainting_workflow_source_path": ("이미지 편집", "ANIMA 인페인팅"),
     "lora_training_workflow_source_paths.anima": ("LoRA 학습", "ANIMA"),
     "lora_training_workflow_source_paths.sdxl": ("LoRA 학습", "ILXL"),
@@ -193,6 +196,46 @@ def delete_local_workflow(service, *, identity: str, revision: str) -> dict:
     return {"deleted": identity}
 
 
+def _local_workflow_models(service, library: dict, relative: str) -> dict:
+    """Resolve a user workflow's model dependencies from the project manifest.
+
+    User workflows are not part of the encrypted pack, so they have no
+    ``model_ids`` entry. Reading the JSON directly still lets the catalog show
+    which bundled models are missing and enables the model install action.
+    """
+    from comfy_installer.model_installer import missing_models
+    from comfy_installer.pack_cli import WorkflowPackError, _workflow_model_ids
+
+    blocked = {
+        "modelsInstalled": False, "modelCount": None, "modelBytes": None,
+        "missingModelCount": None, "missingModelBytes": None,
+        "installBlockedReason": "사용자 워크플로우에는 자동 설치할 필수 모델 목록이 없습니다.",
+    }
+    manifest = getattr(service, "manifest", None)
+    if not isinstance(getattr(manifest, "models", None), list):
+        return blocked
+    user_root = library.get("user_root") if isinstance(library, dict) else None
+    if not isinstance(user_root, (str, Path)):
+        return blocked
+    try:
+        model_ids = _workflow_model_ids(Path(user_root) / relative, service.manifest)
+    except (WorkflowPackError, OSError) as exc:
+        return {**blocked, "installBlockedReason": str(exc)}
+    if not model_ids:
+        return {**blocked, "installBlockedReason": "이 워크플로우에서 자동 설치할 모델을 찾지 못했습니다."}
+    by_id = {model["id"]: model for model in service.manifest.models}
+    models = [by_id[identity] for identity in model_ids if identity in by_id]
+    missing = missing_models(models=models, comfy_root=service.comfy_root)
+    return {
+        "modelsInstalled": not missing,
+        "modelCount": len(models),
+        "modelBytes": sum(model["size"] for model in models),
+        "missingModelCount": len(missing),
+        "missingModelBytes": sum(model["size"] for model in missing),
+        "installBlockedReason": "",
+    }
+
+
 def workflow_catalog(service) -> dict:
     library = service.workflow_library_status()
     release = _latest_release(library)
@@ -248,15 +291,15 @@ def workflow_catalog(service) -> dict:
         if original is not None:
             original["localPaths"].append(relative)
             continue
+        local_models = _local_workflow_models(service, library, relative)
         items.append({
             "id": _local_workflow_id(relative),
             "name": file["name"], "filename": relative, "bindings": [],
             "source": "local", "localPaths": [relative], "fileBytes": file["size"], "fileRevision": file["sha256"],
-            "modelCount": None, "modelBytes": None, "e2eProfiles": [],
+            "e2eProfiles": [],
             "e2eBlockedReason": "사용자 워크플로우는 자동 E2E 검증 대상이 아닙니다.",
             "integrityBlockedReason": "사용자 워크플로우는 비교할 팩 원본이 없어 무결성 검증 대상이 아닙니다.",
-            "modelsInstalled": False, "missingModelCount": None, "missingModelBytes": None,
-            "installBlockedReason": "사용자 워크플로우에는 자동 설치할 필수 모델 목록이 없습니다.",
+            **local_models,
         })
     cleanup = None
     cleanup_error = model_error or "필수 모델 목록을 확인할 수 없습니다."
@@ -285,12 +328,15 @@ def workflow_catalog(service) -> dict:
             "workflowFolder": library.get("user_root", ""), "folderError": library.get("workflow_files_error", "")}
 
 
-def workflow_selection(body: dict) -> tuple[str, list[str]]:
+def workflow_selection(body: dict, *, allow_local: bool = False) -> tuple[str, list[str]]:
     release, selected = body.get("releaseVersion"), body.get("selectedItemIds")
     if (not isinstance(release, str) or not release
             or not isinstance(selected, list) or not 1 <= len(selected) <= 1000
             or not all(isinstance(value, str) and 0 < len(value) <= 200 for value in selected)):
         raise ValueError("검사할 배포 워크플로우를 하나 이상 선택하세요.")
-    if any(identity.startswith("local:") for identity in selected):
+    local = [identity for identity in selected if identity.startswith("local:")]
+    if local and not allow_local:
         raise ValueError("사용자 워크플로우는 팩 검증 대상이 아닙니다. 팩 워크플로우를 선택하세요.")
+    if local and len(selected) != 1:
+        raise ValueError("사용자 워크플로우는 하나씩 선택하세요.")
     return release, list(dict.fromkeys(selected))

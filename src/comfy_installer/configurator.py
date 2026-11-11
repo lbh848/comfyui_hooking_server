@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from configuration import read_config, write_config
-from lora_paths import ASSET_LORA_FOLDER
+from lora_paths import ASSET_LORA_FOLDER, default_lora_load_paths
 
 from comfy_allocation import (
     CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
@@ -53,12 +53,6 @@ _EMBEDDED_DIRECT_PATHS: dict[str, tuple[str, ...]] = {
         "loras",
         "SOYA_CHAR_LORA",
         "SOYA_BOT_LORA",
-    ),
-    "$.instance_lora_load_path": (
-        "models",
-        "loras",
-        "SOYA_CHAR_LORA",
-        "SOYA_INSTANCE_LORA",
     ),
     "$.style_lora_load_path": (
         "models",
@@ -530,9 +524,13 @@ def _retarget_descendant_paths(
 
     direct_parts = _EMBEDDED_DIRECT_PATHS.get(json_path)
     if direct_parts is not None:
+        raw = value.strip()
+        if raw and not Path(raw).is_absolute():
+            # Relative settings already follow the install location.
+            return value
         try:
             target = (new_root.joinpath(*direct_parts)).resolve()
-            candidate = Path(value.strip()).resolve() if value.strip() else None
+            candidate = Path(raw).resolve() if raw else None
         except (OSError, RuntimeError) as exc:
             print(
                 "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 직접 경로 해석 실패; "
@@ -921,14 +919,10 @@ def apply_installed_config(
             normalized_defaults,
         )
 
-        lora_base = install_root / "models" / "loras" / "SOYA_CHAR_LORA"
         direct_updates = {
             "comfyui_port": int(comfy_port),
             "comfy_input_dir": str(install_root / "input"),
-            "lora_load_path": str(lora_base / ASSET_LORA_FOLDER),
-            "bot_lora_load_path": str(lora_base / "SOYA_BOT_LORA"),
-            "instance_lora_load_path": str(lora_base / "SOYA_INSTANCE_LORA"),
-            "style_lora_load_path": str(lora_base / "SOYA_STYLE_LORA"),
+            **default_lora_load_paths(),
             "outfit_mode_enabled": False,
             "outfit_workflow_source_path": "",
         }

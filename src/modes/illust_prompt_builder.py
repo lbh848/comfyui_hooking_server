@@ -870,7 +870,6 @@ class IllustPromptBuilder:
         anima_loras = []
         sdxl_loras = []
         all_face_loras = []
-        all_style_loras = []
 
         for char_name in detected_chars:
             char_data = next((c for c in characters if c["name"] == char_name), None)
@@ -919,45 +918,8 @@ class IllustPromptBuilder:
                     item["UPSCALE_SIZE"] = upscale_size
                 all_face_loras.append(item)
 
-            # style_loras(그림체) 수집 → 트리거는 메인 트리거에 유지,
-            # LoRA 데이터는 일반 LoRA(LORA_DATA)에서 분리하여 STYLE_LORA_DATA로 별도 출력
-            for slora in char_data.get("style_loras", []):
-                strigger = (slora.get("trigger", "") or "").strip()
-                sbase = slora.get("BASE", "anima")
-                slora_path = self._resolve_lora_path(slora)
-                sstrength = slora.get("strength", 0.8)
-
-                # 트리거워드는 메인 트리거(ANIMA_CONTENT/SDXL 맨 앞)에 유지
-                if sbase == "anima":
-                    if strigger and strigger not in anima_triggers:
-                        anima_triggers.append(strigger)
-                    if strigger and strigger not in anima_shared_triggers:
-                        anima_shared_triggers.append(strigger)
-                elif sbase == "sdxl":
-                    if strigger and strigger not in sdxl_triggers:
-                        sdxl_triggers.append(strigger)
-
-                # 같은 전역 스타일은 캐릭터 수와 무관하게 가장 높은 강도로 한 번 적용한다.
-                existing_style = next((
-                    item for item in all_style_loras
-                    if item["BASE"] == sbase
-                    and item["lora_path"].replace("\\", "/") == slora_path.replace("\\", "/")
-                ), None)
-                if existing_style is not None:
-                    previous_strength = existing_style["str"]
-                    existing_style["str"] = max(float(previous_strength), float(sstrength))
-                    print(
-                        f"[ILLUST_STYLE_LORA] 중복 전역 스타일 병합: char={char_name!r}, "
-                        f"path={slora_path!r}, base={sbase}, "
-                        f"strengths=({previous_strength}, {sstrength}), "
-                        f"applied={existing_style['str']}"
-                    )
-                else:
-                    all_style_loras.append({
-                        "lora_path": slora_path,
-                        "str": sstrength,
-                        "BASE": sbase
-                    })
+            # 그림체(스타일) LoRA는 캐릭터 카드에서 수집하지 않는다.
+            # 모델 프리셋의 공통 LoRA(STYLE_LORA_DATA)로만 적용한다.
 
         # ─── 아티스트 프리셋 태그 ───
         anima_artist_preset_name = settings.get("anima_artist_preset", "")
@@ -1203,14 +1165,13 @@ class IllustPromptBuilder:
         positive += "\n[FACE_LORA_DATA]"
         positive += "\n" + json.dumps(face_lora_data, ensure_ascii=False)
 
-        # STYLE LORA (그림체) — 캐릭터 LoRA(LORA_DATA)와 분리하여 별도 섹션 출력
-        has_style_lora = len(all_style_loras) > 0
-        positive += f"\n[STYLE_LORA_ACTIVATE]"
-        positive += f"\n{'true' if has_style_lora else 'false'}"
-
-        style_lora_data = {"list": all_style_loras}
+        # STYLE LORA (그림체) — 모델 프리셋의 공통 LoRA만 생성 JSON 병합 단계에서
+        # 적용한다. 카메라 LoRA 병합 등 후속 단계가 이 제어 블록을 읽으므로 빈 목록으로
+        # 유지한다.
+        positive += "\n[STYLE_LORA_ACTIVATE]"
+        positive += "\nfalse"
         positive += "\n[STYLE_LORA_DATA]"
-        positive += "\n" + json.dumps(style_lora_data, ensure_ascii=False)
+        positive += "\n" + json.dumps({"list": []}, ensure_ascii=False)
 
         # CHAR FACE TAG INFORM
         whitelist = settings.get("positive_whitelist", [])

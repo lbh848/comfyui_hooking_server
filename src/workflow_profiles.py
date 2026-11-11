@@ -157,7 +157,38 @@ def illustration_local_profile(workflow_type: str) -> str | None:
     return None
 
 
-def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "anima") -> dict:
+def is_moss_workflow_source(workflow_source_path: str) -> bool:
+    """MOSS 워크플로우 파일명인지 확인한다(HIRESFIX 미지원, CharRef 레퍼런스 지원)."""
+    name = str(workflow_source_path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return "moss" in name
+
+
+MODEL_FAMILIES = ("anima", "moss")
+
+
+def illustration_model_family(
+    workflow_type: str, workflow_source_path: str = "", selected: str = ""
+) -> str:
+    """그림 모델 선택값을 돌려준다.
+
+    사용자가 고른 계열이 있으면 그 값을 그대로 따르고, 예전 설정처럼 계열
+    선택값이 없을 때만 워크플로우 파일명에서 이관한다. 파일명 추측을 계속
+    우선하면 모델을 바꿔도 그리기 설정의 CharRef/MOSS 잠금이 따라오지 않는다.
+    """
+    if normalize_illustration_workflow_type(workflow_type) not in ILLUSTRATION_LOCAL_PROFILES:
+        return "anima"
+    family = str(selected or "").strip().lower()
+    if family in MODEL_FAMILIES:
+        return family
+    return "moss" if is_moss_workflow_source(workflow_source_path) else "anima"
+
+
+def illustration_capabilities(
+    workflow_type: str,
+    chansub_workflow_type: str = "anima",
+    workflow_source_path: str = "",
+    model_family: str = "",
+) -> dict:
     """UI와 서버 검증이 공유하는 삽화 옵션 기능표."""
     workflow_type = normalize_illustration_workflow_type(workflow_type)
     chansub_family = str(chansub_workflow_type or "anima").strip().lower()
@@ -169,7 +200,7 @@ def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "
         chansub_family = "anima"
 
     if workflow_type == ILLUST_V3:
-        return {
+        capabilities = {
             "anima_presets": True,
             "sdxl_presets": True,
             "ipadapter": True,
@@ -178,8 +209,8 @@ def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "
             "multi_char_mask": True,
             "v1_limited": False,
         }
-    if workflow_type == ILLUST_V3_ANIMA:
-        return {
+    elif workflow_type == ILLUST_V3_ANIMA:
+        capabilities = {
             "anima_presets": True,
             "sdxl_presets": False,
             "ipadapter": False,
@@ -188,8 +219,8 @@ def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "
             "multi_char_mask": True,
             "v1_limited": False,
         }
-    if workflow_type == ILLUST_CHANSUB:
-        return {
+    elif workflow_type == ILLUST_CHANSUB:
+        capabilities = {
             "anima_presets": chansub_family == "anima",
             "sdxl_presets": chansub_family == "sdxl",
             "ipadapter": False,
@@ -198,17 +229,27 @@ def illustration_capabilities(workflow_type: str, chansub_workflow_type: str = "
             "multi_char_mask": False,
             "v1_limited": False,
         }
-    # 하이브리드는 사용자가 승인한 교집합 정책: 챈섭 ANIMA에서 쓸 수 있는
-    # 프리셋/이미지 크기만 편집하고 로컬 전용 고급 옵션은 회색 처리한다.
-    return {
-        "anima_presets": True,
-        "sdxl_presets": False,
-        "ipadapter": False,
-        "local_advanced": False,
-        "chansub_advanced": True,
-        "multi_char_mask": False,
-        "v1_limited": False,
-    }
+    else:
+        # 하이브리드는 사용자가 승인한 교집합 정책: 챈섭 ANIMA에서 쓸 수 있는
+        # 프리셋/이미지 크기만 편집하고 로컬 전용 고급 옵션은 회색 처리한다.
+        capabilities = {
+            "anima_presets": True,
+            "sdxl_presets": False,
+            "ipadapter": False,
+            "local_advanced": False,
+            "chansub_advanced": True,
+            "multi_char_mask": False,
+            "v1_limited": False,
+        }
+    # MOSS has no HIRESFIX/detailer stages, but the MOSS workflows now carry the
+    # integrated CharRef v2 reference path. Keep the two capabilities separate so
+    # the UI unlocks only image references. The family follows the user's model
+    # selection and only falls back to the workflow filename for old presets.
+    family = illustration_model_family(workflow_type, workflow_source_path, model_family)
+    capabilities["model_family"] = family
+    capabilities["moss"] = family == "moss"
+    capabilities["moss_reference"] = capabilities["moss"]
+    return capabilities
 
 
 def asset_capabilities(workflow_type: str) -> dict:
@@ -295,6 +336,13 @@ def normalize_workflow_config(config: dict) -> dict:
         illustration_type,
     )
     config["illustration_workflow_type"] = illustration_type
+    local_source = illustration_local_profile(illustration_type)
+    config["illustration_model_family"] = illustration_model_family(
+        illustration_type,
+        (config["illustration_workflow_source_paths"].get(local_source, "")
+         if local_source else ""),
+        config.get("illustration_model_family"),
+    )
     config["illustration_provider"] = illustration_provider_mode(illustration_type)
     config["restore_prompt_file"] = normalize_restore_prompt_file(
         config.get("restore_prompt_file")

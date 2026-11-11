@@ -9,11 +9,11 @@ export function illustrationPromptDocument(value: unknown) {
     ? document as { schema: string; fields: Record<string, unknown>; assets?: Record<string, unknown> } : null;
 }
 
-export function IllustrationPrompt({ value, label = "최종 JSON" }: { value: unknown; label?: string }) {
+export function IllustrationPrompt({ value, label = "최종 JSON", title }: { value: unknown; label?: string; title?: string }) {
   const payload = illustrationPromptDocument(value);
   const text = payload ? JSON.stringify(payload, null, 2) : typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
   return <section className="illust-json-prompt">
-    <header><h4>{payload ? "최종 JSON" : label}</h4>{payload && <button className="button" onClick={() => {
+    <header><h4>{title || (payload ? "최종 JSON" : label)}</h4>{payload && <button className="button" onClick={() => {
       const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
       const link = window.document.createElement("a"); link.href = url; link.download = "illustration-prompt.json"; link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);

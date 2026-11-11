@@ -57,14 +57,19 @@ class BackupRetentionTests(unittest.IsolatedAsyncioTestCase):
             "asyncio": asyncio, "copy": copy, "datetime": datetime, "glob": glob,
             "json": json, "os": os, "traceback": traceback, "Image": Image, "BytesIO": BytesIO,
             "app_config": self.config, "DEFAULT_MAX_BACKUP_IMAGES": 500,
-            "WORKFLOW_BACKUP_DIR": str(self.backups), "get_backup_base_dir": lambda: str(self.backups),
+            "WORKFLOW_BACKUP_DIR": str(self.backups),
+            "get_backup_base_dir": lambda *args, **kwargs: str(self.backups),
             "_BACKUP_SNAPSHOT_UNSET": object(), "HAS_PIEXIF": False, "REMOTE_COMFY_TARGETS": (),
             "CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT": ContextVar("test_backup_snapshot", default=None),
             "current_original_workflow": None, "current_api_workflow": None, "current_conversion_info": {},
             "multi_char_mask": SimpleNamespace(normalize_multi_char_snapshot=lambda _: None),
             "_normalize_illustration_visual_states": lambda *args, **kwargs: None,
             "get_backup_webp_quality": lambda: 80, "get_backup_webp_lossless": lambda: False,
-            "illustration_flow": SimpleNamespace(record_backup=lambda _: None),
+            "illustration_flow": SimpleNamespace(
+                WORKSHOPS=("illustration", "emotion"),
+                current_workshop=lambda: "",
+                record_backup=lambda _: None,
+            ),
             "_invalidate_backup_filter_cache": Mock(), "notify_frontend": AsyncMock(),
         }
         for name in ("cleanup_backups", "save_backup"):

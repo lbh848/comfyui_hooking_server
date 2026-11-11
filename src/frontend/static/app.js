@@ -15637,16 +15637,12 @@
             document.getElementById('setting-face-extract-workflow-filename').value = faceExtractSplit.filename;
             document.getElementById('setting-face-extract-workflow-source-path').value = faceExtractPath;
 
-            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA, SOYA_CHAR_LORA\SOYA_INSTANCE_LORA, SOYA_CHAR_LORA\SOYA_STYLE_LORA 접미사 제거 후 표시)
+            // 로라 폴더는 관리형 ComfyUI 설치의 models/loras로 고정된다. 표시만 한다.
             const loraLoadPath = currentConfig.lora_load_path || '';
-            const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
-            const instanceLoraLoadPath = currentConfig.instance_lora_load_path || '';
-            const styleLoraLoadPath = currentConfig.style_lora_load_path || '';
-            const basePath = stripManagedLoraPath(loraLoadPath)
-                || stripManagedLoraPath(botLoraLoadPath)
-                || stripManagedLoraPath(instanceLoraLoadPath)
-                || stripManagedLoraPath(styleLoraLoadPath);
-            document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
+            const loraFolderEl = document.getElementById('setting-lora-folder-path');
+            if (loraFolderEl) {
+                loraFolderEl.textContent = stripManagedLoraPath(loraLoadPath) || loraLoadPath || '-';
+            }
 
             settingsFormPopulated = true;
         }
@@ -15767,20 +15763,9 @@
             return normalizedBase + sep + filename;
         }
 
-        function combineLoraLoadPath(baseDir, ...parts) {
-            const normalizedBase = String(baseDir || '').trim().replace(/[\\/]+$/, '');
-            if (!normalizedBase) return '';
-            // 경로 구분자는 입력값을 따릅니다. POSIX 환경에서 역슬래시(\\)로 고정할 경우,
-            // "loras\\SOYA_CHAR_LORA"라는 단일 폴더명으로 생성되어 저장은 성공하지만
-            // 실제 LoRA 폴더 경로와 조용히 어긋나는 문제가 발생합니다.
-            const separator =
-                normalizedBase.includes('\\') && !normalizedBase.includes('/') ? '\\' : '/';
-            return [normalizedBase, ...parts].join(separator);
-        }
-
         function stripManagedLoraPath(path) {
             return String(path || '').trim().replace(
-                /[\\/]SOYA_CHAR_LORA(?:[\\/]SOYA_(?:ASSET|BOT|INSTANCE|STYLE)_LORA)?$/i,
+                /[\\/]SOYA_(?:ASSET|BOT|STYLE)_LORA$/i,
                 ''
             );
         }
@@ -16723,8 +16708,10 @@
         let _untrackedLoraItems = [];
 
         async function openLoraFolder() {
-            const pathInput = document.getElementById('setting-lora-load-path').value.trim();
-            if (!pathInput) { showToast('LoRA 경로가 설정되지 않았습니다', 'error'); return; }
+            // 서버가 계산해 준 고정 경로(models/loras)를 연다.
+            const loraLoadPath = (currentConfig && currentConfig.lora_load_path) || '';
+            const pathInput = stripManagedLoraPath(loraLoadPath) || loraLoadPath;
+            if (!pathInput) { showToast('LoRA 경로를 불러오지 못했습니다', 'error'); return; }
             try {
                 const resp = await fetchJSON(`/api/open-folder?path=${encodeURIComponent(pathInput)}`);
                 if (!resp.success) showToast(resp.error || '폴더 열기 실패', 'error');
@@ -17084,10 +17071,6 @@
                     sdxl: document.getElementById('setting-style-lora-workflow-sdxl-source-path').value
                 },
                 face_extract_workflow_source_path: document.getElementById('setting-face-extract-workflow-source-path').value,
-                lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_ASSET_LORA'),
-                bot_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_BOT_LORA'),
-                instance_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_INSTANCE_LORA'),
-                style_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_STYLE_LORA'),
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
@@ -20824,6 +20807,7 @@
             { key: 'illustration_character_resolve', label: '삽화·만화 등장인물·장면 선택', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_profile_context_translate', label: '삽화 프로필 영어 컨텍스트 번역', kind: 'JSON · 캐시 미스 시', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_emotion_resolve', label: '삽화 CURRENT 복장 결정 (EMOTION-RESOLVE)', kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
@@ -21578,9 +21562,14 @@
                     || currentConfig?.illustration_workflow_type
             );
             const chansubFamily = document.getElementById('setting-chansub-workflow-type')?.value === 'sdxl' ? 'sdxl' : 'anima';
+            // MOSS 워크플로우는 이미지 레퍼런스와 고해상도·디테일러 노드가 없어
+            // 레퍼런스/HIRESFIX 고급 옵션을 잠근다.
+            const localProfile = illustrationLocalProfile(normalized);
+            const sourcePath = String(currentConfig?.illustration_workflow_source_paths?.[localProfile] || '');
+            const moss = sourcePath.toLowerCase().includes('moss');
 
-            if (normalized === 'v3') return { anima: true, sdxl: true, ipadapter: true, localAdvanced: true, chansub: false, v1: false };
-            if (normalized === 'v3_anima') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: true, chansub: false, v1: false };
+            if (normalized === 'v3') return { anima: true, sdxl: true, ipadapter: true, localAdvanced: !moss, chansub: false, v1: false, moss, mossReference: moss, reference: true };
+            if (normalized === 'v3_anima') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: !moss, chansub: false, v1: false, moss, mossReference: moss, reference: true };
             if (normalized === 'chansub') return { anima: chansubFamily === 'anima', sdxl: chansubFamily === 'sdxl', ipadapter: false, localAdvanced: false, chansub: true, v1: false };
             return { anima: true, sdxl: false, ipadapter: false, localAdvanced: false, chansub: true, v1: false };
         }
@@ -28615,7 +28604,7 @@
                             saveAfterSelect.value = cfg.save_after;
                         }
                     }
-                    // lora_save_path 자동 생성 (SOYA_CHAR_LORA 접두사 제외: 워크플로우가 base_path와 조합하므로)
+                    // lora_save_path 자동 생성 (models/loras 기준 상대 경로)
                     document.getElementById('lora-cfg-save-path').textContent = 'SOYA_ASSET_LORA/' + loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
             } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
@@ -52878,9 +52867,13 @@
             for (const id of ['illust-local-advanced-before', 'illust-local-advanced-after']) {
                 const fieldset = document.getElementById(id);
                 if (!fieldset) continue;
-                fieldset.disabled = !capabilities.localAdvanced;
-                fieldset.style.opacity = capabilities.localAdvanced ? '1' : '0.38';
-                fieldset.style.filter = capabilities.localAdvanced ? 'none' : 'grayscale(1)';
+                // MOSS unlocks the reference group only; HIRESFIX/detailers stay locked.
+                const enabled = id === 'illust-local-advanced-after'
+                    ? (capabilities.localAdvanced || capabilities.mossReference)
+                    : capabilities.localAdvanced;
+                fieldset.disabled = !enabled;
+                fieldset.style.opacity = enabled ? '1' : '0.38';
+                fieldset.style.filter = enabled ? 'none' : 'grayscale(1)';
             }
             const notice = document.getElementById('illust-chansub-advanced-notice');
             if (notice) notice.style.display = capabilities.chansub ? 'block' : 'none';
@@ -52889,6 +52882,7 @@
                 const available = capability === 'ilxl' ? capabilities.sdxl
                     : capability === 'anima' ? capabilities.anima
                     : capability === 'ipadapter' ? capabilities.ipadapter
+                    : capability === 'reference' ? capabilities.reference
                     : true;
                 group.classList.toggle('illust-capability-unavailable', !available);
                 group.querySelectorAll('input, select, button').forEach(control => {
@@ -54749,7 +54743,8 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '출력 방식과 단계별 사용 여부를 설정합니다. OUTFIT·TIME & PLACE·PLAN은 독립적으로 끌 수 있으며, 생략한 판단은 원문을 받은 후속 LLM이 수행합니다.',
                 fields: [
-                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '원본 에셋 장수는 에셋 선택 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}, {value: 'manga_both', label: '만화 삽화 + 원본 에셋 (준비 중)', disabled: true}, {value: 'manga', label: '만화 삽화 (준비 중)', disabled: true}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'illustration_model_family', label: '그림 모델', type: 'select', skipSave: true, help: 'MOSS 또는 ANIMA 그림 모델 프리셋을 선택합니다. 변경하면 활성 그림 모델 프리셋이 전환됩니다.', options: [{value: 'moss', label: 'MOSS'}, {value: 'anima', label: 'ANIMA'}], onchange: 'onIllustrationModelFamilyChange(this)'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '원본 에셋 장수는 에셋 선택 탭에서 설정합니다. 만화 삽화 모드는 MOSS 그림 모델에서만 선택할 수 있습니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}, {value: 'manga_both', label: '만화 삽화 + 원본 에셋', mossOnly: true}, {value: 'manga', label: '만화 삽화', mossOnly: true}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'genre', label: '장르', type: 'select', placeholder: 'Enter a genre, era, or world setting', help: '장르를 선택하거나 Custom에서 직접 입력하세요. 배경 묘사에 영향을 미칩니다.', options: [{value: '', label: 'Not specified'}, 'Medieval fantasy', 'Modern', 'Modern fantasy', 'Cyberpunk', 'Steampunk', 'Sci-fi / Space', 'Wuxia', 'Eastern fantasy', 'Historical', 'Post-apocalyptic'], onchange: 'onIllustrationContextToggleChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: '켜면 NSFW 및 물리 접촉 지침을 추가하고, 끄면 제외합니다. 호환성 지침은 항상 적용됩니다.'},
                     {key: 'profile_context_translate', label: '프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)', type: 'toggle', help: '켜면 다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.'},
@@ -54881,17 +54876,126 @@
         let _illustrationSettingsDirty = false;
         let _illustrationSettingsSaveTimer = null;
         let _illustrationSettingsSaving = false;
+        // 그림 모델 선택은 전역 활성 프리셋을 전환한다. 생성 설정(toggles)에는
+        // 저장하지 않고, 프리셋 목록에서 MOSS/ANIMA 계열만 골라 보여준다.
+        let _illustrationPresetDocument = null;
+        let _illustrationPresetFamily = '';
+
+        function illustrationPresetFamilyOf(preset) {
+            // 그림 모델 선택값을 먼저 따르고, 선택값이 없는 예전 프리셋만 경로에서 이관한다.
+            const selected = String(preset?.config?.illustration_model_family || '').toLowerCase();
+            if (selected === 'moss' || selected === 'anima') return selected;
+            const paths = Object.values(preset?.config?.illustration_workflow_source_paths || {});
+            const text = [preset?.name || '', ...paths.map(value => String(value))].join(' ').toLowerCase();
+            return text.includes('moss') ? 'moss' : 'anima';
+        }
+
+        async function loadIllustrationModelFamily() {
+            try {
+                const res = await fetch('/api/illustration/presets?workshop=illustration');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                _illustrationPresetDocument = await res.json();
+                const active = (_illustrationPresetDocument.presets || []).find(
+                    preset => preset.id === _illustrationPresetDocument.active_id);
+                _illustrationPresetFamily = illustrationPresetFamilyOf(active);
+            } catch (e) {
+                console.error('[ILLUST_CONTEXT] 그림 모델 프리셋 로드 실패:', e);
+                _illustrationPresetDocument = null;
+                _illustrationPresetFamily = 'anima';
+            }
+            return _illustrationPresetFamily;
+        }
+
+        // ANIMA 그림 모델에서는 만화 삽화 출력을 선택할 수 없다. 옵션 잠금과 함께,
+        // 이미 만화 모드가 저장돼 있으면 일반 삽화로 되돌린다.
+        function applyIllustrationModelFamilyToOutputMode(family) {
+            const modeSelect = document.getElementById('illust-setting-illustration_output_mode');
+            if (!modeSelect) return;
+            Array.from(modeSelect.options).forEach(option => {
+                if (option.dataset.illustMossOnly === 'true') option.disabled = family === 'anima';
+            });
+            if (family === 'anima' && ['manga', 'manga_both'].includes(modeSelect.value)) {
+                modeSelect.value = 'illustration';
+                onIllustrationOutputModeChange(modeSelect);
+                markIllustrationContextSettingsDirty();
+            }
+        }
+
+        async function onIllustrationModelFamilyChange(select) {
+            const family = select?.value === 'moss' ? 'moss' : 'anima';
+            const documentData = _illustrationPresetDocument;
+            if (!documentData) {
+                showToast('그림 모델 프리셋을 불러오지 못했습니다.', 'error');
+                select.value = _illustrationPresetFamily || 'anima';
+                return;
+            }
+            const storageKey = `soya-illust-model-family:${family}`;
+            let remembered = '';
+            try { remembered = localStorage.getItem(storageKey) || ''; } catch (_) {}
+            // Remember the preset we are leaving so switching back restores it.
+            const leaving = (documentData.presets || []).find(
+                preset => preset.id === documentData.active_id);
+            if (leaving) {
+                try { localStorage.setItem(
+                    `soya-illust-model-family:${illustrationPresetFamilyOf(leaving)}`, leaving.id); } catch (_) {}
+            }
+            const presets = (documentData.presets || []).filter(
+                preset => illustrationPresetFamilyOf(preset) === family);
+            const target = presets.find(preset => preset.id === documentData.active_id)
+                || presets.find(preset => preset.id === remembered)
+                || presets[0];
+            if (!target) {
+                showToast(`${family.toUpperCase()} 그림 모델 프리셋이 없습니다.`, 'error');
+                select.value = _illustrationPresetFamily || 'anima';
+                return;
+            }
+            try { localStorage.setItem(storageKey, target.id); } catch (_) {}
+            if (target.id === documentData.active_id) {
+                _illustrationPresetFamily = family;
+                _illustrationContextToggles.illustration_model_family = family;
+                applyIllustrationModelFamilyToOutputMode(family);
+                return;
+            }
+            select.disabled = true;
+            try {
+                const res = await fetch('/api/illustration/presets', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'select', target_id: target.id,
+                        preset_id: documentData.active_id, revision: documentData.revision,
+                        workshop: 'illustration'}),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                _illustrationPresetDocument = data;
+                _illustrationPresetFamily = family;
+                _illustrationContextToggles.illustration_model_family = family;
+                applyIllustrationModelFamilyToOutputMode(family);
+                await loadCurrentConfig(true);
+                showToast(`${target.name} 모델로 전환했습니다.`, 'success');
+            } catch (e) {
+                console.error('[ILLUST_CONTEXT] 그림 모델 전환 실패:', e);
+                showToast('그림 모델 전환 실패: ' + (e.message || e), 'error');
+                select.value = _illustrationPresetFamily || 'anima';
+            } finally {
+                select.disabled = false;
+            }
+        }
 
         function _renderIllustrationContextOptions(options, value) {
+            // 만화 삽화 출력은 MOSS 그림 모델 전용이다.
+            const anima = String(
+                _illustrationContextToggles?.illustration_model_family || _illustrationPresetFamily || ''
+            ) === 'anima';
             return (options || []).map(option => {
                 const optionValue = typeof option === 'object' ? option.value : option;
                 const optionLabel = typeof option === 'object' ? option.label : option;
                 const selected = String(value) === String(optionValue) ? 'selected' : '';
-                const disabled = typeof option === 'object' && option.disabled ? 'disabled' : '';
+                const disabled = typeof option === 'object' && (option.disabled || (option.mossOnly && anima)) ? 'disabled' : '';
                 // Hidden options keep the saved value representable while staying
                 // out of the visible dropdown (moved to another tab).
                 const hidden = typeof option === 'object' && option.hidden ? 'hidden' : '';
-                return `<option value="${escapeHtml(String(optionValue))}" ${selected} ${disabled} ${hidden}>${escapeHtml(String(optionLabel))}</option>`;
+                const mossOnly = typeof option === 'object' && option.mossOnly ? 'data-illust-moss-only="true"' : '';
+                return `<option value="${escapeHtml(String(optionValue))}" ${selected} ${disabled} ${hidden} ${mossOnly}>${escapeHtml(String(optionLabel))}</option>`;
             }).join('');
         }
 
@@ -55413,13 +55517,15 @@
             _illustrationSettingsSaveTimer = null;
             setIllustrationContextStatus('불러오는 중...');
             try {
-                const [res] = await Promise.all([
+                const [res, , modelFamily] = await Promise.all([
                     fetch('/api/illustration_context/toggles'),
                     loadCurrentConfig(true),
+                    loadIllustrationModelFamily(),
                 ]);
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 _illustrationContextToggles = data.toggles || {};
+                _illustrationContextToggles.illustration_model_family = modelFamily;
                 renderIllustrationContextToggles();
                 _illustrationSettingsDirty = false;
                 setIllustrationContextStatus('자동 저장 켜짐');
@@ -55446,6 +55552,8 @@
             _illustrationSettingsSaving = true;
             _illustrationSettingsDirty = false;
             const body = {..._illustrationContextToggles};
+            // The model family switches a global preset instead of a saved toggle.
+            delete body.illustration_model_family;
             // Retired settings must not survive as hidden save-time options.
             delete body.call1_enabled;
             for (const key of Object.keys(body)) {
@@ -55456,6 +55564,7 @@
             delete body.speak_enabled;
             delete body.compat_character_divider;
             for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
+                if (field.skipSave) continue;
                 const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
                 if (!el) {
                     // 합성 삽화 모드에서는 출력 모드 행이 숨겨지지만 기존 저장값을 유지한다.
@@ -62929,10 +63038,10 @@
 
         function resolveLoraPath(l) {
             const src = l.source || 'asset';
-            if (src === 'bot') return 'SOYA_CHAR_LORA\\SOYA_BOT_LORA\\' + l.lora_path;
-            if (src === 'instance') return 'SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\' + l.lora_path;
-            if (src === 'style') return 'SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\' + l.lora_path;
-            return 'SOYA_CHAR_LORA\\SOYA_ASSET_LORA\\' + l.lora_path;
+            if (src === 'bot') return 'SOYA_BOT_LORA\\' + l.lora_path;
+            if (src === 'instance') return 'SOYA_INSTANCE_LORA\\' + l.lora_path;
+            if (src === 'style') return 'SOYA_STYLE_LORA\\' + l.lora_path;
+            return 'SOYA_ASSET_LORA\\' + l.lora_path;
         }
 
         function renderAssetLoraList() {

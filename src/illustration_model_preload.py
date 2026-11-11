@@ -45,7 +45,7 @@ async def load_local_llm_after_generation(toggles: dict) -> None:
 
 
 def image_model_load_graph(workflow: dict) -> dict:
-    specs = json.loads((Path(__file__).parent / "comfy_installer/resources/illustration_v2/illustration_v2_specs.json").read_text(encoding="utf-8"))
+    specs = json.loads((Path(__file__).parent / "comfy_installer/illustration_v2_specs.json").read_text(encoding="utf-8"))
     model_types = {name for name, spec in specs.items() if spec.get("model") and "MODEL" in spec["output"]}
     model_types.update({"UNETLoader", "CheckpointLoaderSimple", "CheckpointLoaderKJ"})
     payload = json.dumps({"schema": SCHEMA, "fields": workflow_json_defaults(workflow), "assets": {}}, ensure_ascii=False)

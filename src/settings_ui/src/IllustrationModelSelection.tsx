@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useIllustrationAction, type IllustrationData } from "./illustration";
 import { useIllustrationSaveReport } from "./IllustrationSaveStatus";
-import { illustrationModelLabel } from "./illustrationModels";
+import { illustrationModelLabel, illustrationPresetFamily } from "./illustrationModels";
 import { useModelSettingsRequest, useModelSettingsResource, useModelSettingsScope } from "./ModelSettingsScope";
 import { SearchableSelect } from "./SearchableSelect";
 
@@ -47,6 +47,11 @@ export function ActiveIllustrationModel() {
   const scope = useModelSettingsScope();
   const { data, disabled, select, pending } = useIllustrationModelSelection();
   const profile = data?.config?.[scope.typeKey];
+  const activePreset = (data?.presets || []).find((item: IllustrationData) => item.id === data?.active_id);
+  // MOSS presets share the ANIMA workflow profile, so show the selected model
+  // family instead of the profile label.
+  const modelLabel = scope.familyKey && illustrationPresetFamily(activePreset) === "moss"
+    ? "MOSS" : profile ? scope.labels[profile] || illustrationModelLabel(profile) : "";
   // The server returns only this workshop's preset file, so no local filtering
   // is needed.
   const presets = data?.presets || [];
@@ -57,6 +62,6 @@ export function ActiveIllustrationModel() {
         {presets.filter((item: IllustrationData) => item.scope === group).map((item: IllustrationData) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </optgroup>)}
     </SearchableSelect>
-    <span className="field-help">{pending ? "모델 설정을 저장한 뒤 전환할 수 있습니다." : profile ? `그림 모델 · ${scope.labels[profile] || illustrationModelLabel(profile)}` : `다음 ${scope.title} 생성에 사용할 프리셋을 선택하세요.`}</span>
+    <span className="field-help">{pending ? "모델 설정을 저장한 뒤 전환할 수 있습니다." : profile ? `그림 모델 · ${modelLabel}` : `다음 ${scope.title} 생성에 사용할 프리셋을 선택하세요.`}</span>
   </label>;
 }

@@ -7,20 +7,23 @@ import { IllustGenerationLogs, IllustHistory } from "./IllustHistory";
 import { IllustPromptStructure } from "./IllustInspector";
 import { IllustNodeFlow } from "./IllustNodeFlow";
 import { IllustPromptEditor } from "./IllustPromptEditor";
+import { EmotionPresetSettings, EMOTION_PRESET_CHAR_LIMIT } from "./EmotionPresetSettings";
 import { IllustPostprocess } from "./IllustPostprocess";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { useUnsavedChanges } from "./unsavedChanges";
+import { illustrationPresetFamily } from "./illustrationModels";
 
 const labels: Record<string, string> = {
   local_llm_load_after_generation: "생성이 끝나면, 공방-LLM 로드", image_model_load_at_detail: "DETAIL이 시작할 때 그림 모델 로드",
+  illustration_model_family: "그림 모델",
   illustration_output_mode: "출력 모드", original_asset_count: "원본 에셋 출력 장수",
-  outfit_enabled: "OUTFIT 복장·헤어 추적", time_place_enabled: "TIME & PLACE 시간·장소·조명 추적", npc_generation_enabled: "미등록 인물 자동 생성", npc_lifetime: "미사용 수명 (회)", call2_plan_enabled: "PLAN 시각 계획",
+  outfit_enabled: "OUTFIT 복장·헤어 추적", time_place_enabled: "TIME & PLACE 시간·장소·조명 추적", npc_generation_enabled: "미등록 인물 자동 생성", npc_generation_deferred: "NPC 생성은 나중에", npc_lifetime: "미사용 수명 (회)", call2_plan_enabled: "PLAN 시각 계획",
   visual_correction_enabled: "비주얼 교정", visual_correction_max_redraws: "최대 교정 횟수",
   call1_context_turns: "OUTFIT 참조 대화 수", call2_context_turns: "DETAIL 참조 대화 수", call3_context_turns: "POST PROCESS 참조 대화 수",
   multi_char_mask_enabled: "마스크 사용", multi_char_mask_inline_enabled: "마스크 예측 방식", single_char_mask_enabled: "1인도 마스크",
   single_char_mask_skip_enabled: "면적 기준으로 1인 마스크 생략", single_char_mask_skip_area_percent: "생략 기준 면적 (%)",
   speak_enabled: "대사 생성", call3_prompt_mode: "대사 출력 방식", speak_language: "대사 언어", speak_emotion_enabled: "대사 감정 지정", speak_emotions: "대사 감정",
-  nsfw: "NSFW 태깅", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "대표 이미지 생성", keyvis_in_detail_enabled: "DETAIL에서 KEYVIS 함께 예측",
+  nsfw: "NSFW 태깅", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "대표 이미지 생성", keyvis_in_detail_enabled: "DETAIL에서 KEYVIS 함께 예측",
   minimal_background_description: "대표 이미지 배경 묘사 최소화", character_limit: "이미지당 최대 캐릭터", scene_mode: "장면 수 결정", output_count_min: "최소 일반 장면 수", output_count_max: "최대 일반 장면 수",
   context_history: "이전 대화 참조", focus: "집중 캐릭터", direction: "우선 연출 지시", manga_output_count_min: "최소 만화 페이지 수", manga_output_count_max: "최대 만화 페이지 수",
   manga_scene_mode: "페이지 수 결정", manga_character_limit: "페이지당 최대 캐릭터", manga_focus: "만화 집중 캐릭터", manga_direction: "만화 우선 연출 지시",
@@ -43,6 +46,20 @@ const choices: Record<string, [string, string][]> = {
 // Composite modes are configured in the emotion illustration workshop and are
 // not exposed in this tab at all.
 const compositeOutputModes = ["composite", "composite_both"];
+// 감정 삽화 공방은 일반 감정 삽화 생성과 배경 합성 파이프라인 두 가지만 노출한다.
+const emotionOutputChoices: [string, string][] = [
+  ["illustration", "감정 삽화 모드"],
+  ["composite", "배경 합성 모드"],
+];
+// 감정 삽화 공방의 에셋 개수 설정 탭은 '일반 장면' 대신 '장면'으로 표기한다.
+const emotionAssetLabels: Record<string, string> = {
+  output_count_min: "최소 장면 수",
+  output_count_max: "최대 장면 수",
+};
+const emotionAssetHelp: Record<string, string> = {
+  output_count_min: "생성할 감정 에셋 수의 하한입니다.",
+  output_count_max: "생성할 감정 에셋 수의 상한입니다.",
+};
 type GenerationSection = { title: string; keys: string[]; dependent?: string[]; advanced?: string[]; advancedTitle?: string; paired?: boolean; mode?: "illustration" | "manga" };
 const parallelSections: GenerationSection[] = ["call2", "call2_detail"].map((prefix, index) => ({
   title: "",
@@ -54,7 +71,7 @@ const generationGroups: { id: string; title: string; description: string; sectio
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_output_mode", "nsfw", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "nsfw", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
       { title: "KEYVIS", keys: ["key_visual"], dependent: ["keyvis_in_detail_enabled", "minimal_background_description"] },
       { title: "MULTI-CHAR-MASK", keys: ["multi_char_mask_enabled"], dependent: ["multi_char_mask_inline_enabled", "single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"] },
@@ -92,13 +109,50 @@ const generationGroups: { id: string; title: string; description: string; sectio
   },
 ];
 const generationTabs = Object.fromEntries(generationGroups.map(group => [group.id, group.title]));
+// 감정 삽화 공방은 OUTFIT·PLAN·KEYVIS·MULTI-CHAR-MASK 노드를 사용하지 않으므로
+// 해당 생성 설정을 노출하지 않는다. DETAIL 설정은 그대로 유지한다.
+const emotionHiddenKeys = new Set([
+  "illustration_model_family",
+  "outfit_enabled", "call2_plan_enabled", "key_visual", "keyvis_in_detail_enabled",
+  "minimal_background_description", "multi_char_mask_enabled", "multi_char_mask_inline_enabled",
+  "single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent",
+  // 감정 삽화는 인스턴스 에셋 생성이 목적이므로 대사 후처리를 사용하지 않는다.
+  "postprocess_enabled",
+]);
+const emotionHiddenSections = new Set(["KEYVIS", "MULTI-CHAR-MASK"]);
+// 장면 선택·PLAN/DETAIL·POST PROCESS·최종 프롬프트·원본 에셋은 감정 삽화
+// 설정에서 사용하지 않는다. 파이프라인 설정만 남긴다.
+const emotionHiddenGroups = new Set(["selection", "plan_detail", "postprocess", "output", "original_asset"]);
+const emotionGenerationGroups = [
+  ...generationGroups.filter(group => !emotionHiddenGroups.has(group.id)).map(group => ({
+    ...group,
+    sections: group.sections
+      .filter(section => !emotionHiddenSections.has(section.title))
+      .map(section => {
+        // NSFW 태깅 바로 아래에 감정 삽화 공방 전용 에셋 생성 토글을 둔다.
+        const keys = section.keys
+          .filter(key => !emotionHiddenKeys.has(key))
+          .flatMap(key => key === "nsfw" ? [key, "nsfw_asset_generation_enabled"] : [key]);
+        const dependent = section.dependent?.filter(key => !emotionHiddenKeys.has(key));
+        const advanced = section.advanced?.filter(key => !emotionHiddenKeys.has(key));
+        return { ...section, keys, dependent: dependent?.length ? dependent : undefined,
+          advanced: advanced?.length ? advanced : undefined };
+      })
+      .filter(section => section.keys.length || section.dependent?.length || section.advanced?.length),
+  })),
+  // 감정 삽화 공방 전용: 생성할 감정 에셋 개수 설정 탭.
+  { id: "emotion_assets", title: "감정 에셋 개수 설정",
+    description: "감정 삽화에서 생성할 감정 에셋 개수를 설정합니다.",
+    sections: [{ title: "", keys: ["output_count_min", "output_count_max", "scene_mode"] }] as GenerationSection[] },
+];
+const emotionGenerationTabs = Object.fromEntries(emotionGenerationGroups.map(group => [group.id, group.title]));
 const dependencies: Record<string, string[]> = {
   keyvis_in_detail_enabled: ["key_visual"], minimal_background_description: ["key_visual"],
   multi_char_mask_inline_enabled: ["multi_char_mask_enabled"], single_char_mask_enabled: ["multi_char_mask_enabled"],
   single_char_mask_skip_enabled: ["multi_char_mask_enabled", "single_char_mask_enabled"],
   single_char_mask_skip_area_percent: ["multi_char_mask_enabled", "single_char_mask_enabled", "single_char_mask_skip_enabled"],
   visual_correction_max_redraws: ["visual_correction_enabled"], speak_emotions: ["speak_emotion_enabled"],
-  call1_context_turns: ["outfit_enabled"],
+  call1_context_turns: ["outfit_enabled"], npc_generation_deferred: ["npc_generation_enabled"],
 };
 for (const [prefix, stage] of [["call2", "call2_plan_enabled"], ["call2_detail", ""]]) {
   const parent = stage ? [stage] : [];
@@ -115,12 +169,14 @@ for (const [prefix, stage] of [["call2", "call2_plan_enabled"], ["call2_detail",
 const fieldHelp: Record<string, string> = {
   local_llm_load_after_generation: "삽화 작업이 끝나면, LLM 모델을 GPU에 올립니다.",
   image_model_load_at_detail: "detail이 시작하는 시점에서 그림 모델을 미리 GPU에 올립니다.\n초기 웜업 시간을 LLM 생성 시간에 가릴 수 있습니다.",
-  illustration_output_mode: "원본 에셋 장수는 에셋 선택 탭에서 설정합니다.",
+  illustration_output_mode: "원본 에셋 장수는 에셋 선택 탭에서 설정합니다. 만화 삽화 모드는 MOSS 그림 모델에서만 선택할 수 있습니다.",
   nsfw: "NSFW 및 물리 접촉 지침을 추가합니다. 호환성 지침은 항상 적용됩니다.",
+  nsfw_asset_generation_enabled: "캐릭터의 NSFW 복장·감정 에셋을 생성합니다.",
   profile_context_translate: "다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.",
   outfit_enabled: "복장·헤어를 미리 추적합니다. 끄면 후속 단계가 원문과 프로필에서 현재 상태를 판단합니다.",
   time_place_enabled: "시간·장소·조명을 미리 추적하고 DETAIL이 해당 조건을 이어받습니다.",
   npc_generation_enabled: "대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다.",
+  npc_generation_deferred: "NPC 외형 예측은 그대로 먼저 진행하고, 대표 이미지 Comfy 호출만 이미지 생성 단계(STEP 6)로 미룹니다.",
   npc_lifetime: "같은 봇에서 삽화를 이 횟수만큼 연속 생성하는 동안 등장하지 않으면 자동 생성 캐릭터를 삭제합니다. 다시 등장하면 수명이 초기화됩니다. 모든 봇의 기존·신규 자동 생성 캐릭터에 적용됩니다.",
   call2_plan_enabled: "장면·만화 컷을 미리 계획합니다. 끄면 DETAIL이 원문에서 직접 계획합니다.",
   key_visual: "일반 장면 외에 대표 이미지 한 장을 추가합니다.",
@@ -161,17 +217,19 @@ for (const [prefix, stage] of [["call2", "PLAN"], ["call2_detail", "DETAIL"]]) {
   fieldHelp[`${prefix}_parallel_slow_retry_progress_threshold`] = "추정 진행률이 이 값보다 낮으면 재시도 조건을 만족합니다.";
   fieldHelp[`${prefix}_parallel_slow_retry_tps_threshold`] = "추정 초당 토큰 생성 속도가 이 값보다 낮으면 재시도 조건을 만족합니다.";
 }
-function ToggleField({ name, value, numeric, disabled, onChange }: { name: string; value: any; numeric: boolean; disabled: boolean; onChange: (value: any, immediate?: boolean) => void }) {
-  const label = labels[name] || name;
-  const options = choices[name] || (name.endsWith("condition_operator") ? [["and", "모두 만족"], ["or", "하나 이상 만족"]] : null);
+type ToggleOption = [string, string, boolean?];
+function ToggleField({ name, value, numeric, disabled, onChange, options: optionOverride, help: helpOverride, label: labelOverride }: { name: string; value: any; numeric: boolean; disabled: boolean; onChange: (value: any, immediate?: boolean) => void; options?: ToggleOption[]; help?: string; label?: string }) {
+  const label = labelOverride || labels[name] || name;
+  const options = optionOverride || choices[name] || (name.endsWith("condition_operator") ? [["and", "모두 만족"], ["or", "하나 이상 만족"]] : null);
   const strategy = ["local_llm_load_after_generation", "image_model_load_at_detail"].includes(name);
-  const help = fieldHelp[name] && <small className="field-help">{strategy && <>토글 설명<br /></>}<span style={strategy ? { whiteSpace: "pre-line" } : undefined}>{fieldHelp[name]}</span>{name === "image_model_load_at_detail" && <><br /><span className="illust-strategy-warning">주의: DETAIL을 로컬 LLM으로 처리 중이라면 사용하지 마세요</span></>}</small>;
+  const helpText = helpOverride ?? fieldHelp[name];
+  const help = helpText && <small className="field-help">{strategy && <>토글 설명<br /></>}<span style={strategy ? { whiteSpace: "pre-line" } : undefined}>{helpText}</span>{name === "image_model_load_at_detail" && <><br /><span className="illust-strategy-warning">주의: DETAIL을 로컬 LLM으로 처리 중이라면 사용하지 마세요</span></>}</small>;
   const stacked = ["direction", "manga_direction", "positive_note", "negative_note", "prompt_format"].includes(name);
   return <div className={`illust-generation-field${stacked ? " stacked" : ""}`} data-disabled={disabled}>
     <label className="illust-generation-copy" htmlFor={`generation-${name}`}><strong>{label}</strong>{help}</label>
     <div className={`illust-generation-control${numeric && !options ? " numeric" : ""}`}>
       {options ? <select id={`generation-${name}`} name={name} aria-label={label} disabled={disabled} value={String(value)} onChange={event => onChange(typeof value === "boolean" ? event.target.value === "true" : numeric ? Number(event.target.value) : event.target.value, true)}>
-        {!options.some(([key]) => key === String(value)) && <option value={String(value)}>{String(value)}</option>}{options.map(([key, text]) => <option key={key} value={key}>{text}</option>)}
+        {!options.some(([key]) => key === String(value)) && <option value={String(value)}>{String(value)}</option>}{options.map(([key, text, optionDisabled]) => <option key={key} value={key} disabled={optionDisabled}>{text}</option>)}
       </select> : typeof value === "boolean" ? <span className="illust-generation-switch">
         <input id={`generation-${name}`} name={name} aria-label={label} disabled={disabled} type="checkbox" role="switch" checked={value} onChange={event => onChange(event.target.checked, true)} /><span aria-hidden="true" className="illust-generation-switch-track" /><span className="illust-generation-state" aria-hidden="true">{value ? "ON" : "OFF"}</span>
       </span> : numeric ? <input id={`generation-${name}`} name={name} aria-label={label} disabled={disabled} required type="number" min={name === "npc_lifetime" ? 1 : 0} max={name.includes("character_limit") ? 3 : undefined} step={name.includes("percent") || name.includes("tps") ? "any" : 1} value={value} onChange={event => onChange(event.target.value === "" ? "" : Number(event.target.value))} />
@@ -182,25 +240,57 @@ function ToggleField({ name, value, numeric, disabled, onChange }: { name: strin
 }
 
 const promptTabs = { settings: "생성 설정", special_strategy: "특수 전략", logs: "생성 로그", history: "채팅 히스토리", prompts: "프롬프트 구성", flow: "노드·Think 확인" };
+// 감정 삽화 공방은 표정 프리셋 설정 탭을 특수 전략 옆에 하나 더 둔다.
+const { settings: settingsTab, special_strategy: specialStrategyTab, ...restPromptTabs } = promptTabs;
+const emotionPromptTabs = { settings: settingsTab, special_strategy: specialStrategyTab, presets: "프리셋 설정", ...restPromptTabs };
 const identityPath = (path: string) => path;
 const changes = (current: IllustrationData, saved: IllustrationData | null) => Object.fromEntries(Object.entries(current).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(saved?.[key])));
 // A completed request must not replace edits made while it was in flight.
 const acceptSaved = (current: IllustrationData | null, sent: IllustrationData, stored: IllustrationData) => ({ ...stored, ...changes(current || {}, sent) });
+
+function ModelFamilyField({ value, disabled, onChange }: {
+  value: "moss" | "anima" | ""; disabled: boolean; onChange: (value: string) => void;
+}) {
+  return <div className="illust-generation-field">
+    <label className="illust-generation-copy" htmlFor="generation-illustration_model_family"><strong>그림 모델</strong>
+      <small className="field-help">MOSS 또는 ANIMA 그림 모델 프리셋을 선택합니다. 변경하면 활성 그림 모델 프리셋이 전환됩니다.</small>
+    </label>
+    <div className="illust-generation-control">
+      <select id="generation-illustration_model_family" name="illustration_model_family" aria-label="그림 모델"
+        disabled={disabled} value={value} onChange={event => onChange(event.target.value)}>
+        {!value && <option value="" disabled>모델 확인 중…</option>}
+        <option value="moss">MOSS</option>
+        <option value="anima">ANIMA</option>
+      </select>
+    </div>
+  </div>;
+}
 
 export function IllustPrompts({ botSelected, scope = "illustration" }: { botSelected: string; scope?: "illustration" | "emotion" }) {
   const [tab, setTab] = useState("settings");
   const [generationTab, setGenerationTab] = useState("pipeline");
   const [postprocessVisited, setPostprocessVisited] = useState(false);
   const [visited, setVisited] = useState<Set<string>>(() => new Set(["settings"]));
+  const [presetChars, setPresetChars] = useState(0);
   const [promptRevision, setPromptRevision] = useState(0);
   function selectTab(value: string) { setTab(value); setVisited(current => new Set([...current, value])); }
   // 감정 공방은 같은 화면을 전용 저장소로 연결한다. 토글·지침·히스토리 모두
   // scope가 붙은 요청만 사용하므로 삽화 공방 설정과 섞이지 않는다.
   const request = scope === "emotion" ? emotionIllustrationRequest : illustrationRequest;
   const scopedPath = scope === "emotion" ? emotionScopePath : identityPath;
+  const scopeGenerationGroups = scope === "emotion" ? emotionGenerationGroups : generationGroups;
+  const scopeGenerationTabs = scope === "emotion" ? emotionGenerationTabs : generationTabs;
   const togglesResource = useIllustrationResource(scopedPath("illustration_context/toggles"), false, request);
   const promptsResource = useIllustrationResource(scopedPath("illustration_context/prompts"), false, request);
   const configResource = useIllustrationResource(scopedPath("illustration/config"), false, request);
+  // The active illustration model preset is global; this selector switches it
+  // without touching the per-generation toggles saved below.
+  const modelPresetResource = useIllustrationResource(scope === "illustration" ? "illustration/presets" : null, false, request);
+  const activeModelPreset = (modelPresetResource.data?.presets || []).find(
+    (item: IllustrationData) => item.id === modelPresetResource.data?.active_id);
+  const modelFamily = modelPresetResource.data ? illustrationPresetFamily(activeModelPreset) : "";
+  const [pendingModelFamily, setPendingModelFamily] = useState<"moss" | "anima" | "">("");
+  const modelAction = useIllustrationAction();
   const [toggles, setToggles] = useState<IllustrationData | null>(null);
   const [prompts, setPrompts] = useState<IllustrationData | null>(null);
   const [config, setConfig] = useState<IllustrationData | null>(null);
@@ -210,6 +300,13 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
   useEffect(() => { if (togglesResource.data) setToggles(togglesResource.data.toggles); }, [togglesResource.data]);
   useEffect(() => { if (promptsResource.data) setPrompts(promptsResource.data); }, [promptsResource.data]);
   useEffect(() => { if (configResource.data) setConfig(configResource.data.config); }, [configResource.data]);
+  // ANIMA 활성 상태에서는 만화 출력 모드를 쓸 수 없으므로, 이전에 저장된
+  // 만화 모드가 남아 있으면 일반 삽화로 되돌린다.
+  useEffect(() => {
+    if (scope !== "illustration" || modelFamily !== "anima") return;
+    setToggles(current => current && ["manga", "manga_both"].includes(current.illustration_output_mode)
+      ? { ...current, illustration_output_mode: "illustration" } : current);
+  }, [modelFamily, scope]);
   const [savedToggles, setSavedToggles] = useState<IllustrationData | null>(null);
   const [savedConfig, setSavedConfig] = useState<IllustrationData | null>(null);
   const [savedPrompts, setSavedPrompts] = useState<IllustrationData | null>(null);
@@ -218,9 +315,11 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
   useEffect(() => { if (promptsResource.data) setSavedPrompts(promptsResource.data); }, [promptsResource.data]);
   const dirty = !!toggles && !!config && !!savedToggles && !!savedConfig && (!!Object.keys(changes(toggles, savedToggles)).length || !!Object.keys(changes(config, savedConfig)).length);
   const promptDirty = !!prompts && !!Object.keys(changes(prompts, savedPrompts)).length;
-  const invalidRange = !!toggles && (Number(toggles.output_count_min) > Number(toggles.output_count_max) || Number(toggles.manga_output_count_min) > Number(toggles.manga_output_count_max));
+  // 감정 삽화 공방도 에셋 개수 설정 탭에서 장면 수 범위를 노출하므로 함께 검증한다.
+  const invalidRange = !!toggles && (Number(toggles.output_count_min) > Number(toggles.output_count_max)
+    || scope !== "emotion" && Number(toggles.manga_output_count_min) > Number(toggles.manga_output_count_max));
   const autosave = useWorkflowAutosave({ label: "삽화 프롬프트 설정 · 생성 옵션", value: JSON.stringify([toggles, config]), dirty, form, delay: saveDelay,
-    validation: invalidRange ? "최소 장면·페이지 수는 최대 장면·페이지 수보다 클 수 없습니다." : "",
+    validation: invalidRange ? (scope === "emotion" ? "최소 장면 수는 최대 장면 수보다 클 수 없습니다." : "최소 장면·페이지 수는 최대 장면·페이지 수보다 클 수 없습니다.") : "",
     save: async () => {
       if (!toggles || !config) return;
       const sentToggles = toggles;
@@ -244,16 +343,79 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
     detail: "지침 저장을 눌러 변경 사항을 저장하세요.", onReview: () => selectTab("prompts") });
 
   if (!toggles || !prompts || !config) return <Panel title="삽화 프롬프트 설정"><IllustrationLoading error={togglesResource.error || promptsResource.error || configResource.error} retry={() => { togglesResource.reload(); promptsResource.reload(); configResource.reload(); }} /></Panel>;
+  async function selectModelFamily(value: string) {
+    const family = value === "moss" ? "moss" : "anima";
+    const document = modelPresetResource.data;
+    if (!document) return;
+    const storageKey = `soya-illust-model-family:${family}`;
+    const remembered = window.localStorage.getItem(storageKey);
+    // Remember the preset we are leaving so switching back restores it.
+    const leaving = (document.presets || []).find((item: IllustrationData) => item.id === document.active_id);
+    if (leaving) window.localStorage.setItem(
+      `soya-illust-model-family:${illustrationPresetFamily(leaving)}`, leaving.id);
+    const presets = (document.presets || []).filter(
+      (item: IllustrationData) => illustrationPresetFamily(item) === family);
+    const target = presets.find((item: IllustrationData) => item.id === document.active_id)
+      || presets.find((item: IllustrationData) => item.id === remembered)
+      || presets[0];
+    if (!target) {
+      setPendingModelFamily("");
+      return;
+    }
+    // ANIMA에서는 만화 출력 모드를 쓸 수 없으므로 일반 삽화로 되돌린다.
+    if (family === "anima" && ["manga", "manga_both"].includes(toggles?.illustration_output_mode)) {
+      setToggles(current => current ? { ...current, illustration_output_mode: "illustration" } : current);
+    }
+    window.localStorage.setItem(storageKey, target.id);
+    if (target.id === document.active_id) {
+      setPendingModelFamily("");
+      return;
+    }
+    setPendingModelFamily(family);
+    await modelAction.run(async () => {
+      await request("illustration/presets", {
+        action: "select", target_id: target.id, preset_id: document.active_id,
+        revision: document.revision, workshop: "illustration",
+      });
+      modelPresetResource.reload();
+      configResource.reload();
+    }, `${target.name} 모델로 전환했습니다.`);
+    setPendingModelFamily("");
+  }
   function field(name: string) {
-    // Composite output modes belong to the emotion illustration workshop; the
-    // illustration prompt settings only expose non-composite modes.
-    if (name === "illustration_output_mode" && compositeOutputModes.includes(toggles!.illustration_output_mode)) return null;
+    if (name === "illustration_model_family") {
+      if (scope !== "illustration") return null;
+      return <ModelFamilyField key={name} value={pendingModelFamily || modelFamily}
+        disabled={modelAction.busy || !modelPresetResource.data}
+        onChange={value => void selectModelFamily(value)} />;
+    }
+    // 일반 삽화 공방은 합성 모드를 선택할 수 없으므로, 합성 모드가 저장돼
+    // 있으면 출력 모드 항목 자체를 숨긴다. 감정 삽화 공방은 합성 설정 탭이
+    // 없으므로 저장된 모드와 무관하게 출력 모드를 항상 노출한다.
+    if (name === "illustration_output_mode" && scope !== "emotion" && compositeOutputModes.includes(toggles!.illustration_output_mode)) return null;
+    const emotionOutputMode = scope === "emotion" && name === "illustration_output_mode";
+    const emotionAssetCount = scope === "emotion" && name in emotionAssetLabels;
+    // 만화 삽화 출력은 MOSS 그림 모델 전용이므로 ANIMA일 때는 선택할 수 없다.
+    const outputModeOptions: ToggleOption[] = choices.illustration_output_mode.map(
+      ([key, text]): ToggleOption => [key, text,
+        (pendingModelFamily || modelFamily) === "anima" && ["manga", "manga_both"].includes(key)]);
     const retryPrefix = name.includes("_parallel_slow_retry_") ? name.split("_slow_retry_")[0] : "";
     const manga = ["manga", "manga_both"].includes(toggles!.illustration_output_mode);
-    const disabled = name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
+    // MOSS 그림 모델은 DETAIL-MOSS가 대표 이미지를 항상 함께 작성하므로
+    // KEYVIS 관련 옵션을 별도로 선택할 수 없다.
+    const mossModel = (pendingModelFamily || modelFamily) === "moss";
+    const keyvisLocked = mossModel && ["key_visual", "keyvis_in_detail_enabled", "minimal_background_description"].includes(name);
+    const disabled = keyvisLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
       || name === "original_asset_count" && !["original_asset", "both", "manga_both", "composite_both"].includes(toggles!.illustration_output_mode)
       || manga && ["postprocess_enabled", "visual_correction_enabled", "visual_correction_max_redraws"].includes(name);
-    return <ToggleField key={name} name={name} value={name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail"].includes(name) ? toggles![name] ?? false : toggles![name]} numeric={typeof savedToggles?.[name] === "number"} disabled={disabled}
+    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "npc_generation_deferred"].includes(name) ? toggles![name] ?? false : toggles![name];
+    // MOSS는 DETAIL-MOSS에서 대표 이미지를 항상 작성하므로 관련 토글을 켜진 상태로 고정 표시한다.
+    const value = mossModel && ["key_visual", "keyvis_in_detail_enabled"].includes(name) ? true
+      : emotionOutputMode && rawValue === "composite_both" ? "composite" : rawValue;
+    return <ToggleField key={name} name={name} value={value} numeric={typeof savedToggles?.[name] === "number"} disabled={disabled}
+      label={emotionAssetCount ? emotionAssetLabels[name] : undefined}
+      options={emotionOutputMode ? emotionOutputChoices : name === "illustration_output_mode" ? outputModeOptions : undefined}
+      help={mossModel && name === "key_visual" ? "MOSS 그림 모델은 DETAIL-MOSS에서 대표 이미지를 항상 함께 작성합니다." : emotionOutputMode ? "감정 삽화 모드는 캐릭터의 복장과 감정 이미지를 생성합니다. 배경 합성 모드는 만들어진 캐릭터를 불러와 배경에 합성합니다." : emotionAssetCount ? emotionAssetHelp[name] : undefined}
       onChange={(value, immediate) => {
         setSaveDelay(immediate ? 0 : 600);
         if (name === "postprocess_enabled") setConfig(current => ({ ...current, postprocess_enabled: value }));
@@ -261,20 +423,21 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
       }} />;
   }
   return <div className="illust-stack">
-    <SettingsTabs id="illust-prompts" label="삽화 프롬프트 설정 메뉴" values={promptTabs} value={tab} onChange={selectTab} />
+    <SettingsTabs id="illust-prompts" label="삽화 프롬프트 설정 메뉴"
+      values={scope === "emotion" ? emotionPromptTabs : promptTabs} value={tab} onChange={selectTab} />
     {promptDirty && <p className="field-help" role="status">프롬프트 구성에 저장하지 않은 변경이 있습니다.</p>}
     <div role="tabpanel" id="illust-prompts-panel-settings" aria-labelledby="illust-prompts-tab-settings" hidden={tab !== "settings"}>
     <Panel title="생성 설정" className="illust-generation-settings" aside={<span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span>}>
     <div className="illust-body illust-generation-layout">
-      <SettingsTabs id="illust-generation" orientation="vertical" className="illust-generation-tabs" label="생성 설정 카테고리" values={generationTabs} value={generationTab} onChange={value => { setGenerationTab(value); if (value === "postprocess") setPostprocessVisited(true); }} />
+      <SettingsTabs id="illust-generation" orientation="vertical" className="illust-generation-tabs" label="생성 설정 카테고리" values={scopeGenerationTabs} value={generationTab} onChange={value => { setGenerationTab(value); if (value === "postprocess") setPostprocessVisited(true); }} />
       <div className="illust-generation-main">
     <form ref={form} id="illust-generation-form" noValidate onSubmit={event => { event.preventDefault(); void autosave.retry(); }}
       onBlur={event => { if (event.target.matches("input:not([type=checkbox]), textarea")) void autosave.retry(); }}>
         <fieldset className="illust-form">
           <p className="field-help">변경 사항은 자동 저장됩니다. 숫자·텍스트는 입력을 멈추거나 입력칸을 벗어나면 저장됩니다.</p>
-          <IllustrationFeedback error={autosave.error || autosave.inputError} />
+          <IllustrationFeedback error={modelAction.error || modelPresetResource.error || autosave.error || autosave.inputError} message={modelAction.message} />
           {autosave.error && <button type="button" className="button" disabled={autosave.busy || !!autosave.inputError} onClick={() => void autosave.retry()}>자동 저장 다시 시도</button>}
-          {generationGroups.map(group => <div key={group.id} role="tabpanel" id={`illust-generation-panel-${group.id}`} aria-labelledby={`illust-generation-tab-${group.id}`} data-generation-tab={group.id} hidden={generationTab !== group.id} className="illust-generation-content">
+          {scopeGenerationGroups.map(group => <div key={group.id} role="tabpanel" id={`illust-generation-panel-${group.id}`} aria-labelledby={`illust-generation-tab-${group.id}`} data-generation-tab={group.id} hidden={generationTab !== group.id} className="illust-generation-content">
             <header className="illust-generation-heading"><h3>{group.title}</h3><p>{group.description}</p></header>
             <div className="illust-generation-sections">{group.sections.map((section, index) => <fieldset key={index} className={`illust-generation-section${section.title ? "" : " plain"}${section.paired ? " paired" : ""}`} disabled={!!section.mode && section.mode !== (["manga", "manga_both"].includes(toggles.illustration_output_mode) ? "manga" : "illustration")}>
               {section.title && <legend>{section.title}</legend>}
@@ -300,12 +463,16 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
             <legend>로컬 LLM 대응 전략</legend>
             <div className="illust-fields">{["local_llm_load_after_generation", "image_model_load_at_detail"].map(field)}</div>
           </fieldset>
+          <fieldset className="illust-generation-section">
+            <legend>NPC 생성</legend>
+            <div className="illust-fields">{field("npc_generation_deferred")}</div>
+          </fieldset>
         </div>
       </Panel>
     </div>
     <div role="tabpanel" id="illust-prompts-panel-prompts" aria-labelledby="illust-prompts-tab-prompts" hidden={tab !== "prompts"}><div className="illust-stack">
     {visited.has("prompts") && <IllustPromptStructure toggles={toggles} active={tab === "prompts"} revision={promptRevision} request={request} />}
-    <IllustPromptEditor prompts={prompts} savedPrompts={savedPrompts} {...promptAction} onChange={(key, value) => setPrompts(current => ({ ...current, [key]: value }))}
+    <IllustPromptEditor prompts={prompts} savedPrompts={savedPrompts} scope={scope} {...promptAction} onChange={(key, value) => setPrompts(current => ({ ...current, [key]: value }))}
       onSave={() => void promptAction.run(async () => {
         const edited = changes(prompts, savedPrompts);
         const result = await request("illustration_context/prompts", edited);
@@ -321,8 +488,23 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
         setPrompts(data); setSavedPrompts(data); setPromptRevision(value => value + 1);
       }, "저장된 지침을 다시 불러왔습니다.")} />
     </div></div>
+    <div role="tabpanel" id="illust-prompts-panel-presets" aria-labelledby="illust-prompts-tab-presets" hidden={tab !== "presets"}>
+      {scope === "emotion" && visited.has("presets") && <Panel title="프리셋 설정"
+        aside={<span className="illust-emotion-preset-header-aside">
+          <span className={`illust-emotion-preset-charcount${presetChars > EMOTION_PRESET_CHAR_LIMIT ? " over" : ""}`}
+            role="status" aria-live="polite" title="SFW·NSFW 전체 감정 이름과 표정 태그 글자수">
+            {presetChars.toLocaleString("ko-KR")} / {EMOTION_PRESET_CHAR_LIMIT.toLocaleString("ko-KR")}자
+          </span>
+          <span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span>
+        </span>}>
+        <EmotionPresetSettings toggles={toggles} onChange={patch => {
+          setSaveDelay(600);
+          setToggles(current => ({ ...current, ...patch }));
+        }} onTotalCharsChange={setPresetChars} />
+      </Panel>}
+    </div>
     <div role="tabpanel" id="illust-prompts-panel-logs" aria-labelledby="illust-prompts-tab-logs" hidden={tab !== "logs"}>{visited.has("logs") && <IllustGenerationLogs active={tab === "logs"} />}</div>
     <div role="tabpanel" id="illust-prompts-panel-history" aria-labelledby="illust-prompts-tab-history" hidden={tab !== "history"}>{visited.has("history") && <IllustHistory active={tab === "history"} />}</div>
-    <div role="tabpanel" id="illust-prompts-panel-flow" aria-labelledby="illust-prompts-tab-flow" hidden={tab !== "flow"}>{visited.has("flow") && <IllustNodeFlow toggles={toggles} botSelected={botSelected} active={tab === "flow"} request={request} />}</div>
+    <div role="tabpanel" id="illust-prompts-panel-flow" aria-labelledby="illust-prompts-tab-flow" hidden={tab !== "flow"}>{visited.has("flow") && <IllustNodeFlow toggles={toggles} botSelected={botSelected} active={tab === "flow"} request={request} scope={scope} />}</div>
   </div>;
 }

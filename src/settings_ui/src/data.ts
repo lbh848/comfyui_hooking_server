@@ -85,7 +85,7 @@ export const initialDraft: Draft = {
   install: {
     target: "both",
     mode: "lazy",
-    path: "D:\\Comfy공방",
+    path: "",
     saved: false,
   },
   models: [],

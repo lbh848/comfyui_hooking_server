@@ -21,7 +21,8 @@ class BackupImagePagesTests(unittest.IsolatedAsyncioTestCase):
         self.reader = Mock(return_value=False)
         self.engine = {
             "asyncio": asyncio, "glob": glob, "os": os, "web": web,
-            "reschedule_queue": None, "get_backup_base_dir": lambda: "/fixture",
+            "reschedule_queue": None,
+            "get_backup_base_dir": lambda *args, **kwargs: "/fixture",
             "lighbd_service": SimpleNamespace(_load_lighbd_history=lambda: []),
             "illustration_quality_inspection": SimpleNamespace(TASK_KEY="test"),
             "_backup_image_kind": self.reader, "backup_clean_source_from_info": lambda *args: False,

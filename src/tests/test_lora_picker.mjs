@@ -33,7 +33,7 @@ test('asset results preserve sessions and triggers while excluding uploads witho
     lora_files: [{ path: 'Alice\\Lora\\portrait\\run\\step.safetensors', session: 'run', safetensors: 'step.safetensors' },
       { path: '(수동) Alice/model.safetensors', local_path: 'C:/uploads/model.safetensors' }] }] }] });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].path, 'SOYA_CHAR_LORA/SOYA_ASSET_LORA/Alice/Lora/portrait/run/step.safetensors');
+  assert.equal(rows[0].path, 'SOYA_ASSET_LORA/Alice/Lora/portrait/run/step.safetensors');
   assert.equal(rows[0].family, 'SDXL');
   assert.equal(rows[0].trigger, 'alice');
   assert.match(rows[0].thumbnail, /^\/api\/setting\/internal-lora\/lora\/trained\/preview\//);
@@ -53,7 +53,7 @@ test('bot visual cards retain their distinct paths and preview routes', () => {
 
 test('retired instance LoRAs are neither requested nor exposed from the model scan', () => {
   assert.deepEqual(Object.keys(internalLoraLabels), ['asset', 'bot', 'style']);
-  const retired = { ...external, path: 'loras\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\anima\\old\\model.safetensors' };
+  const retired = { ...external, path: 'loras\\SOYA_INSTANCE_LORA\\anima\\old\\model.safetensors' };
   assert.deepEqual(searchLoras([retired], 'internal', ''), []);
   assert.deepEqual(searchLoras([retired], 'external', ''), []);
 });

@@ -4,10 +4,11 @@ autocomplete_service - CSV 기반 태그 자동완성 서비스
 [검색 동작]
 영문 쿼리 → 태그명 prefix/substring 매치 (기존 동작 + prefix 우선 정렬)
 한글 쿼리 → description 구문(phrase) 기반 역방향 검색
-<...> 쿼리 → angle_kws(<> 안 키워드)에서만 exact match
+<...> 쿼리 → 분류 키워드(새 형식은 키워드 목록)에서 exact match
 
 [description 구조]
 [대분류 > 소분류] 상세설명. 키워드: <카테고리키워드>, 일반키워드1, 일반키워드2
+[대분류 > 소분류] 상세설명. <키워드> 키워드1, 키워드2.
 
 [점수 체계 - 한글 검색]
 4점: 쿼리 == plain_kw 완전 일치
@@ -41,7 +42,8 @@ def _csv_priority(filename: str, description: str = '') -> int:
     """설명 형식 CSV와 기존 KR 파일을 별칭 CSV보다 우선한다."""
     if (filename.lower().startswith("kr")
             or '>' in _parse_description(description)['category']
-            or '키워드:' in description):
+            or '키워드:' in description
+            or '<키워드>' in description):
         return 0
     return 1
 
@@ -55,6 +57,9 @@ def _parse_description(desc: str) -> dict:
         body      = "파란색 눈동자"
         angle_kws = ["눈색"]          ← <> 안 키워드 (카테고리 분류자)
         plain_kws = ["파란 눈", "벽안"] ← 일반 검색 키워드
+
+    새 형식의 "<키워드> 눈색, 파란 눈, 벽안."은 분류자를 구분하지 않으므로
+    모든 항목을 일반 검색과 <...> 정확 일치 검색에 사용한다.
     """
     category = ''
     body = ''
@@ -70,15 +75,21 @@ def _parse_description(desc: str) -> dict:
     if m:
         category = m.group(1)
 
-    if '키워드:' in desc:
-        before_kw, kw_part = desc.split('키워드:', 1)
+    keyword_marker = re.search(r'키워드:|<키워드>', desc)
+    if keyword_marker:
+        before_kw = desc[:keyword_marker.start()]
+        kw_part = desc[keyword_marker.end():]
         # 분류 태그 제거 후 body 추출
         body = re.sub(r'\[.*?\]', '', before_kw).strip().rstrip('. ')
-        # <카테고리키워드> 추출
-        angle_kws = re.findall(r'<([^>]+)>', kw_part)
-        # 나머지 일반 키워드
-        plain_raw = re.sub(r'<[^>]+>', '', kw_part)
-        plain_kws = [k.strip() for k in plain_raw.split(',') if k.strip()]
+        if keyword_marker.group() == '<키워드>':
+            plain_raw = kw_part.strip().removesuffix('.')
+            plain_kws = [k.strip() for k in plain_raw.split(',') if k.strip()]
+            angle_kws = plain_kws.copy()
+        else:
+            # 기존 형식의 <카테고리키워드>와 일반 키워드는 구분을 유지한다.
+            angle_kws = re.findall(r'<([^>]+)>', kw_part)
+            plain_raw = re.sub(r'<[^>]+>', '', kw_part)
+            plain_kws = [k.strip() for k in plain_raw.split(',') if k.strip()]
     else:
         body = re.sub(r'\[.*?\]', '', desc).strip()
 
@@ -97,12 +108,23 @@ def load_all_csv(directory: str | os.PathLike | None = None):
         _loaded = True
         return
 
-    # for_anima 제외, 설명 형식 우선 + 크기 큰 순 정렬
+    # 날짜가 붙은 공식 Anima CSV는 최신판만 읽어 구버전 태그의 재등장을 막는다.
+    filenames = [f for f in os.listdir(directory)
+                 if f.lower().endswith('.csv') and 'for_anima' not in f.lower()]
+    anima_releases = {}
+    for filename in filenames:
+        release = re.fullmatch(
+            r'danbooru-tags-anima-kr-(\d{4}-\d{2}-\d{2})(?:-v(\d+))?\.csv',
+            filename, re.IGNORECASE,
+        )
+        if release:
+            anima_releases[filename] = (release[1], int(release[2] or 1))
+    latest_release = max(anima_releases.values(), default=None)
+
+    # 설명 형식 우선 + 크기 큰 순 정렬. 사용자 CSV는 계속 함께 읽는다.
     files = []
-    for f in os.listdir(directory):
-        if not f.lower().endswith(".csv"):
-            continue
-        if "for_anima" in f.lower():
+    for f in filenames:
+        if f in anima_releases and anima_releases[f] != latest_release:
             continue
         fpath = os.path.join(directory, f)
         priority = _csv_priority(f)

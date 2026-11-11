@@ -27,7 +27,7 @@ git -C "$REPO_ROOT" archive --format=tar HEAD src config/.gitkeep data/.gitkeep 
     | tar -x -C "$APP/Contents/Resources/app"
 
 # 앱 안에서 쓸모없는 것은 뺀다. 없어도 동작에는 지장이 없다.
-for drop in tests upstream_patches tools .github updater_dev GitUpdater.exe; do
+for drop in tests upstream_patches tools .github updater_dev GitUpdater.exe opencode.json customprompt/tag_collector; do
     rm -rf "$APP/Contents/Resources/app/src/$drop"
 done
 

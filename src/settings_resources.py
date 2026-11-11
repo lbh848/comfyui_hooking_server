@@ -14,6 +14,7 @@ import httpx
 
 from app_paths import SOURCE_DIR, data_root
 from comfy_installer.manifest import ManifestError, load_install_manifest
+from lora_paths import MANAGED_LORA_ROOT
 from comfy_installer.model_previews import PREVIEW_EXTENSIONS, preview_path, public_url
 from comfy_installer.model_metadata import METADATA_MAX_SIZE, METADATA_SUFFIXES, complete_model_metadata, download_metadata, enrich_civitai_version, metadata_details, metadata_paths, read_model_metadata
 from comfy_installer.operations import uv_python_path
@@ -129,6 +130,11 @@ class ResourceLibrary:
             manifest_error = MANIFEST_UNAVAILABLE
         visited: set[Path] = set()
         seen: set[Path] = set()
+        # Internal LoRAs are listed by their own screens, never as external models.
+        managed_lora_root = (self.root / "loras" / MANAGED_LORA_ROOT).resolve()
+
+        def is_managed_lora(path: Path) -> bool:
+            return path == managed_lora_root or managed_lora_root in path.parents
 
         def walk_error(error: OSError):
             raise error
@@ -140,7 +146,9 @@ class ResourceLibrary:
                 children[:] = []
                 continue
             visited.add(resolved)
-            children[:] = sorted(name for name in children if not name.startswith(".") and self._inside(current / name))
+            children[:] = sorted(name for name in children
+                                 if not name.startswith(".") and self._inside(current / name)
+                                 and not is_managed_lora((current / name).resolve()))
             for name in sorted(filenames):
                 path = current / name
                 if path.suffix.lower() not in MODEL_EXTENSIONS or not self._inside(path):
@@ -149,9 +157,10 @@ class ResourceLibrary:
                     stat = path.stat()
                 except FileNotFoundError:
                     continue  # A download or a user may remove a file while scanning.
-                if not path.is_file() or not stat.st_size or path.resolve() in seen:
+                resolved_path = path.resolve()
+                if not path.is_file() or not stat.st_size or resolved_path in seen or is_managed_lora(resolved_path):
                     continue
-                seen.add(path.resolve())
+                seen.add(resolved_path)
                 relative = path.relative_to(self.root)
                 folder = relative.parts[0] if len(relative.parts) > 1 else ""
                 identity = hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()

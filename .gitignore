@@ -24,7 +24,7 @@ instance_lora/
 current_mode_workflow/
 # 배포용 한국어 CSV와 라이선스 고지만 포함; 사용자 CSV와 RAG 캐시는 제외
 /src/auto_complete/*
-!/src/auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv
+!/src/auto_complete/danbooru-tags-anima-kr-2026-11-10.csv
 !/src/auto_complete/README.md
 !/src/auto_complete/LICENSE.danbooru-tags-kr.txt
 !/src/auto_complete/CC-BY-SA-4.0.txt

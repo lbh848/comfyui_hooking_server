@@ -1839,6 +1839,58 @@ class ComfyInstallerService:
             with self._lock:
                 self._state.update(state="cancelled" if cancelled else "failed", finished_at=_now_iso(), error=str(exc))
 
+    def start_local_workflow_models(self, *, identity: str, civitai_key: str = "") -> dict:
+        """Install only the models a user workflow references.
+
+        The workflow file itself already lives in the user folder, so unlike
+        ``start_workflow_models`` there is nothing to copy from the pack.
+        """
+        if not isinstance(identity, str) or not identity.startswith("local:"):
+            raise InstallerServiceError("사용자 워크플로우를 선택하세요.")
+        if not (self.comfy_root / "main.py").is_file() or not uv_python_path(self.comfy_root / ".venv").is_file():
+            raise InstallerServiceError("ComfyUI 초기 설치를 먼저 완료하세요.")
+        library = self.workflow_library_status()
+        source = next((file for file in library.get("workflow_files", [])
+                       if hashlib.sha256(file["relative_path"].encode("utf-8")).hexdigest() == identity.split(":", 1)[1]), None)
+        if source is None:
+            raise InstallerServiceError("설치할 사용자 워크플로우를 찾을 수 없습니다. 목록을 새로고침하세요.")
+        from .pack_cli import _workflow_model_ids
+        model_ids = _workflow_model_ids(Path(library["user_root"]) / source["relative_path"], self.manifest)
+        if not model_ids:
+            raise InstallerServiceError("이 워크플로우에서 자동 설치할 모델을 찾지 못했습니다.")
+        by_id = {model["id"]: model for model in self.manifest.models}
+        from .model_installer import missing_models
+        models = missing_models(models=[by_id[model_id] for model_id in model_ids], comfy_root=self.comfy_root)
+        if not models:
+            raise InstallerServiceError("필수 모델이 이미 설치되어 있습니다. 목록을 새로고침하세요.")
+        if any(model.get("auth") == "civitai" for model in models) and not civitai_key.strip():
+            raise InstallerServiceError("기타 API 관리에서 Civitai API 키를 입력하세요.")
+        return self._start_operation(
+            operation="workflow_models", phases=(("models", "필수 모델 설치"), ("complete", "설치 완료")),
+            target=self._run_local_workflow_models,
+            kwargs={"models": models, "identity": identity, "civitai_key": civitai_key},
+        )
+
+    def _run_local_workflow_models(self, *, models: list[dict], identity: str, civitai_key: str) -> None:
+        try:
+            self._set_phase("models")
+            from .model_installer import install_models, missing_models
+            remaining = missing_models(models=models, comfy_root=self.comfy_root)
+            results = install_models(models=remaining, comfy_root=self.comfy_root, downloader=self.downloader,
+                                     civitai_key=civitai_key, cancel_event=self._cancel, log=self._log, progress=self._set_progress)
+            if self._cancel.is_set():
+                raise InstallerServiceError("모델 설치를 중단했습니다.")
+            self._set_phase("complete")
+            with self._lock:
+                self._state.update(state="succeeded", finished_at=_now_iso(),
+                                   result={"models": results, "workflow_files": []}, error=None)
+            self._log(f"[완료] 필수 모델 {len(results)}개 설치 완료")
+        except Exception as exc:
+            cancelled = self._cancel.is_set()
+            self._log(f"[{'중단' if cancelled else '실패'}] {exc}", "warning" if cancelled else "error")
+            with self._lock:
+                self._state.update(state="cancelled" if cancelled else "failed", finished_at=_now_iso(), error=str(exc))
+
     def start_update(self) -> dict:
         python = uv_python_path(self.comfy_root / ".venv")
         if not python.is_file():

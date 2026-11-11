@@ -231,6 +231,9 @@
 .asset-outfit-grid .asset-folder-arrow { margin: 12px; }
 .asset-folder-delete { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); }
 .asset-folder-delete:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.asset-folder-entry.is-renamable > .asset-folder { padding-right: 76px; }
+.asset-folder-rename { position: absolute; top: 8px; right: 42px; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); }
+.asset-folder-rename:hover:not(:disabled) { color: var(--rose-dark); border-color: var(--rose); }
 .asset-folder-actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding: 8px 10px; }
 .asset-folder-actions .button { flex: 1; justify-content: center; padding: 6px 10px; font-size: 11px; }
 .asset-folder-entry.is-selected, .asset-folder-entry.is-drop-target, .asset-folder-section.is-drop-target { border-color: var(--rose-dark); box-shadow: 0 0 0 2px var(--rose-soft); }

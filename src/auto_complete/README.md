@@ -1,16 +1,21 @@
 # 배포용 한국어 태그 CSV
 
-`danbooru-tags-anima-kr-2026-10-05-v2.csv`를 프로그램에 포함합니다.
+`danbooru-tags-anima-kr-2026-11-10.csv`를 프로그램에 포함합니다.
 이 파일은 Anima용으로 소괄호 앞에 역슬래시가 있고 작가 태그 앞에 `@`가
 붙은 원본 버전이며, 배포 과정에서 내용을 수정하지 않았습니다.
 
 - 배포자: `mengod-hf`
 - 원본 저장소: <https://huggingface.co/datasets/mengod-hf/danbooru-tags-kr>
-- 원본 파일: <https://huggingface.co/datasets/mengod-hf/danbooru-tags-kr/blob/c0e4343b8519799a1bb919cff682f522c53bcd4c/danbooru-tags-anima-kr-2026-10-05-v2.csv>
-- 확인한 원본 리비전: `c0e4343b8519799a1bb919cff682f522c53bcd4c`
-- 원본 태그 갱신 날짜: 2026-10-05
-- 파일 크기: 24,239,708바이트
-- SHA-256: `1f92783951def254b087db982c2dd03e37b4ecba2b05328f930f8abed70a08fd`
+- 원본 파일: <https://huggingface.co/datasets/mengod-hf/danbooru-tags-kr/blob/aa899ee834557fa5e78f64b31e1e3d8f360a929a/danbooru-tags-anima-kr-2026-11-10.csv>
+- 확인한 원본 리비전: `aa899ee834557fa5e78f64b31e1e3d8f360a929a`
+- 원본 태그 갱신 날짜: 2026-11-10
+- 파일 크기: 27,796,836바이트
+- SHA-256: `556e51ad8dd00c6ce9953587ed6f7dd8268522c2247f0126f04bf008a58e3745`
+
+설명의 `<키워드>` 뒤 항목을 일반 검색과 `<머리색>` 같은 정확 일치 검색에
+사용합니다. 이전 `키워드: <머리색>, ...` 형식도 계속 지원합니다.
+실행 폴더에 날짜가 다른 공식 Anima CSV가 남아 있으면 최신 날짜와 리비전의
+파일만 로드합니다. 별도 이름의 사용자 CSV는 함께 로드합니다.
 
 ## 라이선스와 출처
 

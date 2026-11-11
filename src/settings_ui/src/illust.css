@@ -57,6 +57,9 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-bot-generation-family > legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; padding: 4px 8px; border-radius: 5px; background: color-mix(in srgb, var(--generation-family-color) 26%, var(--panel)); margin-bottom: 8px; font-size: 13px; font-weight: 650; }
 .illust-bot-generation-family > legend > span { font-size: 11px; font-weight: 400; color: var(--muted); }
 .illust-bot-generation-family:disabled, .illust-bot-generation-section:disabled { opacity: .5; }
+/* 현재 그림 모델에서 쓸 수 없는 설정 섹션은 회색 배경으로 표시한다. */
+.illust-bot-generation .illust-bot-generation-section:disabled { background: color-mix(in srgb, var(--line) 65%, var(--muted)); border-color: var(--line); }
+.illust-bot-generation-section > legend > span { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--muted); }
 .illust-bot-generation-preset { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; min-width: 0; }
 .illust-bot-generation-preset > .button { grid-column: 2; grid-row: 1; align-self: end; }
 .illust-bot-generation-tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 5px; min-height: 80px; max-height: 140px; overflow-y: auto; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--lavender) 40%, var(--panel)); }
@@ -150,6 +153,142 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-character-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .illust-character-view-select select { width: 124px; height: 36px; padding: 6px 10px; font-size: 12px; }
 .illust-character-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
+.illust-character-summary-grid.is-single-column { grid-template-columns: minmax(0, 1fr); }
+.emotion-character-row { display: flex; gap: 20px; align-items: flex-start; }
+.emotion-character-row > .illust-character-summary-card { flex: 0 0 calc(50% - 10px); min-width: 0; }
+.emotion-profile-tree { flex: 0 0 calc(25% - 10px); min-width: 0; padding: 14px 16px; }
+.emotion-profile-tree-root { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0; color: var(--ink); font-weight: 650; }
+.emotion-profile-tree-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emotion-profile-tree-count { flex: 0 0 auto; min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--rose-soft); color: var(--rose-dark); font-size: 11px; font-weight: 650; text-align: center; font-variant-numeric: tabular-nums; }
+.emotion-profile-tree-branches { list-style: none; margin: 10px 0 0; padding: 0 0 0 9px; }
+/* The profile tree is rooted at the big character card: one card connector feeds a
+   single trunk, and every branch hangs off it with exactly one elbow. */
+.emotion-profile-tree-branches > li { position: relative; padding-left: 16px; }
+.emotion-profile-tree-branches > li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--rose); opacity: .5; }
+.emotion-profile-tree-branches > li:first-child::before { top: 50%; }
+.emotion-profile-tree-branches > li:last-child::before { bottom: 50%; }
+.emotion-profile-tree-branches > li:not(:first-child)::after { content: ""; position: absolute; left: 0; top: 50%; width: 16px; height: 1px; background: var(--rose); opacity: .5; }
+.emotion-profile-tree-branch { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--secondary); font: inherit; text-align: left; cursor: pointer; }
+.emotion-profile-tree-branch:hover:not(:disabled) { background: var(--rose-soft); color: var(--ink); }
+.emotion-profile-tree-branch:disabled { opacity: .55; cursor: default; }
+.emotion-profile-tree-branches > li.is-active > .emotion-profile-tree-branch { border-color: var(--rose); background: var(--rose-soft); color: var(--ink); font-weight: 600; }
+.emotion-profile-tree-thumb { flex: 0 0 26px; width: 26px; height: 34px; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 4px; background: var(--lavender); color: var(--muted); }
+.emotion-profile-tree-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.emotion-profile-tree-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emotion-profile-tree-current { flex: 0 0 auto; color: var(--rose-dark); font-size: 11px; font-weight: 650; }
+.emotion-profile-tree.panel { overflow: visible; }
+/* Scales with the profile tree so the reserved right quarter never clips at narrower widths. */
+.emotion-outfit-tree { position: absolute; left: calc(100% + 28px); top: 6px; z-index: 2; width: calc(100% + 20px); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 20px #3f303a14; }
+.emotion-outfit-tree::before { content: ""; position: absolute; right: 100%; top: 19px; width: 28px; height: 1px; background: var(--rose); opacity: .55; }
+.emotion-profile-tree-branches > li > .emotion-profile-tree-branch { position: relative; }
+/* The first branch's connector runs all the way back to the big character card. */
+.emotion-profile-tree-branches > li:first-child > .emotion-profile-tree-branch::before { content: ""; position: absolute; right: 100%; top: 50%; width: 62px; height: 1px; margin-top: -.5px; background: var(--rose); opacity: .55; }
+.emotion-profile-tree-branches > li.is-active > .emotion-profile-tree-branch::after { content: ""; position: absolute; right: -4px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--rose); box-shadow: 0 0 0 2px var(--panel); }
+.emotion-outfit-tree-root { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 650; }
+.emotion-outfit-tree-name { flex: 1 1 auto; }
+.emotion-outfit-tree-note { margin: 8px 0 0; padding-left: 2px; color: var(--muted); font-size: 11px; }
+.emotion-outfit-tree-branches { list-style: none; margin: 8px 0 0; padding: 0 0 0 9px; }
+.emotion-outfit-tree-branches > li { position: relative; padding-left: 16px; }
+.emotion-outfit-tree-branches > li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--line); }
+.emotion-outfit-tree-branches > li:last-child::before { bottom: 20px; }
+.emotion-outfit-tree-branches > li::after { content: ""; position: absolute; left: 0; top: 19px; width: 12px; height: 1px; background: var(--line); }
+.emotion-outfit-tree-row { display: flex; align-items: center; gap: 2px; }
+.emotion-outfit-tree-row > .emotion-outfit-tree-branch { flex: 1 1 auto; min-width: 0; }
+.emotion-outfit-tree-branch { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; border: 0; border-radius: 6px; background: none; color: var(--secondary); font: inherit; text-align: left; cursor: pointer; }
+.emotion-outfit-tree-branch:hover:not(:disabled) { background: var(--rose-soft); color: var(--ink); }
+.emotion-outfit-tree-branch:disabled { opacity: .55; cursor: default; }
+.emotion-outfit-tree-actions { display: flex; flex: 0 0 auto; gap: 1px; opacity: 0; transition: opacity .12s ease; }
+.emotion-outfit-tree-row:hover .emotion-outfit-tree-actions, .emotion-outfit-tree-row:focus-within .emotion-outfit-tree-actions { opacity: 1; }
+.emotion-outfit-tree-actions .icon-button { width: 22px; height: 22px; padding: 0; border-radius: 5px; }
+.emotion-outfit-tree-actions .icon-button:hover:not(:disabled) { color: var(--rose-dark); }
+.emotion-outfit-tree-actions .icon-button.is-danger:hover:not(:disabled) { color: var(--danger); }
+@media (hover: none) { .emotion-outfit-tree-actions { opacity: 1; } }
+.emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row { position: relative; }
+.emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row > .emotion-outfit-tree-branch { background: var(--rose-soft); color: var(--ink); font-weight: 600; }
+.emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row::before { content: ""; position: absolute; left: 100%; top: 50%; width: 32px; height: 1px; margin-top: -.5px; background: var(--rose); opacity: .55; }
+.emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row::after { content: ""; position: absolute; right: -4px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--rose); box-shadow: 0 0 0 2px var(--panel); }
+/* 첫 복장(프로필의 기본 복장)은 에셋 생성 모드를 쓰므로 초록 배경으로 구분한다.
+   변주 복장은 캐릭터 자동 생성 및 복장 이미지 생성 모드라 배경을 두지 않는다. */
+.emotion-outfit-tree-branch.is-asset-mode { background: #edf4ef; color: var(--green); }
+.emotion-outfit-tree-branch.is-asset-mode:hover:not(:disabled) { background: #e3efe7; color: var(--green); }
+.emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row > .emotion-outfit-tree-branch.is-asset-mode { background: #dcebe1; color: var(--green); }
+/* Clicking an outfit slides the row sideways to a detail pane:
+   the outfit large on the far left, the outfit's emotions large on the right. */
+.emotion-character-carousel { overflow: hidden; }
+/* After the slide back the detail is off-screen, so the height can ease down to the row's height. */
+.emotion-character-carousel[data-settling] { transition: height .2s cubic-bezier(.22,.61,.36,1); }
+.emotion-carousel-track { display: flex; width: 200%; transition: transform .42s cubic-bezier(.22,.61,.36,1); }
+.emotion-carousel-track.is-detail { transform: translateX(-50%); }
+.emotion-carousel-pane { flex: 0 0 50%; min-width: 0; }
+/* While a detail is showing (including the slide back), the other character rows and dividers step aside. */
+.illust-character-summary-grid.is-single-column:has(.emotion-character-carousel.is-detail-open) > :not(:has(.emotion-character-carousel.is-detail-open)) { display: none; }
+.emotion-outfit-detail-view { display: flex; gap: 20px; align-items: stretch; }
+.emotion-outfit-detail, .emotion-emotions-detail { flex: 1 1 0; min-width: 0; padding: 16px 18px; }
+.emotion-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.emotion-emotions-detail .emotion-detail-head { flex-wrap: wrap; }
+.emotion-detail-head-actions { display: flex; align-items: center; gap: 4px; }
+.emotion-detail-bulk-actions { flex-wrap: wrap; justify-content: flex-end; }
+.emotion-detail-bulk-actions .button { padding: 4px 8px; min-height: 26px; font-size: 11px; white-space: nowrap; }
+.emotion-detail-bulk-progress { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 0; }
+.emotion-detail-bulk-progress .emotion-detail-note { margin: 0; }
+.emotion-detail-bulk-progress .button { padding: 4px 8px; min-height: 26px; font-size: 11px; white-space: nowrap; }
+.emotion-detail-head-actions .icon-button:hover:not(:disabled) { color: var(--rose-dark); }
+.emotion-detail-head-actions .icon-button.is-danger:hover:not(:disabled) { color: var(--danger); }
+.emotion-detail-title { display: flex; align-items: center; gap: 7px; color: var(--ink); font-size: 14px; font-weight: 700; }
+.emotion-detail-context { margin: 8px 0 12px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emotion-detail-list { list-style: none; display: flex; flex-direction: column; gap: 12px; max-height: min(72vh, 720px); margin: 0; padding: 0; overflow: auto; }
+.emotion-emotion-card { display: flex; align-items: center; gap: 16px; width: 100%; padding: 0; border: 1px solid transparent; border-radius: 12px; background: none; }
+.emotion-emotion-card:hover { border-color: var(--line); }
+.emotion-emotion-open { display: flex; align-items: center; flex: 0 0 auto; padding: 0; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; cursor: zoom-in; }
+.emotion-emotion-open:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+/* Emotion cards stack one per column; the image is about a third of the screen, the name sits beside it. */
+.emotion-profile-tree-thumb.is-hero { flex: 0 0 auto; width: auto; aspect-ratio: 3 / 4; height: min(33vh, 340px); border-radius: 10px; }
+.emotion-profile-tree-thumb.is-hero img { object-fit: contain; animation: emotion-outfit-grow .5s cubic-bezier(.2,.7,.2,1) both; }
+.emotion-emotion-caption { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1 1 auto; min-width: 0; }
+.emotion-emotion-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 16px; font-weight: 650; }
+.emotion-emotion-regenerate { align-self: flex-start; min-height: 28px; padding: 4px 10px; font-size: 11px; }
+.emotion-detail-count { flex: 0 0 auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* The 캐릭터 header shows queued regeneration jobs next to its title. */
+.emotion-regeneration-pending { margin-left: 8px; color: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.emotion-regeneration-pending strong { margin-left: 2px; color: var(--muted); font-size: 12px; }
+.emotion-regeneration-pending.is-busy, .emotion-regeneration-pending.is-busy strong { color: var(--rose-dark); }
+.emotion-detail-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+.emotion-outfit-hero { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+/* contain keeps the whole outfit visible instead of cropping it when the overlay narrows. */
+.emotion-outfit-hero-image { display: flex; align-items: center; justify-content: center; width: 100%; height: min(40vh, 440px); border-radius: 10px; background: var(--lavender); color: var(--muted); overflow: hidden; }
+.emotion-outfit-hero-image img { max-width: 100%; max-height: 100%; object-fit: contain; animation: emotion-outfit-grow .5s cubic-bezier(.2,.7,.2,1) both; }
+/* 감정 삽화 이미지는 투명 배경이므로 체크무늬로 투명 영역을 표시한다. */
+.emotion-outfit-hero-image,
+.emotion-profile-tree-thumb.is-hero {
+  background-color: #f8f5f6;
+  background-image:
+    linear-gradient(45deg, #dfd7db 25%, transparent 25%, transparent 75%, #dfd7db 75%),
+    linear-gradient(45deg, #dfd7db 25%, transparent 25%, transparent 75%, #dfd7db 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+}
+@keyframes emotion-outfit-grow { from { transform: scale(.55); opacity: .2; } to { transform: none; opacity: 1; } }
+.emotion-outfit-hero-caption { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.emotion-outfit-hero-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 14px; font-weight: 650; }
+.emotion-outfit-tags { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.emotion-outfit-tags .emotion-detail-head { justify-content: flex-start; }
+.emotion-outfit-tags .illust-actions { flex-wrap: wrap; }
+.emotion-outfit-tree-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.emotion-outfit-tree-count { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+@media (max-width: 1100px) {
+  .emotion-character-row { flex-direction: column; }
+  .emotion-character-row > .illust-character-summary-card, .emotion-profile-tree { flex: 0 0 auto; width: 100%; }
+  .emotion-outfit-tree { position: static; width: auto; margin: 8px 0 0 16px; box-shadow: none; }
+  .emotion-outfit-tree::before { display: none; }
+  .emotion-outfit-detail-view { flex-direction: column; }
+  .emotion-outfit-detail, .emotion-emotions-detail { flex: 0 0 auto; min-height: 0; }
+  .emotion-detail-list { max-height: none; }
+  .emotion-outfit-hero-image { height: min(38vh, 360px); }
+  .emotion-profile-tree-branches > li:first-child > .emotion-profile-tree-branch::before,
+  .emotion-profile-tree-branches > li.is-active > .emotion-profile-tree-branch::after,
+  .emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row::before,
+  .emotion-outfit-tree-branches > li.is-selected > .emotion-outfit-tree-row::after { display: none; }
+}
 .illust-character-summary-grid > div { min-width: 0; }
 .illust-character-summary-grid > .empty, .illust-character-summary-grid > .panel { grid-column: 1 / -1; }
 .illust-character-group-divider { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; font-weight: 600; }
@@ -158,6 +297,10 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 18px 18px 14px; }
 .illust-summary-heading > div { min-width: 0; }
 .illust-summary-heading h2 { margin: 0; font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
+.illust-summary-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.illust-summary-title h2 { min-width: 0; }
+.illust-character-rename { width: 26px; height: 26px; color: var(--muted); }
+.illust-character-rename:hover:not(:disabled) { color: var(--rose-dark); background: var(--rose-soft); }
 .illust-summary-heading p { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .illust-summary-heading-actions { display: flex; align-items: flex-start; gap: 8px; }
 .illust-summary-badges { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
@@ -269,6 +412,15 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-lightbox-modal figure { margin: 0; }
 .illust-lightbox-modal figcaption { width: 0; min-width: 100%; height: 34px; padding: 8px 12px; background: var(--panel); color: var(--secondary); font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .illust-lightbox-modal .illust-asset-preview { width: auto; height: auto; max-width: calc(100vw - 48px); max-height: calc(100dvh - 82px); }
+/* Emotion lightbox also shows the recorded prompt under the image. */
+.modal.illust-lightbox-modal.has-prompt { width: min(680px, calc(100vw - 48px)); }
+.modal.illust-lightbox-modal.has-prompt > .modal-content { display: flex; flex-direction: column; }
+.modal.illust-lightbox-modal.has-prompt .illust-asset-preview { max-height: calc(100dvh - 380px); }
+.emotion-prompt-view { width: 0; min-width: 100%; max-height: 240px; overflow: auto; padding: 12px; background: var(--panel); border-top: 1px solid var(--line); }
+.emotion-prompt-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
+.emotion-prompt-row + .emotion-prompt-row { margin-top: 8px; }
+.emotion-prompt-label { padding-top: 2px; color: var(--muted); font-size: 12px; }
+.emotion-prompt-row pre { margin: 0; color: var(--secondary); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .illust-upload.disabled { opacity: .5; cursor: default; }
 @media (max-width: 760px) {
   .illust-bot-toolbox > .button { flex: 1 1 140px; white-space: normal; }
@@ -332,6 +484,15 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .illust-image-card, .illust-character-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); min-width: 0; }
 .illust-image-button { display: block; position: relative; width: 100%; padding: 0; border: 0; cursor: pointer; background: var(--lavender); }
 .illust-image-button img { width: 100%; height: 400px; object-fit: contain; display: block; }
+/* 감정 삽화 백업은 투명 배경 에셋이므로 체크무늬로 투명 영역을 표시한다. */
+.illust-checkerboard {
+  background-color: #f8f5f6;
+  background-image:
+    linear-gradient(45deg, #dfd7db 25%, transparent 25%, transparent 75%, #dfd7db 75%),
+    linear-gradient(45deg, #dfd7db 25%, transparent 25%, transparent 75%, #dfd7db 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+}
 .illust-backup-badges { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
 .illust-backup-zoom { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 5px; align-items: center; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 11px; }
 .illust-backup-lightbox::backdrop { background: rgb(0 0 0 / 85%); }
@@ -342,6 +503,7 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .illust-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; min-width: 0; line-height: 1.7; }
 .illust-card-meta time, .illust-card-meta > span { color: var(--muted); font-size: 11px; }
 .illust-card-meta > strong, .illust-backup-filename { overflow-wrap: anywhere; min-width: 0; }
+.illust-backup-asset { color: var(--ink); font-size: 11px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
 .illust-backup-duration { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .illust-backup-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .illust-backup-actions .button { justify-content: center; padding: 8px 4px; font-size: 11px; min-width: 0; }
@@ -645,6 +807,53 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .illust-generation-main { min-width: 0; }
 .illust-generation-content { border: 1px solid var(--line); border-radius: 8px; }
 .illust-generation-content[hidden], .illust-generation-postprocess[hidden] { display: none; }
+.illust-emotion-preset-groups {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--lavender) 30%, var(--panel));
+}
+.illust-emotion-preset-group-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.illust-emotion-preset-group-select { flex: 1 1 260px; min-width: 200px; max-width: 420px; margin: 0; }
+.illust-emotion-preset-group-select .searchable-select, .illust-emotion-preset-group-select .searchable-select-trigger { width: 100%; }
+.illust-emotion-preset-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.illust-emotion-preset-actions > .asset-actions { flex: 1 1 auto; }
+.illust-emotion-preset-actions > .button.danger { margin-left: auto; }
+.illust-emotion-preset-table-wrap { padding: 16px 18px 18px; overflow-x: auto; }
+.illust-emotion-preset-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.illust-emotion-preset-table th, .illust-emotion-preset-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.illust-emotion-preset-table th { color: var(--muted); font-size: 12px; font-weight: 650; text-align: left; }
+.illust-emotion-preset-table th:nth-child(1) { width: 42%; }
+.illust-emotion-preset-table th:nth-child(2) { width: 42%; }
+/* 별표(복장 대표) 열과 삭제 열은 아이콘 버튼이 겹치지 않도록 고정 폭을 준다. */
+.illust-emotion-preset-table th:nth-child(3), .illust-emotion-preset-table td:nth-child(3) {
+  width: 44px; padding-left: 4px; padding-right: 4px; text-align: center;
+}
+/* 복장 대표 도움말은 표 머리 아래쪽으로 펼쳐야 스크롤 영역에 잘리지 않는다. */
+.illust-emotion-preset-table th.illust-emotion-preset-help-head { position: relative; }
+.illust-emotion-preset-table .illust-emotion-preset-help .resource-trigger-tooltip {
+  top: calc(100% + 10px); right: 0; bottom: auto; left: auto;
+  width: 280px; max-width: 280px;
+}
+/* 아래로 펼칠 때는 툴팁 위쪽에 호버 연결 영역을 둔다. */
+.illust-emotion-preset-table .illust-emotion-preset-help .resource-trigger-tooltip::after {
+  top: auto; bottom: 100%;
+}
+.illust-emotion-preset-table th:last-child, .illust-emotion-preset-table td:last-child {
+  width: 48px; padding-left: 4px; padding-right: 4px; text-align: right;
+}
+.illust-emotion-preset-table .searchable-select, .illust-emotion-preset-table .searchable-select-trigger { width: 100%; }
+.illust-emotion-preset-name { width: 100%; box-sizing: border-box; }
+.illust-emotion-preset-tagbox {
+  margin-top: 8px; padding: 8px; max-height: 132px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: color-mix(in srgb, var(--lavender) 40%, var(--panel));
+}
+.illust-emotion-preset-tagbox > .illust-tag-list { margin: 0; }
+.illust-emotion-preset-tagbox > .illust-tag-list > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--line); }
+.illust-emotion-preset-add { margin-top: 12px; }
+.illust-emotion-preset-header-aside { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.illust-emotion-preset-charcount { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.illust-emotion-preset-charcount.over { color: var(--rose-dark); font-weight: 650; }
 .illust-generation-heading { margin: 0; padding: 16px 18px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--rose); border-radius: 8px 8px 0 0; background: var(--lavender); }
 .illust-generation-heading h3 { margin: 0 0 6px; color: var(--ink); font-size: 16px; }
 .illust-generation-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
@@ -664,6 +873,8 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .illust-generation-control { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 0; }
 .illust-generation-control.numeric { width: 120px; justify-self: end; }
 .illust-generation-control input:not([type=checkbox]), .illust-generation-control select, .illust-generation-control textarea { width: 100%; min-width: 0; }
+/* ANIMA 그림 모델에서는 만화 출력 모드를 선택할 수 없음을 회색 배경으로 표시한다. */
+.illust-generation-control select option:disabled { background-color: color-mix(in srgb, var(--line) 45%, var(--panel)); color: var(--muted); }
 .illust-generation-field .field-help { display: block; margin: 5px 0 0; font-weight: 400; }
 .illust-strategy-warning { color: var(--rose-dark); font-weight: 600; }
 .illust-generation-dependent { border-left: 2px solid var(--line); border-radius: 6px; margin: 0 0 0 8px; padding: 0 14px; background: color-mix(in srgb, var(--lavender) 40%, var(--panel)); }
@@ -1229,3 +1440,30 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .workshop-character-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workshop-character-name input { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--rose); }
 .workshop-character-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 11px; color: var(--muted); }
+
+/* 프로필별 복장 이미지 생성 계획 목록 */
+.emotion-profile-outfit-list { list-style: none; display: flex; flex-direction: column; gap: 8px; max-height: min(48vh, 420px); margin: 0; padding: 0; overflow: auto; }
+.emotion-profile-outfit-list li { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) auto; gap: 12px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.emotion-profile-outfit-list li.is-skipped { opacity: .68; }
+.emotion-profile-outfit-who { display: flex; flex-direction: column; min-width: 0; }
+.emotion-profile-outfit-who span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emotion-profile-outfit-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.emotion-profile-outfit-emphasis { color: var(--green); }
+@media (max-width: 720px) {
+  .emotion-profile-outfit-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .emotion-profile-outfit-what { grid-column: 1 / -1; }
+}
+
+/* 수동 배경 모드: 백업 이미지 미리보기 + 배경/전면 레이어 CSS */
+.illust-manual-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr); gap: 18px; align-items: start; }
+.illust-manual-preview-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.illust-manual-preview { position: relative; display: block; width: 100%; min-height: 220px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--lavender); }
+.illust-manual-preview-name { margin: 0; overflow-wrap: anywhere; }
+.illust-manual-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.illust-manual-presets, .illust-manual-css-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, var(--lavender)); }
+.illust-manual-group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.illust-manual-presets h3, .illust-manual-css-group h3 { margin: 0; font-size: 13px; }
+.illust-manual-presets > .field-help, .illust-manual-css-group > .field-help { margin: 0; }
+.illust-manual-presets .illust-actions { gap: 6px; }
+.illust-form textarea.illust-code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12px; line-height: 1.55; tab-size: 2; }
+@media (max-width: 980px) { .illust-manual-layout { grid-template-columns: 1fr; } }

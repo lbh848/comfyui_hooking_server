@@ -5394,6 +5394,11 @@
             background: color-mix(in srgb, var(--bg) 76%, transparent);
             color: color-mix(in srgb, var(--text2) 70%, transparent);
         }
+        /* ANIMA 그림 모델에서는 만화 출력 모드를 선택할 수 없음을 회색 배경으로 표시한다. */
+        .illust-settings .illust-setting-input option:disabled {
+            background: color-mix(in srgb, var(--illust-border-subtle) 55%, var(--bg));
+            color: color-mix(in srgb, var(--text2) 70%, transparent);
+        }
         .illust-settings .illust-setting-input[type='number'] {
             max-width: 120px;
             text-align: right;

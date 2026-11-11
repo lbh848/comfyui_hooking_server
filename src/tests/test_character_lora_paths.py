@@ -21,18 +21,18 @@ class CharacterLoraPathsTest(unittest.TestCase):
         cls.builder = module.IllustPromptBuilder
 
     def test_library_path_is_already_relative_to_lora_root(self):
-        for path in ["portraits/model.safetensors", "SOYA_CHAR_LORA/SOYA_BOT_LORA/A/model.safetensors"]:
+        for path in ["portraits/model.safetensors", "SOYA_BOT_LORA/A/model.safetensors"]:
             with self.subTest(path=path):
                 self.assertEqual(self.builder._resolve_lora_path({"source": "library", "lora_path": path}), path)
 
     def test_managed_sources_use_category_prefixes(self):
-        for source, prefix in [("asset", "SOYA_CHAR_LORA\\SOYA_ASSET_LORA"), ("bot", "SOYA_CHAR_LORA\\SOYA_BOT_LORA"), ("instance", "SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA"), ("style", "SOYA_CHAR_LORA\\SOYA_STYLE_LORA")]:
+        for source, prefix in [("asset", "SOYA_ASSET_LORA"), ("bot", "SOYA_BOT_LORA"), ("instance", "SOYA_INSTANCE_LORA"), ("style", "SOYA_STYLE_LORA")]:
             with self.subTest(source=source):
                 self.assertEqual(self.builder._resolve_lora_path({"source": source, "lora_path": "character/model.safetensors"}), prefix + "\\character/model.safetensors")
 
     def test_legacy_bot_filename_recovers_training_metadata(self):
         value = {"source": "bot", "lora_path": "model.safetensors", "bot_name": "A", "project_name": "P", "character": "C", "preview_url": "/api/bot_lora/trained/preview/A/P/C/session/image.jpg"}
-        self.assertEqual(self.builder._resolve_lora_path(value), "SOYA_CHAR_LORA\\SOYA_BOT_LORA\\A\\Lora\\P\\C\\session\\model.safetensors")
+        self.assertEqual(self.builder._resolve_lora_path(value), "SOYA_BOT_LORA\\A\\Lora\\P\\C\\session\\model.safetensors")
 
 
 if __name__ == "__main__":

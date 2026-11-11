@@ -33,6 +33,12 @@ def config_root(project_root: str | Path = SOURCE_DIR) -> Path:
     return install_root(project_root) / "config"
 
 
+def resolve_install_path(value: str, project_root: str | Path = SOURCE_DIR) -> Path:
+    """Resolve portable resource paths independently of the working directory."""
+    path = Path(value.replace("\\", "/"))
+    return path if path.is_absolute() else install_root(project_root) / path
+
+
 def initialize_layout(project_root: str | Path = SOURCE_DIR) -> None:
     """Create writable roots and seed missing defaults without replacing edits."""
     source = Path(project_root).resolve()

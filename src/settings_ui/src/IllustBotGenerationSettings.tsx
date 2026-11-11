@@ -11,9 +11,9 @@ import { presetRequest, valueText, type PresetCatalog } from "./presets";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { IllustGenerationPresets } from "./IllustGenerationPresets";
 
-const allGenerationModes = { illustration: "일반 삽화 생성 모드", character_auto: "캐릭터 자동 생성 모드", background: "배경 생성 모드" };
-const illustrationModes = { illustration: "일반 삽화 생성 모드", character_auto: "캐릭터 자동 생성 모드" };
-const emotionModes = { illustration: "에셋 생성 모드", character_auto: "캐릭터 자동 생성 모드", background: "배경 생성 모드" };
+const allGenerationModes = { illustration: "일반 삽화 생성 모드", character_auto: "캐릭터 자동 생성 및 복장 이미지 생성 모드", background: "배경 생성 모드" };
+const illustrationModes = { illustration: "일반 삽화 생성 모드", character_auto: "캐릭터 자동 생성 및 복장 이미지 생성 모드" };
+const emotionModes = { illustration: "에셋 생성 모드", character_auto: "캐릭터 자동 생성 및 복장 이미지 생성 모드", background: "배경 생성 모드" };
 type GenerationMode = keyof typeof allGenerationModes;
 const profiles = { solo: "1인", group: "2인 이상" };
 type Profile = keyof typeof profiles;
@@ -96,7 +96,7 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
   return <div className="illust-bot-generation illust-form">
     <fieldset disabled={presetBusy} className="illust-form"><SettingsTabs id={id} className="illust-bot-generation-mode-tabs" label="그리기 설정 모드" values={generationModes} value={mode} onChange={value => setMode(value as GenerationMode)} /></fieldset>
     <div className="illust-bot-generation-toolbar">
-      <span className="field-help">현재 그림 모델: {config.data.workflow_types[config.data.config.illustration_workflow_type]}</span>
+      <span className="field-help">현재 그림 모델: {capabilities.moss ? "MOSS" : config.data.workflow_types[config.data.config.illustration_workflow_type]}</span>
       <span className="field-help" role="status">{autosave.status}</span>
     </div>
     {(autosave.error || autosave.inputError) && <div className="notice error" role="alert">{autosave.error || autosave.inputError}{autosave.error && <button type="button" className="button" onClick={() => void autosave.retry()}>저장 다시 시도</button>}</div>}
@@ -111,7 +111,7 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
       }} />
     <form ref={form} className="illust-form" onSubmit={event => event.preventDefault()}>
       {modeKeys.map(generationMode => <div key={generationMode} id={`${id}-panel-${generationMode}`} role="tabpanel" aria-labelledby={`${id}-tab-${generationMode}`} hidden={mode !== generationMode} className="illust-form">
-      <CommonGenerationFields value={draft[generationMode].solo} tags={presetTags} capabilities={capabilities} readOnly={readOnly} background={generationMode === "background"}
+      <CommonGenerationFields value={draft[generationMode].solo} tags={presetTags} capabilities={capabilities} readOnly={readOnly}
         update={(field, value) => update(generationMode, "solo", field, value)} onEdit={field => setEditor({ mode: generationMode, field })} />
       <section className="illust-bot-generation-section illust-form" data-group="image-size-seed"><h3>이미지 크기·시드</h3>
         {generationMode !== "character_auto" && <div className="illust-bot-generation-toolbar">
@@ -136,8 +136,8 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
   </div>;
 }
 
-function CommonGenerationFields({ value, tags, capabilities, readOnly, background, update, onEdit }: {
-  value: IllustrationData; tags: IllustrationData; capabilities: IllustrationData; readOnly: boolean; background: boolean;
+function CommonGenerationFields({ value, tags, capabilities, readOnly, update, onEdit }: {
+  value: IllustrationData; tags: IllustrationData; capabilities: IllustrationData; readOnly: boolean;
   update: (field: string, value: unknown) => void; onEdit: (field: string) => void;
 }) {
   const check = (key: string, label: string) => <label className="illust-check"><input type="checkbox" checked={!!value[key]} onChange={event => update(key, event.target.checked)} />{label}</label>;
@@ -161,21 +161,21 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, backgroun
         })}
       </fieldset>)}
     </div></section>
-    <fieldset className="illust-bot-generation-section illust-form" data-group="reference" disabled={background || !capabilities.local_advanced || !capabilities.anima_presets}><legend>이미지 레퍼런스</legend>
+    <fieldset className="illust-bot-generation-section illust-form" data-group="reference" disabled={!capabilities.moss_reference && (!capabilities.local_advanced || !capabilities.anima_presets)}><legend>이미지 레퍼런스{capabilities.moss_reference && <span>CharRef v2</span>}{capabilities.moss && !capabilities.moss_reference && <span>MOSS 미사용</span>}</legend>
       {check("snapref_enabled", "이미지 레퍼런스 사용")}
       {value.snapref_enabled && <div className="illust-form illust-bot-generation-dependent">
-        <label className="field">레퍼런스 전처리<select value={value.snapref_preprocess || "none"} onChange={event => update("snapref_preprocess", event.target.value)}>{referencePreprocessOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {!capabilities.moss_reference && <label className="field">레퍼런스 전처리<select value={value.snapref_preprocess || "none"} onChange={event => update("snapref_preprocess", event.target.value)}>{referencePreprocessOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
         {range("snapref_strength", "Strength · 레퍼런스 강도", 0, 2, .05)}
-        {range("snapref_fidelity", "Fidelity · 디테일 유지", 0, 1, .05)}
-        <p className="field-help">1은 레퍼런스 디테일을 유지하고, 낮출수록 프롬프트를 더 자유롭게 따릅니다.</p>
+        {!capabilities.moss_reference && range("snapref_fidelity", "Fidelity · 디테일 유지", 0, 1, .05)}
+        {!capabilities.moss_reference && <p className="field-help">1은 레퍼런스 디테일을 유지하고, 낮출수록 프롬프트를 더 자유롭게 따릅니다.</p>}
         <label className="field">레퍼런스 전달<select value={value.snapref_secondary_reference} onChange={event => update("snapref_secondary_reference", event.target.value)}>{referenceDeliveryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <p className="field-help">ANIMA 단계에 적용합니다. 얼굴 이미지만은 1st·HF·모든 디테일러에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. 대표+얼굴 또는 대표+두 번째 대표는 모든 단계에 함께 전달하며, 추가 이미지가 없으면 대표만 사용합니다. 단계별 전달은 FD·ED에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. HF의 마스크별 캐릭터 LoRA는 레퍼런스 사용 여부와 별개로 적용됩니다.</p>
+        {capabilities.moss_reference ? <p className="field-help">MOSS는 CharRef v2로 캐릭터별 참조 이미지를 최대 3장까지 사용합니다. 모델·스텝·CFG·샘플러는 프리셋 값을 그대로 사용하며, 참조 모드가 이 값을 바꾸지 않습니다. 다중 참조는 실험적이며, 모델 카드는 Picture 1만 안정적이라고 경고합니다.</p> : <><p className="field-help">ANIMA 단계에 적용합니다. 얼굴 이미지만은 1st·HF·모든 디테일러에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. 대표+얼굴 또는 대표+두 번째 대표는 모든 단계에 함께 전달하며, 추가 이미지가 없으면 대표만 사용합니다. 단계별 전달은 FD·ED에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. HF의 마스크별 캐릭터 LoRA는 레퍼런스 사용 여부와 별개로 적용됩니다.</p>
         <p className="field-help">대표·얼굴·두 번째 대표 이미지는 모두 선택된 캐릭터 카드에서 가져옵니다.</p>
         <div className="illust-bot-generation-columns"><label className="field">참조 방식<select value={value.snapref_mode} onChange={event => update("snapref_mode", event.target.value)}><option value="char">캐릭터 외형</option><option value="cs">외형 + 화풍</option></select></label>
-          {range("snapref_megapixels", "레퍼런스 해상도", .25, 2, .25, " MP")}</div>
+          {range("snapref_megapixels", "레퍼런스 해상도", .25, 2, .25, " MP")}</div></>}
       </div>}
     </fieldset>
-    <fieldset className="illust-bot-generation-section illust-form" data-group="enhancement" disabled={!capabilities.local_advanced}><legend>고해상도·디테일러 보정</legend>
+    <fieldset className="illust-bot-generation-section illust-form" data-group="enhancement" disabled={capabilities.moss || !capabilities.local_advanced}><legend>고해상도·디테일러 보정{capabilities.moss && <span>MOSS 미사용</span>}</legend>
       {range("hrf_size", "HIRESFIX 및 디테일러 적용 전 확대 배율", 1, 3, .05, "배")}
       {check("hrf_restore_size", "원본 크기 복원")}
       <div className="illust-bot-generation-columns">{Object.entries(families).map(([family, label]) => <fieldset key={family} className="illust-form illust-bot-generation-family" data-family={family} disabled={!capabilities[`${family}_presets`]}><legend>{label}</legend>
@@ -184,7 +184,9 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, backgroun
       </fieldset>)}</div>
       <GenerationNumberField label="FD / ED 시 고정 사이즈 (px)" value={value.face_lora_upscale_size} min={0} optional onChange={next => update("face_lora_upscale_size", next)} />
     </fieldset>
-    {!capabilities.local_advanced && <p className="field-help">현재 그림 모델에서는 로컬 전용 시드·레퍼런스·고해상도·디테일러 설정을 사용하지 않습니다.</p>}
+    {capabilities.moss_reference && <p className="field-help">MOSS는 이미지 레퍼런스(CharRef v2)만 지원하며, 고해상도·디테일러 보정은 사용하지 않습니다.</p>}
+    {capabilities.moss && !capabilities.moss_reference && <p className="field-help">MOSS 그림 모델에서는 이미지 레퍼런스와 고해상도·디테일러 보정을 사용하지 않습니다.</p>}
+    {!capabilities.local_advanced && !capabilities.moss_reference && <p className="field-help">현재 그림 모델에서는 로컬 전용 시드·레퍼런스·고해상도·디테일러 설정을 사용하지 않습니다.</p>}
   </fieldset>;
 }
 

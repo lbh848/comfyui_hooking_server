@@ -48,6 +48,11 @@ _CARD_LOCAL_LORA_KEYS = {
     "style_loras",
 }
 
+# Per-card style LoRAs are no longer used; style LoRAs come from the model
+# preset.  Keep the key accepted so saved bots still load, but drop it from
+# normalized cards and mirrored root fields.
+_DEPRECATED_CARD_RENDER_KEYS = {"style_loras"}
+
 _CARD_BOOLEAN_METADATA_KEYS = {
     "skip_lb_extra_batch_refine",
 }
@@ -172,6 +177,69 @@ def _normalize_legacy_outfit(raw: dict, *, field: str = "outfit") -> dict:
     }
 
 
+def _normalize_representative_emotion(value, *, field: str) -> dict | None:
+    """Validate the one expression a new outfit cover is generated with."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        print(f"[CHARACTER_CARD] 복장 대표 표정 무시: {field}는 object여야 합니다: {value!r}")
+        return None
+    preset = _clean_text(value.get("preset"))
+    name = _clean_text(value.get("name"))
+    rating = _clean_text(value.get("rating")).lower()
+    if not name or rating not in {"sfw", "nsfw"}:
+        print(
+            f"[CHARACTER_CARD] 복장 대표 표정 무시: {field}에 "
+            f"감정 이름과 sfw/nsfw 등급이 필요합니다: {value!r}"
+        )
+        return None
+    return {"preset": preset, "name": name, "rating": rating}
+
+
+def _normalize_outfit_presets(values, *, field: str) -> list[dict]:
+    """Read the per-card outfit pool: named tag sets the emotion asset stage may reuse.
+
+    Each entry is ``{"label": short outfit name, "tags": [tag entries]}`` with an
+    optional ``representative_emotion`` used to build the outfit cover first. The
+    label is the emotion-store folder name, so duplicates are rejected
+    case-insensitively.
+    """
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        error = f"{field}는 배열이어야 합니다: {type(values).__name__}"
+        print(f"[CHARACTER_CARD] 복장 풀 검증 실패: {error}")
+        raise VisualProfileValidationError(error)
+    result: list[dict] = []
+    seen: set[str] = set()
+    for index, value in enumerate(values):
+        item_field = f"{field}[{index}]"
+        if not isinstance(value, dict):
+            error = f"{item_field}는 object여야 합니다."
+            print(f"[CHARACTER_CARD] 복장 풀 검증 실패: {error}, value={value!r}")
+            raise VisualProfileValidationError(error)
+        tags = normalize_tag_entries(value.get("tags"), field=f"{item_field}.tags")
+        label = _clean_text(value.get("label"))
+        if not label:
+            label = ", ".join(tag["tag"] for tag in tags)[:80].strip()
+        if not label:
+            print(f"[CHARACTER_CARD] 이름과 태그가 모두 빈 복장 풀 항목 스킵: {item_field}")
+            continue
+        if label.casefold() in seen:
+            print(f"[CHARACTER_CARD] 중복 복장 풀 이름 스킵: {item_field}, label={label!r}")
+            continue
+        seen.add(label.casefold())
+        entry = {"label": label, "tags": tags}
+        representative = _normalize_representative_emotion(
+            value.get("representative_emotion"),
+            field=f"{item_field}.representative_emotion",
+        )
+        if representative:
+            entry["representative_emotion"] = representative
+        result.append(entry)
+    return result
+
+
 def _normalize_flat_default_outfit(raw: dict, *, field: str) -> list[dict]:
     """Read the flat field, or migrate one selected outfit from the old nested schema."""
     if "default_outfit" in raw:
@@ -231,6 +299,8 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
         "aliases": _normalize_aliases(raw.get("aliases"), field=f"{field}.aliases"),
         "appearance": normalize_tag_entries(raw.get("appearance"), field=f"{field}.appearance"),
         "default_outfit": _normalize_flat_default_outfit(raw, field=field),
+        "outfit_presets": _normalize_outfit_presets(
+            raw.get("outfit_presets"), field=f"{field}.outfit_presets"),
     }
     for key in _CARD_BOOLEAN_METADATA_KEYS:
         value = raw.get(key, False)
@@ -242,7 +312,7 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
     unknown = sorted(
         set(raw) - _CARD_RENDER_KEYS - _CARD_BOOLEAN_METADATA_KEYS - {
             "id", "label", "selection_guide", "visual_context", "aliases", "appearance",
-            "default_outfit", "default_outfit_id", "outfits",
+            "default_outfit", "default_outfit_id", "outfits", "outfit_presets",
         }
     )
     if unknown:
@@ -250,7 +320,7 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
         print(f"[CHARACTER_CARD] 카드 필드 검증 실패: {error}")
         raise VisualProfileValidationError(error)
     for key in _CARD_RENDER_KEYS:
-        if key not in raw:
+        if key not in raw or key in _DEPRECATED_CARD_RENDER_KEYS:
             continue
         value = deepcopy(raw[key])
         if key in {"use_profile_embedding", "use_image_name_tag"} and not isinstance(value, bool):
@@ -340,6 +410,7 @@ def cards_to_character_profiles(character_name: str, cards: list[dict]) -> dict:
             "aliases": deepcopy(card["aliases"]),
             "appearance": deepcopy(card["appearance"]),
             "default_outfit": deepcopy(card["default_outfit"]),
+            "outfit_presets": deepcopy(card["outfit_presets"]),
             "skip_lb_extra_batch_refine": card["skip_lb_extra_batch_refine"],
             "render_overrides": render_overrides,
         })
@@ -372,7 +443,7 @@ def character_profiles_to_cards(raw: dict) -> list[dict]:
         card = {
             key: deepcopy(profile[key]) for key in (
                 "id", "label", "selection_guide", "visual_context", "aliases", "appearance",
-                "default_outfit", "default_outfit_id", "outfits",
+                "default_outfit", "default_outfit_id", "outfits", "outfit_presets",
                 "skip_lb_extra_batch_refine",
             )
             if key in profile
@@ -655,6 +726,7 @@ def resolve_visual_base(
         "visual_profile_label": profile["label"],
         "appearance": deepcopy(profile.get("appearance") or []),
         "outfit": deepcopy(profile.get("default_outfit") or []),
+        "outfit_presets": deepcopy(profile.get("outfit_presets") or []),
         "render_overrides": deepcopy(profile.get("render_overrides") or {}),
     }
 

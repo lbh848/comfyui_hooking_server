@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useUnsavedChanges } from "./unsavedChanges";
-import { ArrowLeft, ChevronRight, Copy, Images, LockKeyhole, LockKeyholeOpen, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { IllustCharacterTags } from "./IllustCharacterTags";
 import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
@@ -11,7 +11,11 @@ import { IllustLoras } from "./IllustLoras";
 import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
+import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
 import { useCharacterImageRegeneration } from "./useCharacterImageRegeneration";
+import { useEmotionBulkGeneration, type EmotionBulkMode } from "./useEmotionBulkGeneration";
+import { useEmotionImageRegeneration } from "./useEmotionImageRegeneration";
+import { useEmotionOutfitRegeneration } from "./useEmotionOutfitRegeneration";
 import { IllustDataPreparation, dataPreparationTitle } from "./IllustDataPreparation";
 import { IllustAssetProfileOutputInstruction, assetProfileOutputInstructionTitle } from "./IllustAssetProfileOutputInstruction";
 import { useModalWorkspace } from "./ModalWorkspace";
@@ -22,6 +26,8 @@ import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { useBotApi } from "./BotApiScope";
 
 const botToolLabels = { customSystemInstruction: "커스텀 시스템 지침", generation: "그리기 설정", rules: "매칭 기반 규칙", extra: "캐릭터 태그 일괄 관리" };
+const OUTFIT_SLIDE_MS = 420; // matches the carousel transition in illust.css
+const OUTFIT_SETTLE_MS = 220; // matches the carousel height transition in illust.css
 const genderTags = ["1girl", "1boy", "1male", "animal", "1girl, furry", "1boy, furry", "futanari", "monster", "monster girl"];
 
 export function AddIllustrationBot({ onClose, onAdded }: { onClose: () => void; onAdded: (name: string) => void }) {
@@ -178,7 +184,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
             <CharacterEditor botName={item.name} characterName={entry.name} cardData={entry.card_data} onReload={refreshCharacterStatus} embedded inventory={inventory} refreshKey={cardRevision}
               compact={viewMode === "compact"} patchStatus={item.name === bot?.name ? patchStatus.data?.[entry.name] : undefined} patchLoading={!patchStatus.data && !patchStatus.error} patchError={patchStatus.error}
               gallery={gallery?.botName === item.name && gallery?.name === entry.name} onOpenImages={() => { listScroll.current = window.scrollY; setGallery({ botName: item.name, name: entry.name }); }} onClose={() => setGallery(null)}
-              readOnly={isLocked(item.name) || distributionBusy} onDelete={() => setDeleteTarget({ name: entry.name, character: true })}
+              readOnly={isLocked(item.name) || distributionBusy} onDelete={() => setDeleteTarget({ name: entry.name, character: true })} allowRename onRenamed={() => { setGallery(null); setSearch(""); }}
               persona={item.persona_character_name === entry.name} onPersona={value => void action.run(async () => { await api.request("bot_mode/action", { action: "update_persona_character", bot_name: item.name, char_name: value ? entry.name : "" }); resource.reload(); }, "페르소나를 변경했습니다.")} personaBusy={action.busy} />
           </div>;
           return <div key={item.name} hidden={item.name !== bot?.name} className={viewMode === "compact" && !gallery ? "illust-character-summary-grid" : "illust-stack"}>
@@ -224,12 +230,13 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   </div>;
 }
 
-export function CharacterEditor({ botName, characterName, cardData, onReload, onClose, initialCardId = "", tagsOnly = false, readOnly = false, embedded = false, gallery = false, onOpenImages, onEnter, onDelete, inventory, persona = false, onPersona, personaBusy = false, refreshKey = 0, compact = false, patchStatus, patchLoading = false, patchError = "" }: {
+export function CharacterEditor({ botName, characterName, cardData, onReload, onClose, initialCardId = "", tagsOnly = false, readOnly = false, embedded = false, gallery = false, onOpenImages, onEnter, onDelete, inventory, persona = false, onPersona, personaBusy = false, refreshKey = 0, compact = false, patchStatus, patchLoading = false, patchError = "", allowRename = false, onRenamed, showProfileTree = false }: {
   botName: string; characterName: string; onClose: () => void; initialCardId?: string; readOnly?: boolean;
   embedded?: boolean; gallery?: boolean; tagsOnly?: boolean; onOpenImages?: () => void; onEnter?: () => void; onDelete?: () => void; inventory?: Resources;
   persona?: boolean; onPersona?: (value: boolean) => void; personaBusy?: boolean;
   refreshKey?: number; cardData?: IllustrationData; onReload?: () => void;
   compact?: boolean; patchStatus?: IllustrationData; patchLoading?: boolean; patchError?: string;
+  allowRename?: boolean; onRenamed?: (newName: string) => void; showProfileTree?: boolean;
 }) {
   const api = useBotApi();
   const resource = useIllustrationResource(cardData ? null : api.path(`bot_mode/character_cards?${query({ bot_name: botName, character: characterName })}`));
@@ -245,7 +252,21 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const [imageSearch, setImageSearch] = useState("");
   const [localGallery, setLocalGallery] = useState(false);
   const [summaryDetailsOpen, setSummaryDetailsOpen] = useState(false);
-  const action = useIllustrationAction(); const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState("");
+  const [selectedOutfit, setSelectedOutfit] = useState("");
+  const [outfitSlideBack, setOutfitSlideBack] = useState(false);
+  const [renameOutfitTarget, setRenameOutfitTarget] = useState("");
+  const [renameOutfitName, setRenameOutfitName] = useState("");
+  const [deleteOutfitTarget, setDeleteOutfitTarget] = useState<IllustrationData | null>(null);
+  // The regenerated cover keeps its filename, so bust the media cache after it completes.
+  const [outfitMediaRevision, setOutfitMediaRevision] = useState(0);
+  const action = useIllustrationAction(); const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction(); const renameAction = useIllustrationAction();
+  const outfitTagAction = useIllustrationAction();
+  const outfitFolderAction = useIllustrationAction();
+  // Remember the tags the cover prompt was made with, so saving the editor first
+  // does not make the regeneration compare the new tags against themselves.
+  const outfitTagsSeed = useRef<{ outfit: string; tags: string[] }>({ outfit: "", tags: [] });
   // Tag modals own a local draft. Keep its original conflict base during background refreshes.
   useEffect(() => { if (((detail !== "tags" && !tagsOnly) || !base) && data?.character && (!base || JSON.stringify(draft) === JSON.stringify(base))) {
     setDraft(data.character); setBase(data.character);
@@ -266,6 +287,18 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
     images.reload(); onReload?.();
   });
   const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy;
+  const canRename = allowRename && draft?.npc_generated === true && !readOnly && !busy;
+  const openRename = () => { setRenameName(characterName); setRenameOpen(true); };
+  const submitRename = () => {
+    const next = renameName.trim();
+    if (!next || next === characterName) { setRenameOpen(false); return; }
+    void renameAction.run(async () => {
+      await api.request("bot_mode/action", { action: "rename_character", bot_name: botName, old_name: characterName, new_name: next });
+      setRenameOpen(false);
+      onRenamed?.(next);
+      onReload?.();
+    }, "캐릭터 이름을 변경했습니다.");
+  };
   useUnsavedChanges({ label: `${botName} · ${characterName} · 캐릭터 편집`, dirty, busy: dirty && action.busy,
     error: action.error, modalTitle: `${characterName} · 캐릭터 편집`, detail: "캐릭터 카드 변경 사항을 저장하세요." });
   const update = (changes: IllustrationData) => setDraft(current => current && ({ ...current, profiles: current.profiles.map((item: IllustrationData, i: number) => i === index ? { ...item, ...changes } : item) }));
@@ -291,9 +324,223 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   };
   const regenerateButton = (image: IllustrationData) => image.generated && <button type="button" className="button secondary" disabled={readOnly || busy} onClick={() => regenerateImage(image)}><RefreshCw size={14} />{regeneration.busy ? "재생성 중…" : "재생성"}</button>;
   const summaryMode = compact && !gallery;
+  // The outfit tree next to the selected profile shows only the active card's outfits.
+  const outfitResource = useIllustrationResource(summaryMode && showProfileTree && card
+    ? api.path(`bot_mode/emotion_outfits?${query({ bot: botName, character: characterName, profile: card.id })}`)
+    : null);
+  // Clicking an outfit opens the large outfit/emotion drill-down for the active card.
+  const emotionsResource = useIllustrationResource(summaryMode && showProfileTree && card && selectedOutfit
+    ? api.path(`bot_mode/emotion_emotions?${query({ bot: botName, character: characterName, profile: card.id, outfit: selectedOutfit })}`)
+    : null);
+  const outfitRegeneration = useEmotionOutfitRegeneration(botName, characterName, !!selectedOutfit, () => {
+    images.reload(); outfitResource.reload(); emotionsResource.reload(); onReload?.();
+    setOutfitMediaRevision(value => value + 1);
+  });
+  const emotionImageRegeneration = useEmotionImageRegeneration(botName, characterName, !!selectedOutfit, () => {
+    outfitResource.reload(); emotionsResource.reload(); onReload?.();
+    setOutfitMediaRevision(value => value + 1);
+  });
+  const emotionBulkGeneration = useEmotionBulkGeneration(botName, characterName, !!selectedOutfit, () => {
+    outfitResource.reload(); emotionsResource.reload(); onReload?.();
+    setOutfitMediaRevision(value => value + 1);
+  });
+  // Regenerate one emotion image with the outfit tags saved on the active card.
+  const regenerateEmotion = async (emotion: IllustrationData) => {
+    if (!card || !selectedOutfit || readOnly) return;
+    await emotionImageRegeneration.regenerate(card.id, selectedOutfit, String(emotion.name || ""), outfitTagsFor(savedCard || card, selectedOutfit));
+  };
+  // Generate every configured emotion preset, or only the ones with no image yet.
+  const generateAllEmotions = async (mode: EmotionBulkMode) => {
+    if (!card || !selectedOutfit || readOnly) return;
+    await emotionBulkGeneration.generate(card.id, selectedOutfit, mode);
+  };
+  const cancelAllEmotions = async () => {
+    if (!card || !selectedOutfit) return;
+    await emotionBulkGeneration.cancel(card.id, selectedOutfit);
+  };
+  // The lightbox shows the exact prompt the emotion image was generated with.
+  const loadEmotionPrompt = async (emotion: IllustrationData) => {
+    if (!card || !selectedOutfit) return {};
+    const result = await api.request(`bot_mode/emotion_image_prompt?${query({
+      bot_name: botName, char_name: characterName, profile: card.id, outfit: selectedOutfit, emotion: String(emotion.name || ""),
+    })}`);
+    return result.prompt || {};
+  };
+  const versionedMedia = (url: string) => url ? `${url}${url.includes("?") ? "&" : "?"}v=${outfitMediaRevision}` : "";
+  // The detail hides the other rows, so the page shrinks while it is open. Remember where the
+  // list was and scroll back to it as the rows return, like the asset gallery keeps its place.
+  const outfitScroll = useRef<number | null>(null);
+  const outfitTimer = useRef<number | null>(null);
+  const outfitSettleTimer = useRef<number | null>(null);
+  const outfitCarousel = useRef<HTMLDivElement>(null);
+  const outfitOpen = !!selectedOutfit && !outfitSlideBack;
+  const cancelOutfitSlide = () => {
+    if (outfitTimer.current === null) return;
+    window.clearTimeout(outfitTimer.current);
+    outfitTimer.current = null;
+  };
+  // The carousel is as tall as the detail while it is open. Drop the inline height the settle used
+  // once the detail is gone, so the list is back on its natural height.
+  const resetOutfitHeight = () => {
+    if (outfitSettleTimer.current !== null) {
+      window.clearTimeout(outfitSettleTimer.current);
+      outfitSettleTimer.current = null;
+    }
+    const node = outfitCarousel.current;
+    if (!node) return;
+    node.style.height = "";
+    delete node.dataset.settling;
+  };
+  // The rows reappear as the track slides back, so the list below the open row is already in its
+  // final place. Only the carousel height still differs; animate it down to the row height.
+  const settleOutfitHeight = () => {
+    const finish = () => { setOutfitSlideBack(false); setSelectedOutfit(""); };
+    const node = outfitCarousel.current;
+    // Both panes stretch to the track's height, so measure the row itself for the list's height.
+    const row = node?.querySelector<HTMLElement>(".emotion-character-row");
+    const from = node ? node.getBoundingClientRect().height : 0;
+    const to = row ? row.getBoundingClientRect().height : from;
+    // The detail is off-screen after the slide, so clipping it down to the row height shows nothing.
+    if (!node || Math.abs(from - to) < 1) { finish(); return; }
+    node.style.height = `${from}px`;
+    node.dataset.settling = "true";
+    requestAnimationFrame(() => { node.style.height = `${to}px`; });
+    outfitSettleTimer.current = window.setTimeout(() => {
+      outfitSettleTimer.current = null;
+      finish();
+    }, OUTFIT_SETTLE_MS);
+  };
+  const outfitTagsFor = (source: IllustrationData | null | undefined, label: string): string[] => {
+    if (!source || !label) return [];
+    const preset = (source.outfit_presets || []).find((item: IllustrationData) =>
+      String(item.label || "").trim().toLocaleLowerCase() === label.toLocaleLowerCase());
+    return (preset?.tags || []).map((item: IllustrationData) => String(item.tag || "").trim()).filter(Boolean);
+  };
+  const outfitTagsWith = (source: IllustrationData, label: string, text: string): IllustrationData => {
+    const tags = text.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
+    return {
+      ...source,
+      profiles: source.profiles.map((item: IllustrationData) => {
+        if (item.id !== card?.id) return item;
+        const presets: IllustrationData[] = item.outfit_presets || [];
+        const index = presets.findIndex((preset: IllustrationData) =>
+          String(preset.label || "").trim().toLocaleLowerCase() === label.toLocaleLowerCase());
+        // Keep descriptions of unchanged tags; only the text list is edited here.
+        const previous = index >= 0 ? (presets[index].tags || []) : [];
+        const entries = tags.map(tag => {
+          const match = previous.find((entry: IllustrationData) =>
+            String(entry.tag || "").trim().toLocaleLowerCase() === tag.toLocaleLowerCase());
+          return { ...(match || {}), tag };
+        });
+        const next = index >= 0
+          ? presets.map((preset: IllustrationData, i: number) => i === index ? { ...preset, label: preset.label || label, tags: entries } : preset)
+          : [...presets, { label, tags: entries }];
+        return { ...item, outfit_presets: next };
+      }),
+    };
+  };
+  async function saveDraftCard(next: IllustrationData) {
+    const result = await api.request("bot_mode/character_cards", { bot_name: botName, character: characterName, data: next, base });
+    setDraft(result.character); setBase(result.character);
+    return result.character;
+  }
+  async function saveOutfitTags(text: string) {
+    if (!draft || !card || !selectedOutfit || readOnly) return;
+    const next = outfitTagsWith(draft, selectedOutfit, text);
+    await outfitTagAction.run(async () => {
+      await saveDraftCard(next);
+      outfitResource.reload();
+    }, "복장 태그를 저장했습니다.");
+  }
+  async function regenerateOutfit(text: string) {
+    if (!draft || !card || !selectedOutfit || readOnly) return;
+    const newTags = text.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
+    const seed = outfitTagsSeed.current.outfit === selectedOutfit
+      ? outfitTagsSeed.current.tags
+      : outfitTagsFor(savedCard, selectedOutfit);
+    const next = outfitTagsWith(draft, selectedOutfit, text);
+    const started = await outfitRegeneration.regenerate(card.id, selectedOutfit, seed, newTags, async () => {
+      if (JSON.stringify(next) !== JSON.stringify(draft)) await saveDraftCard(next);
+    });
+    if (started) outfitTagsSeed.current = { outfit: selectedOutfit, tags: newTags };
+  }
+  // Keep the card's outfit tag pool attached to the folder after a rename.
+  const renameOutfitPresetLabel = (source: IllustrationData | null, cardId: string, oldName: string, newName: string) => {
+    if (!source) return source;
+    return {
+      ...source,
+      profiles: source.profiles.map((item: IllustrationData) => {
+        if (item.id !== cardId || !Array.isArray(item.outfit_presets)) return item;
+        return {
+          ...item,
+          outfit_presets: item.outfit_presets.map((preset: IllustrationData) =>
+            String(preset.label || "").trim().toLocaleLowerCase() === oldName.toLocaleLowerCase()
+              ? { ...preset, label: newName } : preset),
+        };
+      }),
+    };
+  };
+  const openOutfitRename = (name: string) => { setRenameOutfitTarget(name); setRenameOutfitName(name); };
+  const submitOutfitRename = () => {
+    const oldName = renameOutfitTarget;
+    const next = renameOutfitName.trim();
+    if (!card || !oldName || !next || next === oldName) { setRenameOutfitTarget(""); return; }
+    void outfitFolderAction.run(async () => {
+      await api.request("bot_mode/emotion_outfits", { action: "rename", bot: botName, character: characterName, profile: card.id, outfit: oldName, new_outfit: next });
+      setRenameOutfitTarget("");
+      setSelectedOutfit(current => current === oldName ? next : current);
+      setDraft(current => renameOutfitPresetLabel(current, card.id, oldName, next));
+      setBase(current => renameOutfitPresetLabel(current, card.id, oldName, next));
+      outfitResource.reload(); emotionsResource.reload(); images.reload(); onReload?.();
+      setOutfitMediaRevision(value => value + 1);
+    }, "복장 이름을 변경했습니다.");
+  };
+  const removeOutfit = () => {
+    if (!card || !deleteOutfitTarget) return;
+    const name = deleteOutfitTarget.name;
+    void outfitFolderAction.run(async () => {
+      await api.request("bot_mode/emotion_outfits", { action: "remove", bot: botName, character: characterName, profile: card.id, outfit: name });
+      setDeleteOutfitTarget(null);
+      setOutfitSlideBack(false);
+      setSelectedOutfit(current => current === name ? "" : current);
+      outfitResource.reload(); emotionsResource.reload(); images.reload(); onReload?.();
+      setOutfitMediaRevision(value => value + 1);
+    }, "복장을 삭제했습니다.");
+  };
+  const openOutfit = (name: string) => {
+    cancelOutfitSlide();
+    resetOutfitHeight();
+    setOutfitSlideBack(false);
+    outfitScroll.current = window.scrollY;
+    outfitTagsSeed.current = { outfit: name, tags: outfitTagsFor(savedCard, name) };
+    setSelectedOutfit(name);
+  };
+  // Keep the detail pane mounted while the track slides back so the return animates too, then settle.
+  const closeOutfit = () => {
+    if (!selectedOutfit || outfitSlideBack) return;
+    setOutfitSlideBack(true);
+    outfitTimer.current = window.setTimeout(() => {
+      outfitTimer.current = null;
+      settleOutfitHeight();
+    }, OUTFIT_SLIDE_MS);
+  };
+  useEffect(() => () => { cancelOutfitSlide(); resetOutfitHeight(); }, []);
+  // The rows come back when the slide starts, so put the page where they were in that same frame.
+  useLayoutEffect(() => {
+    if (outfitOpen || outfitScroll.current === null) return;
+    const top = outfitScroll.current;
+    outfitScroll.current = null;
+    window.scrollTo(0, top);
+  }, [outfitOpen]);
+  // Drop the settle's inline height in the same frame the detail unmounts, before it can be painted.
+  useLayoutEffect(() => {
+    if (selectedOutfit || outfitSlideBack) return;
+    resetOutfitHeight();
+  }, [selectedOutfit, outfitSlideBack]);
+  const changeProfile = (next: number) => { setIndex(next); setDetail(null); cancelOutfitSlide(); resetOutfitHeight(); setOutfitSlideBack(false); setSelectedOutfit(""); };
   const showGallery = summaryMode ? localGallery : embedded ? gallery : localGallery;
   const openImages = () => { if (summaryMode || !embedded || !onOpenImages) setLocalGallery(true); else onOpenImages(); };
-  const loraLabels: Record<string, string> = { face_loras: "얼굴 LoRA", loras: "캐릭터 LoRA", style_loras: "스타일 LoRA", loras_solo: "1인 전용 LoRA", loras_group: "다인 전용 LoRA" };
+  const loraLabels: Record<string, string> = { face_loras: "얼굴 LoRA", loras: "캐릭터 LoRA", loras_solo: "1인 전용 LoRA", loras_group: "다인 전용 LoRA" };
   const tagEditor = draft && card && <IllustCharacterTags key={card.id}
     botName={botName} characterName={characterName} card={card} render={render} index={index} references={references} face={face || undefined}
     imagesLoading={!images.data} imagesError={images.error} reloadImages={images.reload} saved={!!savedCard} savedReferences={savedCard?.render_overrides?.rep_images || []}
@@ -310,13 +557,13 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
           const profiles = [...draft.profiles, {
             id: `card_${crypto.randomUUID().slice(0, 8)}`, label: `카드 ${draft.profiles.length + 1}`,
             selection_guide: "", visual_context: "", aliases: [], appearance: [], default_outfit: [], skip_lb_extra_batch_refine: false,
-            render_overrides: { absolute_tags: "", character_negative: "", eye_prompt: "", eye_tags: "", face_loras: [], face_tags: "", gender_tag: render.gender_tag || "1girl", image_name_tag: "", loras: [], loras_solo: [], loras_group: [], rep_images: [], style_loras: [], use_image_name_tag: false, use_profile_embedding: true },
+            render_overrides: { absolute_tags: "", character_negative: "", eye_prompt: "", eye_tags: "", face_loras: [], face_tags: "", gender_tag: render.gender_tag || "1girl", image_name_tag: "", loras: [], loras_solo: [], loras_group: [], rep_images: [], use_image_name_tag: false, use_profile_embedding: true },
           }]; setDraft({ ...draft, profiles }); setIndex(profiles.length - 1);
         }}><Plus size={14} />카드 추가</button>
         {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
       </div>
       <header className="illust-character-heading">
-        <div className="illust-actions"><h2>{characterName}</h2>{draft.npc_generated && <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회</Badge>}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
+        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{draft.npc_generated && <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회</Badge>}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
         <div className="illust-actions">
           {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
           <button type="button" className="button secondary" onClick={() => setDetail("tags")}>캐릭터 태그 편집</button>
@@ -386,17 +633,95 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const content = <>
     {summaryMode && draft && card ? <IllustCharacterSummary
       characterName={characterName} card={card} render={render} index={index} count={draft.profiles.length} isDefault={card.id === draft.default_visual_profile_id} npc={draft.npc_generated ? draft : undefined}
+      onRename={canRename ? openRename : undefined}
       references={references} imagesLoaded={!!images.data} imagesError={images.error} hasFace={!!face} saved={!!savedCard}
       patch={savedCard?.id === base?.profiles[0]?.id ? patchStatus : patchStatus?.cards?.[card.id]} patchLoading={patchLoading} patchError={patchError}
-      readOnly={readOnly} persona={persona} dirty={dirty} busy={busy} onChangeProfile={next => { setIndex(next); setDetail(null); }} onPreview={setPreview}
+      readOnly={readOnly} persona={persona} dirty={dirty} busy={busy} onChangeProfile={changeProfile} onPreview={setPreview}
       onShowDetails={() => setSummaryDetailsOpen(true)} onEnter={onEnter} onDelete={onDelete} onRegenerate={regenerateImage} /> : editor}
     {summaryMode && <IllustrationFeedback {...regeneration} />}
     {summaryMode && summaryDetailsOpen && <Modal title={`${characterName} · ${card?.label || "캐릭터"} · 상세 보기`} onClose={() => { setSummaryDetailsOpen(false); setLocalGallery(false); }} closeDisabled={busy} backgroundable={false} className="illust-character-modal">{editor}</Modal>}
     {preview && <Modal title={preview.filename} onClose={() => setPreview(null)} className="illust-character-modal" backgroundable={false}><img className="illust-asset-preview" src={api.media(preview.url)} alt={preview.filename} /><div className="illust-actions">{regenerateButton(preview)}</div><IllustrationFeedback {...regeneration} /><details className="illust-section"><summary>이미지 프롬프트</summary><p className="illust-text">{preview.prompt || "프롬프트 없음"}</p>{preview.negative && <p className="illust-text">{preview.negative}</p>}</details></Modal>}
+    {renameOpen && <Modal title="캐릭터 이름 변경" backgroundable={false} closeDisabled={renameAction.busy} onClose={() => setRenameOpen(false)}>
+      <form className="illust-form" onSubmit={event => { event.preventDefault(); submitRename(); }}>
+        <label className="field">새 캐릭터 이름<input autoFocus required placeholder="영문, 숫자, _, -, ." value={renameName} disabled={renameAction.busy} onChange={event => setRenameName(event.target.value)} /></label>
+        <p className="field-help">캐릭터 폴더와 등록된 이미지가 새 이름으로 함께 이동합니다.</p>
+        <IllustrationFeedback error={renameAction.error} message={renameAction.message} />
+        <div className="modal-actions"><button type="button" className="button" disabled={renameAction.busy} onClick={() => setRenameOpen(false)}>취소</button><button className="button primary" disabled={renameAction.busy || !renameName.trim()}>{renameAction.busy ? "변경 중…" : "이름 변경"}</button></div>
+      </form>
+    </Modal>}
+    {renameOutfitTarget && <Modal title="복장 이름 변경" backgroundable={false} closeDisabled={outfitFolderAction.busy} onClose={() => setRenameOutfitTarget("")}>
+      <form className="illust-form" onSubmit={event => { event.preventDefault(); submitOutfitRename(); }}>
+        <p className="field-help">{characterName} · {card?.label || `카드 ${index + 1}`}</p>
+        <label className="field">새 복장 이름<input autoFocus required value={renameOutfitName} disabled={outfitFolderAction.busy} onChange={event => setRenameOutfitName(event.target.value)} /></label>
+        <p className="field-help">복장 폴더와 하위 감정 이미지가 새 이름으로 함께 이동합니다.</p>
+        <IllustrationFeedback error={outfitFolderAction.error} message={outfitFolderAction.message} />
+        <div className="modal-actions"><button type="button" className="button" disabled={outfitFolderAction.busy} onClick={() => setRenameOutfitTarget("")}>취소</button><button className="button primary" disabled={outfitFolderAction.busy || !renameOutfitName.trim()}>{outfitFolderAction.busy ? "변경 중…" : "이름 변경"}</button></div>
+      </form>
+    </Modal>}
+    {deleteOutfitTarget && <Modal title="복장 삭제" backgroundable={false} closeDisabled={outfitFolderAction.busy} onClose={() => setDeleteOutfitTarget(null)}>
+      <div className="illust-form">
+        <p><strong>{deleteOutfitTarget.name}</strong> 복장 폴더와 하위 이미지 {Number(deleteOutfitTarget.count || 0).toLocaleString()}장을 삭제합니다. 되돌릴 수 없습니다.</p>
+        <IllustrationFeedback error={outfitFolderAction.error} />
+        <div className="modal-actions"><button type="button" className="button" disabled={outfitFolderAction.busy} onClick={() => setDeleteOutfitTarget(null)}>취소</button><button type="button" className="button danger" disabled={outfitFolderAction.busy} onClick={removeOutfit}>삭제 확인</button></div>
+      </div>
+    </Modal>}
     {discard && <Modal title="편집 닫기" backgroundable={false} onClose={() => setDiscard(false)}><p>저장하지 않은 캐릭터 카드 변경을 버리고 닫을까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDiscard(false)}>계속 편집</button><button type="button" className="button danger" onClick={onClose}>변경 버리기</button></div></Modal>}
   </>;
   if (tagsOnly) return tagEditor || <Modal title={`${characterName} · 태그 불러오기`} onClose={onClose} backgroundable={false} className="illust-character-modal"><IllustrationLoading error={data?.error || resource.error} retry={onReload || resource.reload} /></Modal>;
-  return embedded ? <article className={`panel illust-character-row${summaryMode ? " illust-character-summary-card" : ""}`} aria-label={`${characterName} 캐릭터`}>{content}</article> : <Modal title={`${characterName} · 캐릭터 편집`} onClose={() => dirty ? setDiscard(true) : onClose()} closeDisabled={busy} className="illust-character-modal">{content}</Modal>;
+  if (!embedded) return <Modal title={`${characterName} · 캐릭터 편집`} onClose={() => dirty ? setDiscard(true) : onClose()} closeDisabled={busy} className="illust-character-modal">{content}</Modal>;
+  const article = <article className={`panel illust-character-row${summaryMode ? " illust-character-summary-card" : ""}`} aria-label={`${characterName} 캐릭터`}>{content}</article>;
+  if (!summaryMode || !showProfileTree || !draft || !card) return article;
+  const outfitItem = outfitResource.data?.outfits?.find((item: IllustrationData) => item.name === selectedOutfit);
+  // Clicking an outfit slides the row sideways while the outfit thumbnail grows into the detail pane.
+  return <div ref={outfitCarousel} className={`emotion-character-carousel${outfitOpen ? " is-detail-open" : ""}`}>
+    <div className={`emotion-carousel-track${outfitOpen ? " is-detail" : ""}`}>
+      <div className="emotion-carousel-pane" aria-hidden={outfitOpen ? true : undefined}>
+        <div className="emotion-character-row">
+          {article}
+          <EmotionProfileTree characterName={characterName} profiles={draft.profiles} index={index} defaultProfileId={draft.default_visual_profile_id || ""} busy={busy}
+            thumbnailUrl={profile => {
+              const filename = profile.render_overrides?.rep_images?.[0];
+              return filename ? api.media(`/api/bot_mode/image/${enc(botName)}/${enc(characterName)}/${enc(filename)}`) : "";
+            }}
+            outfits={outfitResource.data?.outfits || []}
+            outfitsLoading={!!card && !outfitResource.data && !outfitResource.error}
+            outfitsError={outfitResource.error}
+            outfitThumbnailUrl={outfit => outfit.cover ? api.media(versionedMedia(outfit.cover)) : ""}
+            selectedOutfit={selectedOutfit}
+            onSelectOutfit={openOutfit}
+            onRenameOutfit={openOutfitRename}
+            onDeleteOutfit={name => setDeleteOutfitTarget({ name, count: outfitResource.data?.outfits?.find((item: IllustrationData) => item.name === name)?.count || 0 })}
+            readOnly={readOnly}
+            onChangeProfile={changeProfile} />
+        </div>
+      </div>
+      <div className="emotion-carousel-pane" aria-hidden={outfitOpen ? undefined : true}>
+        {selectedOutfit && <EmotionOutfitDetail key={selectedOutfit} context={`${characterName} · ${card.label || `카드 ${index + 1}`}`} outfitName={selectedOutfit}
+          outfitCover={outfitItem?.cover ? api.media(versionedMedia(outfitItem.cover)) : ""} outfitCount={outfitItem?.count || 0}
+          emotions={emotionsResource.data?.emotions || []}
+          emotionsLoading={!emotionsResource.data && !emotionsResource.error}
+          emotionsError={emotionsResource.error}
+          emotionThumbnailUrl={emotion => emotion.cover ? api.media(versionedMedia(emotion.cover)) : ""}
+          outfitTags={outfitTagsFor(card, selectedOutfit)} readOnly={readOnly}
+          busy={busy || outfitTagAction.busy} regenerating={outfitRegeneration.busy}
+          error={outfitTagAction.error || outfitRegeneration.error}
+          message={outfitTagAction.message || outfitRegeneration.message}
+          onSaveTags={saveOutfitTags} onRegenerateOutfit={regenerateOutfit}
+          regeneratingEmotions={emotionImageRegeneration.emotions} onRegenerateEmotion={regenerateEmotion} loadEmotionPrompt={loadEmotionPrompt}
+          emotionRegenerationError={emotionImageRegeneration.error}
+          onGenerateAllEmotions={generateAllEmotions}
+          onCancelAllEmotions={cancelAllEmotions}
+          generatingAllEmotions={emotionBulkGeneration.busy}
+          cancellingAllEmotions={emotionBulkGeneration.cancelling}
+          bulkEmotionProgress={emotionBulkGeneration.progress}
+          bulkEmotionMessage={emotionBulkGeneration.message}
+          bulkEmotionError={emotionBulkGeneration.error}
+          onRenameOutfit={() => openOutfitRename(selectedOutfit)}
+          onDeleteOutfit={() => setDeleteOutfitTarget({ name: selectedOutfit, count: outfitItem?.count || 0 })}
+          onBack={closeOutfit} />}
+      </div>
+    </div>
+  </div>;
 }
 
 

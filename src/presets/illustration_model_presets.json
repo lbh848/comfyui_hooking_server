@@ -8,7 +8,8 @@
           "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
           "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
         },
-        "chansub_workflow_type": "anima"
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
       },
       "workflows": {
         "v3": {
@@ -158,7 +159,8 @@
           "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
           "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
         },
-        "chansub_workflow_type": "anima"
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
       },
       "workflows": {
         "v3": {
@@ -325,7 +327,8 @@
           "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
           "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
         },
-        "chansub_workflow_type": "anima"
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
       },
       "workflows": {
         "v3": {
@@ -479,7 +482,8 @@
           "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
           "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
         },
-        "chansub_workflow_type": "anima"
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
       },
       "workflows": {
         "v3": {
@@ -643,6 +647,94 @@
       },
       "id": "cc92169b246b4766895080252a9408ce",
       "name": "공방-애니스타일"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_MOSS_8STEP_V1.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "moss"
+      },
+      "workflows": {
+        "v3_anima": {
+          "fields": {
+            "workflow.model": "moss_image_sft_8stepdmd_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 8,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": "km_flat_half"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "3fa9a2205b004cc0b5ef8b71a0837b14",
+      "name": "공방-MOSS-8step"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_MOSS_4STEP_V1.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "moss"
+      },
+      "workflows": {
+        "v3_anima": {
+          "fields": {
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 4,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.7,
+                  "BASE": "anima",
+                  "trigger": "km_flat_half"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "666072d4c848481aac21573e9226c192",
+      "name": "공방-MOSS-4step"
     }
   ]
 }

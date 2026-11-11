@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Copy, Images, LockKeyhole, LockKeyholeOpen, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Shirt, Star, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { AssetFolderButton, AssetFolderDeleteButton } from "./AssetFolderButton";
 import { IllustrationFeedback } from "./IllustBackups";
@@ -10,11 +10,13 @@ import { useResources } from "./useResources";
 import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { EmotionFolderImages, EmotionFolderImagesModal } from "./EmotionFolderImages";
 import { EmotionProfileBatch } from "./EmotionProfileBatch";
+import { EmotionProfileOutfitGeneration } from "./EmotionProfileOutfitGeneration";
 import { IllustDataPreparation } from "./IllustDataPreparation";
 import { IllustAssetProfileOutputInstruction } from "./IllustAssetProfileOutputInstruction";
 import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
 import { IllustMatchingRules } from "./IllustMatchingRules";
 import { clearWorkSession } from "./illustrationWorkSession";
+import { useEmotionRegenerationActivity } from "./useEmotionRegenerationActivity";
 import "./asset.css";
 
 type Folder = { name: string; count: number; cover: string };
@@ -45,10 +47,13 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   const [emotion, setEmotion] = useState("");
   const [newFolder, setNewFolder] = useState<"outfit" | "emotion" | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
+  const [renamingOutfit, setRenamingOutfit] = useState("");
+  const [renameOutfitName, setRenameOutfitName] = useState("");
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [deletingBot, setDeletingBot] = useState(false);
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [profileBatchOpen, setProfileBatchOpen] = useState(false);
+  const [profileOutfitOpen, setProfileOutfitOpen] = useState(false);
   const [dataPreparationOpen, setDataPreparationOpen] = useState(false);
   const [assetInstructionOpen, setAssetInstructionOpen] = useState(false);
   const [generationOpen, setGenerationOpen] = useState(false);
@@ -64,8 +69,11 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   const [characterSearch, setCharacterSearch] = useState("");
   const [cardRevision, setCardRevision] = useState(0);
   const action = useIllustrationAction();
+  const outfitAction = useIllustrationAction();
   const distributionAction = useIllustrationAction();
   const inventory = useResources();
+  // The 캐릭터 header shows how many emotion regeneration jobs are still queued.
+  const regenerationActivity = useEmotionRegenerationActivity(botName);
   const patchStatus = useIllustrationResource(botName ? api.path(`bot_mode/check_patch_files?${query({ bot_name: botName })}`) : null);
   const characterResource = useBotResource(botName ? `bot_mode/emotion_characters?${query({ bot: botName })}` : null, true);
   const profileResource = useBotResource(botName && character ? `bot_mode/emotion_profiles?${query({ bot: botName, character })}` : null, true);
@@ -172,9 +180,35 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   }, [resource.reload, characterResource.reload, profileResource.reload, outfitResource.reload, emotionResource.reload, patchStatus.reload, onCatalogChange]);
   useEffect(() => {
     window.addEventListener("illustration-completed", refreshCharacterStatus);
+    // 프로필 복장 이미지 생성처럼 백업으로 저장되는 작업이 끝나면 폴더/카드 목록을 갱신한다.
+    window.addEventListener("emotion-store-changed", refreshCharacterStatus);
     window.addEventListener("focus", refreshCharacterStatus);
-    return () => { window.removeEventListener("illustration-completed", refreshCharacterStatus); window.removeEventListener("focus", refreshCharacterStatus); };
+    return () => {
+      window.removeEventListener("illustration-completed", refreshCharacterStatus);
+      window.removeEventListener("emotion-store-changed", refreshCharacterStatus);
+      window.removeEventListener("focus", refreshCharacterStatus);
+    };
   }, [refreshCharacterStatus]);
+  useEffect(() => {
+    // 서버가 백업 저장마다 보내는 backup_created를 직접 받는다. 모달을 닫아
+    // 폴링이 멈춰 있어도 생성된 복장 이미지가 화면에 바로 반영되게 하기 위함.
+    let socket: WebSocket | null = null;
+    let reconnect: number | undefined;
+    let closed = false;
+    const connect = () => {
+      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
+      socket.onmessage = event => {
+        try {
+          const value = JSON.parse(event.data);
+          if (value.type === "backup_created") window.dispatchEvent(new Event("emotion-store-changed"));
+          if (value.type === "illustration_completed") window.dispatchEvent(new Event("emotion-store-changed"));
+        } catch { /* malformed event */ }
+      };
+      socket.onclose = () => { if (!closed) reconnect = window.setTimeout(connect, 3000); };
+    };
+    connect();
+    return () => { closed = true; window.clearTimeout(reconnect); socket?.close(); };
+  }, []);
   function charactersAdded() {
     refreshCharacterStatus();
   }
@@ -203,6 +237,17 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
       setNewFolder(null); setNewFolderName("");
       refreshFolders();
     }, isOutfit ? "복장 폴더를 추가했습니다." : "감정 폴더를 추가했습니다.");
+  }
+  async function renameOutfit() {
+    const oldName = renamingOutfit;
+    const next = renameOutfitName.trim();
+    if (!oldName || !next || next === oldName) { setRenamingOutfit(""); return; }
+    await outfitAction.run(async () => {
+      await api.request("bot_mode/emotion_outfits", { action: "rename", bot: botName, character, profile, outfit: oldName, new_outfit: next });
+      setRenamingOutfit("");
+      if (outfit === oldName) setOutfit(next);
+      resource.reload(); refreshFolders();
+    }, "복장 이름을 변경했습니다.");
   }
   async function removeFolder(target: DeleteTarget) {
     if (locked) return;
@@ -239,7 +284,18 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   const visibleCharacterRows = characterRows.filter(row => row.name.toLocaleLowerCase().includes(characterTerm));
   const registeredByName = new Map(registeredCharacters.map(item => [item.name, item]));
   const registeredRows = visibleCharacterRows.filter(row => registeredByName.has(row.name));
+  const generatedRows = registeredRows.filter(row => registeredByName.get(row.name)?.npc_generated === true);
+  const userRows = registeredRows.filter(row => registeredByName.get(row.name)?.npc_generated !== true);
   const folderOnlyRows = visibleCharacterRows.filter(row => !registeredByName.has(row.name));
+  const renderRegistered = (row: Folder) => <div key={row.name}>
+    <CharacterEditor botName={botName} characterName={row.name} cardData={registeredByName.get(row.name)?.card_data} onClose={() => {}}
+      embedded compact showProfileTree inventory={inventory} refreshKey={cardRevision} onReload={refreshCharacterStatus}
+      readOnly={isLocked(row.name) || distributionBusy}
+      patchStatus={patchStatus.data?.[row.name]} patchLoading={!patchStatus.data && !patchStatus.error} patchError={patchStatus.error}
+      onEnter={() => enterCharacter(row.name)}
+      allowRename onRenamed={newName => { if (character === row.name) setCharacter(newName); }}
+      onDelete={() => setDeleting({ level: "character", name: row.name, label: row.name, count: row.count })} />
+  </div>;
 
   return <div className="illust-stack illust-bot-library">
     <Panel title="봇" aside={<button className="button" disabled={action.busy || distributionAction.busy} onClick={refresh}><RefreshCw size={14} />새로고침</button>}>
@@ -278,9 +334,17 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
       <button className="button" disabled={toolsReadOnly || !currentBot?.characters?.length} onClick={() => setDataPreparationOpen(true)}>감정 삽화 데이터 준비</button>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setGenerationOpen(true)}>그리기 설정</button>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setRulesOpen(true)}>매칭 기반 규칙</button>
+      <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setProfileOutfitOpen(true)}><Shirt size={14} />프로필별 복장 이미지 생성</button>
     </div></Panel>}
 
-    {botName && <Panel title="캐릭터">
+    {botName && <Panel title={<>
+      캐릭터 <span className={`emotion-regeneration-pending${regenerationActivity.count ? " is-busy" : ""}`}
+        role="status" aria-live="polite"
+        title={regenerationActivity.error || (regenerationActivity.characters.length
+          ? `${regenerationActivity.characters.join(", ")} 재생성 중` : "진행 중인 감정 이미지 재생성 없음")}>
+        대기 <strong>{regenerationActivity.count == null ? "—" : regenerationActivity.count.toLocaleString("ko-KR")}</strong>
+      </span>
+    </>}>
       <div className="illust-body">
         <nav className="illust-breadcrumb" aria-label="감정 삽화 봇 폴더 경로">
           <button type="button" disabled={action.busy} onClick={resetPath}>{botName}</button>
@@ -298,15 +362,11 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
             <label className="field">캐릭터 검색<input type="search" value={characterSearch} onChange={event => setCharacterSearch(event.target.value)} placeholder="캐릭터 이름" /></label>
           </div>
           <IllustrationFeedback error={characterResource.error} />
-          {!!registeredRows.length && <div className="illust-character-summary-grid">
-            {registeredRows.map(row => <div key={row.name}>
-              <CharacterEditor botName={botName} characterName={row.name} cardData={registeredByName.get(row.name)?.card_data} onClose={() => {}}
-                embedded compact inventory={inventory} refreshKey={cardRevision} onReload={refreshCharacterStatus}
-                readOnly={isLocked(row.name) || distributionBusy}
-                patchStatus={patchStatus.data?.[row.name]} patchLoading={!patchStatus.data && !patchStatus.error} patchError={patchStatus.error}
-                onEnter={() => enterCharacter(row.name)}
-                onDelete={() => setDeleting({ level: "character", name: row.name, label: row.name, count: row.count })} />
-            </div>)}
+          {!!registeredRows.length && <div className="illust-character-summary-grid is-single-column">
+            {!!userRows.length && !!generatedRows.length && <div className="illust-character-group-divider" role="separator" aria-label="일반 캐릭터 구분선"><span>일반</span></div>}
+            {userRows.map(renderRegistered)}
+            {!!userRows.length && !!generatedRows.length && <div className="illust-character-group-divider" role="separator" aria-label="생성됨 구분선"><span>생성됨</span></div>}
+            {generatedRows.map(renderRegistered)}
           </div>}
           {!!folderOnlyRows.length && <>
             <p className="field-help">등록되지 않은 캐릭터 폴더</p>
@@ -359,9 +419,11 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
               <div className="illust-character-group-divider" role="separator" aria-label="생성됨 구분선"><span>생성됨</span></div>
             </>}
             <div className="asset-folder-list">
-              {outfitRows.map(item => <div className="asset-folder-entry is-deletable" key={item.name}>
+              {outfitRows.map(item => <div className="asset-folder-entry is-deletable is-renamable" key={item.name}>
                 <AssetFolderButton label={item.name} galleryKey={item.name} previewUrl={item.cover ? api.media(item.cover) : undefined} count={item.count}
                   disabled={action.busy} onClick={() => setOutfit(item.name)} />
+                <button type="button" className="icon-button asset-folder-rename" title="복장 이름 변경" aria-label={`${item.name} 이름 변경`}
+                  disabled={toolsReadOnly || outfitAction.busy} onClick={() => { setRenameOutfitName(item.name); setRenamingOutfit(item.name); }}><Pencil size={16} /></button>
                 <AssetFolderDeleteButton label={item.name} disabled={toolsReadOnly} onClick={() => setDeleting({ level: "outfit", name: item.name, label: item.name, count: item.count })} />
               </div>)}
             </div>
@@ -394,6 +456,15 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
         <label className="field">{newFolder === "outfit" ? "복장 이름" : "감정 이름"}<input autoFocus required placeholder={newFolder === "outfit" ? "예: 수영복, 교복, 기본복" : "예: 웃음, 울음, 화남"} value={newFolderName} disabled={action.busy} onChange={event => setNewFolderName(event.target.value)} /></label>
         <IllustrationFeedback error={action.error} />
         <div className="illust-actions"><button type="button" className="button" disabled={action.busy} onClick={() => setNewFolder(null)}>취소</button><button className="button primary" disabled={action.busy || !newFolderName.trim()}>추가</button></div>
+      </form>
+    </Modal>}
+    {renamingOutfit && <Modal title="복장 이름 변경" backgroundable={false} closeDisabled={outfitAction.busy} onClose={() => setRenamingOutfit("")}>
+      <form className="illust-form" onSubmit={event => { event.preventDefault(); void renameOutfit(); }}>
+        <p className="field-help">{character} · {profileLabel}</p>
+        <label className="field">새 복장 이름<input autoFocus required value={renameOutfitName} disabled={outfitAction.busy} onChange={event => setRenameOutfitName(event.target.value)} /></label>
+        <p className="field-help">복장 폴더와 하위 감정 이미지가 새 이름으로 함께 이동합니다.</p>
+        <IllustrationFeedback error={outfitAction.error} message={outfitAction.message} />
+        <div className="illust-actions"><button type="button" className="button" disabled={outfitAction.busy} onClick={() => setRenamingOutfit("")}>취소</button><button className="button primary" disabled={outfitAction.busy || !renameOutfitName.trim()}>{outfitAction.busy ? "변경 중…" : "이름 변경"}</button></div>
       </form>
     </Modal>}
     {deleting && <Modal title="폴더 삭제" backgroundable={false} closeDisabled={action.busy} onClose={() => setDeleting(null)}>
@@ -448,6 +519,8 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     </Modal>}
     {profileBatchOpen && botName && currentBot && <EmotionProfileBatch key={botName} botName={botName}
       characters={currentBot.characters || []} readOnly={toolsReadOnly} onClose={() => setProfileBatchOpen(false)} onChanged={charactersAdded} />}
+    {profileOutfitOpen && botName && currentBot && <EmotionProfileOutfitGeneration key={botName} botName={botName}
+      readOnly={toolsReadOnly} onClose={() => setProfileOutfitOpen(false)} onChanged={charactersAdded} />}
     {assetInstructionOpen && botName && currentBot && <IllustAssetProfileOutputInstruction key={botName} botName={botName}
       readOnly={toolsReadOnly} onClose={() => {
         clearWorkSession(`${api.scope}:instruction:${botName}`);

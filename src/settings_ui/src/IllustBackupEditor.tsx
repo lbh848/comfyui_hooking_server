@@ -3,11 +3,14 @@ import { Download, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 import { Modal, SettingsTabs } from "./components";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { IllustrationMaskLegend, IllustrationPreviewImage } from "./IllustrationMaskPreview";
+import { IllustrationPrompt } from "./IllustrationPrompt";
 import { IllustrationPromptBlocks, type PromptCategory } from "./IllustrationPromptBlocks";
 import { enc, illustrationMedia, illustrationRequest, useIllustrationAction, useIllustrationResource, type IllustrationData } from "./illustration";
 
 export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; onClose: () => void }) {
   const prompt = useIllustrationResource(`backup_prompt/${enc(item.name)}?view=edit`);
+  // The exact document ComfyUI received; the edit document is only a projection.
+  const submitted = useIllustrationResource(`backup_prompt/${enc(item.name)}?view=submitted`);
   const template = useIllustrationResource("llm_edit_prompt_template", true);
   const action = useIllustrationAction();
   const [text, setText] = useState<string | null>(null);
@@ -27,7 +30,8 @@ export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; 
   const faces = info.face_positions || [];
   const imagePath = original && item.raw_url ? item.raw_url : item.image_url;
   const editedLayout = editResult.illustration_multi_char?.layout;
-  const layout = info.illustration_multi_char?.layout;
+  const layout = prompt.data?.moss_layout || info.illustration_multi_char?.layout;
+  const hasRegions = !!layout?.regions?.length;
   function applyDocument(document: IllustrationData) {
     const { assets: attachments, ...editable } = document;
     setAssets(attachments); setText(JSON.stringify(editable, null, 2));
@@ -35,6 +39,8 @@ export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; 
   useEffect(() => {
     if (text !== null || !prompt.data?.prompt_json) return;
     applyDocument(prompt.data.prompt_json);
+    // MOSS documents expose summary/items directly; open the composed view.
+    if (prompt.data.prompt_json.moss && prompt.data.prompt_json.workflow) setPromptView("assembled");
     setSource({ positive: prompt.data.positive, negative: prompt.data.negative });
   }, [prompt.data, text]);
   useEffect(() => {
@@ -48,10 +54,19 @@ export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; 
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("JSON 객체를 입력하세요.");
       if (parsed.schema !== undefined) {
         if (parsed.schema !== "soya.illustration.v2" || !parsed.fields || typeof parsed.fields !== "object" || Array.isArray(parsed.fields)) throw new Error("schema와 fields를 확인하세요.");
+      } else if (parsed.moss !== undefined || parsed.workflow !== undefined) {
+        if (!parsed.moss || typeof parsed.moss !== "object" || Array.isArray(parsed.moss)
+          || !parsed.workflow || typeof parsed.workflow !== "object" || Array.isArray(parsed.workflow)) throw new Error("moss와 workflow를 확인하세요.");
       } else if (typeof parsed.positive !== "string" || typeof parsed.negative !== "string") throw new Error("positive와 negative를 확인하세요.");
       document = { ...parsed, ...(assets !== undefined ? { assets } : {}) };
     } catch (cause) { jsonError = `JSON 형식을 확인하세요. ${(cause as Error).message}`; }
   }
+  // MOSS backups are edited as their layout/controller document. Tag blocks
+  // are shown read-only from the backup's assembled V3 prompt for reference.
+  const mossDocument = !!document && typeof document.moss === "object" && typeof document.workflow === "object";
+  // MOSS tags live in the layout document itself (summary/items), so the same
+  // tag tabs edit the document that the redraw uses.
+  const activePromptView = promptView;
   async function editPrompt() {
     if (!document) return;
     setPending("edit");
@@ -92,10 +107,11 @@ export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; 
           <div className="illust-mask-controls">
             {!!faces.length && <label><input type="checkbox" checked={showFaces} onChange={event => setShowFaces(event.target.checked)} />FACE</label>}
             {!!info.mask_url && <label><input type="checkbox" checked={showMask} onChange={event => setShowMask(event.target.checked)} />최종 마스크</label>}
+            {hasRegions && !info.mask_url && <label><input type="checkbox" checked={showMask} onChange={event => setShowMask(event.target.checked)} />영역</label>}
           </div>
-          <IllustrationPreviewImage path={imagePath} alt={`${item.name} 삽화`} maskPath={info.mask_url} faces={faces} showMask={showMask} showFaces={showFaces} maskOpacity={.65} maskOutline />
-          {info.mask_url && <IllustrationMaskLegend layout={layout} />}
-          {!faces.length && !info.mask_url && <p className="field-help">저장된 FACE·최종 마스크 정보가 없습니다.</p>}
+          <IllustrationPreviewImage path={imagePath} alt={`${item.name} 삽화`} layout={layout} maskPath={info.mask_url} faces={faces} showMask={showMask} showFaces={showFaces} maskOpacity={.65} maskOutline />
+          {(info.mask_url || hasRegions) && <IllustrationMaskLegend layout={layout} />}
+          {!faces.length && !info.mask_url && !hasRegions && <p className="field-help">저장된 FACE·최종 마스크 정보가 없습니다.</p>}
           <div className="illust-actions">{item.raw_url && <button className="button" onClick={() => setOriginal(value => !value)}>{original ? "합성본 보기" : "원본 보기"}</button>}
             <a className="button" href={illustrationMedia(imagePath)} download><Download size={14} />다운로드</a></div>
         </section>
@@ -106,26 +122,30 @@ export function IllustBackupEditor({ item, onClose }: { item: IllustrationData; 
       </aside>
       <div className="illust-backup-editor-fields">
         {text === null ? <IllustrationLoading error={prompt.error || (prompt.data && !prompt.data.prompt_json ? "편집할 JSON을 불러오지 못했습니다. 설정 서버를 다시 시작하세요." : "")} retry={prompt.reload} /> : <>
-          <SettingsTabs id={promptTabsId} label="프롬프트 편집 보기" values={{ generated: "생성 태그", preset: "사용자 사전 태그", assembled: "조립된 프롬프트", json: "최종 JSON" }} value={promptView} onChange={setPromptView} />
-          {(["generated", "preset", "assembled"] as PromptCategory[]).map(category => <div key={category} role="tabpanel" id={`${promptTabsId}-panel-${category}`} aria-labelledby={`${promptTabsId}-tab-${category}`} hidden={promptView !== category}>
+          <SettingsTabs id={promptTabsId} label="프롬프트 편집 보기" values={{ generated: "생성 태그", preset: "사용자 사전 태그", assembled: "조립된 프롬프트", json: "투영 JSON", submitted: "제출된 JSON" }} value={activePromptView} onChange={setPromptView} />
+          {(["generated", "preset", "assembled"] as PromptCategory[]).map(category => <div key={category} role="tabpanel" id={`${promptTabsId}-panel-${category}`} aria-labelledby={`${promptTabsId}-tab-${category}`} hidden={activePromptView !== category}>
             {document ? <IllustrationPromptBlocks document={document} category={category} disabled={action.busy} onChange={applyDocument} /> : <div className="illust-prompt-block-error">
               <p className="field-error" role="alert">JSON 형식 오류를 수정하면 태그 블록을 다시 편집할 수 있습니다.</p>
-              <button className="button" onClick={() => setPromptView("json")}>최종 JSON 수정</button>
+              <button className="button" onClick={() => setPromptView("json")}>투영 JSON 수정</button>
             </div>}
           </div>)}
-          <section role="tabpanel" id={`${promptTabsId}-panel-json`} aria-labelledby={`${promptTabsId}-tab-json`} hidden={promptView !== "json"} className="illust-backup-editor-json"><header><h3>최종 JSON</h3><button className="button" disabled={action.busy || !document} onClick={() => document && applyDocument(document)}>JSON 정리</button></header>
-            <label className="field"><span className="sr-only">최종 JSON</span><textarea className="illust-json-editor" rows={20} spellCheck={false} aria-invalid={!!jsonError} readOnly={action.busy} value={text} onChange={event => setText(event.target.value)} /></label>
+          <section role="tabpanel" id={`${promptTabsId}-panel-json`} aria-labelledby={`${promptTabsId}-tab-json`} hidden={activePromptView !== "json"} className="illust-backup-editor-json"><header><h3>투영 JSON</h3><button className="button" disabled={action.busy || !document} onClick={() => document && applyDocument(document)}>JSON 정리</button>{mossDocument && <span className="field-help">MOSS 레이아웃·워크플로 문서</span>}</header>
+            <label className="field"><span className="sr-only">투영 JSON</span><textarea className="illust-json-editor" rows={20} spellCheck={false} aria-invalid={!!jsonError} readOnly={action.busy} value={text} onChange={event => setText(event.target.value)} /></label>
             {jsonError && <p className="field-error" role="alert">{jsonError}</p>}
             {assets && <details className="illust-json-assets"><summary>첨부 데이터 (assets) · {Object.keys(assets).length}개</summary><ul>{Object.entries(assets).map(([key, asset]) => <li key={key}>{asset.name || key} · {asset.media_type || asset.encoding}</li>)}</ul></details>}
           </section>
-          <section className="illust-backup-easy-edit"><h3>편하게 수정</h3><label className="field">수정 방향<textarea rows={3} readOnly={action.busy} value={direction} onChange={event => setDirection(event.target.value)} placeholder="바꾸고 싶은 표정, 자세, 배경 등을 입력하세요." /></label>
+          <section role="tabpanel" id={`${promptTabsId}-panel-submitted`} aria-labelledby={`${promptTabsId}-tab-submitted`} hidden={activePromptView !== "submitted"} className="illust-backup-editor-json"><header><h3>제출된 JSON</h3><span className="field-help">ComfyUI에 실제로 전송된 문서</span></header>
+            {!submitted.data ? <IllustrationLoading error={submitted.error} retry={submitted.reload} /> : submitted.data.submitted_prompt ? <IllustrationPrompt value={submitted.data.submitted_prompt} title="제출된 JSON" /> : <p className="field-help">저장된 제출 JSON이 없습니다.</p>}
+          </section>
+          {!mossDocument && <section className="illust-backup-easy-edit"><h3>편하게 수정</h3><label className="field">수정 방향<textarea rows={3} readOnly={action.busy} value={direction} onChange={event => setDirection(event.target.value)} placeholder="바꾸고 싶은 표정, 자세, 배경 등을 입력하세요." /></label>
             <div className="illust-backup-easy-edit-actions">{(layout || editedLayout) && <label className="illust-check"><input type="checkbox" checked={allowMaskEdit} disabled={action.busy} onChange={event => setAllowMaskEdit(event.target.checked)} />마스크 영역도 수정</label>}
               <div className="illust-backup-easy-edit-submit">
                 <label className="illust-check">답변 언어<select aria-label="답변 언어" value={responseLanguage} disabled={action.busy} onChange={event => void changeLanguage(event.target.value)}><option value="en">영어</option><option value="ko">한국어</option></select></label>
                 <button className="button" disabled={action.busy || !document || !direction.trim()} onClick={() => void editPrompt()}>{pending === "edit" ? <LoaderCircle size={15} className="illust-manual-spinner" /> : <Sparkles size={15} />}{pending === "edit" ? "수정 중…" : "편하게 수정"}</button>
               </div></div>
             {editResult.plan && <div className="illust-backup-edit-result"><strong>수정 결과</strong><pre>{typeof editResult.plan === "string" ? editResult.plan : JSON.stringify(editResult.plan, null, 2)}</pre></div>}
-          </section>
+          </section>}
+          {mossDocument && <p className="field-help" role="note">MOSS 태그는 서머리·캐릭터·오브젝트 단위로 표시됩니다. 생성 태그에서 수정한 내용은 투영 JSON과 다시 그리기에 반영되고, 레이아웃·샘플링 설정은 투영 JSON에서 수정합니다.</p>}
         </>}
       </div>
     </div>

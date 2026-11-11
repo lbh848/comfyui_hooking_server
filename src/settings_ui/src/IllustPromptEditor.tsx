@@ -19,14 +19,21 @@ const promptGroups: PromptGroup[] = [
   { id: "profile", title: "PROFILE-RESOLVE", description: "확정 등장인물의 프로필과 적용 시점을 결정합니다.", fields: [
     { key: "profile_resolve", label: "프로필 선택 지침" },
   ] },
+  { id: "emotion_resolve", title: "EMOTION-RESOLVE", description: "캐릭터·감정·프로필이 확정된 선택 장면마다 입을 복장 하나를 정합니다. 감정 삽화 공방에서만 사용합니다.", fields: [
+    { key: "emotion_resolve", label: "장면별 복장 결정 지침" },
+  ] },
+  { id: "emotion_asset", title: "EMOTION-ASSET", description: "선택 장면마다 SFW/NSFW 등급과 가장 가까운 감정 프리셋을 고르고, 프로필 카드에 없는 복장 태그를 새로 정합니다. 감정 삽화 공방에서만 사용합니다.", fields: [
+    { key: "emotion_asset", label: "장면별 감정 에셋 결정 지침" },
+  ] },
   { id: "outfit", title: "OUTFIT", description: "과거 문맥과 저장 이력에서 시작 복장·머리를 복원하고, 현재 원문의 변화를 추적합니다.", fields: [
     { key: "call1_enhance", label: "복장·헤어스타일 상태 추적 지침" },
   ] },
   { id: "time_place", title: "TIME & PLACE", description: "캐릭터별 시간대·장소·조명을 추적합니다. time, place, lighting은 변경된 SLOT에서 갱신하고 이전 값을 이어받습니다.", fields: [
     { key: "time_place", label: "시간·장소·조명 추적 지침" },
   ] },
-  { id: "npc_generation", title: "NPC 생성 노드", description: "대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다. 자동 삭제까지의 미사용 횟수는 생성 설정 > 파이프라인 > NPC 생성에서 정합니다.", fields: [
-    { key: "npc_generation", label: "NPC 캐릭터 카드 생성 지침" },
+  { id: "npc_generation", title: "NPC 생성 노드", description: "대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. ANIMA는 공용 지침을, MOSS는 bbox 없이 요약 캡션으로 그리는 MOSS 전용 지침을 사용합니다. 자동 삭제까지의 미사용 횟수는 생성 설정 > 파이프라인 > NPC 생성에서 정합니다.", fields: [
+    { key: "npc_generation", label: "NPC 캐릭터 카드 생성 지침 (ANIMA)" },
+    { key: "npc_generation_moss", label: "NPC 캐릭터 카드 생성 지침 (MOSS · bbox 없음)" },
   ] },
   { id: "plan", title: "PLAN", description: "선택된 장면의 구도·동작·접촉을 계획합니다. 공용 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_plan", label: "선택 장면 구체화 지침" },
@@ -36,6 +43,9 @@ const promptGroups: PromptGroup[] = [
   ] },
   { id: "detail", title: "DETAIL", description: "선택된 장면을 이미지 태그로 작성합니다. KEYVIS 통합 예측에서는 대표 이미지 지침을, 마스크 통합 예측에서는 인물 영역 배치 지침을 함께 사용합니다.", fields: [
     { key: "call2_detail", label: "이미지 태그 작성 지침" },
+  ] },
+  { id: "detail_moss", title: "DETAIL-MOSS", description: "MOSS 그림 모델에서 장면마다 이미지 크기를 입력받아 abs_centralized/yxyx 절대 bbox 레이아웃을 작성합니다. 이미지 중심이 (0,0)이고 y는 아래로, x는 오른쪽으로 증가합니다. 캐릭터뿐 아니라 위치가 중요한 사물도 bbox화합니다.", fields: [
+    { key: "detail_moss", label: "MOSS 레이아웃 작성 지침" },
   ] },
   { id: "manga_detail", title: "DETAIL-MANGA", description: "만화 페이지의 이미지 프롬프트를 작성합니다. PLANNER를 끄면 컷·캐릭터·대사·영역도 함께 계획합니다.", fields: [
     { key: "manga_detail", label: "만화 페이지 묘사 지침" },
@@ -76,15 +86,25 @@ const promptGroups: PromptGroup[] = [
 ];
 const groupedKeys = new Set(promptGroups.flatMap(group => group.fields.map(field => field.key)));
 
-export function IllustPromptEditor({ prompts, savedPrompts, busy, error, message, onChange, onSave, onReload }: {
+export function IllustPromptEditor({ prompts, savedPrompts, busy, error, message, onChange, onSave, onReload, scope = "illustration" }: {
   prompts: IllustrationData; savedPrompts: IllustrationData | null; busy: boolean; error: string; message: string;
-  onChange: (key: string, value: string) => void; onSave: () => void; onReload: () => void;
+  onChange: (key: string, value: string) => void; onSave: () => void; onReload: () => void; scope?: "illustration" | "emotion";
 }) {
   const [selected, setSelected] = useState("character");
   const [confirmReload, setConfirmReload] = useState(false);
   // DETAIL 합성 삽화 is edited from the emotion illustration workshop.
   const extraKeys = Object.keys(prompts).filter(key => !groupedKeys.has(key) && key !== "composite_detail");
-  const groups = promptGroups.map(group => ({ ...group, fields: group.fields.filter(field => Object.hasOwn(prompts, field.key)) })).filter(group => group.fields.length);
+  // 감정 삽화 공방은 OUTFIT·PLAN·KEYVIS·MULTI-CHAR-MASK와 대사 후처리를 사용하지 않는다.
+  // 일반 삽화 공방은 감정 삽화 전용 EMOTION-RESOLVE를 사용하지 않는다.
+  const hiddenGroups = scope === "emotion"
+    ? new Set(["outfit", "plan", "manga_plan", "keyvis", "mask", "postprocess"])
+    : new Set(["emotion_resolve", "emotion_asset"]);
+  const groups = promptGroups.filter(group => !hiddenGroups?.has(group.id))
+    .map(group => ({
+      ...group,
+      description: scope === "emotion" && group.id === "detail" ? "선택된 장면을 이미지 태그로 작성합니다." : group.description,
+      fields: group.fields.filter(field => Object.hasOwn(prompts, field.key)),
+    })).filter(group => group.fields.length);
   if (extraKeys.length) groups.push({ id: "additional", title: "기타 지침", description: "추가로 등록된 지침을 실제 변수명으로 편집합니다.", fields: extraKeys.map(key => ({ key, label: key })) });
   const activeGroup = groups.some(group => group.id === selected) ? selected : groups[0]?.id;
   const edited = Object.keys(prompts).filter(key => prompts[key] !== savedPrompts?.[key]);

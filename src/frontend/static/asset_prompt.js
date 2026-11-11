@@ -33,10 +33,10 @@ globalThis.ComfyAssetPrompt = (() => {
         function defaultLoraPath(l) {
             const src = l.source || 'asset';
             if (src === 'external') return l.lora_path;
-            if (src === 'bot') return 'SOYA_CHAR_LORA\\SOYA_BOT_LORA\\' + l.lora_path;
-            if (src === 'instance') return 'SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\' + l.lora_path;
-            if (src === 'style') return 'SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\' + l.lora_path;
-            return 'SOYA_CHAR_LORA\\' + l.lora_path;
+            if (src === 'bot') return 'SOYA_BOT_LORA\\' + l.lora_path;
+            if (src === 'instance') return 'SOYA_INSTANCE_LORA\\' + l.lora_path;
+            if (src === 'style') return 'SOYA_STYLE_LORA\\' + l.lora_path;
+            return 'SOYA_ASSET_LORA\\' + l.lora_path;
         }
 
         function getAssetPresetValues(assetTags, category) {

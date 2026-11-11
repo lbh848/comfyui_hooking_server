@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "groups": {
+    "sfw": [
+      {
+        "name": "기본 SD 감정 25종",
+        "rows": [
+          {
+            "preset": "SD-80_standing",
+            "name": "neutral"
+          },
+          {
+            "preset": "SD-80_thinking_v3",
+            "name": "thinking"
+          },
+          {
+            "preset": "SD-80_curious_v4",
+            "name": "curious"
+          },
+          {
+            "preset": "SD-80_joyful_v2",
+            "name": "joyful"
+          },
+          {
+            "preset": "SD-80_laughing_v3",
+            "name": "laughing"
+          },
+          {
+            "preset": "SD-80_excited_v2",
+            "name": "excited"
+          },
+          {
+            "preset": "SD-80_lovestruck_v2",
+            "name": "lovestruck"
+          },
+          {
+            "preset": "SD-80_blushing shyly_v3",
+            "name": "shy"
+          },
+          {
+            "preset": "SD-80_flustered_v1",
+            "name": "flustered"
+          },
+          {
+            "preset": "SD-80_playful winking _v2",
+            "name": "playful"
+          },
+          {
+            "preset": "SD-80_acting cute_v1",
+            "name": "cute"
+          },
+          {
+            "preset": "SD-80_smug_v4",
+            "name": "smug"
+          },
+          {
+            "preset": "SD-80_angry_v3",
+            "name": "angry"
+          },
+          {
+            "preset": "SD-80_contemptuous",
+            "name": "contemptuous"
+          },
+          {
+            "preset": "SD-80_jealous_v2",
+            "name": "jealous"
+          },
+          {
+            "preset": "SD-80_sad_v2",
+            "name": "sad"
+          },
+          {
+            "preset": "SD-80_depressed_v3",
+            "name": "depressed"
+          },
+          {
+            "preset": "SD-80_crying with eyes open_v3",
+            "name": "crying"
+          },
+          {
+            "preset": "SD-80_scared_v2",
+            "name": "scared"
+          },
+          {
+            "preset": "SD-80_nervous_v3",
+            "name": "nervous"
+          },
+          {
+            "preset": "SD-80_surprised_v2",
+            "name": "surprised"
+          },
+          {
+            "preset": "SD-80_sleepy_v2",
+            "name": "sleepy"
+          },
+          {
+            "preset": "SD-80_aroused_v2",
+            "name": "aroused"
+          },
+          {
+            "preset": "SD-80_seductive smiling_v2",
+            "name": "seductive"
+          },
+          {
+            "preset": "SD-80_determined_v2",
+            "name": "determined"
+          }
+        ]
+      }
+    ],
+    "nsfw": [
+      {
+        "name": "공방-NSFW 14종",
+        "rows": [
+          {
+            "preset": "SD-NSFW-구속_cowgirl",
+            "name": "cowgirl sex"
+          },
+          {
+            "preset": "SD-NSFW-구속_doggysex",
+            "name": "doggy sex"
+          },
+          {
+            "preset": "SD-NSFW-구속_fullnelson",
+            "name": "fullnelson sex"
+          },
+          {
+            "preset": "SD-NSFW-구속_missionary",
+            "name": "missionary sex"
+          },
+          {
+            "preset": "SD-NSFW-구속_spooningsex",
+            "name": "spooning sex"
+          },
+          {
+            "preset": "SD-NSFW-비노출_breastfeeding",
+            "name": "breastfeeding"
+          },
+          {
+            "preset": "SD-NSFW-비노출_armpit sex",
+            "name": "armpit sex"
+          },
+          {
+            "preset": "SD-NSFW-pre standingsex",
+            "name": "standing sex"
+          },
+          {
+            "preset": "SD-NSFW-sex_mating press",
+            "name": "mating press"
+          },
+          {
+            "preset": "SD-NSFW-비노출_stealth fellatio",
+            "name": "fellatio"
+          },
+          {
+            "preset": "SD-NSFW-비노출_indifference footjob",
+            "name": "footjob"
+          },
+          {
+            "preset": "SD-NSFW-비노출_paizuri",
+            "name": "paizur"
+          },
+          {
+            "preset": "SD-NSFW-solo_panty show",
+            "name": "panty show"
+          },
+          {
+            "preset": "SD-NSFW-구속_standingsex",
+            "name": "standing sex"
+          }
+        ]
+      }
+    ]
+  }
+}

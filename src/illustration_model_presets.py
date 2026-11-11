@@ -15,7 +15,12 @@ from json_store import write_json_atomic
 from configuration import read_config
 import workflow_profiles
 
-CONFIG_KEYS = ("illustration_workflow_type", "illustration_workflow_source_paths", "chansub_workflow_type")
+CONFIG_KEYS = (
+    "illustration_workflow_type",
+    "illustration_workflow_source_paths",
+    "chansub_workflow_type",
+    "illustration_model_family",
+)
 # The illustration and emotion workshops keep separate preset files, so a
 # preset created or selected in one never appears in or changes the other.
 WORKSHOPS = ("illustration", "emotion")
@@ -65,6 +70,7 @@ class IllustrationModelPresets:
         paths = candidate[self.paths_key]
         if (candidate[self.type_key] not in workflow_profiles.ILLUSTRATION_WORKFLOW_TYPES
                 or candidate["chansub_workflow_type"] not in {"anima", "sdxl"}
+                or str(candidate.get("illustration_model_family", "")) not in {"", *workflow_profiles.MODEL_FAMILIES}
                 or not isinstance(paths, dict) or set(paths) - set(self.local_profiles)
                 or not all(isinstance(path, str) for path in paths.values())):
             raise ValueError("그림 모델 설정 값을 확인하세요.")
@@ -94,6 +100,23 @@ class IllustrationModelPresets:
             entry["path"] = paths.get(profile, "")
         preset["scope"] = "builtin"
         return preset
+
+    def resolved_config(self, config: dict) -> dict:
+        """프리셋 하나의 그림 모델 계열을 확정한다.
+
+        계열 선택값이 없는 예전 프리셋은 워크플로우 경로에서 이관하고, 저장된
+        선택값이 있으면 그 값을 쓴다. 다른 공방(감정 삽화)의 설정에서 넘어온
+        계열 값이 남지 않도록 프리셋 자신의 config로 항상 덮어쓴다.
+        """
+        config = copy.deepcopy(config)
+        if self.type_key != "illustration_workflow_type":
+            return config
+        profile = workflow_profiles.illustration_local_profile(config.get(self.type_key))
+        paths = config.get(self.paths_key)
+        source = str((paths or {}).get(profile) or "") if profile and isinstance(paths, dict) else ""
+        config["illustration_model_family"] = workflow_profiles.illustration_model_family(
+            config.get(self.type_key), source, config.get("illustration_model_family", ""))
+        return config
 
     def _workshop_path(self, workshop: str | None) -> Path:
         return self.emotion_path if workshop == "emotion" else self.path
@@ -197,7 +220,8 @@ class IllustrationModelPresets:
         # invalidate another profile's draft or the model-selection form.
         metadata = {"active_id": document["active_id"], "presets": [
             {key: item.get(key, "") for key in ("id", "name", "config", "scope", "description")} for item in document["presets"]]}
-        return {**metadata, "revision": revision(metadata), "config": copy.deepcopy(self.active(document).get("config", {})),
+        return {**metadata, "revision": revision(metadata),
+                "config": self.resolved_config(self.active(document).get("config", {})),
                 "saved_at": self.saved_at(self.active(document), workshop)}
 
     def saved_at(self, preset: dict, workshop: str | None = None) -> str | None:
@@ -381,6 +405,7 @@ class IllustrationModelPresets:
         if selected is None:
             raise ValueError("그림 모델 프리셋을 찾을 수 없습니다.")
         preset = copy.deepcopy(selected)
+        preset["config"] = self.resolved_config(preset["config"])
         profile = self.local_profile(preset["config"][self.type_key])
         if profile:
             source = preset["config"][self.paths_key].get(profile, "")
@@ -399,7 +424,7 @@ def apply_active_model_preset(config: dict, config_file: str | Path, builtin_fil
     store = IllustrationModelPresets(config_file, builtin_file)
     document = store.read(workshop=workshop)
     if document and document["presets"]:
-        config.update(copy.deepcopy(store.active(document)["config"]))
+        config.update(store.resolved_config(store.active(document)["config"]))
     return workflow_profiles.normalize_workflow_config(config)
 
 

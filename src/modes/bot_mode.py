@@ -1688,8 +1688,6 @@ class BotMode:
                     return await self._update_char_face_tags(data, body)
                 elif action == "update_char_face_loras":
                     return await self._update_char_face_loras(data, body)
-                elif action == "update_char_style_loras":
-                    return await self._update_char_style_loras(data, body)
                 elif action == "update_char_gender_tag":
                     return await self._update_char_gender_tag(data, body)
                 elif action == "update_persona_character":
@@ -1873,6 +1871,20 @@ class BotMode:
         new_path = os.path.join(BOT_DIR, bot_name, new_name)
         if os.path.isdir(old_path):
             os.rename(old_path, new_path)
+        extra = _load_lb_extra(bot_name)
+        extra_entries = extra.get("edited") if isinstance(extra, dict) else extra
+        if isinstance(extra_entries, list):
+            renamed_entries = 0
+            for entry in extra_entries:
+                if isinstance(entry, dict) and str(entry.get("name") or "") == old_name:
+                    entry["name"] = new_name
+                    renamed_entries += 1
+            if renamed_entries:
+                _save_lb_extra(bot_name, extra_entries)
+                print(
+                    f"[BOT_MODE] 캐릭터 이름 변경을 이식용 평면 데이터에 반영: "
+                    f"bot={bot_name!r}, entries={renamed_entries}"
+                )
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 이름 변경: {bot_name}/{old_name} → {new_name}")
         return _json_ok({"bots": data["bots"]})
@@ -1999,24 +2011,6 @@ class BotMode:
         sync_root_fields_to_primary_card(char, {"face_loras"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 얼굴 LoRA 업데이트: {bot_name}/{char_name} ({len(face_loras)}개)")
-        return _json_ok({"bots": data["bots"]})
-
-    async def _update_char_style_loras(self, data, body):
-        bot_name = body.get("bot_name", "").strip()
-        char_name = body.get("char_name", "").strip()
-        style_loras = body.get("style_loras", [])
-        if not bot_name or not char_name:
-            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
-        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
-        if not bot:
-            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
-        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
-        if not char:
-            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
-        char["style_loras"] = style_loras
-        sync_root_fields_to_primary_card(char, {"style_loras"})
-        _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 스타일(그림체) LoRA 업데이트: {bot_name}/{char_name} ({len(style_loras)}개)")
         return _json_ok({"bots": data["bots"]})
 
     async def _update_char_gender_tag(self, data, body):
@@ -2335,7 +2329,6 @@ class BotMode:
                     "image_name_tag": "",
                     "loras": [],
                     "rep_images": [],
-                    "style_loras": [],
                     "use_image_name_tag": False,
                     "use_profile_embedding": True,
                 }
@@ -3392,21 +3385,271 @@ class BotMode:
         }
         return profiles, unclassified
 
+    @staticmethod
+    def _emotion_folder_name(value) -> str:
+        """Match the pipeline's emotion-store folder naming for one expression."""
+        text = str(value or "").strip().strip("\"'“”‘’").lstrip("#").strip()
+        text = re.sub(r"\s+", " ", text)
+        if not text:
+            return ""
+        words = text.split(" ")
+        if len(words) > 8:
+            text = " ".join(words[:8])
+        text = text[:80].strip()
+        text = re.sub(r"[\\/:\x00]+", "-", text)
+        return text.strip(" .-_")[:80].strip()
+
+    def _emotion_outfit_representative(
+        self, bot_name: str, character: str, profile: str, outfit: str
+    ) -> dict | None:
+        """복장 폴더의 대표 표정을 정한다.
+
+        카드의 복장별 지정을 먼저 쓰고, 없으면 프리셋 설정에서 별표한 복장
+        대표 표정을 쓴다. 새 복장은 이 표정의 이미지를 가장 먼저 생성하므로,
+        이 값이 UI의 복장 대표 이미지(좌측 큰 이미지)로 고정된다.
+        """
+        try:
+            designated = self._emotion_card_representative(
+                bot_name, character, profile, outfit)
+            if designated:
+                return designated
+        except Exception as exc:
+            print(
+                f"[BOT_MODE] 복장 대표 표정 조회 실패: bot={bot_name!r}, "
+                f"character={character!r}, outfit={outfit!r}, error={exc}"
+            )
+        return self._emotion_preset_representative()
+
+    def _emotion_card_representative(
+        self, bot_name: str, character: str, profile: str, outfit: str
+    ) -> dict | None:
+        """Read the card's designated cover expression for one outfit folder."""
+        token = set_bot_scope("emotion")
+        try:
+            data = _load_bot_data()
+        finally:
+            reset_bot_scope(token)
+        bot = next(
+            (entry for entry in data.get("bots", []) if entry.get("name") == bot_name),
+            None,
+        )
+        if bot is None:
+            return None
+        root_character = next(
+            (entry for entry in bot.get("characters", [])
+             if str(entry.get("name") or "").casefold() == character.casefold()),
+            None,
+        )
+        if root_character is None:
+            return None
+        cards, _source = effective_character_cards(root_character, None)
+        card = next(
+            (entry for entry in cards if str(entry.get("id") or "") == profile),
+            None,
+        )
+        if card is None:
+            card = next(
+                (entry for entry in cards
+                 if str(entry.get("label") or "").casefold() == profile.casefold()),
+                None,
+            )
+        if card is None:
+            return None
+        wanted = outfit.casefold()
+        wanted_folder = self._emotion_folder_name(outfit).casefold()
+        for entry in card.get("outfit_presets") or []:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label") or "").strip()
+            if not label:
+                continue
+            matches = label.casefold() == wanted
+            if not matches and wanted_folder:
+                matches = self._emotion_folder_name(label).casefold() == wanted_folder
+            if not matches:
+                continue
+            value = entry.get("representative_emotion")
+            if not isinstance(value, dict):
+                return None
+            name = str(value.get("name") or "").strip()
+            rating = str(value.get("rating") or "").strip().lower()
+            if not name or rating not in {"sfw", "nsfw"}:
+                return None
+            return {
+                "preset": str(value.get("preset") or "").strip(),
+                "name": name,
+                "rating": rating,
+            }
+        return None
+
+    @staticmethod
+    def _emotion_preset_representative() -> dict | None:
+        """프리셋 설정에서 별표한 복장 대표 표정을 반환한다."""
+        try:
+            config = read_config(application_config_path(BASE_DIR))
+        except Exception as exc:
+            print(f"[BOT_MODE] 복장 대표 표정 설정 조회 실패: {exc}")
+            return None
+        toggles = config.get("emotion_illustration_context_toggles")
+        value = toggles.get("emotion_representative") if isinstance(toggles, dict) else None
+        if not isinstance(value, dict):
+            return None
+        name = str(value.get("name") or "").strip()
+        rating = str(value.get("rating") or "").strip().lower()
+        if not name or rating not in {"sfw", "nsfw"}:
+            return None
+        return {
+            "preset": str(value.get("preset") or "").strip(),
+            "name": name,
+            "rating": rating,
+        }
+
+    def _emotion_outfit_cover_rel(
+        self, bot_name: str, character: str, profile: str, outfit: str,
+        images: list[tuple[list[str], str, os.stat_result]],
+    ) -> list[str] | None:
+        """Prefer the designated cover expression, then the sorted fallback."""
+        representative = self._emotion_outfit_representative(
+            bot_name, character, profile, outfit)
+        if representative:
+            folder = self._emotion_folder_name(representative.get("name"))
+            if folder:
+                preferred = next(
+                    (rel for rel, _path, _stat in images
+                     if len(rel) == 2 and rel[0].casefold() == folder.casefold()),
+                    None,
+                )
+                if preferred:
+                    return preferred
+        return self._emotion_cover_rel(images, 2, 2)
+
+    def _rename_emotion_outfit_preset(
+        self, bot_name: str, character: str, profile: str, old_name: str, new_name: str
+    ) -> None:
+        """복장 폴더 이름을 카드의 복장 프리셋 라벨에도 반영한다.
+
+        태그와 대표 표정은 폴더가 아니라 카드의 ``outfit_presets`` 라벨로
+        연결되므로, 폴더만 바꾸면 기존 태그를 잃는다. 이름 변경은 최선 노력으로
+        처리하고 실패해도 폴더 이름 변경 자체는 유지한다.
+        """
+        token = set_bot_scope("emotion")
+        try:
+            data = _load_bot_data()
+            bot = next(
+                (entry for entry in data.get("bots", []) if entry.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                return
+            root_character = next(
+                (entry for entry in bot.get("characters", [])
+                 if str(entry.get("name") or "").casefold() == character.casefold()),
+                None,
+            )
+            if root_character is None:
+                return
+            cards, _source = effective_character_cards(root_character, None)
+            card = next(
+                (entry for entry in cards if str(entry.get("id") or "") == profile),
+                None,
+            )
+            if card is None:
+                card = next(
+                    (entry for entry in cards
+                     if str(entry.get("label") or "").casefold() == profile.casefold()),
+                    None,
+                )
+            if card is None:
+                return
+            pool = card.get("outfit_presets")
+            if not isinstance(pool, list):
+                return
+            changed = False
+            for entry in pool:
+                if not isinstance(entry, dict):
+                    continue
+                label = str(entry.get("label") or "").strip()
+                if label.casefold() != old_name.casefold():
+                    continue
+                entry["label"] = new_name
+                changed = True
+            if not changed:
+                return
+            card["outfit_presets"] = pool
+            store_visual_cards(root_character, cards)
+            _save_bot_data(data)
+            print(
+                f"[BOT_MODE] 감정 복장 이름 변경: bot={bot_name!r}, character={character!r}, "
+                f"profile={profile!r}, {old_name!r} -> {new_name!r}"
+            )
+        except Exception as exc:
+            print(f"[BOT_MODE] 감정 복장 프리셋 이름 변경 실패: {exc}")
+        finally:
+            reset_bot_scope(token)
+
+    def _emotion_profile_base_outfit(self, bot_name, character, profile, folders):
+        """Return the profile card's default outfit folder for the current store."""
+        from modes.illustration_context_pipeline import emotion_profile_base_outfit
+        data = _load_bot_data()
+        bot = next(
+            (entry for entry in data.get("bots", [])
+             if isinstance(entry, dict) and entry.get("name") == bot_name),
+            None,
+        )
+        if bot is None:
+            return ""
+        root_character = next(
+            (entry for entry in bot.get("characters", [])
+             if isinstance(entry, dict)
+             and str(entry.get("name") or "").casefold() == character.casefold()),
+            None,
+        )
+        if root_character is None:
+            return ""
+        cards, _source = effective_character_cards(root_character, None)
+        card = next(
+            (entry for entry in cards
+             if str(entry.get("id") or "").strip() == profile),
+            None,
+        )
+        if card is None:
+            return ""
+        _label, folder = emotion_profile_base_outfit(card, folders)
+        return folder
+
     def _emotion_outfits(self, bot_name: str, character: str, profile: str) -> list[dict]:
         profile_dir = os.path.join(BOT_DIR, bot_name, character, profile)
         if not os.path.isdir(profile_dir):
             return []
+        names = [
+            outfit for outfit in sorted(os.listdir(profile_dir))
+            if not outfit.startswith((".", "_"))
+            and os.path.isdir(os.path.join(profile_dir, outfit))
+        ]
+        # 첫 복장(프로필의 기본 복장)은 에셋 생성 모드, 나머지는 변주 복장으로
+        # 캐릭터 자동 생성 및 복장 이미지 생성 모드를 쓴다.
+        base_folder = self._emotion_profile_base_outfit(
+            bot_name, character, profile, names)
         outfits = []
-        for outfit in sorted(os.listdir(profile_dir)):
+        for outfit in names:
             outfit_dir = os.path.join(profile_dir, outfit)
-            if outfit.startswith((".", "_")) or not os.path.isdir(outfit_dir):
-                continue
             images = self._emotion_image_files(outfit_dir)
-            cover_rel = self._emotion_cover_rel(images, 2, 2)
+            cover_rel = self._emotion_outfit_cover_rel(
+                bot_name, character, profile, outfit, images)
             cover = self._emotion_cover_url(
                 bot_name, character, [profile, outfit, *cover_rel]
             ) if cover_rel else ""
-            outfits.append({"name": outfit, "count": len(images), "cover": cover})
+            outfits.append({
+                "name": outfit,
+                "count": len(images),
+                "cover": cover,
+                "generation_mode": (
+                    "illustration"
+                    if base_folder
+                    and outfit.casefold() == base_folder.casefold()
+                    else "character_auto"
+                ),
+            })
         return outfits
 
     def _emotion_emotions(self, bot_name: str, character: str, profile: str, outfit: str) -> list[dict]:
@@ -3494,7 +3737,7 @@ class BotMode:
             return _json_error(str(exc))
 
     async def handle_emotion_store_outfits(self, request):
-        """GET/POST /api/bot_mode/emotion_outfits - 프로필 안의 복장 폴더 목록·추가·삭제"""
+        """GET/POST /api/bot_mode/emotion_outfits - 프로필 안의 복장 폴더 목록·추가·이름 변경·삭제"""
         try:
             if request.method == "POST":
                 body = await request.json()
@@ -3525,6 +3768,20 @@ class BotMode:
                     if not os.path.isdir(outfit_dir):
                         return _json_error("존재하지 않는 복장입니다.", status=404)
                     shutil.rmtree(outfit_dir)
+                elif action == "rename":
+                    new_outfit = str(body.get("new_outfit") or "").strip()
+                    error = self._emotion_store_segment(new_outfit, "새 복장")
+                    if error:
+                        return _json_error(error)
+                    if not os.path.isdir(outfit_dir):
+                        return _json_error("존재하지 않는 복장입니다.", status=404)
+                    if new_outfit != outfit:
+                        new_dir = os.path.join(character_dir, profile, new_outfit)
+                        if os.path.exists(new_dir):
+                            return _json_error("같은 이름의 복장이 이미 있습니다.")
+                        os.rename(outfit_dir, new_dir)
+                        self._rename_emotion_outfit_preset(
+                            bot_name, character, profile, outfit, new_outfit)
                 else:
                     return _json_error("지원하지 않는 복장 작업입니다.")
                 return _json_ok({"outfits": self._emotion_outfits(bot_name, character, profile)})
@@ -8389,6 +8646,152 @@ def save_char_face_tags(
         print(f"[BOT_MODE] save_char_face_tags 예외: {e}")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
+
+
+def save_emotion_outfit_presets(bot_name: str, updates: list[dict]) -> dict:
+    """감정 삽화가 새로 만든 복장 태그를 프로필 카드의 복장 풀에 보존한다.
+
+    업데이트 항목은 ``{"character", "profile_id", "label", "tags"}`` 이며, 같은
+    이름의 복장이 이미 있으면 태그만 채우고 새 항목을 만들지 않는다. 어떤
+    복장이 기존 복장과 같은지는 EMOTION-RESOLVE가 저장된 이름·태그를 보고
+    판단하므로, 이 함수는 유사도로 추측해 합치지 않는다. 감정 삽화
+    파이프라인은 요청 스코프와 무관하게 감정 봇 저장소에 기록해야 하므로 이
+    함수가 직접 스코프를 고정한다.
+    """
+    entries = [entry for entry in (updates or []) if isinstance(entry, dict)]
+    if not entries:
+        return {"success": True, "added": 0}
+    token = set_bot_scope("emotion")
+    try:
+        data = _load_bot_data()
+        added = 0
+        changed = False
+        for entry in entries:
+            char_name = str(entry.get("character") or "").strip()
+            profile_id = str(entry.get("profile_id") or "").strip()
+            label = str(entry.get("label") or "").strip()
+            tags = [
+                value for value in (
+                    str(tag or "").strip()
+                    for tag in (entry.get("tags") or [])
+                    if str(tag or "").strip()
+                )
+            ]
+            if not char_name or not label or not tags:
+                print(
+                    f"[BOT_MODE] 감정 복장 풀 저장 스킵: "
+                    f"character={char_name!r}, profile={profile_id!r}, label={label!r}"
+                )
+                continue
+            bot = next(
+                (value for value in data.get("bots", []) if value.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                print(f"[BOT_MODE] 감정 복장 풀 저장 실패 - 봇 없음: {bot_name!r}")
+                break
+            character = next(
+                (value for value in bot.get("characters", [])
+                 if str(value.get("name") or "").strip().casefold() == char_name.casefold()),
+                None,
+            )
+            if character is None:
+                print(f"[BOT_MODE] 감정 복장 풀 저장 실패 - 캐릭터 없음: {bot_name!r}/{char_name!r}")
+                continue
+            cards, _source = effective_character_cards(character, None)
+            card = next(
+                (value for value in cards if str(value.get("id") or "") == profile_id),
+                None,
+            )
+            if card is None and not profile_id:
+                card = cards[0]
+            if card is None:
+                print(
+                    f"[BOT_MODE] 감정 복장 풀 저장 실패 - 프로필 카드 없음: "
+                    f"{char_name!r}/{profile_id!r}"
+                )
+                continue
+            pool = card.get("outfit_presets")
+            if not isinstance(pool, list):
+                pool = []
+            existing = next(
+                (value for value in pool
+                 if isinstance(value, dict)
+                 and str(value.get("label") or "").strip().casefold() == label.casefold()),
+                None,
+            )
+            if existing is not None:
+                if existing.get("tags"):
+                    continue
+                existing["tags"] = [{"tag": tag} for tag in tags]
+                changed = True
+            else:
+                pool.append({"label": label, "tags": [{"tag": tag} for tag in tags]})
+                added += 1
+                changed = True
+            card["outfit_presets"] = pool
+            store_visual_cards(character, cards)
+        if changed:
+            _save_bot_data(data)
+            print(
+                f"[BOT_MODE] 감정 복장 풀 업데이트: bot={bot_name!r}, "
+                f"added={added}, requested={len(entries)}"
+            )
+        return {"success": True, "added": added}
+    except Exception as exc:
+        print(f"[BOT_MODE] 감정 복장 풀 저장 예외: bot={bot_name!r}, error={exc}")
+        traceback.print_exc()
+        return {"success": False, "error": str(exc)}
+    finally:
+        reset_bot_scope(token)
+
+
+def save_emotion_asset_bytes(target_dir: str, image_bytes: bytes) -> str:
+    """감정 에셋 이미지를 지정한 프로필·복장·감정 폴더에 저장한다.
+
+    같은 이미지를 다시 생성해도 파일이 늘지 않도록 내용 해시를 파일명으로 쓰고,
+    부분 기록이 남지 않도록 임시 파일을 거쳐 교체한다. HTTP 파이프라인의 요청
+    스코프와 무관하게 감정 봇 저장소 루트를 기준으로 경로를 검증한다.
+    """
+    if not image_bytes:
+        return ""
+    token = set_bot_scope("emotion")
+    try:
+        root = os.path.abspath(os.fspath(BOT_DIR))
+    finally:
+        reset_bot_scope(token)
+    target = os.path.abspath(os.fspath(target_dir or ""))
+    try:
+        if not target or os.path.commonpath([root, target]) != root:
+            print(
+                "[BOT_MODE] 감정 에셋 저장 경로 거부: "
+                f"root={root!r}, target={target!r}"
+            )
+            return ""
+    except ValueError:
+        print(f"[BOT_MODE] 감정 에셋 저장 경로 오류: target={target!r}")
+        return ""
+    extension = ".png" if image_bytes.startswith(b"\x89PNG\r\n\x1a\n") else ".webp"
+    digest = hashlib.sha256(image_bytes).hexdigest()[:16]
+    filename = f"{digest}{extension}"
+    path = os.path.join(target, filename)
+    if os.path.isfile(path):
+        return path
+    try:
+        os.makedirs(target, exist_ok=True)
+        temp_path = path + ".tmp"
+        with open(temp_path, "wb") as handle:
+            handle.write(image_bytes)
+        os.replace(temp_path, path)
+    except OSError as exc:
+        print(
+            f"[BOT_MODE] 감정 에셋 저장 실패: target={target!r}, error={exc}"
+        )
+        return ""
+    print(
+        f"[BOT_MODE] 감정 에셋 저장 완료: path={path!r}, bytes={len(image_bytes):,}"
+    )
+    return path
 
 
 async def handle_auto_classify_face_tags(request):

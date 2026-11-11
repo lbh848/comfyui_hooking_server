@@ -86,15 +86,8 @@
             "looking away"
           ],
           "raw_character_negative_tags": [],
-          "snapref_enabled": true,
-          "snapref_images": [
-            {
-              "name": "1793973955_d2f7be.webp",
-              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1793973955_d2f7be.webp",
-              "orig_filename": "1793973744_beb530.webp",
-              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1793973955_d2f7be.webp"
-            }
-          ],
+          "snapref_enabled": false,
+          "snapref_images": [],
           "snapref_face_images": [],
           "snapref_secondary_images": [],
           "snapref_strength": 1,
@@ -173,14 +166,7 @@
           ],
           "raw_character_negative_tags": [],
           "snapref_enabled": false,
-          "snapref_images": [
-            {
-              "name": "1793973955_d2f7be.webp",
-              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1793973955_d2f7be.webp",
-              "orig_filename": "1793973744_beb530.webp",
-              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1793973955_d2f7be.webp"
-            }
-          ],
+          "snapref_images": [],
           "snapref_face_images": [],
           "snapref_secondary_images": [],
           "snapref_strength": 1,
@@ -266,15 +252,8 @@
           "expression": "공방-빈 표정",
           "raw_expression_tags": [],
           "raw_character_negative_tags": [],
-          "snapref_enabled": true,
-          "snapref_images": [
-            {
-              "name": "1794009028_dcefa3.webp",
-              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\Dale\\공방-빈 복장\\공방-빈 표정\\1794009028_dcefa3.webp",
-              "orig_filename": "1794009028_dcefa3.webp",
-              "preview_url": "/api/asset/asset_mode/characters/Dale/outfits/%EA%B3%B5%EB%B0%A9-%EB%B9%88%20%EB%B3%B5%EC%9E%A5/expressions/%EA%B3%B5%EB%B0%A9-%EB%B9%88%20%ED%91%9C%EC%A0%95/images/1794009028_dcefa3.webp"
-            }
-          ],
+          "snapref_enabled": false,
+          "snapref_images": [],
           "snapref_face_images": [],
           "snapref_secondary_images": [],
           "snapref_strength": 1,
@@ -402,23 +381,9 @@
             "looking to the side"
           ],
           "raw_character_negative_tags": [],
-          "snapref_enabled": true,
-          "snapref_images": [
-            {
-              "name": "1794097096_ccfe32.webp",
-              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\Yuki\\공방-Yuki 비키니\\SD-80_acting coy_v3\\1794097096_ccfe32.webp",
-              "orig_filename": "1794097096_ccfe32.webp",
-              "preview_url": "/api/asset/asset_mode/characters/Yuki/outfits/%EA%B3%B5%EB%B0%A9-Yuki%20%EB%B9%84%ED%82%A4%EB%8B%88/expressions/SD-80_acting%20coy_v3/images/1794097096_ccfe32.webp"
-            }
-          ],
-          "snapref_face_images": [
-            {
-              "name": "1794083151_9355c3.webp",
-              "local_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\asset\\업로드이미지\\갤러리\\갤러리\\1794083151_9355c3.webp",
-              "orig_filename": "1794054497_dcf254_face.png",
-              "preview_url": "/api/asset/asset_mode/characters/%EC%97%85%EB%A1%9C%EB%93%9C%EC%9D%B4%EB%AF%B8%EC%A7%80/outfits/%EA%B0%A4%EB%9F%AC%EB%A6%AC/expressions/%EA%B0%A4%EB%9F%AC%EB%A6%AC/images/1794083151_9355c3.webp"
-            }
-          ],
+          "snapref_enabled": false,
+          "snapref_images": [],
+          "snapref_face_images": [],
           "snapref_secondary_images": [],
           "snapref_strength": 1,
           "snapref_mode": "char",

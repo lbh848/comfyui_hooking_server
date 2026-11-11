@@ -10,6 +10,7 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import math
 import mimetypes
 import re
@@ -33,6 +34,64 @@ REFERENCE_PREPROCESS_LABELS = {
     "none": "전처리 없음", "lineart": "선만 따기(흑백)",
     "lineart_color": "선만 따기(원본 색상)", "grayscale": "흑백화",
 }
+
+
+def _text(value) -> str:
+    return str(value or "").strip()
+
+
+def _split_prompt_key(payload: dict, key: str) -> tuple[dict, str]:
+    """Resolve a stored-settings key to its container and dotted path.
+
+    Legacy illustration documents keep every value under ``fields``. MOSS
+    documents keep the layout under ``moss`` and everything else under
+    ``workflow``. A ``fields.`` prefix always means the legacy container.
+    """
+    key = str(key or "").strip()
+    if key.startswith("fields."):
+        return payload.setdefault("fields", {}), key[len("fields."):]
+    head = key.split(".", 1)[0]
+    if head in {"moss", "workflow"} and head in payload:
+        return payload, key
+    return payload.setdefault("fields", {}), key
+
+
+def read_prompt_path(payload: dict, key: str, default=None):
+    """Read ``fields.X``, ``workflow.X`` or a nested path like ``workflow.loras``."""
+    root, path = _split_prompt_key(payload, key)
+    value = root
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return default
+        value = value[part]
+    return value
+
+
+def write_prompt_path(payload: dict, key: str, value) -> None:
+    """Write a value at the same dotted path read by :func:`read_prompt_path`."""
+    root, path = _split_prompt_key(payload, key)
+    parts = path.split(".")
+    target = root
+    for part in parts[:-1]:
+        child = target.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            target[part] = child
+        target = child
+    target[parts[-1]] = value
+
+
+def prompt_payload(text: str) -> dict:
+    """Parse a positive-prompt node payload (legacy V2 or MOSS document)."""
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return illustration_fields(text)
+    if not isinstance(payload, dict):
+        raise ValueError("프롬프트 JSON은 객체여야 합니다.")
+    if isinstance(payload.get("moss"), dict) and isinstance(payload.get("workflow"), dict):
+        return payload
+    return illustration_fields(text)
 
 
 def preprocess_reference_images(payload: dict) -> None:
@@ -260,6 +319,14 @@ def illustration_fields(positive: str, negative: str = "") -> dict:
 
 def illustration_edit_document(positive: str, negative: str) -> dict:
     """Expose the existing editable prompt as one JSON document."""
+    if positive.lstrip().startswith("{"):
+        try:
+            candidate = json.loads(positive)
+        except json.JSONDecodeError:
+            candidate = None
+        if is_moss_document(candidate):
+            # Keep the submitted MOSS layout/controller intact for editing.
+            return candidate
     if positive.lstrip().startswith("{") or _CONTROL_BLOCK_HEADER_RE.search(positive):
         return illustration_fields(positive, negative)
     return {"positive": positive, "negative": negative}
@@ -273,6 +340,11 @@ def illustration_edit_prompts(document: dict, source_positive: str) -> tuple[str
     """
     if not isinstance(document, dict):
         raise ValueError("프롬프트 JSON은 객체여야 합니다.")
+    if is_moss_document(document):
+        # MOSS has no V3 control blocks. Keep the edited layout/controller as
+        # the positive transport; the MOSS builder re-emits it on redraw.
+        return (json.dumps(document, ensure_ascii=False, separators=(",", ":")),
+                str((document.get("workflow") or {}).get("negative") or ""))
     if "schema" not in document:
         if set(document) != {"positive", "negative"} or not all(isinstance(value, str) for value in document.values()):
             raise ValueError("프롬프트 JSON의 positive와 negative를 확인하세요.")
@@ -317,6 +389,10 @@ def illustration_edit_prompts(document: dict, source_positive: str) -> tuple[str
 
 def merge_illustration_edit_document(document: dict, before: tuple[str, str], after: tuple[str, str]) -> dict:
     """Apply only scene-editor changes, retaining sampling and embedded assets."""
+    if is_moss_document(document):
+        # MOSS is edited directly as JSON; V3 block projection would drop the
+        # bbox layout and controller.
+        return copy.deepcopy(document)
     if document.get("schema") != SCHEMA:
         return illustration_edit_document(*after)
     result = copy.deepcopy(document)
@@ -341,8 +417,7 @@ _LORA_SET_SPECS: dict | None = None
 def _illustration_v2_specs() -> dict:
     global _LORA_SET_SPECS
     if _LORA_SET_SPECS is None:
-        path = (Path(__file__).parent / "comfy_installer" / "resources" / "illustration_v2"
-                / "illustration_v2_specs.json")
+        path = Path(__file__).parent / "comfy_installer" / "illustration_v2_specs.json"
         _LORA_SET_SPECS = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     return _LORA_SET_SPECS
 
@@ -361,8 +436,13 @@ def _prompt_json_source(workflow: dict, identity: str, seen: frozenset[str] = fr
     return None
 
 
-def _workflow_lora_data_sources(workflow: dict) -> dict[str, set[str]]:
-    """LoRA set keys read by prompt-JSON loader nodes, and their source nodes."""
+def _workflow_lora_data_sources(workflow: dict) -> dict[str, dict]:
+    """LoRA sets read by prompt-JSON loader nodes.
+
+    The result maps the preset-facing key (for example ``STYLE_LORA_DATA``) to
+    the JSON path the node actually reads (``workflow.loras`` for MOSS) and the
+    prompt-JSON source nodes that own that path.
+    """
     specs = _illustration_v2_specs()
     result = {}
     for node in workflow.values():
@@ -378,8 +458,13 @@ def _workflow_lora_data_sources(workflow: dict) -> dict[str, set[str]]:
             continue
         for binding in spec.get("json_inputs", {}).values():
             key = str(binding.get("key", ""))
-            if _is_lora_data_key(key):
-                result.setdefault(key, set()).add(source)
+            preset_key = str(binding.get("preset_key") or "").strip()
+            if not preset_key and _is_lora_data_key(key):
+                preset_key = key
+            if not preset_key:
+                continue
+            entry = result.setdefault(preset_key, {"key": key, "sources": set()})
+            entry["sources"].add(source)
     return result
 
 
@@ -424,20 +509,29 @@ def workflow_json_defaults(workflow: dict) -> dict:
         source = workflow[source_id]["inputs"]["value"]
         payload = json.loads(source)
         for key, value_type in keys.items():
-            settings = payload.get("fields", {}).get(key)
+            settings = read_prompt_path(payload, key)
             if not isinstance(settings, value_type) or value_type is str and not settings.strip():
-                raise ValueError(f"Workflow JSON prompt requires fields.{key}")
+                raise ValueError(f"Workflow JSON prompt requires {key}")
             if key in result and result[key] != settings:
-                raise ValueError(f"Workflow JSON sources disagree on fields.{key}")
+                raise ValueError(f"Workflow JSON sources disagree on {key}")
             result[key] = settings
         # Workflow-wide LoRAs are additive to the character cards' own LoRAs.
         for key in lora_keys:
-            if key != "STYLE_LORA_DATA" and source_id not in lora_sources[key]:
+            entry = lora_sources.get(key)
+            if key != "STYLE_LORA_DATA" and not entry:
                 continue
-            shared = payload.get("fields", {}).get(key, {"list": []})
+            if entry and source_id not in entry["sources"]:
+                continue
+            shared = read_prompt_path(payload, entry["key"] if entry else key)
+            if isinstance(shared, list):
+                shared = {"list": copy.deepcopy(shared)}
+            elif isinstance(shared, dict) and isinstance(shared.get("list"), list):
+                shared = {"list": copy.deepcopy(shared["list"])}
+            else:
+                shared = {"list": []}
             if key in result and result[key] != shared:
                 raise ValueError(f"Workflow JSON sources disagree on {key}")
-            result[key] = copy.deepcopy(shared)
+            result[key] = shared
         del payload
     controls, _ = _basic_sampling_controls(workflow)
     if isinstance(result.get("ANIMA_FIRST_SAMPLER"), dict):
@@ -504,9 +598,30 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
         for key, value in defaults.items():
             if _is_lora_data_key(key):
                 fields.setdefault(key, copy.deepcopy(value))
+        if is_moss_prompt_workflow(workflow, defaults):
+            # Older MOSS presets used flat fields; the controller now lives
+            # under workflow.*. Keep the saved values under the current keys
+            # before dropping the obsolete ones.
+            for legacy, current in (("MOSS_FIRST_SAMPLER", "workflow.sampling"),
+                                    ("MOSS_DIFFUSION_MODEL", "workflow.model"),
+                                    ("MOSS_CLIP_MODEL", "workflow.clip"),
+                                    ("MOSS_VAE_MODEL", "workflow.vae")):
+                if legacy not in fields or current in fields:
+                    continue
+                if isinstance(defaults.get(current), dict):
+                    fields[current] = {**copy.deepcopy(defaults[current]),
+                                       **copy.deepcopy(fields[legacy])}
+                else:
+                    fields[current] = copy.deepcopy(fields[legacy])
+            for key in list(fields):
+                if key not in defaults:
+                    fields.pop(key)
+            for key, value in defaults.items():
+                fields.setdefault(key, copy.deepcopy(value))
     validate_workflow_json_settings(fields, defaults)
     result = copy.deepcopy(workflow)
     _apply_basic_sampling_controls(result, fields.get("ANIMA_FIRST_SAMPLER", {}))
+    lora_sources = _workflow_lora_data_sources(workflow_json_settings_nodes(result))
     nodes = result["nodes"] if isinstance(result.get("nodes"), list) else result.values()
     updated = False
     for node in nodes:
@@ -514,8 +629,23 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
             continue
         ui = "widgets_values" in node
         text = node["widgets_values"][0] if ui else node["inputs"]["value"]
-        payload = illustration_fields(text)
-        payload["fields"].update(copy.deepcopy(fields))
+        payload = prompt_payload(text)
+        if isinstance(payload.get("fields"), dict):
+            payload["fields"].update(copy.deepcopy(fields))
+        else:
+            # MOSS controller: write each stored setting at the path its node reads.
+            for key, value in fields.items():
+                if _is_lora_data_key(key):
+                    entry = lora_sources.get(key)
+                    path = entry["key"] if entry else key
+                    current = read_prompt_path(payload, path)
+                    target = dict(current) if isinstance(current, dict) else {}
+                    items = value.get("list", []) if isinstance(value, dict) else []
+                    target["activate"] = bool(items)
+                    target["list"] = copy.deepcopy(items)
+                    write_prompt_path(payload, path, target)
+                else:
+                    write_prompt_path(payload, key, copy.deepcopy(value))
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
         if ui:
             node["widgets_values"][0] = serialized
@@ -562,9 +692,387 @@ def merge_shared_style_loras(fields: dict, defaults: dict) -> None:
     merge_workflow_loras(fields, "STYLE_LORA_DATA", defaults)
 
 
+def is_moss_prompt_workflow(workflow: dict, defaults: dict | None = None) -> bool:
+    """A workflow whose prompt JSON uses the MOSS layout/controller document."""
+    if not isinstance(workflow, dict):
+        return False
+    extra = workflow.get("extra")
+    if isinstance(extra, dict) and extra.get("soya_prompt_schema") == "moss":
+        return True
+    try:
+        defaults = workflow_json_defaults(workflow) if defaults is None else defaults
+    except (ValueError, KeyError, TypeError):
+        return False
+    return any(key in defaults for key in
+               ("MOSS_DIFFUSION_MODEL", "MOSS_FIRST_SAMPLER", "workflow.model", "workflow.sampling"))
+
+
+def is_moss_prompt_defaults(defaults: dict | None) -> bool:
+    """True when preset defaults were read from a MOSS prompt document.
+
+    Callers that only have ``workflow_json_defaults`` (the manual-draw queue,
+    for example) use this to choose the MOSS builder without the API workflow.
+    """
+    return is_moss_prompt_workflow({}, defaults if isinstance(defaults, dict) else {})
+
+
+def is_moss_document(value) -> bool:
+    """True for the ``{"moss": ..., "workflow": ...}`` submitted prompt shape."""
+    return (isinstance(value, dict) and isinstance(value.get("moss"), dict)
+            and isinstance(value.get("workflow"), dict))
+
+
+def is_moss_prompt(value) -> bool:
+    """True for a MOSS document supplied as a dict or a JSON string."""
+    if isinstance(value, str):
+        text = value.lstrip()
+        if not text.startswith("{"):
+            return False
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+    return is_moss_document(value)
+
+
+MOSS_REFERENCE_MAX_PICTURES = 3
+
+
+def _embed_asset(assets: dict, path: Path) -> str:
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    assets.setdefault(digest, {
+        "encoding": "base64", "name": path.name,
+        "media_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        "sha256": digest, "data": base64.b64encode(data).decode("ascii"),
+    })
+    return digest
+
+
+def _moss_character_paths(entry: dict, bot_root: Path | None) -> tuple[list[Path], Path | None]:
+    """Representative image paths and the FACE image for one FACE_ID_DIR entry."""
+    value = entry.get("snapref_path") or entry.get("ipa_path") or ""
+    relative = Path(str(value).replace("\\", "/"))
+    if ".." in relative.parts:
+        raise ValueError(f"Illustration input is outside INPUT: {value}")
+    relative = relative.parent if relative.suffix else relative
+    artifact = char_root = None
+    if bot_root and relative.parts and relative.parts[0] == "soya_bot":
+        candidate = (bot_root / Path(*relative.parts[1:])).resolve()
+        if candidate.is_relative_to(bot_root):
+            artifact = candidate
+        if len(relative.parts) >= 3:
+            candidate = (bot_root / relative.parts[1] / relative.parts[2]).resolve()
+            if candidate.is_relative_to(bot_root):
+                char_root = candidate
+    face = None
+    if artifact and (artifact / "_face_image.webp").is_file():
+        face = (artifact / "_face_image.webp").resolve()
+    images = []
+    if char_root:
+        for name in entry.get("snapref_images") or []:
+            name = str(name).strip()
+            if not name or name in {".", ".."} or "/" in name or "\\" in name:
+                continue
+            candidate = (char_root / name).resolve()
+            if candidate.is_relative_to(char_root) and candidate.is_file():
+                images.append(candidate)
+    if not images and artifact and char_root:
+        record = artifact / "_face_image_source.json"
+        source = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
+        source = source.get("source_filename") if isinstance(source, dict) else ""
+        candidate = (char_root / str(source or "")).resolve()
+        if source and candidate.is_relative_to(char_root) and candidate.is_file():
+            images = [candidate]
+    return images, face
+
+
+def moss_reference_roster(fields: dict, bot_dir) -> list[dict]:
+    """Characters that can supply a CharRef reference picture, in roster order."""
+    settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
+    if not settings.get("enabled"):
+        return []
+    if settings.get("strength_scale") == "linear" and float(settings.get("strength", 1.0)) <= 0:
+        return []
+    multi = fields.get("MULTI_CHAR") if isinstance(fields.get("MULTI_CHAR"), dict) else {}
+    names = [_text(name) for name in (
+        multi.get("char_name_list") if multi.get("enable") else fields.get("CHAR_LIST")
+    ) or [] if _text(name)]
+    entries = (fields.get("FACE_ID_DIR") or {}).get("list", [])
+    by_name = {_text(entry.get("CHAR")).casefold(): entry for entry in entries
+               if isinstance(entry, dict) and _text(entry.get("CHAR"))}
+    bot_root = Path(bot_dir).resolve() if bot_dir else None
+    roster = []
+    seen = set()
+    for name in names:
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = by_name.get(key)
+        if entry is None:
+            continue
+        images, face = _moss_character_paths(entry, bot_root)
+        if images or face:
+            roster.append({"name": name, "entry": entry, "images": images, "face": face})
+        if len(roster) >= MOSS_REFERENCE_MAX_PICTURES:
+            break
+    return roster
+
+
+def _moss_reference_pictures(fields: dict, bot_dir, assets: dict, layout: dict,
+                             roster: list[dict]) -> list[dict]:
+    """Pick per-character pictures from the roster and embed their bytes."""
+    settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
+    mode = str(settings.get("secondary_reference") or "none")
+    strength = float(settings.get("strength", 1.0))
+    items = [item for item in (layout.get("items") or [])
+             if isinstance(item, dict) and item.get("label") == "character"]
+    layout_names = [_text(item.get("name")) for item in items if _text(item.get("name"))]
+    order = layout_names or [entry["name"] for entry in roster]
+    by_name = {entry["name"].casefold(): entry for entry in roster}
+    unique_names = list(dict.fromkeys(name.casefold() for name in order))
+    multi = len(unique_names) >= 2
+
+    def choose(entry):
+        images, face = entry.get("images") or [], entry.get("face")
+        if mode == "face_only":
+            return [(face, "face")] if face else ([(images[0], "representative")] if images else [])
+        if mode == "face" and not multi:
+            chosen = []
+            if images:
+                chosen.append((images[0], "representative"))
+            if face and (not images or face != images[0]):
+                chosen.append((face, "face"))
+            return chosen
+        if mode == "representative":
+            if len(images) > 1:
+                return [(images[1], "second_representative")]
+            return [(images[0], "representative")] if images else ([(face, "face")] if face else [])
+        return [(images[0], "representative")] if images else ([(face, "face")] if face else [])
+
+    pictures = []
+    for name in order:
+        entry = by_name.get(name.casefold())
+        if entry is None:
+            continue
+        for path, kind in choose(entry):
+            digest = _embed_asset(assets, path)
+            pictures.append({
+                "picture": len(pictures) + 1, "name": entry["name"],
+                "asset": digest, "source": digest, "kind": kind,
+            })
+            if len(pictures) >= MOSS_REFERENCE_MAX_PICTURES:
+                break
+        if len(pictures) >= MOSS_REFERENCE_MAX_PICTURES:
+            break
+    return pictures
+
+
+def _moss_reference_from_existing(fields: dict, assets: dict, layout: dict) -> list[dict]:
+    """Use already-embedded SNAPREF.references assets when the document carries them."""
+    settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
+    references = [item for item in settings.get("references") or [] if isinstance(item, dict)]
+    if not references:
+        return []
+    mode = str(settings.get("secondary_reference") or "none")
+    by_name = {}
+    for item in references:
+        name = _text(item.get("CHAR"))
+        if name:
+            by_name.setdefault(name.casefold(), []).append(item)
+    items = [item for item in (layout.get("items") or [])
+             if isinstance(item, dict) and item.get("label") == "character"]
+    order = [_text(item.get("name")) for item in items if _text(item.get("name"))]
+    if not order:
+        order = [_text(item.get("CHAR")) for item in references if _text(item.get("CHAR"))]
+    pictures = []
+    for name in order:
+        entries = by_name.get(name.casefold(), [])
+        if not entries:
+            continue
+        chosen = []
+        primary = entries[0].get("asset")
+        face = entries[0].get("face_asset") or next(
+            (entry.get("asset") for entry in entries[1:] if entry.get("role") == "face"), None)
+        if mode == "face_only" and face:
+            chosen = [(face, "face")]
+        elif mode == "face":
+            chosen = [(primary, "representative")]
+            if face and face != primary:
+                chosen.append((face, "face"))
+        else:
+            chosen = [(primary, "representative")]
+            if len(entries) > 1 and entries[1].get("role") == "representative":
+                chosen.append((entries[1].get("asset"), "second_representative"))
+        for asset, kind in chosen:
+            if not asset or asset not in assets:
+                continue
+            source = next((entry.get("source_asset") or entry.get("face_source_asset") or asset
+                           for entry in entries if entry.get("asset") == asset or entry.get("face_asset") == asset), asset)
+            pictures.append({
+                "picture": len(pictures) + 1, "name": name,
+                "asset": asset, "source": source, "kind": kind,
+            })
+            if len(pictures) >= MOSS_REFERENCE_MAX_PICTURES:
+                break
+        if len(pictures) >= MOSS_REFERENCE_MAX_PICTURES:
+            break
+    return pictures
+
+
+def build_moss_reference(fields: dict, bot_dir, assets: dict, layout: dict) -> dict | None:
+    """Build the ``workflow.reference`` control object, or None when disabled."""
+    settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
+    if not settings.get("enabled"):
+        return None
+    strength = float(settings.get("strength", 1.0))
+    if settings.get("strength_scale") == "linear" and strength <= 0:
+        return None
+    pictures = _moss_reference_from_existing(fields, assets, layout)
+    if not pictures:
+        pictures = _moss_reference_pictures(fields, bot_dir, assets, layout, moss_reference_roster(fields, bot_dir))
+    if not pictures:
+        return None
+    from modes.moss_prompt_builder import MOSS_CHARREF_LORA, MOSS_CHARREF_PROMPT_PREFIX
+    return {
+        "activate": True,
+        "pictures": pictures,
+        "char": pictures[0]["name"],
+        "strength": strength,
+        "lora": MOSS_CHARREF_LORA,
+        "prompt_prefix": MOSS_CHARREF_PROMPT_PREFIX,
+    }
+
+
+def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
+                       seed=None) -> str:
+    """Re-emit a saved MOSS document, filling missing values from the preset."""
+    from modes.moss_prompt_builder import MossPromptBuilder, build_controller, merge_lora_lists
+
+    workflow = document.get("workflow") or {}
+    reference = workflow.get("reference") if isinstance(workflow.get("reference"), dict) else {}
+    if not reference and isinstance(document.get("reference"), dict):
+        reference = document["reference"]
+    reference_active = bool(reference.get("activate"))
+    saved_loras = workflow.get("loras") if isinstance(workflow.get("loras"), dict) else {}
+    loras = merge_lora_lists(saved_loras)
+    if not loras:
+        loras = merge_lora_lists(workflow_defaults.get("STYLE_LORA_DATA", {}))
+    saved_sampling = workflow.get("sampling")
+    if saved_sampling is not None and not isinstance(saved_sampling, dict):
+        raise ValueError("MOSS sampling settings must be an object")
+    sampling = {**workflow_defaults.get("workflow.sampling", {}), **(saved_sampling or {})}
+    model = workflow.get("model") or workflow_defaults.get("workflow.model", "")
+    controller = build_controller(
+        model=model,
+        clip=workflow.get("clip") or workflow_defaults.get("workflow.clip", ""),
+        vae=workflow.get("vae") or workflow_defaults.get("workflow.vae", ""),
+        width=workflow.get("width") or 1024,
+        height=workflow.get("height") or 1024,
+        batch_size=workflow.get("batch_size") or 1,
+        seed=int(seed) if seed is not None else int(workflow.get("seed") or 0),
+        negative=workflow.get("negative") or negative or "",
+        sampling=sampling, lora_list=loras,
+        lora_filter=saved_loras.get("filter", ""),
+    )
+    rebuilt = MossPromptBuilder.build(document["moss"], controller)
+    if reference_active:
+        rebuilt["workflow"]["reference"] = copy.deepcopy(reference)
+    if "assets" in document:
+        rebuilt["assets"] = copy.deepcopy(document["assets"])
+    return MossPromptBuilder.dumps(rebuilt)
+
+
+def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: dict,
+                   seed=None, single_subject: bool = False, bot_dir=None,
+                   assets: dict | None = None) -> str:
+    """Emit ``{"moss": ..., "workflow": ...}`` for a MOSS workflow."""
+    from modes.moss_prompt_builder import (
+        MossNpcPromptBuilder, MossPromptBuilder, build_controller, build_moss_layout,
+        merge_lora_lists,
+    )
+    assets = assets if isinstance(assets, dict) else {}
+
+    width = int(fields.get("IMG_W") or workflow_defaults.get("workflow.width") or 1024)
+    height = int(fields.get("IMG_H") or workflow_defaults.get("workflow.height") or 1024)
+    if single_subject:
+        # The NPC generation node's card values go straight into the dedicated
+        # NPC builder: one summary caption, no regional items or bboxes.
+        moss = MossNpcPromptBuilder.build_layout(
+            fields.get("ANIMA_CONTENT", ""), fields=fields)
+    else:
+        moss = build_moss_layout(layout, fields.get("ANIMA_CONTENT", ""), fields=fields,
+                                 image_width=width, image_height=height)
+    reference = None if single_subject else build_moss_reference(fields, bot_dir, assets, moss)
+    # Character-card LoRAs have no loader of their own in the MOSS graph. Merge
+    # them with the preset's common set so the one batch loader applies both.
+    lora_list = merge_lora_lists(
+        fields.get("LORA_DATA", {}),
+        fields.get("STYLE_LORA_DATA", {}),
+        workflow_defaults.get("STYLE_LORA_DATA", {}),
+    )
+    if reference:
+        # Existing MOSS style LoRAs stay first; CharRef is applied last.
+        lora_list = merge_lora_lists(lora_list, [{
+            "lora_path": reference["lora"], "str": reference["strength"],
+            "BASE": "anima", "trigger": "",
+        }])
+    sampling = (fields.get("workflow.sampling") or fields.get("MOSS_FIRST_SAMPLER")
+                or workflow_defaults.get("workflow.sampling")
+                or workflow_defaults.get("MOSS_FIRST_SAMPLER") or {})
+    if not isinstance(sampling, dict):
+        raise ValueError("MOSS sampling settings must be an object")
+    model = (fields.get("workflow.model") or fields.get("MOSS_DIFFUSION_MODEL")
+             or workflow_defaults.get("workflow.model")
+             or workflow_defaults.get("MOSS_DIFFUSION_MODEL") or "")
+    clip = (fields.get("workflow.clip") or fields.get("MOSS_CLIP_MODEL")
+            or workflow_defaults.get("workflow.clip")
+            or workflow_defaults.get("MOSS_CLIP_MODEL") or "")
+    vae = (fields.get("workflow.vae") or fields.get("MOSS_VAE_MODEL")
+           or workflow_defaults.get("workflow.vae")
+           or workflow_defaults.get("MOSS_VAE_MODEL") or "")
+    controller_loras = fields.get("workflow.loras")
+    controller_loras = controller_loras if isinstance(controller_loras, dict) else {}
+    seed_value = int(seed) if seed is not None else int(fields.get("SEED") or 0)
+    controller = build_controller(
+        model=model, clip=clip, vae=vae, width=width, height=height,
+        batch_size=fields.get("workflow.batch_size") or 1, seed=seed_value,
+        negative=fields.get("NEGATIVE_ANIMA") or negative or "",
+        sampling=sampling, lora_list=lora_list,
+        lora_filter=controller_loras.get("filter", ""),
+    )
+    rebuilt = MossPromptBuilder.build(moss, controller)
+    if reference:
+        # Reference control stays in the workflow section; ``moss`` is pure layout.
+        rebuilt["workflow"]["reference"] = reference
+        if assets:
+            rebuilt["assets"] = assets
+        logging.info(
+            "[MOSS:CHARREF] document pictures=%s assets=%d model=%s sampling=%s styles=%d",
+            [(item["picture"], item["name"], item["kind"], str(item.get("asset") or "")[:12])
+             for item in reference["pictures"]],
+            len(assets), model, sampling, max(0, len(lora_list) - 1),
+        )
+    return MossPromptBuilder.dumps(rebuilt)
+
+
 def build_illustration_json(positive: str, negative: str, *, input_dir,
                             mask_location="region_mask", seed=None, workflow_defaults=None, bot_dir=None,
-                            include_face_embeddings=True, render_target=None) -> str:
+                            include_face_embeddings=True, render_target=None,
+                            moss_layout=None, npc_representative=False) -> str:
+    saved_moss = None
+    if isinstance(positive, str) and positive.lstrip().startswith("{"):
+        try:
+            candidate = json.loads(positive)
+        except json.JSONDecodeError:
+            candidate = None
+        if is_moss_document(candidate):
+            saved_moss = candidate
+    if saved_moss is not None:
+        # Regeneration/replay keeps the saved layout, models and sampling. The
+        # current preset only fills values the saved document does not carry.
+        return _moss_regeneration(saved_moss, negative, workflow_defaults or {}, seed)
     payload = illustration_fields(positive, negative)
     fields = payload["fields"]
     if render_target is not None:
@@ -596,6 +1104,15 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
     assets = payload.setdefault("assets", {})
     for key in ("LORA_DATA", "FACE_LORA_DATA", "STYLE_LORA_DATA", "BG_LORA_DATA"):
         _normalize_payload_paths(fields.get(key, {}), path_fields=frozenset({"lora_path"}), block_name=key)
+    if moss_layout is not None or is_moss_prompt_defaults(workflow_defaults):
+        # MOSS keeps the layout and controller in one document. When CharRef is
+        # enabled, reference pictures and control data travel under
+        # workflow.reference plus the shared base64 assets; the moss layout
+        # itself stays a pure generation prompt.
+        return _moss_document(fields, negative, moss_layout,
+                              workflow_defaults=workflow_defaults or {}, seed=seed,
+                              single_subject=bool(npc_representative),
+                              bot_dir=bot_dir, assets=assets)
     def input_path(value):
         # Resolve the Comfy directory only for legacy path-based assets.
         # Original bot references and embedded JSON must not access it.

@@ -288,6 +288,16 @@ class WorkflowApiTests(unittest.IsolatedAsyncioTestCase):
         self.installer.start_e2e.assert_not_called()
         self.installer.workflow_integrity_report.assert_not_called()
 
+    async def test_local_install_routes_to_local_model_installer(self):
+        self.installer.start_local_workflow_models.return_value = {
+            "state": "running", "operation": "workflow_models", "selected_item_ids": ["local:abc"],
+        }
+        response = await self.client.post("/api/setting/workflows/install", headers=self.headers,
+                                          json={"releaseVersion": "v6", "selectedItemIds": ["local:abc"]})
+        self.assertEqual(response.status, 200, await response.text())
+        self.installer.start_local_workflow_models.assert_called_once_with(identity="local:abc", civitai_key="")
+        self.installer.start_workflow_models.assert_not_called()
+
     async def test_empty_selection_errors_and_busy_guards(self):
         for body in ({}, [], {"releaseVersion": "v6", "selectedItemIds": []}, {"releaseVersion": "v6", "selectedItemIds": [42]}):
             response = await self.client.post("/api/setting/workflows/e2e", headers=self.headers, json=body)

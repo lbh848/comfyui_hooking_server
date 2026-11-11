@@ -542,9 +542,6 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
             sdxl.add(char_name)
             continue
         loras = list(char_data.get("loras_solo", char_data.get("loras", [])) or [])
-        # 그림체 LoRA 트리거도 메인 ANIMA/SDXL 프롬프트 접두부에 포함된다.
-        # 이를 누락하면 캐릭터 교체 시 이전 그림체 트리거가 장면 태그로 오인되어 남는다.
-        loras.extend(char_data.get("style_loras", []) or [])
         for lora in loras:
             if not isinstance(lora, dict):
                 continue
@@ -629,15 +626,6 @@ def collect_character_triggers(bot: dict, character_names: list[str]) -> dict:
             else:
                 append_unique(anima, trigger)
                 append_unique(anima_by_char[name], trigger)
-        for lora in character.get("style_loras", []) or []:
-            if not isinstance(lora, dict):
-                continue
-            trigger = lora.get("trigger", "")
-            if lora.get("BASE", "anima") == "sdxl":
-                append_unique(sdxl, trigger)
-            else:
-                append_unique(anima, trigger)
-                append_unique(shared_anima, trigger)
 
     return {
         "anima": set(anima),

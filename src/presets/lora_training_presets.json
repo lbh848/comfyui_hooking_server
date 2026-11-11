@@ -17,7 +17,7 @@
         "step_mode": "per_image",
         "step_per_image": 200,
         "total_steps": 200,
-        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
         "upscale": false
@@ -39,7 +39,7 @@
         "step_mode": "per_image",
         "step_per_image": 300,
         "total_steps": 300,
-        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_캐릭터_ILXL_V1_1.json",
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_ILXL_V1_1.json",
         "profile": "sdxl",
         "multi_img_folder_name": "soya_lora",
         "upscale": false
@@ -61,7 +61,7 @@
         "step_mode": "per_image",
         "step_per_image": 2000,
         "total_steps": 2000,
-        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
         "upscale": false
@@ -83,7 +83,7 @@
         "step_mode": "total",
         "step_per_image": 400,
         "total_steps": 2000,
-        "workflow_source_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\user\\default\\workflows/배포_공방_LoRA학습_스타일_ILXL_V1_1.json",
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ILXL_V1_1.json",
         "profile": "sdxl",
         "multi_img_folder_name": "soya_lora",
         "upscale": false

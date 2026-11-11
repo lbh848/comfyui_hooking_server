@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "공방-카드스타일1",
+      "text": "",
+      "bg_css": ".background {\n  background:\n    radial-gradient(circle at 20% 18%, rgba(255, 245, 210, 0.32) 0 2px, transparent 2.5px),\n    radial-gradient(circle at 78% 24%, rgba(255, 230, 245, 0.28) 0 2px, transparent 2.5px),\n    radial-gradient(circle at 30% 72%, rgba(255, 245, 210, 0.22) 0 1.5px, transparent 2px),\n    radial-gradient(circle at 82% 78%, rgba(255, 230, 245, 0.24) 0 1.5px, transparent 2px),\n    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)),\n    linear-gradient(145deg, #f7d9e8 0%, #e6c8ea 42%, #cdb8e8 72%, #b39fd8 100%);\n\n  background-repeat: repeat, repeat, repeat, repeat, no-repeat, no-repeat;\n  background-size: 140px 140px, 180px 180px, 120px 120px, 160px 160px, 100% 100%, 100% 100%;\n  background-position: 0 0, 20px 30px, 10px 15px, 40px 50px, center, center;\n}",
+      "fg_css": ".foreground {\n  pointer-events: none;\n  position: absolute;\n  inset: 0;\n  box-sizing: border-box;\n  overflow: hidden;\n  border-radius: 10px;\n\n  background: transparent;\n\n  border: 3px solid #f3d48e;\n\n  box-shadow:\n    inset 0 0 0 3px #fffaf0,\n    inset 0 0 0 6px #e6a9bf,\n    inset 0 0 0 8px #ffe7a8,\n    inset 0 0 0 12px rgba(255, 250, 245, 0.9),\n    inset 0 0 0 13px rgba(213, 157, 185, 0.95);\n}\n\n.foreground::before {\n  content: \"✦  ✿  ♡  ✿  ✦\";\n  position: absolute;\n  top: 12px;\n  left: 50%;\n  transform: translateX(-50%);\n  white-space: nowrap;\n\n  font-size: 22px;\n  letter-spacing: 8px;\n  color: #f3d48e;\n}\n\n.foreground::after {\n  content: \"✦  ♡  ✦\";\n  position: absolute;\n  bottom: 14px;\n  left: 50%;\n  transform: translateX(-50%);\n  white-space: nowrap;\n\n  font-size: 22px;\n  letter-spacing: 10px;\n  color: #f3d48e;\n}",
+      "preview_name": "20261110_105231_9bfc2597",
+      "preview_url": "/api/backup_image/20261110_105231_9bfc2597.webp"
+    }
+  ]
+}

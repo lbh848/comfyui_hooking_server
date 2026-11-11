@@ -553,7 +553,10 @@
             ['CALL1', 'call1', 2, 1],
             ['TIME & PLACE', 'time_place', 2, 2],
             ['NPC 생성 노드', 'npc_generation', 2, 3],
+            ['EMOTION-RESOLVE', 'emotion_resolve', 2, 4],
+            ['NPC 대표 이미지 (나중)', 'npc_generation_image', 6, 4],
             ['NPC 대표 이미지', 'npc_generation_image', 2, 4],
+            ['EMOTION-ASSET', 'emotion_asset', 4, 4],
             ['CALL2-SELECT', 'call2_select', 2, 3],
             ['CALL2-PLAN', 'call2_plan', 3, 0],
             ['CALL2-DETAIL', 'call2_detail', 4, 0],
@@ -964,11 +967,13 @@
                 img.onerror = () => {console.error('[ILLUST_FLOW] 생성 이미지 표시 실패:', {node: n.id, url}); img.dataset.failed = 'true'; imageButton.replaceChildren(element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.'));};
                 const maskNode = isSelection ? null : imageMaskNode(n, flow);
                 const result = maskNode && maskResults.get(maskResultKey(flow, maskNode));
+                // MOSS has no MULTI-CHAR-MASK node; its boxes come from the submitted layout.
+                const mossLayout = n.moss_layout?.regions?.length ? n.moss_layout : null;
                 const recordedMask = Object.hasOwn(n, 'mask_url');
-                if ((n.mask_url || (!recordedMask && maskNode) || n.face_positions?.length) && img.dataset.failed !== 'true') {
+                if ((n.mask_url || (!recordedMask && maskNode) || mossLayout || n.face_positions?.length) && img.dataset.failed !== 'true') {
                     const toggle = element('label', 'if-mask-overlay-toggle'), input = element('input');
-                    const overlay = imageMaskOverlay(n.mask_url || !recordedMask ? result?.layout : null, img, n.mask_url, null, n.face_positions || []);
-                    input.type = 'checkbox'; input.checked = maskOverlayNodes.has(previewKey); input.disabled = !overlay;
+                    const overlay = imageMaskOverlay(mossLayout || (n.mask_url || !recordedMask ? result?.layout : null), img, n.mask_url, null, n.face_positions || []);
+                    input.type = 'checkbox'; input.checked = Boolean(mossLayout) || maskOverlayNodes.has(previewKey); input.disabled = !overlay;
                     input.dataset.maskOverlayNode = previewKey; input.setAttribute('aria-label', `${n.label} MASK & 얼굴 보이기`);
                     toggle.title = overlay ? '인물 영역 마스크와 마지막으로 추적한 얼굴 위치·캐릭터 이름을 겹쳐 표시합니다.' : result?.error || '마스크 결과를 기다리는 중입니다.';
                     if (overlay) {
@@ -998,7 +1003,7 @@
             ? (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id)) : n;
         const img = imageNode && previewImages.get(imageNode.id);
         return JSON.stringify([kind, n.label, n.status, n.error, nodeImageUrl(n, flow.status),
-            n.mask_url, Object.hasOwn(n, 'mask_url'), n.face_positions, mask?.id, result, n.image_nodes,
+            n.mask_url, Object.hasOwn(n, 'mask_url'), n.face_positions, n.moss_layout, mask?.id, result, n.image_nodes,
             img?.naturalWidth, img?.naturalHeight, img?.dataset.failed]);
     }
     function render(timelineOnly = false) {
@@ -1183,7 +1188,7 @@
                 preview.remove(); card.style.height = ''; delete card.dataset.previewKind;
             }
             let title = card.querySelector('.if-node-title');
-            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE', 'PROFILE-RESOLVE', 'PROFILE-RESOLVE-REPAIR'].includes(n.label);
+            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE', 'PROFILE-RESOLVE', 'PROFILE-RESOLVE-REPAIR', 'EMOTION-RESOLVE'].includes(n.label);
             if (title.tagName !== (hasStateTable ? 'BUTTON' : 'DIV')) {
                 const nextTitle = hasStateTable ? button(n.label, () => openDetail(n.id)) : element('div');
                 title.replaceWith(nextTitle); title = nextTitle;
@@ -1464,16 +1469,19 @@
         }
         const profile = !!n.profile_state_table;
         const timePlace = !!n.time_place_state_table;
-        const data = profile ? n.profile_state_table : timePlace ? n.time_place_state_table : n.call1_state_table;
+        const emotion = !!n.emotion_state_table;
+        const data = emotion ? n.emotion_state_table : profile ? n.profile_state_table : timePlace ? n.time_place_state_table : n.call1_state_table;
         if (!data) return;
-        const title = profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
-        const fields = profile ? [['profile', '적용 카드 ID'], ['reason', '판단 근거']] : timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
-        body.append(element('h3', '', title), element('p', 'if-subtitle', profile
+        const title = emotion ? 'EMOTION-RESOLVE 장면별 복장' : profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
+        const fields = emotion ? [['outfit', '복장']] : profile ? [['profile', '적용 카드 ID'], ['reason', '판단 근거']] : timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
+        body.append(element('h3', '', title), element('p', 'if-subtitle', emotion
+            ? '선택된 장면 앵커마다 확정된 복장입니다. 파란색은 EMOTION-RESOLVE가 직접 정한 값이고, 회색은 이전 저장 복장을 이어받은 값입니다.'
+            : profile
             ? '파란색은 확정된 시작·변경점이고, 회색은 앞선 프로필과 근거를 이어받은 값입니다. START는 첫 등장 시의 상태이며, 이후 C 칸은 해당 원문 구간이 끝난 시점의 상태입니다.'
             : `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
-        wrap.dataset.detailScrollKey = profile ? 'profile-state-table' : timePlace ? 'time-place-state-table' : 'call1-state-table';
-        table.setAttribute('aria-label', profile ? 'PROFILE-RESOLVE 구간별 프로필·판단 근거' : timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
+        wrap.dataset.detailScrollKey = emotion ? 'emotion-state-table' : profile ? 'profile-state-table' : timePlace ? 'time-place-state-table' : 'call1-state-table';
+        table.setAttribute('aria-label', emotion ? 'EMOTION-RESOLVE 앵커별 복장 상태' : profile ? 'PROFILE-RESOLVE 구간별 프로필·판단 근거' : timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
         const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
         data.slots.forEach(slot => {const th = element('th', '', typeof slot === 'number' ? `SLOT${slot}` : slot); th.scope = 'col'; header.append(th);});
         head.append(header); table.append(head);
@@ -1486,7 +1494,7 @@
                 fields.forEach(([field, caption]) => {
                     const direct = Object.hasOwn(changes, field), section = element('div', `if-state-tags ${direct ? 'if-state-direct' : 'if-state-inherited'}`);
                     section.dataset.field = field; section.dataset.source = direct ? 'direct' : 'inherited';
-                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? (profile ? '판정' : '직접') : '이어받음'}`), element('div', '', state[field] || (profile || timePlace ? '(정보 없음)' : '(태그 없음)'))); cell.append(section);
+                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? (profile ? '판정' : emotion ? '결정' : '직접') : '이어받음'}`), element('div', '', state[field] || (profile || timePlace || emotion ? '(정보 없음)' : '(태그 없음)'))); cell.append(section);
                 });
                 row.append(cell);
             });

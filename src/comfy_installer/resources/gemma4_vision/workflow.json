@@ -135,7 +135,7 @@
         "control_after_generate": "fixed",
         "gpu_layers": "auto",
         "gpu_device": 0,
-        "binary_path": "E:\\test3\\V6 Project\\comfyui_hooking_server\\data\\comfy\\llama.cpp\\b12032-cuda12.4\\llama-server.exe",
+        "binary_path": "llama.cpp/b12032-cuda12.4/llama-server.exe",
         "port": 8094
       }
     },

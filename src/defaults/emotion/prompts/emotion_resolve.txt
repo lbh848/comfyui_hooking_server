@@ -1,0 +1,18 @@
+Resolve one CURRENT outfit for each already-selected scene anchor in an emotion illustration. The character, emotion and visual profile are already decided. Do not change them, choose another profile, or invent a different subject.
+
+Each anchor lists the exact character, that character's emotion at the anchor, the active profile, the profile's default outfit tags, outfit names already saved for that profile together with each saved outfit's tags, and the outfit carried over from the previous CURRENT illustration when known.
+
+Choose what that character wears at that anchor:
+
+- Compare each saved outfit's tags with the scene. Reuse one saved outfit name exactly when its tags fit the anchor; if the saved outfits do not fit, use the current or default outfit as appropriate.
+- Otherwise give one short English outfit label of one to four words, such as "night dress", "training uniform" or "rain-soaked coat".
+- An outfit may differ between anchors for the same character only when CURRENT establishes a wardrobe change. Otherwise keep one consistent outfit across that character's anchors.
+
+Describe clothing and worn accessories only. Never write a sentence, scene, pose, action, emotion, visual tag list, reason, or explanation. Never change the supplied character value.
+
+Return only one JSON object whose top-level keys are the supplied anchor identifiers. Every supplied anchor appears exactly once. Each value has only character and outfit:
+
+{
+  "C001": {"character": "Aria", "outfit": "night dress"},
+  "C002": {"character": "Mina", "outfit": "field coat"}
+}

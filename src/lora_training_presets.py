@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 import uuid
 
-from app_paths import config_root
+from app_paths import config_root, install_root, resolve_install_path
 from asset_preset_scope import AssetPresetLock, write_scope_documents
 from configuration import settings_lock
 from lora_training_steps import training_step_settings
@@ -50,6 +50,7 @@ def validate_training_settings(value, profile):
 
 class LoraTrainingPresets:
     def __init__(self, project_root: Path):
+        self.project_root = Path(project_root)
         self.path = config_root(project_root) / "lora_training_presets.json"
         self.builtin_file = Path(project_root) / "presets/lora_training_presets.json"
         self.lock = AssetPresetLock()
@@ -79,6 +80,9 @@ class LoraTrainingPresets:
             identities.add(preset["id"])
             names.add(name)
             preset["settings"] = validate_training_settings(preset.get("settings"), preset["profile"])
+            if path == self.builtin_file and preset["settings"]["workflow_source_path"]:
+                preset["settings"]["workflow_source_path"] = str(resolve_install_path(
+                    preset["settings"]["workflow_source_path"], self.project_root))
         return document
 
     def _catalog(self):
@@ -157,9 +161,17 @@ class LoraTrainingPresets:
                 entries = []
                 for item in presets:
                     if item["scope"] == scope:
-                        stored = {key: value for key, value in item.items() if key not in {"scope", "source_id"}}
+                        stored = copy.deepcopy({key: value for key, value in item.items() if key not in {"scope", "source_id"}})
                         if scope == "builtin":
                             stored["id"] = item.get("source_id", item["id"])
+                            workflow_source_path = stored["settings"]["workflow_source_path"]
+                            if workflow_source_path:
+                                try:
+                                    stored["settings"]["workflow_source_path"] = resolve_install_path(
+                                        workflow_source_path, self.project_root).resolve().relative_to(
+                                            install_root(self.project_root)).as_posix()
+                                except ValueError as exc:
+                                    raise ValueError("배포 학습 프리셋에는 공방 설치 폴더 안의 워크플로우를 선택하세요.") from exc
                         entries.append(stored)
                 documents[path] = {"version": 1, "presets": entries}
             write_scope_documents(documents)

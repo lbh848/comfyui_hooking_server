@@ -4,6 +4,8 @@ import { enc, loraRepresentative, mediaUrl, type LoraData } from "./internalLora
 
 export const internalLoraLabels = { asset: "에셋", bot: "봇", style: "그림체" };
 export type InternalLoraSource = keyof typeof internalLoraLabels;
+export type InternalLoraFilter = InternalLoraSource | "all";
+export const internalLoraFilterLabels: Record<InternalLoraFilter, string> = { all: "전체", ...internalLoraLabels };
 export type PickerLora = LoraEntry & { sourceUrl?: string; internalSource?: InternalLoraSource; detail?: string };
 const folders: Record<InternalLoraSource, string> = { asset: "SOYA_ASSET_LORA", bot: "SOYA_BOT_LORA", style: "SOYA_STYLE_LORA" };
 export const loraPath = (value = "") => value.replaceAll("\\", "/").replace(/^loras\//i, "");
@@ -26,9 +28,10 @@ export function selectedLora(item: PickerLora, character: boolean): Illustration
     ...(isInternalLora(item) ? { name: item.alias?.trim() || item.name, preview_url: item.thumbnail || "" } : {}) };
 }
 
-export function searchLoras(items: PickerLora[], source: string, query: string): PickerLora[] {
+export function searchLoras(items: PickerLora[], source: string, query: string, internalSource: InternalLoraFilter = "all"): PickerLora[] {
   const search = query.trim().toLocaleLowerCase();
   return items.filter(item => !!item.path && !/snapref/i.test(item.path) && !/^SOYA_CHAR_LORA\/SOYA_INSTANCE_LORA\//i.test(loraPath(item.path)) && isInternalLora(item) === (source === "internal") &&
+    (source !== "internal" || internalSource === "all" || item.internalSource === internalSource) &&
     `${item.name} ${item.alias || ""} ${item.path} ${item.family} ${item.trigger} ${item.customTrigger || ""} ${item.detail || ""}`.toLocaleLowerCase().includes(search))
     .sort((a, b) => (a.alias?.trim() || a.name).localeCompare(b.alias?.trim() || b.name, "ko", { numeric: true }));
 }

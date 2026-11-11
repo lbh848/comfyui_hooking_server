@@ -9,6 +9,7 @@ import { illustrationNodeName, ThinkingBadge, ThinkingChecks, ThinkingNodeDetail
 const groupLabels: Record<string, string> = {
   call1_select: "OUTFIT + TIME & PLACE + NPC", call2_plan: "PLAN 배치", call2_detail: "DETAIL 배치", composite_detail: "DETAIL 합성 삽화",
   keyvis: "KEYVIS", original_asset: "Original Asset", profile_resolve: "PROFILE-RESOLVE",
+  emotion_resolve: "EMOTION-RESOLVE", emotion_asset: "EMOTION-ASSET",
   illustration_images: "삽화", illustration_postprocess: "이미지 후처리", illustration_inspection: "생성 이미지 자동 검사",
 };
 const emptyNodes: IllustrationData[] = [];
@@ -22,6 +23,13 @@ function FlowDiagram({ data, selected, onSelect, thinking, active }: {
   const connections: IllustrationData[] = data.connections;
   const related = new Set(connections.filter(edge => edge.from === selected || edge.to === selected).flatMap(edge => [edge.from, edge.to]));
   const jobCards = new Set<string>(data.jobs.map((job: IllustrationData) => job.card));
+  // The emotion workshop omits OUTFIT/PLAN/KEYVIS/MULTI-CHAR-MASK, so some
+  // pipeline steps have no nodes. Hide those lanes and number the rest in order.
+  const lanes = data.steps.map((step: string, index: number) => ({
+    step, nodes: data.nodes.filter((node: IllustrationData) => node.step === index + 1),
+  })).filter((lane: { nodes: IllustrationData[] }) => lane.nodes.length);
+  const groupLabel = (key: string) => key === "call1_select" && !data.nodes.some((node: IllustrationData) => node.name === "OUTFIT")
+    ? "TIME & PLACE + NPC" : groupLabels[key];
   useLayoutEffect(() => {
     if (!active || !root.current) return;
     const element = root.current;
@@ -84,18 +92,17 @@ function FlowDiagram({ data, selected, onSelect, thinking, active }: {
     <svg className="illust-node-flow-connections" aria-hidden="true"><defs><marker id={marker} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke" /></marker></defs>
       {[...paths].sort((a, b) => Number(a.related) - Number(b.related)).map(path => <path key={path.key} d={path.d} className={path.related ? "related" : ""} strokeDasharray={path.conditional ? "4 4" : undefined} markerEnd={`url(#${marker})`} />)}
     </svg>
-    {data.steps.map((step: string, index: number) => {
-      const nodes: IllustrationData[] = data.nodes.filter((node: IllustrationData) => node.step === index + 1);
+    {lanes.map(({ step, nodes }: { step: string; nodes: IllustrationData[] }, index: number) => {
       const groups = new Map<string, IllustrationData[]>();
-      nodes.forEach(node => { const key = groupLabels[node.group] ? node.group : node.id; groups.set(key, [...(groups.get(key) || []), node]); });
+      nodes.forEach(node => { const key = groupLabel(node.group) ? node.group : node.id; groups.set(key, [...(groups.get(key) || []), node]); });
       return <section key={step} className="illust-node-flow-lane" aria-label={`STEP ${index + 1} · ${step}`}>
         <h3><span>STEP {index + 1}</span>{step}<ArrowRight size={13} aria-hidden="true" /></h3>
         {[...groups].map(([key, items]) => {
-          if (!groupLabels[key]) return items.map(renderNode);
+          if (!groupLabel(key)) return items.map(renderNode);
           const ids = new Set(items.map(item => item.id));
           const jobs = data.jobs.filter((job: IllustrationData) => ids.has(job.card));
           return <details className="illust-node-flow-group" key={key} open={items.length < 4}>
-            <summary><strong>{groupLabels[key]}</strong><span>큐 작업 {jobs.length}개 · 노드 {items.length}개</span></summary>
+            <summary><strong>{groupLabel(key)}</strong><span>큐 작업 {jobs.length}개 · 노드 {items.length}개</span></summary>
             <div>{items.map(renderNode)}</div>
           </details>;
         })}
@@ -104,7 +111,7 @@ function FlowDiagram({ data, selected, onSelect, thinking, active }: {
   </div>;
 }
 
-export function IllustNodeFlow({ toggles, botSelected, active, request = illustrationRequest }: { toggles: IllustrationData; botSelected: string; active: boolean; request?: typeof illustrationRequest }) {
+export function IllustNodeFlow({ toggles, botSelected, active, request = illustrationRequest, scope = "illustration" }: { toggles: IllustrationData; botSelected: string; active: boolean; request?: typeof illustrationRequest; scope?: "illustration" | "emotion" }) {
   const [scenario, setScenario] = useState({ character_count: 2, conditional: false, protocol: "context" });
   const [data, setData] = useState<IllustrationData | null>(null), [error, setError] = useState("");
   const [revision, setRevision] = useState(0), [loading, setLoading] = useState(true), [selected, setSelected] = useState("");
@@ -134,7 +141,7 @@ export function IllustNodeFlow({ toggles, botSelected, active, request = illustr
       <fieldset className="illust-node-flow-scenario illust-fields" disabled={!!thinking.progress}>
         <label className="field">CHARACTER-RESOLVE 인원<input type="number" min={0} step={1} value={scenario.character_count} disabled={scenario.protocol === "prompt_batch_v1"} onChange={event => setScenario({ ...scenario, character_count: Math.max(0, Math.trunc(Number(event.target.value))) })} /></label>
         <label className="field">입력<select value={scenario.protocol} onChange={event => setScenario({ ...scenario, protocol: event.target.value })}><option value="context">대화 문맥</option><option value="prompt_batch_v1">완성 프롬프트</option></select></label>
-        <label className="illust-check"><input type="checkbox" checked={scenario.conditional} onChange={event => setScenario({ ...scenario, conditional: event.target.checked })} />다중 캐릭터 마스크 가정</label>
+        {scope !== "emotion" && <label className="illust-check"><input type="checkbox" checked={scenario.conditional} onChange={event => setScenario({ ...scenario, conditional: event.target.checked })} />다중 캐릭터 마스크 가정</label>}
       </fieldset>
       {!data ? <IllustrationLoading error={error} retry={reload} /> : <>
         <IllustrationFeedback error={error} />

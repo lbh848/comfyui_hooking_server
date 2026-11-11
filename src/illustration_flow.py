@@ -6,6 +6,9 @@ import copy
 import functools
 import inspect
 import json
+import os
+import re
+import shutil
 import time
 import traceback
 import uuid
@@ -25,10 +28,57 @@ _latest_video_input = None
 _latest_lora_feedback = None
 _notify = None
 HISTORY_LIMIT = 8
+WORKSHOPS = ("illustration", "emotion")
+# Each workshop owns a separate record space. Emotion illustrations must never
+# share the illustration store or directory; the history API reads one space
+# and never filters another workshop's runs out of it.
+_history_dirs = {
+    "illustration": DATA_DIR / "illustration_flow",
+    "emotion": DATA_DIR / "emotion_illustration_flow",
+}
+_histories = {workshop: {} for workshop in WORKSHOPS}
+# Direct id lookup across both spaces (cancel, node detail, continuation).
 _history = {}
-_history_dir = DATA_DIR / "illustration_flow"
 _history_dirty = set()
 _history_task = None
+
+
+def normalize_workshop(value) -> str:
+    return "emotion" if str(value or "").strip().lower() == "emotion" else "illustration"
+
+
+def run_workshop(run) -> str:
+    return normalize_workshop((run or {}).get("workshop"))
+
+
+def _session_workshop(session_id) -> str:
+    """Resolve a run's workshop from its persisted session metadata."""
+    session_id = str(session_id or "")
+    if not session_id:
+        return "illustration"
+    try:
+        from modes import illustration_context_pipeline
+        return normalize_workshop(
+            (illustration_context_pipeline.get_session(session_id) or {}).get("workshop")
+        )
+    except Exception:
+        return "illustration"
+
+
+def _legacy_workshop(run) -> str:
+    """Place records written before per-workshop storage in their real space.
+
+    Composite assembly is the emotion workshop's exclusive output, so a node
+    from that stage identifies its run even when the session is gone.
+    """
+    if "workshop" in run:
+        return run_workshop(run)
+    for node in (run.get("nodes") or {}).values():
+        if node.get("layout_group") == "illustration_postprocess":
+            return "emotion"
+    return _session_workshop(run.get("session_id"))
+
+
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration", "regenerate"}
 BACKGROUND_LLM_TYPES = {"illustration_quality_inspection", "illustration_visual_correction", "illustration_visual_selection"}
 VIDEO_INPUT_TYPES = {
@@ -50,40 +100,57 @@ TERMINAL = {"completed", "failed", "cancelled", "skipped"}
 def configure(notify):
     global _notify, _latest
     _notify = notify
-    if _history:
+    if any(_histories.values()):
         return
-    restored = []
-    for path in _history_dir.glob("*.json"):
-        try:
-            run = json.loads(path.read_text(encoding="utf-8"))
-            if run.get("kind") != "illustration" or path.stem != run["id"]:
-                continue
-            # Existing standalone character regenerations were recorded before
-            # their queue requests explicitly opted out of illustration history.
-            if (not run.get("session_id") and not run.get("backup_names")
-                    and str(run.get("label") or "").startswith("캐릭터 이미지 재생성 · ")
-                    and any(node.get("kind") == "request" and node.get("task_key") == "illustration"
-                            and not node.get("dependencies") for node in run["nodes"].values())):
-                path.unlink(missing_ok=True)
-                print(f"[ILLUST_FLOW] 캐릭터 이미지 재생성 기록 제거: run={run['id']}")
-                continue
-            for node in run["nodes"].values():
-                for key in ("_preview_image", "_preview_mask", "_preview_source"):
-                    if node.get(key):
-                        node[key] = base64.b64decode(node[key], validate=True)
-                if node["status"] not in TERMINAL:
-                    node.update(status="cancelled", ended_at=run["updated_at"],
-                                error="프로그램이 종료되어 중단된 작업입니다.")
-            if run["status"] not in TERMINAL:
-                run.update(status="cancelled", cancel_requested=True)
-            run["_active_llm_tasks"] = set()
-            restored.append(run)
-        except Exception:
-            print(f"[ILLUST_FLOW] 기록 복원 실패: {path}")
-            traceback.print_exc()
-    for run in sorted(restored, key=lambda value: value["created_at"])[-HISTORY_LIMIT:]:
-        _history[run["id"]] = run
-        _latest = run
+    for directory_workshop, directory in _history_dirs.items():
+        restored = []
+        if directory.is_dir():
+            for path in directory.glob("*.json"):
+                try:
+                    run = json.loads(path.read_text(encoding="utf-8"))
+                    if run.get("kind") != "illustration" or path.stem != run["id"]:
+                        continue
+                    # Existing standalone character regenerations were recorded before
+                    # their queue requests explicitly opted out of illustration history.
+                    if (not run.get("session_id") and not run.get("backup_names")
+                            and str(run.get("label") or "").startswith("캐릭터 이미지 재생성 · ")
+                            and any(node.get("kind") == "request" and node.get("task_key") == "illustration"
+                                    and not node.get("dependencies") for node in run["nodes"].values())):
+                        path.unlink(missing_ok=True)
+                        print(f"[ILLUST_FLOW] 캐릭터 이미지 재생성 기록 제거: run={run['id']}")
+                        continue
+                    run["workshop"] = _legacy_workshop(run)
+                    for node in run["nodes"].values():
+                        for key in ("_preview_image", "_preview_mask", "_preview_source"):
+                            if node.get(key):
+                                node[key] = base64.b64decode(node[key], validate=True)
+                        if node["status"] not in TERMINAL:
+                            node.update(status="cancelled", ended_at=run["updated_at"],
+                                        error="프로그램이 종료되어 중단된 작업입니다.")
+                    if run["status"] not in TERMINAL:
+                        run.update(status="cancelled", cancel_requested=True)
+                    run["_active_llm_tasks"] = set()
+                    # Move legacy records out of the shared directory so the next
+                    # startup restores them in their own space.
+                    if run["workshop"] != directory_workshop:
+                        destination = _history_dirs[run["workshop"]] / path.name
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(path, destination)
+                        path.unlink(missing_ok=True)
+                        print(
+                            f"[ILLUST_FLOW] 흐름 기록 공간 이동: run={run['id']}, "
+                            f"{directory_workshop} -> {run['workshop']}"
+                        )
+                    restored.append(run)
+                except Exception:
+                    print(f"[ILLUST_FLOW] 기록 복원 실패: {path}")
+                    traceback.print_exc()
+        for run in sorted(restored, key=lambda value: value["created_at"])[-HISTORY_LIMIT:]:
+            workshop = run_workshop(run)
+            _histories[workshop][run["id"]] = run
+            _history[run["id"]] = run
+            if workshop == "illustration":
+                _latest = run
 
 
 def find_run(run_id, *, kind="illustration"):
@@ -94,14 +161,15 @@ def find_run(run_id, *, kind="illustration"):
     return run if run and run["id"] == run_id else None
 
 
-def history():
-    """Return lightweight newest-first entries for navigation and backup groups."""
+def history(workshop="illustration"):
+    """Return lightweight newest-first entries from one workshop's own space."""
+    runs = _histories[normalize_workshop(workshop)]
     return [{key: copy.deepcopy(run.get(key)) for key in
              ("id", "label", "session_id", "group_label", "status", "created_at", "updated_at", "revision")} | {
                  "active": run["status"] not in TERMINAL or any(
                      node["status"] not in TERMINAL for node in run["nodes"].values()),
                  "backup_names": list(run.get("backup_names", [])),
-             } for run in reversed(list(_history.values()))]
+             } for run in reversed(list(runs.values()))]
 
 
 def record_backup(backup_name):
@@ -115,6 +183,29 @@ def record_backup(backup_name):
     return run["id"]
 
 
+def current_workshop():
+    """Workshop of the flow run executing in this queue context, if any."""
+    run = _run.get()
+    if run is None or run.get("kind") != "illustration":
+        return None
+    return run_workshop(run)
+
+
+def backup_workshops():
+    """Map each retained backup name to the workshop that produced it.
+
+    Backups are already bound to their flow run; this gives the backup listing
+    the same separation as the flow history even when the image metadata has
+    no workshop stamp (records written before the stamp existed).
+    """
+    mapping = {}
+    for workshop, runs in _histories.items():
+        for run in runs.values():
+            for name in run.get("backup_names") or ():
+                mapping[name] = workshop
+    return mapping
+
+
 async def _persist_history():
     while _history_dirty:
         await asyncio.sleep(0.5)
@@ -123,21 +214,26 @@ async def _persist_history():
         payloads = {}
         for run_id in dirty & _history.keys():
             run = _history[run_id]
+            workshop = run_workshop(run)
             payload = serializable({key: value for key, value in run.items()
                                     if not key.startswith("_") and key != "publish_pending"})
+            payload["workshop"] = workshop
             for node_id, node in run["nodes"].items():
                 for key in ("_preview_image", "_preview_mask", "_preview_source"):
                     if node.get(key):
                         payload["nodes"][node_id][key] = base64.b64encode(node[key]).decode("ascii")
-            payloads[run_id] = payload
-        retained = set(_history)
+            payloads[run_id] = (workshop, payload)
 
         def write():
-            for run_id, payload in payloads.items():
-                write_json_atomic(_history_dir / f"{run_id}.json", payload)
-            for path in _history_dir.glob("*.json"):
-                if path.stem not in retained:
-                    path.unlink(missing_ok=True)
+            for run_id, (workshop, payload) in payloads.items():
+                write_json_atomic(_history_dirs[workshop] / f"{run_id}.json", payload)
+            for workshop, directory in _history_dirs.items():
+                if not directory.is_dir():
+                    continue
+                retained = set(_histories[workshop])
+                for path in directory.glob("*.json"):
+                    if path.stem not in retained:
+                        path.unlink(missing_ok=True)
         try:
             await asyncio.to_thread(write)
         except Exception:
@@ -150,9 +246,25 @@ async def flush_history(_app=None):
         await _history_task
 
 
-def snapshot(run=None, *, kind="illustration"):
+def _moss_preview_layout(node):
+    """Normalized bbox layout for a MOSS generation node, if it has one."""
+    prompt = node.get("submitted_prompt")
+    if not isinstance(prompt, dict) or not isinstance(prompt.get("moss"), dict):
+        return None
+    try:
+        from modes.moss_prompt_builder import preview_layout
+        return preview_layout(prompt)
+    except Exception as exc:
+        print(f"[ILLUST_FLOW:MOSS] bbox 미리보기 변환 실패: node={node.get('id')!r}, error={exc}")
+        traceback.print_exc()
+        return None
+
+
+def snapshot(run=None, *, kind="illustration", workshop="illustration"):
     latest_by_kind = {
-        "illustration": _latest,
+        "illustration": next(
+            reversed(list(_histories[normalize_workshop(workshop)].values())), None
+        ),
         "video": _latest_video,
         "video_input": _latest_video_input,
         "lora_feedback": _latest_lora_feedback,
@@ -160,13 +272,30 @@ def snapshot(run=None, *, kind="illustration"):
     run = run if run is not None else latest_by_kind.get(kind)
     if run is None:
         return None
+    # Backfill the final-result view for emotion runs recorded before it existed.
+    if run_workshop(run) == "emotion":
+        for node in run["nodes"].values():
+            if node.get("kind") == "result" and "final_result" not in node:
+                node["final_result"] = _final_result_payload(run)
+                _mark_changed(run)
+    nodes = []
+    for node in run["nodes"].values():
+        preview = {k: copy.deepcopy(v) for k, v in node.items()
+                   if k not in {"input", "input_variables", "output", "submitted_prompt", "attempts", "_preview_image", "_preview_mask", "_preview_source", "call1_state_table", "time_place_state_table", "profile_state_table", "emotion_state_table", "validation_warnings"}}
+        preview["attempt_count"] = sum(
+            event.get("type") == "attempt_start" for event in node.get("attempts", []))
+        preview["validation_warnings"] = [
+            {k: copy.deepcopy(v) for k, v in warning.items() if k != "input"}
+            for warning in node.get("validation_warnings", [])]
+        # MOSS generation nodes carry their boxes in the submitted layout
+        # document instead of a MULTI-CHAR-MASK node. Expose the normalized
+        # regions so the flow preview can draw the same bbox overlay.
+        moss_layout = _moss_preview_layout(node)
+        if moss_layout is not None:
+            preview["moss_layout"] = moss_layout
+        nodes.append(preview)
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
-        "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "input_variables", "output", "submitted_prompt", "attempts", "_preview_image", "_preview_mask", "_preview_source", "call1_state_table", "time_place_state_table", "profile_state_table", "validation_warnings"}} | {
-                       "attempt_count": sum(event.get("type") == "attempt_start" for event in node.get("attempts", [])),
-                       "validation_warnings": [{k: copy.deepcopy(v) for k, v in warning.items() if k != "input"}
-                                               for warning in node.get("validation_warnings", [])],
-                   } for node in run["nodes"].values()]
+        "nodes": nodes,
     }
 
 
@@ -174,8 +303,18 @@ def detail(run_id, node_id):
     for run in (find_run(run_id), _latest_video, _latest_video_input, _latest_lora_feedback):
         if run is not None and run["id"] == run_id:
             node = run["nodes"].get(node_id)
-            return {key: copy.deepcopy(value) for key, value in node.items()
-                    if key not in {"_preview_image", "_preview_mask", "_preview_source"}} if node is not None else None
+            if (node is not None and node.get("kind") == "result"
+                    and "final_result" not in node and run_workshop(run) == "emotion"):
+                node["final_result"] = _final_result_payload(run)
+                _mark_changed(run)
+            if node is None:
+                return None
+            details = {key: copy.deepcopy(value) for key, value in node.items()
+                       if key not in {"_preview_image", "_preview_mask", "_preview_source"}}
+            moss_layout = _moss_preview_layout(node)
+            if moss_layout is not None:
+                details["moss_layout"] = moss_layout
+            return details
     print(f"[ILLUST_FLOW] 상세 정보 없음: run={run_id}, node={node_id}")
     return None
 
@@ -190,15 +329,200 @@ def preview_image(run_id, node_id, *, source=False):
     return None
 
 
+_SLOT_MARKER_IN_TEXT_RE = re.compile(r"\[Slot\s+(\d+)\]")
+
+
+def _emotion_asset_image_bytes(asset):
+    """Read one emotion asset image without depending on the live session cache."""
+    from modes.bot_mode import IMAGE_EXTENSIONS
+
+    candidates = []
+    saved_path = str(asset.get("saved_path") or "").strip()
+    if saved_path:
+        candidates.append(saved_path)
+    target_dir = str(asset.get("target_dir") or "").strip()
+    if target_dir and os.path.isdir(target_dir):
+        try:
+            candidates.extend(
+                os.path.join(target_dir, name)
+                for name in sorted(os.listdir(target_dir))
+                if not name.startswith((".", "_"))
+                and os.path.splitext(name)[1].lower() in IMAGE_EXTENSIONS
+                and os.path.isfile(os.path.join(target_dir, name))
+            )
+        except OSError as exc:
+            print(
+                "[ILLUST_FLOW:FINAL] 감정 에셋 폴더 확인 실패: "
+                f"dir={target_dir!r}, error={exc}"
+            )
+    for path in candidates:
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError as exc:
+            print(
+                "[ILLUST_FLOW:FINAL] 감정 에셋 이미지 읽기 실패: "
+                f"path={path!r}, error={exc}"
+            )
+            continue
+        if data:
+            return data
+    return None
+
+
+def preview_final_image(run_id, slot):
+    """Serve the final-result image for one insertion slot of an emotion run."""
+    run = find_run(run_id)
+    if run is None or run["id"] != run_id:
+        print(f"[ILLUST_FLOW:FINAL] 흐름 없음: run={run_id}, slot={slot}")
+        return None
+    try:
+        slot_number = int(slot)
+    except (TypeError, ValueError):
+        print(f"[ILLUST_FLOW:FINAL] 슬롯 파싱 실패: run={run_id}, slot={slot!r}")
+        return None
+    session_id = str(run.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    from modes import illustration_context_pipeline
+
+    # Emotion sessions persist no image bytes; the store folder owns the asset.
+    # Prefer it first so a restored session never logs a missing-backup warning.
+    item = illustration_context_pipeline.session_item_by_slot(session_id, slot_number)
+    asset = (item or {}).get("emotion_asset")
+    if isinstance(asset, dict):
+        image = _emotion_asset_image_bytes(asset)
+        if image:
+            return image
+    return illustration_context_pipeline.session_image_by_slot(session_id, slot_number)
+
+
+def _final_result_payload(run):
+    """Build the body text with each emotion asset at its parsed insertion slot.
+
+    Emotion illustrations are character assets: the result is not a set of
+    numbered images but the original passage with the asset placed where its
+    ``[Slot N]`` marker was parsed. The flow keeps that association so the
+    viewer can show the actual final result instead of a flat image list.
+    """
+    session_id = str(run.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    from modes import illustration_context_pipeline
+
+    session = illustration_context_pipeline.get_session(session_id)
+    if not isinstance(session, dict) or session.get("status") != "ready":
+        return None
+    items = [item for item in (session.get("items") or []) if isinstance(item, dict)]
+    if not items:
+        return None
+    slotted = ""
+    for flow_node in run.get("nodes", {}).values():
+        input_value = flow_node.get("input")
+        payload = input_value.get("payload") if isinstance(input_value, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        candidate = str(payload.get("target_slotted") or "")
+        if candidate.strip():
+            slotted = candidate
+            break
+    image_blocks = {}
+    for item in items:
+        try:
+            slot = int(item.get("slot"))
+        except (TypeError, ValueError):
+            continue
+        asset = item.get("emotion_asset") if isinstance(item.get("emotion_asset"), dict) else {}
+        image_blocks[slot] = {
+            "type": "image",
+            "slot": slot,
+            "anchor": str(asset.get("anchor") or ""),
+            "character": str(asset.get("character") or ""),
+            "emotion": str(asset.get("emotion_name") or ""),
+            "outfit": str(asset.get("outfit") or ""),
+            "image_url": f"/api/illustration_flow?run={run['id']}&final_image={slot}",
+        }
+    blocks = []
+    if slotted:
+        cursor = 0
+        for match in _SLOT_MARKER_IN_TEXT_RE.finditer(slotted):
+            text = slotted[cursor:match.start()]
+            if text.strip():
+                blocks.append({"type": "text", "text": text.strip("\n")})
+            block = image_blocks.pop(int(match.group(1)), None)
+            if block is not None:
+                blocks.append(block)
+            cursor = match.end()
+        tail = slotted[cursor:]
+        if tail.strip():
+            blocks.append({"type": "text", "text": tail.strip("\n")})
+    # A requested slot without its marker still belongs to the result; append it
+    # rather than dropping the asset and shifting the remaining anchors.
+    blocks.extend(image_blocks[slot] for slot in sorted(image_blocks))
+    if not any(block["type"] == "image" for block in blocks):
+        return None
+    return {
+        "session_id": session_id,
+        "kind": "emotion_asset",
+        "blocks": blocks,
+    }
+
+
 def record_reference_images(prompt_json):
     """Show the exact submitted reference bytes before the generation node."""
     run = _run.get()
     if run is None or run.get("kind") != "illustration":
         return
     from illustration_json import REFERENCE_PREPROCESS_LABELS
-    from comfy_installer.resources.illustration_v2.soya_illustration_json_v2 import stage_reference_assets
+    from illustration_reference_assets import stage_reference_assets
     payload = json.loads(prompt_json)
-    settings = payload["fields"].get("SNAPREF", {})
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        # MOSS documents keep reference data under workflow.reference.
+        workflow = payload.get("workflow") if isinstance(payload.get("workflow"), dict) else {}
+        reference = workflow.get("reference") if isinstance(workflow.get("reference"), dict) else {}
+        pictures = reference.get("pictures") if reference.get("activate") else []
+        if not pictures:
+            return
+        generation = next((run["nodes"][key] for key in _frontier.get()
+                           if run["nodes"][key].get("kind") == "image"
+                           or run["nodes"][key].get("layout_group") == "illustration_generation"), None)
+        if generation is None:
+            print(f"[ILLUST_FLOW:REFERENCE] MOSS 생성 노드가 없어 미리보기 생략: run={run['id']}")
+            return
+        dependencies = [key for key in generation["dependencies"]
+                        if run["nodes"].get(key, {}).get("kind") != "reference"]
+        node_ids = []
+        for entry in pictures:
+            if not isinstance(entry, dict):
+                continue
+            asset = entry.get("asset")
+            source = entry.get("source", asset)
+            assets = payload.get("assets") if isinstance(payload.get("assets"), dict) else {}
+            if asset not in assets:
+                continue
+            character = str(entry.get("name") or "")
+            kind = str(entry.get("kind") or "representative")
+            role = {"face": "얼굴 이미지", "second_representative": "두 번째 대표 이미지"}.get(kind, "대표 이미지")
+            picture = entry.get("picture")
+            node_id = f"{generation['id']}-reference-{len(node_ids)}"
+            label = f"CharRef 레퍼런스 · Picture {picture} · {character or '참조'}"
+            if node_id not in run["nodes"]:
+                add_node(run, label, dependencies=dependencies, node_id=node_id,
+                         kind="reference", executor="process", layout_group="reference_preprocessing",
+                         **({"prompt_id": generation["prompt_id"]} if generation.get("prompt_id") else {}))
+            url = f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1"
+            update(run, node_id, label=label, dependencies=dependencies, status="completed",
+                   image_url=f"{url}&v={asset}", source_image_url=f"{url}&source=1&v={source}",
+                   input={"character": character, "reference": role, "picture": picture},
+                   output={"reference": role, "picture": picture},
+                   _preview_image=base64.b64decode(assets[asset]["data"], validate=True),
+                   _preview_source=base64.b64decode(assets[source]["data"], validate=True))
+            node_ids.append(node_id)
+        if node_ids:
+            update(run, generation["id"], dependencies=list(dict.fromkeys([*dependencies, *node_ids])))
+        return
+    settings = fields.get("SNAPREF", {})
     mode = settings.get("preprocess", "none")
     if mode == "none" or not settings.get("enabled") or (
             settings.get("strength_scale") == "linear" and float(settings.get("strength", 1.0)) <= 0):
@@ -372,6 +696,19 @@ def unregister_active_llm_task(registration):
     active = run.get("_active_llm_tasks")
     if active is not None:
         active.discard(task)
+
+
+def _mark_changed(run):
+    """Schedule persistence for a lazily derived field without requiring a loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        run["revision"] += 1
+        run["updated_at"] = time.time()
+        if _history.get(run["id"]) is run:
+            _history_dirty.add(run["id"])
+        return
+    changed(run)
 
 
 def changed(run):
@@ -717,15 +1054,24 @@ def queue_added(item):
         params = item.params or {}
         session_id = str(params.get("session_id") or (params.get("payload") or {}).get("session_id")
                          or (params.get("raw_body") or {}).get("illustration_context_session_id") or "")
+        workshop = normalize_workshop(
+            params.get("workshop") or (params.get("payload") or {}).get("workshop")
+            or _session_workshop(session_id)
+        )
         run = {"id": uuid.uuid4().hex, "kind": "illustration", "label": item.label, "status": "waiting",
                "cancel_requested": False, "created_at": time.time(),
                "updated_at": time.time(), "revision": 0, "nodes": {},
-               "_active_llm_tasks": set(), "session_id": session_id, "backup_names": []}
+               "_active_llm_tasks": set(), "session_id": session_id, "backup_names": [],
+               "workshop": workshop}
         run["group_label"] = session_id[:12] if session_id else f"flow_{run['id'][:8]}"
-        _latest = run
+        if workshop == "illustration":
+            _latest = run
+        _histories[workshop][run["id"]] = run
         _history[run["id"]] = run
-        while len(_history) > HISTORY_LIMIT:
-            del _history[next(iter(_history))]
+        while len(_histories[workshop]) > HISTORY_LIMIT:
+            expired = next(iter(_histories[workshop]))
+            del _histories[workshop][expired]
+            _history.pop(expired, None)
     # Manager edits are reviewed in the prompt editor; keep their graph available
     # without interrupting that review with an automatically opened dialog.
     if "edit_body" in (item.params or {}) or (item.params or {}).get("illustration_flow_auto_open") is False:
@@ -919,9 +1265,14 @@ def queue_execution(fn):
                 image_nodes = [key for key, value in delivery_nodes.items()
                                if value.get("image_url") and value.get("kind") != "reference" and value.get("task_key") not in BACKGROUND_LLM_TYPES
                                and value["created_at"] >= node["created_at"]]
-                add_node(run, "결과 반환", dependencies=leaves, status=status,
-                         ended_at=time.time(), kind="result", executor="process", output=serializable(result),
-                         image_nodes=image_nodes)
+                result_node_id = add_node(
+                    run, "결과 반환", dependencies=leaves, status=status,
+                    ended_at=time.time(), kind="result", executor="process",
+                    output=serializable(result), image_nodes=image_nodes)
+                if run_workshop(run) == "emotion":
+                    final_result = _final_result_payload(run)
+                    if final_result:
+                        update(run, result_node_id, final_result=final_result)
                 run["status"] = status
                 changed(run)
             return result

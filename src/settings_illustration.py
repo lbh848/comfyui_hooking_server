@@ -15,7 +15,8 @@ API_PREFIX = "/api/illust"
 # Keep the worker's public surface explicit. Never expose /api/config or arbitrary
 # server routes (credentials, filesystem actions, and other applications).
 READ_PATHS = {
-    "bot_mode/regenerate_image",
+    "bot_mode/regenerate_image", "bot_mode/regenerate_emotion_outfit", "bot_mode/regenerate_emotion_image",
+    "bot_mode/generate_emotion_images", "bot_mode/generate_profile_outfits",
     "backups", "backups/filters", "reschedule", "illustration/config", "asset_mode/tags",
     "illustration_context/bridge/bots", "illustration_context/prompts",
     "illustration_context/toggles", "illustration_context/prompt-structure",
@@ -27,15 +28,18 @@ READ_PATHS = {
     "illustration_context/chat-histories", "illustration_context/chat-histories/settings",
     "bot_mode/illust_logs", "bot_mode/lb_extra", "bot_mode/lb_extra_refine_prompt", "bot_mode/auto_face_tag_prompt",
     "bot_mode/emotion_characters", "bot_mode/emotion_profiles", "bot_mode/emotion_outfits",
-    "bot_mode/emotion_emotions", "bot_mode/emotion_assets",
+    "bot_mode/emotion_emotions", "bot_mode/emotion_assets", "bot_mode/emotion_image_prompt",
+    "bot_mode/emotion_regeneration_activity",
     "bot_mode/importable_bot_chars", "bot_mode/asset_chars_with_rep", "bot_mode/asset_character_rep_images",
     "bot_mode/word_replacements", "illustration/thinking-connections", "illustration/extra",
     "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle",
     "postprocess/settings", "postprocess/fonts", "postprocess/face_devices", "illustration/workflow", "illustration/sampling-options", "illustration/presets",
+    "illustration/background-presets",
     "llm_edit_prompt_template",
 }
 WRITE_PATHS = {
-    "bot_mode/regenerate_image",
+    "bot_mode/regenerate_image", "bot_mode/regenerate_emotion_outfit", "bot_mode/regenerate_emotion_image",
+    "bot_mode/generate_emotion_images", "bot_mode/generate_profile_outfits",
     "illustration/config", "illustration_context/bridge/bots",
     "illustration_context/prompts", "illustration_context/toggles",
     "illustration_context/prompt-structure", "illustration_context/execution-preview",
@@ -57,6 +61,7 @@ WRITE_PATHS = {
     "bot_mode/emotion_assets", "bot_mode/emotion_upload",
     "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle",
     "postprocess/settings", "postprocess/preview", "postprocess/font/upload", "postprocess/font/delete", "illustration/workflow", "illustration/presets",
+    "illustration/background-presets",
     "llm_edit_prompt_template",
 }
 MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image)"
@@ -172,7 +177,7 @@ def register_illustration(app: web.Application, runtime, schema: str) -> None:
     app.router.add_delete(API_PREFIX + "/{path:.+}", gateway)
 
 
-def register_illustration_config(server, *, model_presets=None) -> None:
+def register_illustration_config(server, *, model_presets=None, background_preset_builtin_file=None) -> None:
     """Reuse the normal configuration writer, returning only illustration fields."""
     import workflow_profiles
 
@@ -184,22 +189,82 @@ def register_illustration_config(server, *, model_presets=None) -> None:
     async def config(request: web.Request) -> web.Response:
         scope = str(request.query.get("scope") or "").strip().lower()
         emotion_scope = scope == "emotion"
+
+        def emotion_values() -> dict:
+            return {
+                "postprocess_enabled": bool(server.app_config.get(
+                    "emotion_postprocess_enabled",
+                    server.DEFAULT_CONFIG.get("emotion_postprocess_enabled", False),
+                )),
+                "background_manual_text": str(server.app_config.get(
+                    "emotion_background_manual_text",
+                    server.DEFAULT_CONFIG.get("emotion_background_manual_text", ""),
+                )),
+                "background_bg_css": str(server.app_config.get(
+                    "emotion_background_manual_bg_css",
+                    server.DEFAULT_CONFIG.get("emotion_background_manual_bg_css", ""),
+                )),
+                "background_fg_css": str(server.app_config.get(
+                    "emotion_background_manual_fg_css",
+                    server.DEFAULT_CONFIG.get("emotion_background_manual_fg_css", ""),
+                )),
+                "background_preview_name": str(server.app_config.get(
+                    "emotion_background_preview_name",
+                    server.DEFAULT_CONFIG.get("emotion_background_preview_name", ""),
+                )),
+                "background_preview_url": str(server.app_config.get(
+                    "emotion_background_preview_url",
+                    server.DEFAULT_CONFIG.get("emotion_background_preview_url", ""),
+                )),
+            }
+
         if request.method == "POST" and emotion_scope:
             body = await request.json()
-            if not isinstance(body, dict) or set(body) - {"postprocess_enabled"}:
+            emotion_keys = {
+                "postprocess_enabled", "background_manual_text",
+                "background_bg_css", "background_fg_css",
+                "background_preview_name", "background_preview_url",
+            }
+            if not isinstance(body, dict) or set(body) - emotion_keys:
                 return web.json_response({"error": "지원하지 않는 감정 삽화 설정입니다."}, status=400)
-            if not isinstance(body.get("postprocess_enabled"), bool):
-                return web.json_response({"error": "감정 삽화 후처리 설정 값을 확인하세요."}, status=400)
-            server.app_config["emotion_postprocess_enabled"] = body["postprocess_enabled"]
+            if "postprocess_enabled" in body:
+                if not isinstance(body["postprocess_enabled"], bool):
+                    return web.json_response({"error": "감정 삽화 후처리 설정 값을 확인하세요."}, status=400)
+                server.app_config["emotion_postprocess_enabled"] = body["postprocess_enabled"]
+            text_fields = (
+                ("background_manual_text", "emotion_background_manual_text", 20000, "배경 설명"),
+                ("background_bg_css", "emotion_background_manual_bg_css", 20000, "배경 CSS"),
+                ("background_fg_css", "emotion_background_manual_fg_css", 20000, "전면 CSS"),
+                ("background_preview_name", "emotion_background_preview_name", 500, "미리보기 이미지 이름"),
+            )
+            for key, config_key, limit, label in text_fields:
+                if key not in body:
+                    continue
+                value = body[key]
+                if not isinstance(value, str) or len(value) > limit:
+                    return web.json_response(
+                        {"error": f"{label}은 {limit:,}자 이하의 문자열이어야 합니다."}, status=400
+                    )
+                server.app_config[config_key] = value
+            if "background_preview_url" in body:
+                value = body["background_preview_url"]
+                # 백업 이미지 경로만 허용한다. 빈 문자열은 선택 해제를 뜻한다.
+                if (
+                    not isinstance(value, str)
+                    or len(value) > 1000
+                    or (value and not value.startswith("/api/"))
+                ):
+                    return web.json_response({"error": "미리보기 이미지 경로를 확인하세요."}, status=400)
+                server.app_config["emotion_background_preview_url"] = value
+            if not body:
+                return web.json_response({"error": "저장할 감정 삽화 설정이 없습니다."}, status=400)
             server.save_config(server.app_config)
             # Return the same key set as GET so the autosave keeps a complete
             # baseline and never resends shared illustration settings.
             config_values = {
                 key: server.app_config.get(key, server.DEFAULT_CONFIG.get(key)) for key in keys
             }
-            config_values["postprocess_enabled"] = bool(
-                server.app_config["emotion_postprocess_enabled"]
-            )
+            config_values.update(emotion_values())
             return web.json_response(
                 {"config": config_values},
                 headers={"Cache-Control": "no-store"},
@@ -231,12 +296,21 @@ def register_illustration_config(server, *, model_presets=None) -> None:
             key: server.app_config.get(key, server.DEFAULT_CONFIG.get(key)) for key in keys
         }
         if emotion_scope:
-            config_values["postprocess_enabled"] = bool(
-                server.app_config.get(
-                    "emotion_postprocess_enabled",
-                    server.app_config.get("postprocess_enabled", False),
-                )
+            config_values.update(emotion_values())
+            # 감정 삽화 공방은 MOSS를 쓰지 않으므로 레퍼런스·디테일러 잠금을 적용하지 않는다.
+            workflow_source_path = ""
+            model_family = ""
+        else:
+            workflow_type = server.app_config.get(
+                "illustration_workflow_type",
+                server.DEFAULT_CONFIG.get("illustration_workflow_type"),
             )
+            local_profile = workflow_profiles.illustration_local_profile(workflow_type)
+            source_paths = server.app_config.get("illustration_workflow_source_paths") or {}
+            workflow_source_path = str(source_paths.get(local_profile) or "") if local_profile else ""
+            # 그리기 설정의 CharRef v2 / MOSS 잠금은 활성 프리셋의 그림 모델
+            # 선택을 따른다. 선택값이 없는 예전 프리셋만 경로에서 이관한다.
+            model_family = str(server.app_config.get("illustration_model_family") or "")
         return web.json_response({
             "config": config_values,
             "workflow_types": workflow_profiles.ILLUSTRATION_PROFILE_LABELS,
@@ -244,11 +318,66 @@ def register_illustration_config(server, *, model_presets=None) -> None:
             "capabilities": workflow_profiles.illustration_capabilities(
                 server.app_config.get("illustration_workflow_type"),
                 server.app_config.get("chansub_workflow_type", "anima"),
+                workflow_source_path,
+                model_family,
             ),
         }, headers={"Cache-Control": "no-store"})
 
     server.app.router.add_get("/api/illustration/config", config)
     server.app.router.add_post("/api/illustration/config", config)
+
+    # 수동 배경 프리셋은 봇 데이터와 분리된 감정 삽화 공방 공통 저장소에 둔다.
+    # 배포 프리셋은 설치본 presets/, 사용자 프리셋은 설정 파일 옆에 저장된다.
+    from emotion_background_presets import EmotionBackgroundPresets
+
+    background_preset_store = EmotionBackgroundPresets(
+        server.CONFIG_FILE, background_preset_builtin_file
+    )
+    background_preset_store.migrate(server.app_config.get("emotion_background_presets"))
+
+    async def background_presets(request: web.Request) -> web.Response:
+        if str(request.query.get("scope") or "").strip().lower() != "emotion":
+            return web.json_response({"error": "감정 삽화 워크숍에서만 사용할 수 있습니다."}, status=400)
+        if request.method == "GET":
+            try:
+                presets = background_preset_store.list()
+            except (OSError, ValueError) as error:
+                return web.json_response({"error": str(error)}, status=500)
+            return web.json_response({"presets": presets}, headers={"Cache-Control": "no-store"})
+        body = await request.json()
+        if not isinstance(body, dict):
+            return web.json_response({"error": "프리셋 요청 형식을 확인하세요."}, status=400)
+        action = body.get("action")
+        try:
+            if action in ("unlock", "lock"):
+                return web.json_response(
+                    background_preset_store.change_lock(body), headers={"Cache-Control": "no-store"}
+                )
+            token = body.get("builtin_unlock_token")
+            if action == "save":
+                presets = background_preset_store.save(
+                    body.get("scope", "local"), body.get("name"), body, token
+                )
+            elif action == "duplicate":
+                presets = background_preset_store.duplicate(
+                    body.get("name"), body.get("new_name"), body.get("scope", "local"), token
+                )
+            elif action == "rename":
+                presets = background_preset_store.rename(body.get("name"), body.get("new_name"), token)
+            elif action == "delete":
+                presets = background_preset_store.delete(body.get("name"), token)
+            elif action == "scope":
+                presets = background_preset_store.move(body.get("name"), body.get("scope"), token)
+            else:
+                return web.json_response({"error": "지원하지 않는 프리셋 작업입니다."}, status=400)
+        except KeyError as error:
+            return web.json_response({"error": str(error.args[0] if error.args else "프리셋을 찾을 수 없습니다.")}, status=404)
+        except (OSError, ValueError) as error:
+            return web.json_response({"error": str(error)}, status=400)
+        return web.json_response({"presets": presets}, headers={"Cache-Control": "no-store"})
+
+    server.app.router.add_get("/api/illustration/background-presets", background_presets)
+    server.app.router.add_post("/api/illustration/background-presets", background_presets)
 
     async def sampling_options(request: web.Request) -> web.Response:
         return web.json_response(await illustration_sampling_options(server), headers={"Cache-Control": "no-store"})

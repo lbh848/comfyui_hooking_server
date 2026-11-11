@@ -11,9 +11,67 @@ const categoryHelp: Record<PromptCategory, string> = {
   assembled: "생성 태그와 사전 태그가 합쳐진 전체 장면·영역 공통 프롬프트입니다. 출처가 따로 저장되지 않은 태그는 이곳에서 편집합니다.",
 };
 
+// MOSS transports only a summary plus character/object (and text) items, so the
+// tag editor mirrors that document instead of projecting V3 control blocks.
+const mossCategoryHelp: Record<PromptCategory, string> = {
+  generated: "MOSS 레이아웃의 서머리·캐릭터·오브젝트 태그입니다. 수정한 값은 투영 JSON과 다시 그리기에 바로 반영됩니다.",
+  preset: "MOSS 워크플로 컨트롤러의 부정 프롬프트와 적용된 LoRA 트리거입니다. 부정 프롬프트는 여기서 수정할 수 있습니다.",
+  assembled: "생성에 사용되는 서머리·캐릭터·오브젝트를 MOSS 순서대로 모은 참고 표시입니다. 수정은 생성 태그에서 합니다.",
+};
+const mossItemLabels: Record<string, string> = { character: "캐릭터", object: "오브젝트", text: "텍스트" };
+
+const isMossDocument = (document: IllustrationData) =>
+  !!document && typeof document.moss === "object" && !!document.moss
+  && typeof document.workflow === "object" && !!document.workflow;
+
+function mossPromptGroups(document: IllustrationData): PromptGroup[] {
+  const groups: PromptGroup[] = [];
+  const moss = document.moss as IllustrationData;
+  const workflow = document.workflow as IllustrationData;
+  const items: IllustrationData[] = Array.isArray(moss.items) ? moss.items : [];
+  function group(category: PromptCategory, label: string, help?: string) {
+    const result: PromptGroup = { category, label, help, blocks: [] };
+    groups.push(result);
+    return result;
+  }
+  function add(target: PromptGroup, label: string, path: PromptPath, readOnly = false) {
+    const value = path.reduce<any>((node, key) => node?.[key], document);
+    if (typeof value === "string") target.blocks.push({ label, path, value, readOnly });
+  }
+  function addLayout(category: PromptCategory, readOnly: boolean) {
+    const summary = group(category, "서머리", "MOSS 레이아웃의 장면 요약입니다.");
+    add(summary, "장면 요약", ["moss", "summary", "caption"], readOnly);
+    const byLabel = new Map<string, number[]>();
+    items.forEach((item, index) => {
+      if (!item || typeof item !== "object") return;
+      const label = String(item.label || "character");
+      byLabel.set(label, [...(byLabel.get(label) || []), index]);
+    });
+    for (const [label, indices] of byLabel) {
+      const title = mossItemLabels[label] || label;
+      const target = group(category, title, label === "character" ? "캐릭터별 프롬프트입니다."
+        : label === "object" ? "위치가 중요한 사물 프롬프트입니다." : "이미지에 넣을 텍스트 항목입니다.");
+      indices.forEach((index, position) => add(target, `${title} ${position + 1}`, ["moss", "items", index, "caption"], readOnly));
+    }
+  }
+  addLayout("generated", false);
+  addLayout("assembled", true);
+  const negative = group("preset", "부정 프롬프트", "MOSS 컨트롤러의 부정 프롬프트입니다. 다시 그리기에 그대로 적용됩니다.");
+  add(negative, "부정 프롬프트", ["workflow", "negative"]);
+  const loras = Array.isArray(workflow.loras?.list) ? workflow.loras.list : [];
+  const triggers = group("preset", "LoRA 트리거 원문", "MOSS 컨트롤러에서 적용된 LoRA의 참고 원문입니다.");
+  loras.forEach((entry: IllustrationData, index: number) => {
+    if (typeof entry?.trigger !== "string" || !entry.trigger) return;
+    const name = typeof entry.lora_path === "string" ? entry.lora_path.split(/[\\/]/).pop() : "";
+    add(triggers, name || `LoRA ${index + 1}`, ["workflow", "loras", "list", index, "trigger"], true);
+  });
+  return groups.filter(target => target.blocks.length);
+}
+
 // Edit the stored inputs directly. Do not try to infer SETUP/CHAR boundaries
 // from a combined prompt, or rebuild prompts with a second frontend builder.
 function promptGroups(document: IllustrationData): PromptGroup[] {
+  if (isMossDocument(document)) return mossPromptGroups(document);
   const groups: PromptGroup[] = [];
   const root = document.schema === "soya.illustration.v2" ? ["fields"] : [];
   const fields = root.length ? document.fields : document;
@@ -113,20 +171,21 @@ function updatePromptBlock(document: IllustrationData, block: PromptBlock, value
   return result;
 }
 
-export function IllustrationPromptBlocks({ document, category, disabled, onChange }: {
-  document: IllustrationData; category: PromptCategory; disabled: boolean; onChange: (document: IllustrationData) => void;
+export function IllustrationPromptBlocks({ document, category, disabled, readOnly = false, onChange }: {
+  document: IllustrationData; category: PromptCategory; disabled: boolean; readOnly?: boolean; onChange: (document: IllustrationData) => void;
 }) {
   const groups = promptGroups(document).filter(group => group.category === category);
+  const moss = isMossDocument(document);
   return <div className="illust-prompt-blocks">
-    <p className="field-help">{categoryHelp[category]} 수정한 값은 최종 JSON에 바로 반영됩니다.</p>
-    {!groups.length && <p className="field-help">이 종류의 태그가 따로 저장되어 있지 않습니다. 조립된 프롬프트 또는 최종 JSON에서 확인하세요.</p>}
+    <p className="field-help">{moss ? mossCategoryHelp[category] : readOnly ? "이 백업이 실제로 사용한 태그의 참고 표시입니다." : `${categoryHelp[category]} 수정한 값은 투영 JSON에 바로 반영됩니다.`}</p>
+    {!groups.length && <p className="field-help">이 종류의 태그가 따로 저장되어 있지 않습니다. 조립된 프롬프트 또는 투영 JSON에서 확인하세요.</p>}
     {groups.map(group => <section className="illust-prompt-block-group" key={group.label}>
       <header><h3>{group.label}</h3><span>{group.blocks.length}개 블록</span></header>
       {group.help && <p className="field-help">{group.help}</p>}
       {group.blocks.map(block => <label className="field illust-prompt-block" key={block.path.join(".")}>
         <span>{block.label}{block.readOnly && <small className="illust-prompt-reference">참고 원문</small>}</span>
         <textarea aria-label={`${group.label} · ${block.label}`} rows={block.value.length > 240 ? 5 : 3} spellCheck={false}
-          readOnly={disabled || block.readOnly} value={block.value} onChange={event => onChange(updatePromptBlock(document, block, event.target.value))} />
+          readOnly={disabled || readOnly || block.readOnly} value={block.value} onChange={event => onChange(updatePromptBlock(document, block, event.target.value))} />
       </label>)}
     </section>)}
   </div>;

@@ -63,6 +63,18 @@
 .illust-flow-preview > .illust-mask-image { height: 185px; flex-shrink: 0; }
 .illust-flow-preview > .illust-mask-overlay { display: block; width: 100%; height: 130px; flex-shrink: 0; background: #020617; border-radius: 6px; }
 .illust-flow-mask-text { font-family: inherit; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: var(--muted); }
+.illust-flow-final-result { min-width: 0; }
+.illust-flow-final-result h3 { margin: 0 0 10px; font-size: 14px; }
+.illust-flow-final-body { display: flex; flex-direction: column; gap: 14px; }
+.illust-flow-final-body p { margin: 0; font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.illust-flow-final-figure { margin: 0; display: flex; flex-direction: column; gap: 5px; }
+.illust-flow-final-figure figcaption { font-size: 12px; font-weight: 600; color: var(--muted); }
+.illust-flow-final-figure img { display: block; width: 100%; max-height: 520px; object-fit: contain; border-radius: 8px; background: transparent; }
+/* 투명 PNG임을 알아볼 수 있도록 흐름 보기의 이미지 배경을 체크보드로 표시한다. */
+.illust-flow-panel .illust-mask-image,
+.illust-flow-detail .illust-mask-image { background-color: #f5f5f5; background-image: conic-gradient(#d9d9d9 25%, transparent 0 50%, #d9d9d9 0 75%, transparent 0); background-size: 24px 24px; }
+.illust-flow-panel .illust-mask-image .field-help,
+.illust-flow-detail .illust-mask-image .field-help { color: var(--muted); }
 .illust-flow-result-images > .illust-flow-preview { flex: none; overflow: visible; }
 .illust-flow-timeline { padding: 14px 20px; border-block: 1px solid var(--line); }
 .illust-flow-timeline > .illust-actions { margin-bottom: 12px; font-size: 12px; }

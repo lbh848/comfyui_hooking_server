@@ -24,7 +24,7 @@ CAMERA_AXIS_BUDGET_MAX = 3.0
 CAMERA_AXIS_DEADZONE = 0.2
 CAMERA_POLE_GATE_START = 0.9
 CAMERA_LORA_PATH = (
-    r"SOYA_CHAR_LORA\SOYA_INSTANCE_LORA\anima\bsk-anima-camera-control"
+    r"SOYA_INSTANCE_LORA\anima\bsk-anima-camera-control"
     r"\civitai-3174431\anima_bsk_camera_control_v1.0.safetensors"
 )
 CAMERA_LORA_MODEL_VERSION_ID = 3174431

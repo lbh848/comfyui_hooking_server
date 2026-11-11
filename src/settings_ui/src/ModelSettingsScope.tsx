@@ -7,19 +7,24 @@ import { assetRequest, assetWorkflowPaths, assetWorkflowTypes } from "./asset";
 const illustrationScope = {
   prefix: "illustration", workshop: "illustration", title: "삽화", category: "삽화",
   typeKey: "illustration_workflow_type", pathsKey: "illustration_workflow_source_paths",
-  configKeys: ["illustration_workflow_type", "illustration_workflow_source_paths", "chansub_workflow_type"],
-  profiles: ["v3", "v3_anima"], labels: { v3: "ANIMA+ILXL", v3_anima: "ANIMA" } as Record<string, string>,
+  configKeys: ["illustration_workflow_type", "illustration_workflow_source_paths", "chansub_workflow_type", "illustration_model_family"],
+  profiles: ["v3", "v3_anima"], labels: { v3: "ANIMA+ILXL", v3_anima: "ANIMA", moss: "MOSS" } as Record<string, string>,
+  // MOSS is a separate model choice that still runs on the v3_anima profile.
+  modelAliases: { moss: "v3_anima" } as Record<string, string>, familyKey: "illustration_model_family",
   bindings: {} as Record<string, string>, allowChansub: true, request: illustrationRequest,
   description: "선택한 프리셋은 모든 봇의 다음 삽화 생성에 공통으로 적용됩니다.",
 };
 const emotionScope: typeof illustrationScope = {
   ...illustrationScope, workshop: "emotion", title: "감정 삽화",
+  // 감정 삽화 프리셋은 DUAL_VAE 전용이므로 MOSS 모델을 선택할 수 없다.
+  configKeys: ["illustration_workflow_type", "illustration_workflow_source_paths", "chansub_workflow_type"],
+  labels: { v3: "ANIMA+ILXL", v3_anima: "ANIMA" }, modelAliases: {}, familyKey: "",
   description: "선택한 프리셋은 감정 삽화(배경 합성) 생성에만 적용됩니다.",
 };
 const assetScope: typeof illustrationScope = {
   prefix: "asset", workshop: "", title: "에셋", category: "에셋", typeKey: "asset_workflow_type", pathsKey: "asset_workflow_source_paths",
   configKeys: ["asset_workflow_type", "asset_workflow_source_paths"], profiles: ["anima_only", "anima_ilxl"],
-  labels: assetWorkflowTypes, bindings: assetWorkflowPaths, allowChansub: false, request: assetRequest,
+  labels: assetWorkflowTypes, modelAliases: {}, familyKey: "", bindings: assetWorkflowPaths, allowChansub: false, request: assetRequest,
   description: "선택한 프리셋은 에셋 생성과 에셋 일괄 생성의 모든 슬롯에 공통으로 적용됩니다.",
 };
 const Context = createContext(illustrationScope);

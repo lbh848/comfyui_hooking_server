@@ -489,6 +489,21 @@
       }
     },
     {
+      "key": "illustration_emotion_resolve",
+      "label": "삽화 CURRENT 복장 결정 (EMOTION-RESOLVE)",
+      "kind": "JSON · 1단계",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
       "key": "illustration_original_asset",
       "label": "삽화 원본 에셋 선택 (ORIGINAL-ASSET)",
       "kind": "JSON · 1단계",

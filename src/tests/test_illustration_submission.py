@@ -48,7 +48,7 @@ class IllustrationJsonSubmissionTests(unittest.TestCase):
             }
             original = copy.deepcopy(workflow)
             item_context = ContextVar("json_test_item", default=SimpleNamespace(_comfy_mask_location="job-mask"))
-            build = server_function("build_prompt", {"copy": copy, "CURRENT_COMFY_QUEUE_ITEM": item_context,
+            build = server_function("build_prompt", {"copy": copy, "os": os, "CURRENT_COMFY_QUEUE_ITEM": item_context,
                 "app_config": {"comfy_input_dir": directory}, "log_to_file": lambda *args: None})
             draft = ('[ANIMA_CONTENT]\n1girl, garden\n[CHAR_LIST]\nAlice\n[IMG_W]\n512\n'
                      '[CACHE_PATH]\n{"list":[{"CHAR":"Alice","emb_path":"cache.pt"}]}\n'
@@ -85,7 +85,10 @@ class ManualDrawQueueTests(unittest.IsolatedAsyncioTestCase):
             "CUSTOMPROMPT_DIR": self.temp.name, "RESTORE_WORKFLOW_PROMPT_LLM": "llm.py",
             "workflow_profiles": SimpleNamespace(normalize_restore_prompt_file=lambda value: value,
                 normalize_illustration_workflow_type=lambda value: "v3_anima",
-                is_restore_prompt_compatible=lambda *args: True, illustration_providers=lambda value: ["comfy"]),
+                is_restore_prompt_compatible=lambda *args: True, illustration_providers=lambda value: ["comfy"],
+                illustration_local_profile=lambda value: "v3_anima",
+                active_illustration_source_path=lambda config, value: "",
+                is_moss_workflow_source=lambda path: False),
         })
 
     async def test_success_waits_for_registration_and_returns_item_id(self):

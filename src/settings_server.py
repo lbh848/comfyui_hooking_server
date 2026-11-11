@@ -23,6 +23,7 @@ from settings_store import SettingsStore, SettingsConflict, SettingsDocument, Va
 from settings_resources import ResourceDeleteBlockedError, ResourceMoveBlockedError, ResourceLibrary
 from settings_workflows import WorkflowGroups, WorkflowGroupMoveBlocked, delete_local_workflow, effective_workflow_groups, validate_workflow_group_move, workflow_catalog, workflow_selection
 from llm_settings import LLM_SP_SLOTS, import_llm_settings, migrate_document
+from emotion_preset_groups import EmotionPresetGroups
 
 SETTINGS_HOST = "127.0.0.1"
 SETTINGS_PORT = 8201
@@ -66,7 +67,9 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     installer_lock = asyncio.Lock()
     resource_lock = asyncio.Lock()
     preset_lock = asyncio.Lock()
+    emotion_group_lock = asyncio.Lock()
     autocomplete_lock = asyncio.Lock()
+    emotion_groups = EmotionPresetGroups(project_root)
     autocomplete_loaded = False
     from settings_presets import SettingsPresets, classify_presets
     from modes import preset_importer, autocomplete_service
@@ -140,6 +143,29 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
             return web.json_response({"error": str(exc)}, status=400, headers=headers)
         except OSError:
             return web.json_response({"error": "프리셋 파일을 읽거나 저장할 수 없습니다. 폴더 권한을 확인하세요."}, status=500, headers=headers)
+
+    async def emotion_preset_groups(request: web.Request) -> web.Response:
+        headers = {"Cache-Control": "no-store"}
+        if request.headers.get("X-Comfy-Settings") != "1":
+            raise web.HTTPForbidden()
+        if request.headers.get("X-Comfy-Settings-Schema") != SETTINGS_UI_SCHEMA:
+            return web.json_response({"error": "설정 화면을 새로고침해 주세요."}, status=409, headers=headers)
+        try:
+            async with emotion_group_lock:
+                if request.method == "GET":
+                    result = await asyncio.to_thread(emotion_groups.catalog)
+                else:
+                    if request.content_type != "application/json":
+                        raise web.HTTPUnsupportedMediaType()
+                    body = await request.json()
+                    if not isinstance(body, dict):
+                        raise ValueError("감정 프리셋 그룹 요청 형식을 확인하세요.")
+                    result = await asyncio.to_thread(emotion_groups.mutate, request.match_info["action"], body)
+            return web.json_response(result, headers=headers)
+        except (ValueError, TypeError, KeyError) as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=headers)
+        except OSError:
+            return web.json_response({"error": "감정 프리셋 그룹 파일을 읽거나 저장할 수 없습니다. 폴더 권한을 확인하세요."}, status=500, headers=headers)
 
     async def preset_asset(request: web.Request) -> web.Response:
         from app_paths import data_root
@@ -541,7 +567,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                         result = await asyncio.to_thread(delete_local_workflow, installer,
                                                         identity=body.get("id"), revision=body.get("revision"))
                 else:
-                    release, selected = workflow_selection(body)
+                    release, selected = workflow_selection(body, allow_local=action == "install")
                     if state.get("state") == "running":
                         raise InstallerServiceError("진행 중인 설치·검증 작업이 끝난 뒤 다시 시도하세요.")
                     if action in {"cleanup-preview", "cleanup"}:
@@ -561,8 +587,12 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                         async with store_lock:
                             document, _ = await asyncio.to_thread(store.read)
                             key = (document or {}).get("apiKeys", {}).get("other-civitai", "")
-                        result = await asyncio.to_thread(installer.start_workflow_models,
-                                                        release_version=release, selected_item_ids=selected, civitai_key=key)
+                        if selected[0].startswith("local:"):
+                            result = await asyncio.to_thread(installer.start_local_workflow_models,
+                                                            identity=selected[0], civitai_key=key)
+                        else:
+                            result = await asyncio.to_thread(installer.start_workflow_models,
+                                                            release_version=release, selected_item_ids=selected, civitai_key=key)
                     elif action == "e2e":
                         if blockers:
                             raise InstallerServiceError(" ".join(blockers))
@@ -742,6 +772,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_get("/api/setting/autocomplete", autocomplete)
     app.router.add_get("/api/setting/presets", preset_requests)
     app.router.add_post("/api/setting/presets/{action:save|delete|hide|restore|commit|validate|compare|trace|analyze|classify|unlock|lock}", preset_requests)
+    app.router.add_get("/api/setting/emotion-preset-groups", emotion_preset_groups)
+    app.router.add_post("/api/setting/emotion-preset-groups/{action:create|save|duplicate|rename|delete|unlock|lock}", emotion_preset_groups)
     app.router.add_get("/api/setting/preset-assets/{path:.+}", preset_asset)
     app.router.add_get("/api/setting/resources", resources)
     app.router.add_get("/api/setting/resources/{identity}/details", resource_details)

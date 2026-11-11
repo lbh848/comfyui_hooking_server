@@ -3,6 +3,8 @@ from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Mapping
 
+from app_paths import SOURCE_DIR, data_root
+
 
 MANAGED_LORA_ROOT = "SOYA_CHAR_LORA"
 ASSET_LORA_FOLDER = "SOYA_ASSET_LORA"
@@ -43,6 +45,67 @@ def validate_lora_storage_name(value, label: str = "이름") -> str:
     if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_FILE_STEMS:
         return f"{label}에 Windows 예약 이름 {value!r}을(를) 사용할 수 없습니다."
     return ""
+
+
+# 인스턴스 LoRA는 더 이상 사용하지 않는다.
+DEFAULT_LORA_CATEGORY_FOLDERS = (
+    ASSET_LORA_FOLDER,
+    "SOYA_BOT_LORA",
+    "SOYA_STYLE_LORA",
+)
+
+
+def default_lora_load_paths() -> dict[str, str]:
+    """Portable category roots relative to the install's data directory."""
+    root = f"comfy/models/loras/{MANAGED_LORA_ROOT}"
+    return {
+        LORA_CATEGORY_CONFIG_KEYS[folder]: f"{root}/{folder}"
+        for folder in DEFAULT_LORA_CATEGORY_FOLDERS
+    }
+
+
+def resolve_lora_load_path(value: Any, project_root: str | Path = SOURCE_DIR) -> str:
+    """Resolve a configured LoRA path against the install's data directory."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    return str(path if path.is_absolute() else data_root(project_root) / path)
+
+
+def resolve_lora_load_paths(
+    config: Mapping[str, Any],
+    project_root: str | Path = SOURCE_DIR,
+) -> dict[str, str]:
+    defaults = default_lora_load_paths()
+    return {
+        key: resolve_lora_load_path(config.get(key) or defaults.get(key, ""), project_root)
+        for key in LORA_CATEGORY_CONFIG_KEYS.values()
+    }
+
+
+def portable_lora_load_path(value: Any, project_root: str | Path = SOURCE_DIR) -> str:
+    """Store LoRA paths relative to the data folder when they live inside it."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if not path.is_absolute():
+        return PurePosixPath(text.replace("\\", "/")).as_posix()
+    try:
+        return path.resolve().relative_to(data_root(project_root).resolve()).as_posix()
+    except ValueError:
+        return text
+
+
+def portable_lora_load_paths(
+    config: Mapping[str, Any],
+    project_root: str | Path = SOURCE_DIR,
+) -> dict[str, str]:
+    return {
+        key: portable_lora_load_path(config.get(key) or "", project_root)
+        for key in LORA_CATEGORY_CONFIG_KEYS.values()
+    }
 
 
 def managed_lora_root(config: Mapping[str, Any]) -> str:

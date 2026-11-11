@@ -6,7 +6,12 @@ import unittest
 from unittest.mock import patch
 
 from comfy_installer.configurator import apply_installed_config
-from lora_paths import bot_lora_load_path, lora_artifact_destination
+from lora_paths import (
+    bot_lora_load_path,
+    default_lora_load_paths,
+    lora_artifact_destination,
+    resolve_lora_load_paths,
+)
 from modes import lora_mode
 from modal_backend.lora_inventory import _asset_items, _remote_identity
 from modal_backend.service import ModalService
@@ -24,17 +29,27 @@ class LoraStoragePathsTest(unittest.TestCase):
             "style_lora_load_path": str(self.managed / "SOYA_STYLE_LORA"),
         }
 
-    def test_install_config_places_all_categories_at_the_same_depth(self):
+    def test_install_config_stores_portable_category_paths(self):
         config_file = self.root / "fixture.json"
         config_file.write_text("{}", encoding="utf-8")
-        comfy = self.root / "comfy"
-        comfy.mkdir()
+        comfy = self.root / "data" / "comfy"
+        comfy.mkdir(parents=True)
         apply_installed_config(config_path=config_file, requirements_dir=self.root / "backups",
                                comfy_root=comfy, workflow_bindings={}, required_bindings=[])
         result = json.loads(config_file.read_text(encoding="utf-8"))
-        base = comfy / "models" / "loras" / "SOYA_CHAR_LORA"
+        base = "comfy/models/loras/SOYA_CHAR_LORA"
         for key, folder in (("lora_load_path", "SOYA_ASSET_LORA"), ("bot_lora_load_path", "SOYA_BOT_LORA"), ("style_lora_load_path", "SOYA_STYLE_LORA")):
-            self.assertEqual(Path(result[key]), base / folder)
+            self.assertEqual(result[key], f"{base}/{folder}")
+            self.assertEqual(Path(resolve_lora_load_paths(result, self.root)[key]), comfy / "models" / "loras" / "SOYA_CHAR_LORA" / folder)
+
+    def test_default_category_paths_resolve_against_the_data_folder(self):
+        paths = default_lora_load_paths()
+        self.assertEqual(paths["lora_load_path"], "comfy/models/loras/SOYA_CHAR_LORA/SOYA_ASSET_LORA")
+        resolved = resolve_lora_load_paths(paths, self.root)
+        self.assertEqual(
+            Path(resolved["lora_load_path"]),
+            self.root / "data" / "comfy" / "models" / "loras" / "SOYA_CHAR_LORA" / "SOYA_ASSET_LORA",
+        )
 
     def test_training_output_is_discovered_and_uploaded_from_the_same_folder(self):
         save_path = lora_mode.training_save_path("Character", "Project")

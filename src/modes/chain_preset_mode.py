@@ -7,7 +7,7 @@ from app_paths import data_root
 from pathlib import Path
 from data_backups import BackupPolicy, backup_json_file, backup_policy
 from json_store import write_json_atomic
-from asset_preset_scope import AssetPresetLock
+from asset_preset_scope import AssetPresetLock, without_local_reference_images
 from configuration import settings_lock
 import hashlib
 import json
@@ -105,8 +105,17 @@ class ChainPresetMode:
                         raise ValueError("대상 그룹에 같은 이름의 체인 프리셋이 있습니다.")
                     path.parent.mkdir(parents=True, exist_ok=True)
                     self._backup_existing_file(source)
-                    # Both groups belong to this installation; rename is atomic.
-                    os.rename(source, path)
+                    if scope == "builtin":
+                        data = json.loads(source.read_text(encoding="utf-8-sig"))
+                        self._write_json_atomic(path, data)
+                        try:
+                            source.unlink()
+                        except OSError:
+                            path.unlink()
+                            raise
+                    else:
+                        # Both groups belong to this installation; rename is atomic.
+                        os.rename(source, path)
                 result = {"success": True, "name": name}
             if not result.get("success"):
                 return result
@@ -120,6 +129,8 @@ class ChainPresetMode:
         return backup_json_file(filepath, self._backup_policy(filepath))
 
     def _write_json_atomic(self, filepath, data):
+        if Path(filepath).parent == Path(self.builtin_dir):
+            data = without_local_reference_images(data)
         write_json_atomic(Path(filepath), data, backup_policy=self._backup_policy(filepath))
 
     def check_new_preset(self, name):
@@ -235,6 +246,8 @@ class ChainPresetMode:
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if scope == "builtin":
+                data = without_local_reference_images(data)
             return None if scope == "builtin" and data.get("hidden") is True else data
         except Exception as e:
             print(

@@ -1310,7 +1310,6 @@ def _e2e_owned_path_specs(comfy_root: Path) -> tuple[tuple[Path, bool], ...]:
             comfy_root
             / "models"
             / "loras"
-            / "SOYA_CHAR_LORA"
             / "comfy-installer-e2e",
             True,
         ),

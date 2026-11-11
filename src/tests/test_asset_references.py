@@ -17,8 +17,8 @@ from illustration_json import build_illustration_json
 from queue_manager import QueueItem, QueueManager
 from tests import test_asset_style_presets as style_tests
 
-spec = importlib.util.spec_from_file_location("asset_reference_nodes", Path(__file__).resolve().parents[1] /
-    "comfy_installer/resources/illustration_v2/soya_illustration_json_v2.py")
+spec = importlib.util.spec_from_file_location("asset_reference_nodes", Path(__file__).resolve().parents[2] /
+    "data/comfy/custom_nodes/comfyui-soya-custom-nodes/soya_illustration_json_v2.py")
 nodes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(nodes)
 
