@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Copy, Images, LockKeyhole, LockKeyholeOpen, Pencil, Save, Trash2 } from "lucide-react";
+import { Blend, Copy, Globe, Images, LockKeyhole, LockKeyholeOpen, Pencil, Save, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
+import { EmotionAutoBackgroundPresets } from "./EmotionAutoBackgroundPresets";
+import { EmotionCompositionSettings } from "./EmotionCompositionSettings";
 import { SearchableSelect } from "./SearchableSelect";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { emotionIllustrationRequest, useEmotionIllustrationResource } from "./emotionIllustration";
 import { illustrationMedia, type IllustrationData } from "./illustration";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
+import { EmotionBotApiProvider } from "./BotApiScope";
+import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
 
 /**
  * 감정 삽화 공방의 배경 설정.
  * 배경 생성은 수동 배경 모드와 자동 배경 모드로 나뉘며, 각 모드는 내부 탭으로
- * 관리한다. 설정은 봇과 분리된 공방 공통 값으로 저장한다.
+ * 관리한다. 수동 설정은 공방 공통 값, 자동 배경 봇은 별도 저장소를 사용한다.
  */
 export const backgroundModes = {
   manual: "수동 배경 모드",
@@ -26,7 +30,7 @@ export const backgroundModeShortLabels: Record<BackgroundMode, string> = {
 
 const modeDescriptions: Record<BackgroundMode, string> = {
   manual: "배경 CSS 위에 백업 이미지를 놓고, 다시 그 위에 전면 CSS 레이어를 얹어 배경 구성을 확인합니다.",
-  auto: "자동 배경 모드에서 생성된 배경 결과물을 관리합니다.",
+  auto: "원문과 세계관 설정에 맞는 배경 카드를 재사용하고, 없는 배경은 새로 생성합니다.",
 };
 
 type PreviewImage = { name: string; url: string };
@@ -54,18 +58,31 @@ function layerRules(selector: string, css: string): string {
   return body.includes("{") ? body : `${selector}{${body}}`;
 }
 
-function formValue(bgCss: string, fgCss: string, preview: PreviewImage | null): string {
-  return JSON.stringify([bgCss, fgCss, preview?.name || "", preview?.url || ""]);
+function formValue(bgCss: string, fgCss: string, preview: PreviewImage | null, mode: BackgroundMode = "manual", world = ""): string {
+  return JSON.stringify([bgCss, fgCss, preview?.name || "", preview?.url || "", mode, world]);
 }
 
-export function EmotionBackgroundSettings({ mode, onModeChange }: {
+export function EmotionBackgroundSettings({ mode, onModeChange, onPresetChange, botSelected }: {
   mode: BackgroundMode;
   onModeChange: (mode: BackgroundMode) => void;
+  onPresetChange?: (name: string) => void;
+  botSelected: string;
 }) {
   const resource = useEmotionIllustrationResource("illustration/config");
   const presetsResource = useEmotionIllustrationResource("illustration/background-presets");
   const [bgCss, setBgCss] = useState("");
   const [fgCss, setFgCss] = useState("");
+  const [world, setWorld] = useState("");
+  const [worldOpen, setWorldOpen] = useState(false);
+  const [generationBot, setGenerationBot] = useState("");
+  const [generationDirty, setGenerationDirty] = useState(false);
+  const [generationBusy, setGenerationBusy] = useState(false);
+  const [discardGeneration, setDiscardGeneration] = useState(false);
+  const [compositionOpen, setCompositionOpen] = useState(false);
+  const [compositionDirty, setCompositionDirty] = useState(false);
+  const [compositionBusy, setCompositionBusy] = useState(false);
+  const [discardComposition, setDiscardComposition] = useState(false);
+  const distribution = useEmotionIllustrationResource(generationBot ? "bot_mode/distribution" : null);
   const [preview, setPreview] = useState<PreviewImage | null>(null);
   const [picker, setPicker] = useState(false);
   const [ratio, setRatio] = useState(0.75);
@@ -91,11 +108,15 @@ export function EmotionBackgroundSettings({ mode, onModeChange }: {
       : null;
     const nextBgCss = String(config.background_bg_css || "");
     const nextFgCss = String(config.background_fg_css || "");
+    const nextWorld = String(config.background_world || "");
+    const nextMode: BackgroundMode = config.background_mode === "auto" ? "auto" : "manual";
+    onModeChange(nextMode);
+    setWorld(nextWorld);
     setBgCss(nextBgCss);
     setFgCss(nextFgCss);
     setPreview(nextPreview);
-    setBaseline(formValue(nextBgCss, nextFgCss, nextPreview));
-  }, [resource.data]);
+    setBaseline(formValue(nextBgCss, nextFgCss, nextPreview, nextMode, nextWorld));
+  }, [resource.data, onModeChange]);
 
   useEffect(() => {
     if (!presetsResource.data) return;
@@ -129,12 +150,14 @@ export function EmotionBackgroundSettings({ mode, onModeChange }: {
     return () => { active = false; probe.onload = null; };
   }, [previewUrl]);
 
-  const value = formValue(bgCss, fgCss, preview);
+  const value = formValue(bgCss, fgCss, preview, mode, world);
   const dirty = value !== baseline;
   const autosave = useWorkflowAutosave({
-    label: "감정 삽화 · 배경 설정", value, dirty, form,
+    label: "감정 삽화 · 배경 설정", value, dirty, form, paused: !resource.data,
     save: async () => {
       const result = await emotionIllustrationRequest("illustration/config", {
+        background_mode: mode,
+        background_world: world,
         background_bg_css: bgCss,
         background_fg_css: fgCss,
         background_preview_name: preview?.name || "",
@@ -152,6 +175,8 @@ export function EmotionBackgroundSettings({ mode, onModeChange }: {
               url: String(config.background_preview_url),
             }
           : null,
+        config.background_mode === "auto" ? "auto" : "manual",
+        String(config.background_world || ""),
       ));
     },
   });
@@ -430,16 +455,65 @@ export function EmotionBackgroundSettings({ mode, onModeChange }: {
     </div>
 
     <div hidden={mode !== "auto"}>
-      <Panel title={backgroundModes.auto}>
-        <div className="illust-body illust-form">
-          <p className="field-help">{modeDescriptions.auto}</p>
-          <IllustrationFeedback error={resource.error} />
-          <Empty title="생성된 배경이 없습니다">
-            자동 배경 모드로 생성한 배경 결과물이 이 화면에 표시됩니다.
-          </Empty>
-        </div>
-      </Panel>
+      {mode === "auto" && <EmotionAutoBackgroundPresets onPresetChange={onPresetChange}
+        toolbox={<Panel title="툴박스" aside={<span role="status">{autosave.status}</span>}>
+          <div className="illust-body illust-form">
+            <div className="illust-bot-toolbox">
+              <button type="button" className="button secondary" aria-haspopup="dialog" aria-expanded={worldOpen}
+                onClick={() => setWorldOpen(true)}><Globe size={14} />세계관 설정</button>
+              <button type="button" className="button" aria-haspopup="dialog" aria-expanded={!!generationBot}
+                disabled={!botSelected} onClick={() => setGenerationBot(botSelected)}><SlidersHorizontal size={14} />그리기 설정</button>
+              <button type="button" className="button" aria-haspopup="dialog" aria-expanded={compositionOpen}
+                onClick={() => setCompositionOpen(true)}><Blend size={14} />합성 설정</button>
+            </div>
+            <p className="field-help">{botSelected ? `현재 감정 삽화 봇 '${botSelected}'의 그리기 설정을 함께 사용합니다.` : "감정 삽화 봇 설정에서 봇을 먼저 선택하세요."}</p>
+            <IllustrationFeedback error={autosave.error || autosave.inputError} />
+          </div>
+        </Panel>} />}
     </div>
+
+    {compositionOpen && <Modal title="합성 설정" className="emotion-composition-modal" backgroundable={false} closeDisabled={compositionBusy}
+      onClose={() => { if (compositionDirty) setDiscardComposition(true); else setCompositionOpen(false); }}>
+      <EmotionCompositionSettings botSelected={botSelected} onDirtyChange={setCompositionDirty} onBusyChange={setCompositionBusy} />
+    </Modal>}
+    {discardComposition && <Modal title="설정 닫기" backgroundable={false} closeDisabled={compositionBusy} onClose={() => setDiscardComposition(false)}>
+      <p>저장하지 않은 변경을 버리고 닫을까요?</p>
+      <div className="modal-actions">
+        <button type="button" className="button" onClick={() => setDiscardComposition(false)}>계속 편집</button>
+        <button type="button" className="button danger" onClick={() => { setDiscardComposition(false); setCompositionDirty(false); setCompositionOpen(false); }}>변경 버리기</button>
+      </div>
+    </Modal>}
+
+    {generationBot && <Modal title={`${generationBot} · 그리기 설정`} backgroundable={false}
+      className="illust-character-modal" closeDisabled={generationBusy}
+      onClose={() => { if (generationDirty) setDiscardGeneration(true); else setGenerationBot(""); }}>
+      <IllustrationFeedback error={distribution.error} />
+      <EmotionBotApiProvider><IllustBotGenerationSettings key={generationBot} botName={generationBot} initialMode="background"
+        readOnly={!distribution.data?.bots?.some((bot: IllustrationData) => bot.name === generationBot && bot.scope === "local")}
+        onDirtyChange={setGenerationDirty} onBusyChange={setGenerationBusy} /></EmotionBotApiProvider>
+    </Modal>}
+    {discardGeneration && <Modal title="설정 닫기" backgroundable={false} onClose={() => setDiscardGeneration(false)}>
+      <p>저장하지 않은 변경을 버리고 닫을까요?</p>
+      <div className="modal-actions"><button type="button" className="button" onClick={() => setDiscardGeneration(false)}>계속 편집</button>
+        <button type="button" className="button danger" onClick={() => { setDiscardGeneration(false); setGenerationDirty(false); setGenerationBot(""); }}>변경 버리기</button></div>
+    </Modal>}
+
+    {worldOpen && <Modal title="세계관 설정" backgroundable={false} onClose={() => setWorldOpen(false)}>
+      <div className="illust-form">
+        <label className="field">세계관 설정
+          <textarea rows={12} value={world} maxLength={20000}
+            placeholder="배경의 시대, 건축 양식, 지역, 기술 수준 등을 입력하세요."
+            onChange={event => setWorld(event.target.value)} onBlur={() => void autosave.retry()} />
+          <span className="field-help">자동 배경 모드에서 원문과 함께 배경 선택·생성에 사용합니다.</span>
+        </label>
+        <span role="status">{autosave.status}</span>
+        <IllustrationFeedback error={autosave.error || autosave.inputError} />
+        <div className="modal-actions">
+          {autosave.error && <button type="button" className="button" onClick={() => void autosave.retry()}>저장 다시 시도</button>}
+          <button type="button" className="button" onClick={() => setWorldOpen(false)}>닫기</button>
+        </div>
+      </div>
+    </Modal>}
 
     {picker && <ManualBackgroundPicker onClose={() => setPicker(false)} onSelect={item => {
       setPreview({ name: item.name, url: item.raw_url || item.image_url });

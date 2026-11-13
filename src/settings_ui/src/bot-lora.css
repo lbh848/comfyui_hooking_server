@@ -72,12 +72,20 @@
 .bot-lora-settings .internal-lora-preset-select { min-width: 0; }
 .bot-lora-settings .internal-lora-toolbar > .button { width: 100%; }
 .bot-lora-settings .button { white-space: normal; }
-.bot-lora-results { grid-template-columns: minmax(0, 1fr); }
-.bot-lora-session-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.internal-lora-results.bot-lora-results { grid-template-columns: minmax(0, 1fr); }
+.bot-lora-results .internal-lora-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 18px; }
+.bot-lora-results .internal-lora-step { min-width: 0; margin-bottom: 0; }
+.bot-lora-results .internal-lora-step .internal-lora-images { grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); }
+.bot-lora-results .internal-lora-step .internal-lora-images > div { min-width: 0; }
+.bot-lora-results .internal-lora-step .internal-lora-image-open img { max-height: 360px; }
+.bot-lora-results .bot-lora-session-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .bot-lora-results .internal-lora-sessions[hidden] { display: none; }
 .bot-lora-session-overview .internal-lora-session img { height: 260px; max-height: none; }
 .bot-lora-reference-select { padding: 0 10px 10px; }
-.bot-lora-results-modal { height: min(900px, calc(100dvh - 48px)); overflow: hidden; }
+.bot-lora-test-prompt-setup { min-width: 0; display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.bot-lora-test-prompt-setup .lora-prompt-image > img { width: 72px; max-height: 110px; object-fit: contain; border-radius: 6px; }
+.bot-lora-test-prompt-setup .lora-prompt-image > strong { min-width: 0; overflow-wrap: anywhere; }
+.modal.bot-lora-results-modal { width: calc(100vw - 32px); max-width: none; height: calc(100dvh - 32px); max-height: calc(100dvh - 32px); overflow: hidden; }
 .bot-lora-results-modal > .modal-content { display: flex; flex-direction: column; height: 100%; }
 .bot-lora-results-modal > .modal-content > header { flex-shrink: 0; }
 .bot-lora-results-modal > .modal-content > .internal-lora-section { flex: 1; min-height: 0; overflow-y: auto; }
@@ -87,6 +95,8 @@
   .bot-lora-card-comparison { grid-template-columns: minmax(0, 1fr) minmax(130px, .8fr); gap: 8px; }
 }
 @media (max-width: 760px) {
+  .bot-lora-results .internal-lora-steps { grid-template-columns: minmax(0, 1fr); }
+  .modal.bot-lora-results-modal { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
   .lora-shell:has(#lora-main > div:not([hidden]) .bot-lora-project-page) #lora-main { padding: 8px 10px 0; }
   .bot-lora-project-toolbar h2 { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bot-lora-project-title { width: 100%; }
@@ -102,5 +112,5 @@
   .bot-lora-card-comparison { grid-template-columns: minmax(0, 1fr) minmax(120px, .8fr); }
   .bot-lora-trigger input { width: 160px; }
   .bot-lora-prompt-comparison { grid-template-columns: minmax(0, 1fr); }
-  .bot-lora-session-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bot-lora-results .bot-lora-session-overview { grid-template-columns: minmax(0, 1fr); }
 }

@@ -3,7 +3,7 @@
     {
       "key": "lora_management",
       "label": "LoRA 관리",
-      "description": "봇·에셋·스타일 LoRA 프롬프트 정제, 테스트 세팅과 학습 피드백",
+      "description": "봇·에셋·스타일 LoRA 프롬프트 정제와 테스트 이미지 세팅",
       "color": "#39a8d0"
     },
     {
@@ -33,6 +33,7 @@
     {
       "key": "knowledge_search",
       "label": "지식 · 태그 검색",
+      "hidden": true,
       "description": "자연어 질문 분석과 Danbooru RAG 근거 선별",
       "color": "#e6a23c"
     },
@@ -45,7 +46,7 @@
     {
       "key": "illustration_pipeline",
       "label": "삽화 생성 파이프라인",
-      "description": "수동 그리기와 등장인물·장면 선택, 프롬프트·대사·마스크 생성, 비주얼 교정과 결과 선택",
+      "description": "수동 그리기와 등장인물·장면 선택, 프롬프트·대사·마스크 생성",
       "color": "#5fbd8b"
     },
     {
@@ -55,15 +56,9 @@
       "color": "#cc6f88"
     },
     {
-      "key": "video_pipeline",
-      "label": "MiniMax H3 영상화",
-      "description": "I2V·FLF2V용 공식 H3 프롬프트 작성",
-      "color": "#cf6bd6"
-    },
-    {
       "key": "developer_settings",
-      "label": "개발자 옵션",
-      "description": "프로그램 개선용 삽화 품질 자동 검사",
+      "label": "개발자 옵션 및 비사용 옵션",
+      "description": "삽화 품질 자동 검사, LoRA 프롬프트 2차 검수·오토피드백과 MiniMax H3 영상화",
       "color": "#f0a04b"
     }
   ],
@@ -223,7 +218,7 @@
       "label": "LoRA 프롬프트 2차 검수",
       "kind": "비전/JSON",
       "modality": "vision",
-      "group": "lora_management",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -238,7 +233,7 @@
       "label": "오토피드백 · 원본 관찰",
       "kind": "비전/자연어",
       "modality": "vision",
-      "group": "lora_management",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -253,7 +248,7 @@
       "label": "오토피드백 · 태그·학습 결과 대조",
       "kind": "다중 비전/태그 수정",
       "modality": "vision",
-      "group": "lora_management",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -490,7 +485,7 @@
     },
     {
       "key": "illustration_emotion_resolve",
-      "label": "삽화 CURRENT 복장 결정 (EMOTION-RESOLVE)",
+      "label": "감정 삽화 CURRENT 복장 결정 (OUTFIT-RESOLVE)",
       "kind": "JSON · 1단계",
       "modality": "text",
       "group": "illustration_pipeline",
@@ -507,21 +502,6 @@
       "key": "illustration_original_asset",
       "label": "삽화 원본 에셋 선택 (ORIGINAL-ASSET)",
       "kind": "JSON · 1단계",
-      "modality": "text",
-      "group": "illustration_pipeline",
-      "defaults": {
-        "primary": "llm1",
-        "fallback_target": "none",
-        "retry_delay_sec": 1,
-        "max_retries": 0,
-        "fallback_retry_delay_sec": 1,
-        "fallback_max_retries": 0
-      }
-    },
-    {
-      "key": "illustration_original_asset_recovery",
-      "label": "삽화 원본 에셋 복구 (ORIGINAL-ASSET-RECOVERY)",
-      "kind": "JSON · 실패 후보 재선택",
       "modality": "text",
       "group": "illustration_pipeline",
       "defaults": {
@@ -575,6 +555,17 @@
       }
     },
     {
+      "key": "illustration_background_generation",
+      "label": "배경 카드 예측",
+      "kind": "JSON · 자동 배경 카드 생성",
+      "modality": "text",
+      "group": "illustration_pipeline",
+      "defaults": {
+        "primary": "llm1", "fallback_target": "none", "retry_delay_sec": 1,
+        "max_retries": 0, "fallback_retry_delay_sec": 1, "fallback_max_retries": 0
+      }
+    },
+    {
       "key": "illustration_call2_plan",
       "label": "삽화·만화 장면 계획 (PLAN / PLANNER-MANGA)",
       "kind": "텍스트 · 배치별 시각 계획",
@@ -592,6 +583,7 @@
     {
       "key": "illustration_call2_keyvis",
       "label": "삽화 대표 이미지 (KEYVIS)",
+      "hidden": true,
       "kind": "텍스트",
       "modality": "text",
       "group": "illustration_pipeline",
@@ -635,56 +627,11 @@
       }
     },
     {
-      "key": "illustration_visual_correction",
-      "label": "삽화 비주얼 교정 (VISUAL CORRECTION)",
-      "kind": "비전/JSON",
-      "modality": "vision",
-      "group": "illustration_pipeline",
-      "defaults": {
-        "primary": "llm1",
-        "fallback_target": "none",
-        "retry_delay_sec": 1,
-        "max_retries": 0,
-        "fallback_retry_delay_sec": 1,
-        "fallback_max_retries": 0
-      }
-    },
-    {
-      "key": "illustration_visual_selection",
-      "label": "삽화 비주얼 교정 결과 선택 (VISUAL SELECTION)",
-      "kind": "비전/JSON",
-      "modality": "vision",
-      "group": "illustration_pipeline",
-      "defaults": {
-        "primary": "llm1",
-        "fallback_target": "none",
-        "retry_delay_sec": 1,
-        "max_retries": 0,
-        "fallback_retry_delay_sec": 1,
-        "fallback_max_retries": 0
-      }
-    },
-    {
-      "key": "illustration_multi_char_mask",
-      "label": "삽화 다중 캐릭터 마스크 (MULTI-CHAR-MASK)",
-      "kind": "JSON",
-      "modality": "text",
-      "group": "illustration_pipeline",
-      "defaults": {
-        "primary": "llm1",
-        "fallback_target": "none",
-        "retry_delay_sec": 1,
-        "max_retries": 0,
-        "fallback_retry_delay_sec": 1,
-        "fallback_max_retries": 0
-      }
-    },
-    {
       "key": "video_instruction_translate",
       "label": "영상 연출 영어 번역",
       "kind": "텍스트",
       "modality": "text",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -699,7 +646,7 @@
       "label": "H3 I2V 연출·정적 분석",
       "kind": "비전",
       "modality": "vision",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -714,7 +661,7 @@
       "label": "H3 I2V 프롬프트 작성",
       "kind": "텍스트",
       "modality": "text",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -729,7 +676,7 @@
       "label": "H3 FLF2V 연출·정적 분석",
       "kind": "다중 비전",
       "modality": "vision",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -744,7 +691,7 @@
       "label": "H3 FLF2V 프롬프트 작성",
       "kind": "텍스트",
       "modality": "text",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -759,7 +706,7 @@
       "label": "H3 REF2V 연출·정적 분석",
       "kind": "다중 비전",
       "modality": "vision",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",
@@ -774,7 +721,7 @@
       "label": "H3 REF2V 프롬프트 작성",
       "kind": "텍스트",
       "modality": "text",
-      "group": "video_pipeline",
+      "group": "developer_settings",
       "defaults": {
         "primary": "llm1",
         "fallback_target": "none",

@@ -17,14 +17,14 @@ const labels: Record<string, string> = {
   local_llm_load_after_generation: "생성이 끝나면, 공방-LLM 로드", image_model_load_at_detail: "DETAIL이 시작할 때 그림 모델 로드",
   illustration_model_family: "그림 모델",
   illustration_output_mode: "출력 모드", original_asset_count: "원본 에셋 출력 장수",
+  moss_dialogue_repair_enabled: "말풍선 한국어 교정",
   outfit_enabled: "OUTFIT 복장·헤어 추적", time_place_enabled: "TIME & PLACE 시간·장소·조명 추적", npc_generation_enabled: "미등록 인물 자동 생성", npc_generation_deferred: "NPC 생성은 나중에", npc_lifetime: "미사용 수명 (회)", call2_plan_enabled: "PLAN 시각 계획",
-  visual_correction_enabled: "비주얼 교정", visual_correction_max_redraws: "최대 교정 횟수",
   call1_context_turns: "OUTFIT 참조 대화 수", call2_context_turns: "DETAIL 참조 대화 수", call3_context_turns: "POST PROCESS 참조 대화 수",
-  multi_char_mask_enabled: "마스크 사용", multi_char_mask_inline_enabled: "마스크 예측 방식", single_char_mask_enabled: "1인도 마스크",
+  single_char_mask_enabled: "1인도 마스크",
   single_char_mask_skip_enabled: "면적 기준으로 1인 마스크 생략", single_char_mask_skip_area_percent: "생략 기준 면적 (%)",
   speak_enabled: "대사 생성", call3_prompt_mode: "대사 출력 방식", speak_language: "대사 언어", speak_emotion_enabled: "대사 감정 지정", speak_emotions: "대사 감정",
-  nsfw: "NSFW 태깅", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "대표 이미지 생성", keyvis_in_detail_enabled: "DETAIL에서 KEYVIS 함께 예측",
-  minimal_background_description: "대표 이미지 배경 묘사 최소화", character_limit: "이미지당 최대 캐릭터", scene_mode: "장면 수 결정", output_count_min: "최소 일반 장면 수", output_count_max: "최대 일반 장면 수",
+  nsfw: "NSFW 태깅", manga_composition_hint_enabled: "만화 구성 힌트", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "KEYVIS 대표 이미지 생성",
+  character_limit: "이미지당 최대 캐릭터", scene_mode: "장면 수 결정", output_count_min: "최소 일반 장면 수", output_count_max: "최대 일반 장면 수",
   context_history: "이전 대화 참조", focus: "집중 캐릭터", direction: "우선 연출 지시", manga_output_count_min: "최소 만화 페이지 수", manga_output_count_max: "최대 만화 페이지 수",
   manga_scene_mode: "페이지 수 결정", manga_character_limit: "페이지당 최대 캐릭터", manga_focus: "만화 집중 캐릭터", manga_direction: "만화 우선 연출 지시",
   postprocess_enabled: "POST PROCESS", prompt_format: "프롬프트 입력 형식",
@@ -37,7 +37,6 @@ const choices: Record<string, [string, string][]> = {
   illustration_output_mode: [["illustration", "일반 삽화"], ["original_asset", "원본 에셋"], ["both", "일반 삽화 + 원본 에셋"], ["manga", "만화 삽화"], ["manga_both", "만화 삽화 + 원본 에셋"]],
   scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]], manga_scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]],
   character_limit: [["1", "1"], ["2", "2"], ["3", "3"]], manga_character_limit: [["1", "1"], ["2", "2"], ["3", "3"]],
-  multi_char_mask_inline_enabled: [["false", "별도 LLM으로 예측"], ["true", "현재 모델에서 예측"]],
   call3_prompt_mode: [["speak", "대사"], ["manga", "말풍선"], ["subtitle", "자막"]],
   compat_character_prompt: [["separate", "캐릭터별 분리"], ["combined", "통합"]],
   speak_language: [["한국어", "한국어"], ["영어", "영어"], ["일어", "일어"], ["중어", "중어"]],
@@ -71,12 +70,9 @@ const generationGroups: { id: string; title: string; description: string; sectio
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "nsfw", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "manga_composition_hint_enabled", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
-      { title: "KEYVIS", keys: ["key_visual"], dependent: ["keyvis_in_detail_enabled", "minimal_background_description"] },
-      { title: "MULTI-CHAR-MASK", keys: ["multi_char_mask_enabled"], dependent: ["multi_char_mask_inline_enabled", "single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"] },
-      { title: "", keys: ["postprocess_enabled"] },
-      { title: "비주얼 교정", keys: ["visual_correction_enabled", "visual_correction_max_redraws"] },
+      { title: "", keys: ["key_visual", "postprocess_enabled"] },
     ],
   },
   {
@@ -95,7 +91,7 @@ const generationGroups: { id: string; title: string; description: string; sectio
     sections: parallelSections,
   },
   {
-    id: "postprocess", title: "POST PROCESS", description: "대사의 언어·감정과 대사창·말풍선·자막 합성을 설정합니다.",
+    id: "postprocess", title: "POST PROCESS", description: "대사의 언어·감정과 자막·텍스트 교체 합성을 설정합니다.",
     sections: [
       { title: "", keys: ["speak_language", "speak_emotion_enabled", "speak_emotions"] },
     ],
@@ -113,8 +109,10 @@ const generationTabs = Object.fromEntries(generationGroups.map(group => [group.i
 // 해당 생성 설정을 노출하지 않는다. DETAIL 설정은 그대로 유지한다.
 const emotionHiddenKeys = new Set([
   "illustration_model_family",
+  "moss_dialogue_repair_enabled",
+  "manga_composition_hint_enabled",
   "outfit_enabled", "call2_plan_enabled", "key_visual", "keyvis_in_detail_enabled",
-  "minimal_background_description", "multi_char_mask_enabled", "multi_char_mask_inline_enabled",
+  "minimal_background_description",
   "single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent",
   // 감정 삽화는 인스턴스 에셋 생성이 목적이므로 대사 후처리를 사용하지 않는다.
   "postprocess_enabled",
@@ -147,11 +145,9 @@ const emotionGenerationGroups = [
 ];
 const emotionGenerationTabs = Object.fromEntries(emotionGenerationGroups.map(group => [group.id, group.title]));
 const dependencies: Record<string, string[]> = {
-  keyvis_in_detail_enabled: ["key_visual"], minimal_background_description: ["key_visual"],
-  multi_char_mask_inline_enabled: ["multi_char_mask_enabled"], single_char_mask_enabled: ["multi_char_mask_enabled"],
-  single_char_mask_skip_enabled: ["multi_char_mask_enabled", "single_char_mask_enabled"],
-  single_char_mask_skip_area_percent: ["multi_char_mask_enabled", "single_char_mask_enabled", "single_char_mask_skip_enabled"],
-  visual_correction_max_redraws: ["visual_correction_enabled"], speak_emotions: ["speak_emotion_enabled"],
+  single_char_mask_skip_enabled: ["single_char_mask_enabled"],
+  single_char_mask_skip_area_percent: ["single_char_mask_enabled", "single_char_mask_skip_enabled"],
+  speak_emotions: ["speak_emotion_enabled"],
   call1_context_turns: ["outfit_enabled"], npc_generation_deferred: ["npc_generation_enabled"],
 };
 for (const [prefix, stage] of [["call2", "call2_plan_enabled"], ["call2_detail", ""]]) {
@@ -170,7 +166,9 @@ const fieldHelp: Record<string, string> = {
   local_llm_load_after_generation: "삽화 작업이 끝나면, LLM 모델을 GPU에 올립니다.",
   image_model_load_at_detail: "detail이 시작하는 시점에서 그림 모델을 미리 GPU에 올립니다.\n초기 웜업 시간을 LLM 생성 시간에 가릴 수 있습니다.",
   illustration_output_mode: "원본 에셋 장수는 에셋 선택 탭에서 설정합니다. 만화 삽화 모드는 MOSS 그림 모델에서만 선택할 수 있습니다.",
+  moss_dialogue_repair_enabled: "항상 OFF로 고정됩니다. 말풍선 대사를 교정하지 않고 그대로 그립니다.",
   nsfw: "NSFW 및 물리 접촉 지침을 추가합니다. 호환성 지침은 항상 적용됩니다.",
+  manga_composition_hint_enabled: "만화 프롬프트의 기존 컷 구성 지침 아래에 3~5컷 배치 목록을 추가합니다.",
   nsfw_asset_generation_enabled: "캐릭터의 NSFW 복장·감정 에셋을 생성합니다.",
   profile_context_translate: "다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.",
   outfit_enabled: "복장·헤어를 미리 추적합니다. 끄면 후속 단계가 원문과 프로필에서 현재 상태를 판단합니다.",
@@ -178,20 +176,14 @@ const fieldHelp: Record<string, string> = {
   npc_generation_enabled: "대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다.",
   npc_generation_deferred: "NPC 외형 예측은 그대로 먼저 진행하고, 대표 이미지 Comfy 호출만 이미지 생성 단계(STEP 6)로 미룹니다.",
   npc_lifetime: "같은 봇에서 삽화를 이 횟수만큼 연속 생성하는 동안 등장하지 않으면 자동 생성 캐릭터를 삭제합니다. 다시 등장하면 수명이 초기화됩니다. 모든 봇의 기존·신규 자동 생성 캐릭터에 적용됩니다.",
-  call2_plan_enabled: "장면·만화 컷을 미리 계획합니다. 끄면 DETAIL이 원문에서 직접 계획합니다.",
-  key_visual: "일반 장면 외에 대표 이미지 한 장을 추가합니다.",
-  keyvis_in_detail_enabled: "첫 DETAIL 배치에서 대표 이미지를 함께 작성합니다. 끄면 KEYVIS에 연결된 LLM으로 별도 예측합니다.",
-  minimal_background_description: "대표 이미지의 배경 묘사를 최소화합니다. 일반 장면의 배경은 PLAN·DETAIL의 장면 설명을 따릅니다.",
-  multi_char_mask_enabled: "2명 이상 장면에서 캐릭터별 영역 마스크를 계산합니다.",
-  multi_char_mask_inline_enabled: "일반 삽화의 마스크 예측 방식을 선택합니다. 만화는 DETAIL에서 함께 예측합니다.",
-  single_char_mask_enabled: "마스크 사용이 켜져 있을 때 1인 장면에도 마스크를 계산합니다.",
+  call2_plan_enabled: "장면을 미리 계획합니다. 끄면 DETAIL이 원문에서 직접 계획합니다.",
+  key_visual: "켜면 첫 DETAIL 배치에서 대표 이미지 한 장을 함께 작성합니다. 만화 삽화에서는 일반 만화 페이지 외에 KEYVIS 대표 만화 1페이지를 추가하며, 만화 이미지 크기·확대 배율·시드를 사용합니다.",
+  single_char_mask_enabled: "1인 장면에도 현재 모델에서 마스크를 함께 예측합니다.",
   single_char_mask_skip_enabled: "예측한 1인 영역의 화면 점유율이 아래 기준을 초과하면 마스크를 생략합니다.",
   single_char_mask_skip_area_percent: "예측한 인물 영역이 이 비율을 초과하면 1인 마스크를 생략합니다.",
-  postprocess_enabled: "대사를 생성하고 이미지에 대사창·말풍선·자막을 합성합니다. 세부 옵션은 POST PROCESS에서 설정합니다.",
-  visual_correction_enabled: "생성 이미지를 검사하고 필요하면 다시 그린 뒤 최종 결과를 선택합니다.",
-  visual_correction_max_redraws: "이미지 한 장당 다시 그릴 수 있는 최대 횟수입니다. 0이면 검사·재생성·선택을 생략합니다.",
+  postprocess_enabled: "대사를 생성하고 이미지에 자막·텍스트 교체를 합성합니다. 세부 옵션은 POST PROCESS에서 설정합니다.",
   original_asset_count: "원본 에셋 또는 원본 에셋을 포함한 출력 모드에 적용됩니다.",
-  manga_output_count_min: "한 페이지는 3~4컷입니다.",
+  manga_output_count_min: "한 페이지는 1~5컷입니다.",
   output_count_min: "선택할 일반 장면 수의 하한입니다.", output_count_max: "선택할 일반 장면 수의 상한입니다. PLAN과 DETAIL은 배정된 장면 수를 유지합니다.",
   manga_output_count_max: "선택할 만화 페이지 수의 상한입니다.",
   scene_mode: "두 모드 모두 최소·최대 범위를 적용합니다. 자동 선택은 범위 안에서 문맥에 맞는 수량을 고릅니다.",
@@ -400,22 +392,22 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
       ([key, text]): ToggleOption => [key, text,
         (pendingModelFamily || modelFamily) === "anima" && ["manga", "manga_both"].includes(key)]);
     const retryPrefix = name.includes("_parallel_slow_retry_") ? name.split("_slow_retry_")[0] : "";
-    const manga = ["manga", "manga_both"].includes(toggles!.illustration_output_mode);
-    // MOSS 그림 모델은 DETAIL-MOSS가 대표 이미지를 항상 함께 작성하므로
-    // KEYVIS 관련 옵션을 별도로 선택할 수 없다.
     const mossModel = (pendingModelFamily || modelFamily) === "moss";
-    const keyvisLocked = mossModel && ["key_visual", "keyvis_in_detail_enabled", "minimal_background_description"].includes(name);
-    const disabled = keyvisLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
+    // MOSS는 DETAIL-MOSS가 만든 bbox 객체 레이아웃을 그대로 쓰므로 V3 영역 마스크 설정을 제어하지 않는다.
+    const maskKeys = ["single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"];
+    const maskLocked = mossModel && maskKeys.includes(name);
+    const mangaMode = ["manga", "manga_both"].includes(toggles!.illustration_output_mode);
+    const planLocked = mangaMode && (name === "call2_plan_enabled" || (dependencies[name] || []).includes("call2_plan_enabled"));
+    const disabled = planLocked || maskLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
       || name === "original_asset_count" && !["original_asset", "both", "manga_both", "composite_both"].includes(toggles!.illustration_output_mode)
-      || manga && ["postprocess_enabled", "visual_correction_enabled", "visual_correction_max_redraws"].includes(name);
+      || name === "moss_dialogue_repair_enabled";
     const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "npc_generation_deferred"].includes(name) ? toggles![name] ?? false : toggles![name];
-    // MOSS는 DETAIL-MOSS에서 대표 이미지를 항상 작성하므로 관련 토글을 켜진 상태로 고정 표시한다.
-    const value = mossModel && ["key_visual", "keyvis_in_detail_enabled"].includes(name) ? true
+    const value = planLocked && name === "call2_plan_enabled" || name === "moss_dialogue_repair_enabled" || maskLocked && ["single_char_mask_enabled", "single_char_mask_skip_enabled"].includes(name) ? false
       : emotionOutputMode && rawValue === "composite_both" ? "composite" : rawValue;
     return <ToggleField key={name} name={name} value={value} numeric={typeof savedToggles?.[name] === "number"} disabled={disabled}
       label={emotionAssetCount ? emotionAssetLabels[name] : undefined}
       options={emotionOutputMode ? emotionOutputChoices : name === "illustration_output_mode" ? outputModeOptions : undefined}
-      help={mossModel && name === "key_visual" ? "MOSS 그림 모델은 DETAIL-MOSS에서 대표 이미지를 항상 함께 작성합니다." : emotionOutputMode ? "감정 삽화 모드는 캐릭터의 복장과 감정 이미지를 생성합니다. 배경 합성 모드는 만들어진 캐릭터를 불러와 배경에 합성합니다." : emotionAssetCount ? emotionAssetHelp[name] : undefined}
+      help={planLocked && name === "call2_plan_enabled" ? "만화 삽화에서는 DETAIL-MANGA가 컷 구성과 대사를 직접 작성하므로 PLAN을 사용하지 않습니다." : maskLocked && name === "single_char_mask_enabled" ? "MOSS는 DETAIL-MOSS가 만든 bbox 객체 레이아웃을 그대로 사용하므로 영역 마스크를 쓰지 않습니다." : emotionOutputMode ? "감정 삽화 모드는 캐릭터의 복장과 감정 이미지를 생성합니다. 배경 합성 모드는 만들어진 캐릭터를 불러와 배경에 합성합니다." : emotionAssetCount ? emotionAssetHelp[name] : undefined}
       onChange={(value, immediate) => {
         setSaveDelay(immediate ? 0 : 600);
         if (name === "postprocess_enabled") setConfig(current => ({ ...current, postprocess_enabled: value }));

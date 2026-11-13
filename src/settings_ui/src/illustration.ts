@@ -7,6 +7,13 @@ export const enc = encodeURIComponent;
 export const query = (values: IllustrationData) => new URLSearchParams(Object.entries(values).map(([key, value]) => [key, String(value)])).toString();
 export const illustrationMedia = (path: string) => path.startsWith("/api/") ? illustrationApi + path.slice(4) : "";
 
+export function illustrationNodeName(name: string) {
+  return name.replaceAll("EMOTION-RESOLVE", "OUTFIT-RESOLVE")
+    .replaceAll("CALL2-SELECT", "SLOT-SELECTER").replaceAll("CALL2-PLAN", "PLAN")
+    .replaceAll("DETAIL-COMPOSITE", "DETAIL 합성 삽화").replaceAll("CALL2-DETAIL", "DETAIL")
+    .replaceAll("CALL2-KEYVIS", "KEYVIS").replaceAll("CALL3", "POST PROCESS");
+}
+
 let botDistributionToken = "";
 export function setBotDistributionToken(token: string) { botDistributionToken = token; }
 

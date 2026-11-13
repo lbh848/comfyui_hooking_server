@@ -11,8 +11,10 @@ import uuid
 import aiohttp
 from aiohttp import web
 
-from app_paths import data_root
+from app_paths import config_root, data_root
+from llm_settings import RuntimeSettingsReader, SLOT_IDS
 from llm_token_usage import output_token_stats
+from llm_failure_details import format_llm_failure
 
 
 SUMMARY_FIELDS = (
@@ -30,6 +32,31 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
     history_stamp = None
     records_by_id: dict[str, dict] = {}
     summaries: list[dict] = []
+    settings_reader = RuntimeSettingsReader(config_root(project_root))
+
+    def read_llm_config() -> dict:
+        try:
+            return settings_reader.read()
+        except (OSError, ValueError, RuntimeError):
+            return {}
+
+    def model_alias(record: dict, config: dict) -> str:
+        """Resolve the user-facing alias for the slot that produced a record."""
+        slot = str(record.get("llm_slot") or "").strip().lower()
+        model = str(record.get("model") or "").strip()
+        if slot not in SLOT_IDS:
+            # Old records may lack a slot; mirror the original UI and only use an
+            # alias when exactly one configured slot matches the recorded model.
+            matches = [
+                candidate for candidate in SLOT_IDS
+                if model and str(config.get(
+                    f"llm_model{'' if candidate == 'llm1' else candidate[3:]}", "")).strip() == model
+            ]
+            slot = matches[0] if len(matches) == 1 else ""
+        if not slot:
+            return ""
+        suffix = "" if slot == "llm1" else slot[3:]
+        return str(config.get(f"llm_alias{suffix}", "") or "").strip()
 
     def read_history():
         from modes.lighbd_service import _load_lighbd_history, LIGHBD_HISTORY_MAX
@@ -37,6 +64,7 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
         records += _load_lighbd_history(history_path=settings_history_path, strict=True)
         records.sort(key=lambda record: str(record.get("ts") or ""))
         records = records[-LIGHBD_HISTORY_MAX:]
+        config = read_llm_config()
         indexed = {}
         rows = []
         occurrences = {}
@@ -55,9 +83,15 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
                 )
                 record = {**record, **{key: value for key, value in stats.items()
                                       if key.startswith("reasoning_")}}
-            indexed[identity] = {**record, "id": identity}
+            # Existing history already contains finish details; show them without
+            # rewriting logs or changing identities used by history links.
+            if record.get("status") == "error":
+                record = {**record, "error": format_llm_failure(record.get("error", ""), record)}
+            alias = model_alias(record, config)
+            indexed[identity] = {**record, "id": identity, "llm_alias": alias}
             row = {key: record[key] for key in SUMMARY_FIELDS if key in record}
-            row.update(id=identity, preview=str(record.get("error") or record.get("output") or "")[:240])
+            row.update(id=identity, llm_alias=alias,
+                       preview=str(record.get("error") or record.get("output") or "")[:240])
             rows.append(row)
         return indexed, rows
 
@@ -104,11 +138,14 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
         guard(request)
         engine = sys.modules.get("modes.llm_service")
         local = engine.get_active_streams() if engine else []
-        result = [{**stream, "source": "settings"} for stream in local]
+        config = read_llm_config()
+        result = [{**stream, "source": "settings", "llm_alias": model_alias(stream, config)}
+                  for stream in local]
         errors = []
         try:
             worker = await runtime.llm_streams()
-            result.extend({**stream, "source": "internal-lora"} for stream in worker["streams"])
+            result.extend({**stream, "source": "internal-lora", "llm_alias": model_alias(stream, config)}
+                          for stream in worker["streams"])
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError):
             errors.append("작업 라이브에 연결할 수 없습니다. 자동으로 다시 연결합니다.")
         return response({"streams": result, "errors": errors})

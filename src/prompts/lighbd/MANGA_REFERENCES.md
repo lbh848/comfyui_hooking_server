@@ -39,3 +39,9 @@
 ### 검증 범위
 
 실제 저장 요청과 대화를 우선 사용한다. 일반화 검증에는 이름과 표현이 바뀐 인과적 사건, 대사 없는 사건, 아직 결과가 없는 사건, 같은 상태를 여러 문장으로 묘사한 사건도 포함한다. 프롬프트 문구 존재만으로 원문 충실도나 이미지 품질을 통과로 판정하지 않는다. API 완료, 페이지 수, 3~4컷의 가독성, 대사·bbox 재현은 각각 별도로 확인한다.
+
+## MOSS page composition
+
+- `detail_manga.txt` supplies composition principles rather than a coordinate example or a finite layout catalog. The narrative sequence, page arrangement and composition inside a panel are distinct planning concerns. Horizontal and vertical groups can nest, with alignment and shared boundaries helping the reader navigate them. Reference: Neil Cohn (2013), [Navigating Comics: An Empirical and Theoretical Approach to Strategies of Reading Comic Page Layouts](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2013.00186/full), especially the Assemblage and hierarchical structure discussion.
+- Spanning panels, staggered divisions, whole rows and whole columns are spatial relationships that can combine within a page, rather than prescribed templates. Reference: Kaitlin Pederson and Neil Cohn (2016), [The changing pages of comics](https://visuallanguagelab.com/P/2016.SiC.KPNC.pdf), page-layout feature definitions. Their corpus concerns American superhero comics; it does not prescribe preferred frequencies for this project's manga output.
+- Matching relative area and proportion to focal actions, dialogue room and pacing is a project design judgment informed by those spatial concepts. Retain the source-first 3-5-shot comparison, readable primary panels, shared-divider geometry and optional frame breaks. The model authors the composition; the server does not select a template, impose numerical layout quotas or rearrange its boxes.

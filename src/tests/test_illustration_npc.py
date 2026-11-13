@@ -451,9 +451,34 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
             selection=selection, anchors=["C001"])
         self.assertNotIn("# NPC REGISTRATION EXTENSION", messages[0]["content"])
         self.assertIn("npc_candidates is a required top-level array", messages[0]["content"])
+        self.assertIn("npc_candidates must exclude every person", messages[0]["content"])
         self.assertEqual(messages[1]["content"].count("# NPC REGISTRATION EXTENSION"), 1)
+        self.assertIn("subtract the complete registered roster from npc_candidates", messages[1]["content"])
         self.assertIn("Return only a JSON object with characters, npc_candidates and scene_plan arrays.",
                       messages[1]["content"])
+        self.assertIn("must make the source-supported actor and target explicit", messages[1]["content"])
+        self.assertNotIn("When explicit-scene guidance is active", messages[1]["content"])
+
+    def test_nsfw_selection_prioritizes_the_explicit_scene(self):
+        for key in ("call2_select", "manga_select"):
+            self.assertIn("SCENE PRIORITY", self.prompts[key])
+            self.assertIn("ACTOR AND TARGET", self.prompts[key])
+        toggles = {"character_limit": 2, "nsfw": True, "illustration_output_mode": "illustration"}
+        selection = self.builders.selection_messages(self.prompts, "role context", "2", toggles, {}, "", "")
+        messages = self.builders.resolution_messages(False, ["Manual"], {}, "", "current", "", "", "character system",
+            selection=selection, anchors=["C001"])
+        user = messages[1]["content"]
+        self.assertIn("When explicit-scene guidance is active, a sexual or NSFW event established in CURRENT "
+                      "is a primary selection target", user)
+        self.assertIn("keep the source-supported actor/target direction unchanged", user)
+
+    def test_manga_junction_rules_require_an_external_junction_view(self):
+        text = self.prompts["detail_manga"]
+        self.assertIn("one panel of that page MUST be a dedicated junction panel", text)
+        self.assertIn("Do not use a cutaway, cross-section, x-ray, see-through or internal view", text)
+        self.assertIn("For creampie, show the semen at the opening", text)
+        self.assertIn("camera_angle` to `side_view`", text)
+        self.assertNotIn("internal cumshot", text)
 
     async def test_character_resolution_salvages_invalid_npc_candidates(self):
         raw = {"characters": [], "npc_candidates": [

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } fro
 import { RefreshCw } from "lucide-react";
 import { Panel } from "./components";
 import { IllustrationLoading } from "./IllustBackups";
-import { illustrationRequest, type IllustrationData } from "./illustration";
+import { illustrationNodeName, illustrationRequest, type IllustrationData } from "./illustration";
 
 function PromptText({ text, spans = [] }: { text: string; spans?: IllustrationData[] }) {
   let cursor = 0; const parts: ReactNode[] = [];
@@ -36,7 +36,18 @@ export function IllustPromptStructure({ toggles, active, revision, request = ill
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController(); setData(null); setError("");
-    void request("illustration_context/prompt-structure", { toggles: JSON.parse(serialized) }, controller.signal).then(value => { if (!controller.signal.aborted) setData(value); }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
+    void request("illustration_context/prompt-structure", { toggles: JSON.parse(serialized) }, controller.signal).then(value => {
+      if (controller.signal.aborted) return;
+      setData({ ...value,
+        stages: value.stages.filter((stage: IllustrationData) => stage.key !== "mask").map((stage: IllustrationData) =>
+          stage.key === "emotion_resolve" ? { ...stage, title: illustrationNodeName(stage.title),
+            system_parts: stage.system_parts?.map((part: string | IllustrationData) => typeof part === "string"
+              ? part : { ...part, source: illustrationNodeName(String(part.source || "")) }) } : stage),
+        flow: value.flow.map((group: IllustrationData) => ({ ...group,
+          keys: group.keys.filter((stageKey: string) => stageKey !== "mask"),
+        })).filter((group: IllustrationData) => group.keys.length),
+      });
+    }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
     return () => controller.abort();
   }, [active, serialized, revision, reload, request]);
   const definition = data?.stages.find((item: IllustrationData) => item.key === key) || data?.stages[0];

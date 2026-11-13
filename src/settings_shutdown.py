@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from collections.abc import Awaitable, Callable
 
 from aiohttp import web
@@ -38,6 +39,7 @@ def register_program_shutdown(
         except Exception as exc:
             phase = "error"
             print(f"[SETTINGS_SHUTDOWN] 종료 준비 실패: {exc}")
+            traceback.print_exc()
 
     @web.middleware
     async def reject_new_work(request: web.Request, handler):

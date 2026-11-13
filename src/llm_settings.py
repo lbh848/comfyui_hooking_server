@@ -16,6 +16,17 @@ SLOT_DEFAULTS = {
     "model": "", "alias": "",
     "stream": False, "vision_compress": False, "gemini_base64": False,
     "pdf_prompt": False, "pdf_prompt_format": "pdf", "max_tokens": 0,
+    "pdf_image_media_resolution": "medium",
+    "pdf_image_page_width": 1191, "pdf_image_page_height": 1684,
+    "pdf_image_margin": 12, "pdf_image_font_size": 16,
+    "pdf_image_line_spacing": 1.2,
+    "pdf_image_font_family": (
+        '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", '
+        '"Noto Sans CJK KR", sans-serif'
+    ),
+    "pdf_image_line_break": "character", "pdf_image_color_mode": "grayscale",
+    "pdf_image_emoji": "keep", "pdf_image_newline": "actual",
+    "pdf_image_preserve_system_prompt": True,
     "context_size": LLM_SP["context_size"],
     "stream_idle_timeout_seconds": 90.0, "reasoning_preset": "custom",
     "reasoning_effort": "", "reasoning_budget_tokens": 0,
@@ -25,6 +36,10 @@ PROVIDERS = [("openai", "OpenAI 호환 URL"), ("gemini", "Gemini AI Studio"),
              ("claude", "Claude"), ("vertex", "Vertex Gemini")]
 SERVICE_NAMES = dict(PROVIDERS)
 LLM_ROUTING_CATALOG = json.loads(Path(__file__).with_name("llm_routing_catalog.json").read_text(encoding="utf-8"))
+RETIRED_LLM_ROUTING_TASKS = {
+    "illustration_multi_char_mask", "illustration_visual_correction", "illustration_visual_selection",
+    "illustration_original_asset_recovery",
+}
 
 
 def migrate_reasoning_preset(preset: str, model: str = "", service: str = "") -> str:
@@ -82,6 +97,8 @@ def import_llm_routing(config: dict) -> dict:
     if not isinstance(source, dict):
         raise ValueError("LLM routing must be an object")
     for key, entry in source.items():
+        if key in RETIRED_LLM_ROUTING_TASKS:
+            continue
         if not isinstance(entry, dict):
             raise ValueError("LLM route must be an object")
         route = {field: entry[field] for field in fields if field in entry}
@@ -273,6 +290,9 @@ def migrate_document(value: dict, root: Path) -> dict:
         value["draft"]["llmRouting"] = import_llm_routing(read_object(root / "config.json"))
     elif isinstance(value["draft"]["llmRouting"], dict):
         value["draft"]["llmRouting"] = {**default_llm_routing(), **value["draft"]["llmRouting"]}
+    if isinstance(value["draft"].get("llmRouting"), dict):
+        for task in RETIRED_LLM_ROUTING_TASKS:
+            value["draft"]["llmRouting"].pop(task, None)
     if "llms" in value["draft"]:
         value["draft"]["llms"] = [fixed_sp_slot(slot["id"], reasoning_budget_tokens=slot.get("reasoning_budget_tokens"),
                                               context_size=slot.get("context_size", LLM_SP["context_size"])) if slot.get("id") in LLM_SP_SLOTS else slot
@@ -301,7 +321,17 @@ def runtime_config(document: dict) -> dict:
     providers = {p["id"]: p for p in document["draft"]["llmProviders"]}
     result = {}
     if "llmRouting" in document["draft"]:
-        result["llm_routing"] = copy.deepcopy(document["draft"]["llmRouting"])
+        routing = {key: copy.deepcopy(route) for key, route in document["draft"]["llmRouting"].items()
+                   if key not in RETIRED_LLM_ROUTING_TASKS}
+        # Derived stages share their owning stage's model and retry policy.
+        # Keep distinct task keys for execution history and flow inspection.
+        for task, source_task in (
+            ("illustration_multi_char_mask", "illustration_call2"),
+            ("illustration_original_asset_recovery", "illustration_original_asset"),
+        ):
+            if source_task in routing:
+                routing[task] = copy.deepcopy(routing[source_task])
+        result["llm_routing"] = routing
     for slot in document["draft"]["llms"]:
         if slot["id"] in LLM_SP_SLOTS:
             slot = fixed_sp_slot(slot["id"], reasoning_budget_tokens=slot.get("reasoning_budget_tokens"),

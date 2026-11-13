@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+from app_paths import resolve_install_path
 
 from .crypto import ExtractedWorkflowPack, extract_workflow_pack
 from .manifest import InstallManifest, load_install_manifest
@@ -1172,24 +1173,19 @@ def configured_workflow_integrity(
                 reason = "팩 원본과 일치"
                 actual_hash: str | None = None
                 try:
-                    candidate = Path(configured_path)
-                    if not candidate.is_absolute():
-                        status = "invalid_path"
-                        reason = "절대 경로가 아닙니다."
+                    resolved = resolve_install_path(configured_path, config_file.parent.parent).resolve()
+                    configured_path = str(resolved)
+                    if resolved.is_symlink() or not resolved.is_file():
+                        status = "missing"
+                        reason = "설정된 워크플로우 파일이 없습니다."
                     else:
-                        resolved = candidate.resolve()
-                        configured_path = str(resolved)
-                        if resolved.is_symlink() or not resolved.is_file():
-                            status = "missing"
-                            reason = "설정된 워크플로우 파일이 없습니다."
-                        else:
-                            actual_hash = _sha256_bytes(resolved.read_bytes())
-                            if actual_hash != expected_hash:
-                                status = "modified"
-                                reason = (
-                                    "팩 원본과 내용이 다릅니다. ComfyUI 저장 또는 "
-                                    "사용자 편집으로 변경됐을 수 있습니다."
-                                )
+                        actual_hash = _sha256_bytes(resolved.read_bytes())
+                        if actual_hash != expected_hash:
+                            status = "modified"
+                            reason = (
+                                "팩 원본과 내용이 다릅니다. ComfyUI 저장 또는 "
+                                "사용자 편집으로 변경됐을 수 있습니다."
+                            )
                 except Exception as exc:
                     status = "unreadable"
                     reason = f"설정된 워크플로우를 읽지 못했습니다: {exc}"

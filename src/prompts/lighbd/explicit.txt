@@ -41,6 +41,22 @@ Rows are candidate vocabulary, not fixed tag bundles. When a tag's meaning is cl
 | nipple stimulation | `nipple stimulation, nipple tweak, nipple rub, lying, on back` |
 | paizuri | `paizuri, breasts squeezed together, grabbing own breast` |
 
+ANATOMY AND FLUID TERM MAPPING
+
+When the source establishes an explicit anatomy or fluid fact, write the matching English image tag instead of a euphemism. These pairs are translation, not optional suggestions:
+- vulva, labia, vagina, womb opening -> `pussy`, `vagina`
+- clitoris -> `clitoris`
+- penis -> `penis`, `cock`
+- semen, ejaculate -> `cum`, `semen`
+- penetration, thrusting -> `penetration`, `sex`
+- internal ejaculation -> `creampie`, `cum inside`
+- masturbation, fingering -> `fingering`, `masturbation`
+- lower body uncovered -> `bottomless`
+- upper body uncovered -> `topless`
+- fully uncovered -> `nude`, `naked`
+
+A caption for an explicit act must contain the applicable coverage tag and at least one literal act or anatomy tag. `between her thighs`, `scooping`, `receiving him deep` and `hips pressed` do not replace those tags; the image model cannot infer the act from them.
+
 OUTPUT
 
 Add `nsfw` exactly once in `scene`. Apply the common field contract and return only the role's requested structured artifact.

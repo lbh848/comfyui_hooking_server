@@ -2,19 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Copy, Lock, LockOpen, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, Panel, Toggle } from "./components";
 import { BotCharacterImport } from "./InternalLoraPage";
-import { ImageEditor, ImagePicker, InternalLoraImages } from "./InternalLoraImages";
+import { ImageEditor, ImagePicker } from "./InternalLoraImages";
 import { InternalLoraTraining, type BotLoraTrainingHandle } from "./InternalLoraTraining";
 import { InternalLoraResults } from "./InternalLoraResults";
+import { InternalLoraProgress } from "./InternalLoraProgress";
 import { BotProjectImport, BotTestSetup } from "./InternalLoraExtras";
 import { BotLoraBatchRefine } from "./BotLoraBatchRefine";
 import { WorkQueuePage } from "./WorkQueuePage";
 import { addLoraImages, contextParams, imageUrl, loraRepresentative, loraRequest, loraSessionsByPriority, mediaUrl, query, type LoraContext, type LoraData, type LoraProject } from "./internalLora";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { useLoraRefinementRevision } from "./useLoraRefinementRevision";
+import { useLoraTrainingRevision } from "./useLoraTrainingRevision";
 import { ProgressiveGallery, matchesImageSearch } from "./ScrollGallery";
 import "./bot-lora.css";
 
-type ProjectDialog = { kind: "import" | "project-import" | "picker" | "prompt" | "results" | "refine" | "test-setup" | "shared" | "queue"; unitKey?: string; image?: LoraData; test?: boolean; session?: string };
+type ProjectDialog = { kind: "import" | "project-import" | "picker" | "prompt" | "results" | "refine" | "test-setup" | "queue"; unitKey?: string; image?: LoraData; test?: boolean; session?: string };
 
 export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
   project: LoraProject; notify: (message: string) => void; onBack: () => void; onDuplicate: () => void;
@@ -27,6 +29,7 @@ export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
   const scrollArea = useRef<HTMLDivElement>(null); const training = useRef<BotLoraTrainingHandle>(null);
   const context: LoraContext = { category: "bot", project, profile: detail?.training_config?.profile || "anima" };
   const refinementRevision = useLoraRefinementRevision(context);
+  const trainingRevision = useLoraTrainingRevision(context);
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true); setError("");
     try {
@@ -35,7 +38,7 @@ export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
     } catch (cause) { if (!signal?.aborted) setError((cause as Error).message); }
     finally { if (!signal?.aborted) setLoading(false); }
   }, [project.bot, project.name]);
-  useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => controller.abort(); }, [refresh, refinementRevision]);
+  useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => controller.abort(); }, [refresh, refinementRevision, trainingRevision]);
   const cards: LoraData[] = detail?.characters || [];
   const groups = new Map<string, LoraData[]>();
   cards.forEach(card => groups.set(card.name, [...(groups.get(card.name) || []), card]));
@@ -149,9 +152,10 @@ export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
         <section className="bot-lora-shared-tests" aria-label="공통 테스트 이미지"><div className="internal-lora-toolbar"><h2>공통 테스트 이미지</h2><button className="button secondary" onClick={() => setDialog({ kind: "picker", test: true })}>에셋에서 선택</button></div><p className="field-help">테스트 이미지가 없는 캐릭터는 공통 테스트 이미지로 LoRA 프리뷰를 생성합니다.</p>{images(undefined, true)}<details className="bot-lora-card-details" onToggle={event => { event.currentTarget.dataset.galleryRetain = String(event.currentTarget.open); }}><summary>프롬프트 ({detail.test_images.length}장)</summary>{prompts(undefined, true)}</details></section>
       </div>
       <aside className="bot-lora-settings" aria-label="봇 로라 공통 설정" tabIndex={0}>
+        <InternalLoraProgress category="bot" project={project} />
         <div className="internal-lora-actions"><button className="button danger" disabled={busy} onClick={remove}><Trash2 size={14} />삭제</button><button className="button secondary" disabled={busy} onClick={onDuplicate}><Copy size={14} />복제</button></div>
         <Panel title="캐릭터 추가"><div className="bot-lora-sidebar-actions"><button className="button secondary" onClick={() => setDialog({ kind: "import" })}>봇에서 캐릭터 임포트</button><button className="button secondary" onClick={() => setDialog({ kind: "project-import" })}>봇 로라 프로젝트에서 캐릭터 임포트</button></div></Panel>
-        <Panel title="테스트 이미지"><div className="bot-lora-sidebar-actions"><button className="button secondary" onClick={() => setDialog({ kind: "picker", test: true })}>에셋에서 선택</button><button className="button" onClick={() => setDialog({ kind: "shared" })}>공통 테스트 이미지 관리</button></div></Panel>
+        <Panel title="테스트 이미지"><div className="bot-lora-sidebar-actions"><button className="button secondary" onClick={() => setDialog({ kind: "picker", test: true })}>에셋에서 선택</button></div></Panel>
         <Panel title="LLM 기반 학습 이미지 태그 정제"><div className="bot-lora-sidebar-actions"><button className="button primary" disabled={!cards.some(card => card.training_images.length && !card.skip_training)} onClick={() => setDialog({ kind: "refine" })}>선택 이미지 일괄 정제</button></div></Panel>
         <Panel title="LLM 기반 테스트 이미지 태그 정제"><div className="bot-lora-sidebar-actions"><button className="button primary" disabled={!cards.length || !detail.test_images.length} onClick={() => setDialog({ kind: "test-setup" })}>선택 이미지 일괄 정제</button></div></Panel>
         <InternalLoraTraining context={context} detail={detail} refresh={refresh} notify={notify} trainingRef={training} />
@@ -170,10 +174,9 @@ export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
       await loraRequest(`bot_lora/${dialog.test ? dialogShared ? "test_images" : "char_test_images" : "training_images"}/prompt`, { ...contextParams(dialogContext), filename: dialog.image!.filename, ...prompt });
       await refresh(); notify("프롬프트를 저장했습니다."); close();
     }} />}
-    {dialog?.kind === "results" && dialogCard && <Modal title={`학습된 LoRA 관리 · ${dialogCard.name} · ${dialogCard.visual_card_label}`} onClose={close} className="internal-lora-modal bot-lora-results-modal"><InternalLoraResults context={dialogContext} detail={detail!} refresh={refresh} notify={notify} initialSession={dialog.session} /></Modal>}
+    {dialog?.kind === "results" && dialogCard && <Modal title={`학습된 LoRA 관리 · ${dialogCard.name} · ${dialogCard.visual_card_label}`} onClose={close} className="internal-lora-modal bot-lora-results-modal"><InternalLoraResults context={dialogContext} detail={detail!} refresh={refresh} notify={notify} initialSession={dialog.session} trainingRevision={trainingRevision} /></Modal>}
     {dialog?.kind === "refine" && <BotLoraBatchRefine context={context} detail={detail!} onClose={close} notify={notify} />}
-    {dialog?.kind === "test-setup" && <BotTestSetup context={context} detail={detail!} tests={detail!.test_images} onClose={close} notify={notify} />}
-    {dialog?.kind === "shared" && <Modal title="공통 테스트 이미지" onClose={close} className="internal-lora-modal"><InternalLoraImages context={context} detail={detail!} test refresh={refresh} notify={notify} /></Modal>}
+    {dialog?.kind === "test-setup" && <BotTestSetup context={context} detail={detail!} tests={detail!.test_images} onClose={close} refresh={refresh} notify={notify} />}
     {dialog?.kind === "queue" && <Modal title="학습 작업 흐름 보기" onClose={close} className="internal-lora-modal"><WorkQueuePage notify={notify} /></Modal>}
     {zoom && <Modal title="이미지 확대" onClose={() => setZoom("")} className="internal-lora-modal"><img className="internal-lora-zoom" src={zoom} alt="이미지 확대" /></Modal>}
   </div>;

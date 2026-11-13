@@ -15,7 +15,7 @@ export function InternalLoraTraining({ context, detail, refresh, notify, trainin
   const [saved, setSaved] = useState(current); const [saveDelay, setSaveDelay] = useState(600);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [raw, setRaw] = useState<LoraData | null>(null); const [promptEditor, setPromptEditor] = useState(false);
   const [rounds, setRounds] = useState(3);
-  const trainingProfile = config.profile === "sdxl" ? "sdxl" : "anima";
+  const trainingProfile = config.profile === "moss" ? "moss" : config.profile === "sdxl" ? "sdxl" : "anima";
   const trainingContext = { ...context, profile: trainingProfile };
   const params = contextParams(trainingContext);
   async function save() {
@@ -37,9 +37,8 @@ export function InternalLoraTraining({ context, detail, refresh, notify, trainin
   }
   async function train(all = false, both = false, target?: LoraData) {
     if (!config.workflow_source_path?.trim()) throw new Error(config.training_preset_id ? "선택한 학습 프로필 프리셋에 워크플로우가 없습니다. 학습 프로필 설정에서 워크플로우를 지정하고 저장하세요." : "학습 프로필 프리셋을 선택하세요.");
-    if (both) {
-      const otherProfile = trainingContext.profile === "anima" ? "sdxl" : "anima";
-      if (!detail.training_config?.[otherProfile]?.workflow_source_path?.trim()) throw new Error(`학습 프로필 설정에서 워크플로우를 지정해 저장한 ${trainingProfileLabel(otherProfile)} 프로필을 가져오세요.`);
+    if (both) for (const otherProfile of ["anima", "sdxl"] as const) {
+      if (otherProfile !== trainingContext.profile && !detail.training_config?.[otherProfile]?.workflow_source_path?.trim()) throw new Error(`학습 프로필 설정에서 워크플로우를 지정해 저장한 ${trainingProfileLabel(otherProfile)} 프로필을 가져오세요.`);
     }
     await ensureSaved();
     if (category === "bot") {
@@ -66,7 +65,7 @@ export function InternalLoraTraining({ context, detail, refresh, notify, trainin
     <div className="internal-lora-toolbar"><button type="button" className="button" disabled={locked} onClick={() => void act(() => preview())}>프롬프트 Raw 보기</button>{(category !== "bot" || character) && <button type="button" className="button primary" disabled={locked} onClick={() => void act(() => train(), "학습을 큐에 추가했습니다.")}><Play size={14} />{category === "bot" ? "선택 캐릭터 학습" : "학습 시작"}</button>}{category === "bot" && <button type="button" className="button primary" disabled={locked || !detail.characters.some((card: LoraData) => !card.skip_training && card.training_images.length)} onClick={() => void act(() => train(true), "전체 캐릭터 학습을 큐에 추가했습니다.")}>전체 순차 학습 시작</button>}{category === "style" && <button type="button" className="button" disabled={locked} onClick={() => void act(() => train(false, true), "ANIMA·SDXL 학습을 큐에 추가했습니다.")}>ANIMA + SDXL 학습</button>}</div>
     {category === "bot" && character && <div className="internal-lora-toolbar"><button type="button" className="button danger" disabled={busy} onClick={() => { if (window.confirm(`${character.name} · ${character.visual_card_label} 카드를 이 프로젝트에서 제거할까요?`)) void act(() => loraRequest("bot_lora/character/remove", params), "캐릭터 카드를 제거했습니다."); }}>프로젝트에서 캐릭터 제거</button></div>}
   </form></Panel>
-  {category === "bot" && <Panel title="자동 피드백"><div className="internal-lora-form"><label className="field">최대 반복 횟수<input type="number" min={1} max={10} value={rounds} onChange={e => setRounds(Number(e.target.value))} /></label><div className="internal-lora-toolbar">{character && <button className="button" disabled={busy} onClick={() => void act(() => loraRequest("bot_lora/feedback", { ...params, characters: [{ character: character.name, visual_card_id: character.visual_card_id }], action: "analyze", max_rounds: rounds }), "피드백 분석을 시작했습니다.")}>선택 캐릭터 분석</button>}<button className="button primary" disabled={busy || !detail.characters.some((card: LoraData) => !card.skip_training)} onClick={() => void act(() => loraRequest("bot_lora/feedback", { ...params, action: "start", max_rounds: rounds }), "자동 피드백을 시작했습니다.")}>자동 피드백 학습</button></div></div></Panel>}
+  {category === "bot" && <Panel title="자동 피드백" className="bot-lora-feedback-disabled"><div className="internal-lora-form"><label className="field">최대 반복 횟수<input type="number" min={1} max={10} value={rounds} disabled onChange={e => setRounds(Number(e.target.value))} /></label><div className="internal-lora-toolbar">{character && <button className="button" disabled>선택 캐릭터 분석</button>}<button className="button primary" disabled>자동 피드백 학습</button></div></div></Panel>}
   {raw && <Modal title="프롬프트 Raw 보기" onClose={() => setRaw(null)} className="internal-lora-modal"><div className="internal-lora-form">{category === "bot" && <label className="field">캐릭터 카드<select value={raw.unit_key} disabled={busy} onChange={event => void act(() => preview(detail.characters.find((card: LoraData) => card.unit_key === event.target.value)))}>{detail.characters.map((card: LoraData) => <option key={card.unit_key} value={card.unit_key}>{card.name} · [{card.visual_card_index || 1}] {card.visual_card_label}</option>)}</select></label>}{error && <p className="field-error" role="alert">{error}</p>}<h3>긍정 프롬프트</h3><pre>{raw.positive || raw.data?.positive || ""}</pre><h3>부정 프롬프트</h3><pre>{raw.negative || raw.data?.negative || ""}</pre></div></Modal>}
   {promptEditor && <PromptEditor category={category} onClose={() => setPromptEditor(false)} notify={notify} />}
   </div>;

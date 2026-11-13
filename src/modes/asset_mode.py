@@ -2088,9 +2088,10 @@ class AssetMode:
                 return {"success": False, "error": error_msg}
 
             if model_preset:
-                from illustration_json import update_workflow_json_settings
+                from illustration_json import enabled_lora_fields, update_workflow_json_settings
                 prepared_api_workflow = update_workflow_json_settings(
-                    prepared_api_workflow, model_preset["workflows"][asset_workflow_type]["fields"])
+                    prepared_api_workflow, enabled_lora_fields(
+                        model_preset["workflows"][asset_workflow_type]["fields"]))
 
             pose_data = None
             if pose_enabled and pose_id:

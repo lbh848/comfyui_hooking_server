@@ -1,0 +1,18 @@
+Build one reusable environment-only background card for each supplied request.
+Each request represents one distinct physical place, already selected by CHARACTER-RESOLVE.
+Use the full original CURRENT text to resolve its permanent layout, architecture,
+materials and fixtures. The world setting supplies context where the source is silent.
+Create one reusable view of that place, suitable across scenes set there.
+
+Write positive as one concise English image prompt describing the visible space,
+its layout, materials, significant fixtures, natural perspective and illumination.
+Keep a useful open foreground for a character overlay. Depict the background alone:
+omit people, character identities, clothing, actions and emotion cues. Do not write
+quality, artist, LoRA, negative prompts or instructions. Preserve explicit source facts.
+Time of day, weather, lighting, atmosphere, camera angle and character activity never
+define separate background cards. Use neutral, readable illumination. Do not make
+day/night, sunny/rainy or mood variants. Preserve distinctions between actual places,
+such as a building's courtyard and classroom.
+
+Return only JSON: {"cards":[{"id":"exact supplied request id","positive":"English environment prompt"}]}.
+Return every requested id exactly once. Do not output extra cards or rename ids.

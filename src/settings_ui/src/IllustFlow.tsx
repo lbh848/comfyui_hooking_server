@@ -14,6 +14,8 @@ const colors: Record<string, string> = { waiting: "#7a8391", processing: "#3478c
 const executors: Record<string, string> = { llm: "LLM", comfy: "Comfy", human: "사람", process: "프로세스" };
 const live = (status: string) => ["waiting", "processing", "cancelling"].includes(status);
 const executor = (node: FlowNode) => node.executor || (node.kind === "llm" ? "llm" : "process");
+// 별칭이 설정된 LLM은 기술적인 모델명 대신 별칭으로 표시한다.
+const modelLabel = (node: FlowNode) => node.alias || node.model || "";
 const elapsed = (node: FlowNode) => node.started_at ? `${Math.max(0, (node.ended_at || Date.now() / 1000) - node.started_at).toFixed(1)}초` : "실행 전";
 const stringify = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value ?? "", null, 2);
 
@@ -132,19 +134,19 @@ function FlowTimeline({ flow }: { flow: IllustrationFlow }) {
   </div>;
 }
 
-function FlowNodeDetails({ runId, nodeId, onClose }: { runId: string; nodeId: string; onClose: () => void }) {
+function FlowNodeDetails({ runId, nodeId, initialNode, onClose }: { runId: string; nodeId: string; initialNode: FlowNode; onClose: () => void }) {
   const resource = useFlowPoll(`illustration_flow?${query({ run: runId, node: nodeId })}`);
-  const node = resource.data?.node as FlowNode | undefined;
+  const node = (resource.data?.node || initialNode) as FlowNode;
   const fields = [
     ["입력", node?.submitted_prompt ? Object.fromEntries(Object.entries(node.input || {}).filter(([key]) => key !== "positive" && key !== "negative")) : node?.input], ["입력 변수", node?.input_variables], ["출력", node?.output],
     ["오류", node?.error], ["호출·재시도 기록", node?.attempts], ["검증 결과", node?.validation_warnings],
   ] as const;
   return <Modal title={node?.label || "삽화 노드 상세"} onClose={onClose} backgroundable={false} className="illust-flow-detail">
     <IllustrationFeedback error={resource.error} />
-    {!node && !resource.error && <p role="status">노드 상세 정보를 불러오는 중…</p>}
+    {!resource.data && !resource.error && <p role="status">노드 상세 정보를 불러오는 중…</p>}
     {resource.error && <button className="button" onClick={resource.reload}>다시 시도</button>}
     {node && <div className="illust-stack">
-      <div className="illust-actions"><Badge>{labels[node.status] || node.status}</Badge><span>{executors[executor(node)] || executor(node)}{node.kind !== "reference" && ` · ${elapsed(node)}`}</span><span>{node.model || node.service || ""}</span></div>
+      <div className="illust-actions"><Badge>{labels[node.status] || node.status}</Badge><span>{executors[executor(node)] || executor(node)}{node.kind !== "reference" && ` · ${elapsed(node)}`}</span><span>{modelLabel(node) || node.service || ""}</span></div>
       <IllustrationFlowResults node={node} />
       {node.final_result?.blocks?.length ? <FinalResultPreview result={node.final_result} /> : null}
       {(node.image_url || node.mask_url) && <div className="illust-flow-detail-images">
@@ -223,7 +225,7 @@ export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" 
             return <div className="illust-flow-node" key={`${flow.id}:${node.id}`} data-status={node.status} data-executor={executor(node)} style={{ left: position.x, top: position.y, height: preview ? 360 : 98, "--flow-state": colors[node.status] || colors.waiting } as CSSProperties}>
               <button className="illust-flow-node-heading" onClick={() => setSelected(node.id)} aria-label={`${node.label} · ${labels[node.status] || node.status} · 상세 보기`}>
               <strong title={node.label}>{node.label}</strong><span className="illust-flow-node-status">{labels[node.status] || node.status}{node.kind !== "reference" && ` · ${elapsed(node)}`}{node.attempt_count > 0 ? ` · ${node.attempt_count}회` : ""}</span>
-              <span className="illust-flow-node-model" title={node.model}>{executors[executor(node)] || executor(node)}{node.model ? ` · ${node.model}` : ""}</span>
+              <span className="illust-flow-node-model" title={modelLabel(node)}>{executors[executor(node)] || executor(node)}{modelLabel(node) ? ` · ${modelLabel(node)}` : ""}</span>
               </button>
               {preview && <FlowNodePreview node={node} flow={flow} masks={masks} sizes={sizes} onSize={onSize} onOpen={setSelected} />}
               <i className="illust-flow-port" aria-hidden="true" />
@@ -232,6 +234,6 @@ export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" 
         </div></div>
       </div>
     </>}
-    {flow && selectedNode && <FlowNodeDetails key={`${flow.id}:${selectedNode.id}`} runId={flow.id} nodeId={selectedNode.id} onClose={() => setSelected(null)} />}
+    {flow && selectedNode && <FlowNodeDetails key={`${flow.id}:${selectedNode.id}`} runId={flow.id} nodeId={selectedNode.id} initialNode={selectedNode} onClose={() => setSelected(null)} />}
   </Panel>;
 }

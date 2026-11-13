@@ -10,6 +10,7 @@ from configuration import config_path as application_config_path, read_config
 from app_paths import comfy_input_root
 from json_store import JsonFileCache, write_json_atomic
 from lora_paths import validate_lora_storage_name
+from manga_page_sizes import DEFAULT_MANGA_PAGE_SIZES
 
 import asyncio
 import base64
@@ -1670,6 +1671,8 @@ class BotMode:
                     return await self._remove_character(data, body)
                 elif action == "rename_character":
                     return await self._rename_character(data, body)
+                elif action == "renew_npc_lifetime":
+                    return await self._renew_npc_lifetime(data, body)
                 elif action == "set_lb_extra_batch_lock":
                     return await self._set_lb_extra_batch_lock(data, body)
                 elif action == "toggle_rep_image":
@@ -1816,6 +1819,27 @@ class BotMode:
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 삭제: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})
+
+    async def _renew_npc_lifetime(self, data, body):
+        bot_name = str(body.get("bot_name") or "").strip()
+        char_name = str(body.get("char_name") or "").strip()
+        if not bot_name or not char_name:
+            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
+        bot = next((item for item in data.get("bots", []) if item.get("name") == bot_name), None)
+        if bot is None:
+            return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+        character = next((item for item in bot.get("characters", [])
+                          if str(item.get("name") or "").casefold() == char_name.casefold()), None)
+        if character is None:
+            return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
+        if character.get("npc_generated") is not True:
+            return _json_error("생성된 캐릭터만 수명을 갱신할 수 있습니다.")
+        from modes.illustration_npc import get_npc_lifetime
+        npc_lifetime = get_npc_lifetime()
+        character["npc_idle_calls"] = 0
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 캐릭터 수명 갱신: {bot_scope()}/{bot_name}/{character['name']} → {npc_lifetime}회")
+        return _json_ok({"npc_idle_calls": 0, "npc_lifetime": npc_lifetime})
 
     async def _set_lb_extra_batch_lock(self, data, body):
         bot_name = str(body.get("bot_name") or "").strip()
@@ -7846,6 +7870,13 @@ DEFAULT_ILLUST_SETTINGS = {
     "anima_hrf_activate": False,
     "img_w": 756,
     "img_h": 756,
+    # Manga has its own size/seed block: the page size the model picks from its
+    # resolution list is multiplied by this scale when the page is drawn.
+    "manga_scale": 1.0,
+    "manga_seed": -1,
+    # Comma-separated resolution tokens ("1152x1728") the model may pick from.
+    # The UI edits this as a multi-select; empty falls back to every default.
+    "manga_page_sizes": DEFAULT_MANGA_PAGE_SIZES,
     "anima_fd_activate": False,
     "anima_hd_activate": False,
     "anima_ed_activate": False,

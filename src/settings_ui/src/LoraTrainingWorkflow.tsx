@@ -2,12 +2,12 @@ import { RefreshCw } from "lucide-react";
 import { useIllustrationModels, workflowPathKey } from "./illustrationModels";
 import type { LoraData } from "./internalLora";
 
-const labels = { anima: "ANIMA", sdxl: "ILXL" };
-const bindings = { anima: "lora_training_workflow_source_paths.anima", sdxl: "lora_training_workflow_source_paths.sdxl" };
+const labels = { anima: "ANIMA", sdxl: "ILXL", moss: "MOSS" };
+const bindings = { anima: "lora_training_workflow_source_paths.anima", sdxl: "lora_training_workflow_source_paths.sdxl", moss: "lora_training_workflow_source_paths.moss" };
 const categories = ["LoRA 학습", "학습"];
 
 export function LoraTrainingWorkflow({ value, onChange, disabled = false }: { value: LoraData; onChange: (patch: LoraData) => void; disabled?: boolean }) {
-  const profile = value.profile === "sdxl" ? "sdxl" : "anima";
+  const profile = value.profile === "moss" ? "moss" : value.profile === "sdxl" ? "sdxl" : "anima";
   const path = value.workflow_source_path || "";
   const catalog = useIllustrationModels({ [profile]: path }, categories, labels, bindings);
   const model = catalog.models.find(item => item.profile === profile);

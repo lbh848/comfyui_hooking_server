@@ -262,6 +262,29 @@ class PresetStoreTests(PresetFixture, unittest.TestCase):
         self.assertIn("first", payload["fields"]["ANIMA_CONTENT"])
         self.assertEqual(self.source.read_bytes(), self.original)
 
+    def test_switched_off_lora_stays_saved_but_is_not_applied(self):
+        edited = self.fields()
+        edited["fields"]["STYLE_LORA_DATA"]["list"] = [
+            {"lora_path": "keep.safetensors", "BASE": "anima", "str": .8, "trigger": "keep"},
+            {"lora_path": "off.safetensors", "BASE": "anima", "str": .7, "trigger": "off", "enabled": False},
+        ]
+        saved = self.store.workflow(self.config, "v3_anima", self.view["active_id"], edited)
+        # The editor keeps the switched-off entry so it can be turned back on.
+        self.assertEqual([item["lora_path"] for item in saved["fields"]["STYLE_LORA_DATA"]["list"]],
+                         ["keep.safetensors", "off.safetensors"])
+        self.assertFalse(saved["fields"]["STYLE_LORA_DATA"]["list"][1]["enabled"])
+        snapshot = self.store.snapshot()
+        self.change("create", name="다른 설정")
+        workflow = apply_preset_workflow(workflow_fixture(), snapshot, "v3_anima")
+        defaults = workflow_json_defaults(workflow)
+        self.assertEqual([item["lora_path"] for item in defaults["STYLE_LORA_DATA"]["list"]], ["keep.safetensors"])
+        payload = json.loads(build_illustration_json("[ANIMA_CONTENT]\nlandscape\n[END]", "", input_dir=self.root,
+                                                     workflow_defaults=defaults))
+        self.assertEqual([item["lora_path"] for item in payload["fields"]["STYLE_LORA_DATA"]["list"]],
+                         ["keep.safetensors"])
+        self.assertIn("keep", payload["fields"]["ANIMA_CONTENT"])
+        self.assertNotIn("off", payload["fields"]["ANIMA_CONTENT"])
+
 
 class WorkshopPresetTests(PresetFixture, unittest.TestCase):
     def setUp(self):

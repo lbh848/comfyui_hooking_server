@@ -13,9 +13,11 @@ import json
 import shutil
 import traceback
 import re
+from urllib.parse import quote, urlencode
 from PIL import Image
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
+from modes.lora_preview import training_preview_filename
 from modes.visual_profiles import effective_character_cards
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,7 +108,7 @@ def _trained_lora_dir(
 
 def _profile_trigger(char_name: str, visual_card_id: str, *, is_primary: bool) -> str:
     """카드 종류와 무관한 캐릭터 공용 기본 트리거를 반환한다."""
-    return char_name
+    return f"@{char_name}"
 
 
 def _bot_character(bot_data: dict, bot_name: str, char_name: str) -> dict | None:
@@ -902,11 +904,22 @@ def list_projects(bot_name: str) -> list:
         char_count = len(pinfo.get("characters", {}))
         profile_count = sum(1 for _ in _iter_project_units(pinfo))
         training_config = pinfo.get("training_config", {})
+        preview_url = ""
+        for char_name, visual_card_id, _ in _iter_project_units(pinfo):
+            filename = training_preview_filename(
+                _bot_project_training_dir(bot_name, pname, char_name, visual_card_id)
+            )
+            if filename:
+                preview_url = "/api/bot_lora/training_image/" + "/".join(
+                    quote(part, safe="") for part in (bot_name, pname, char_name, filename)
+                ) + "?" + urlencode({"visual_card_id": visual_card_id})
+                break
         projects.append({
             "name": pname,
             "character_count": char_count,
             "profile_count": profile_count,
             "profile": training_config.get("profile", "anima"),
+            "preview_url": preview_url,
         })
     return projects
 
@@ -2092,7 +2105,7 @@ def add_bot_training_from_bot(
     return {"success": True, "added": added, "skipped": skipped}
 
 
-def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positive: str, negative: str) -> dict:
+def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positive: str, negative: str | None) -> dict:
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
     t_dir = _bot_test_dir(bot_name, project_name)
@@ -2108,7 +2121,8 @@ def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positi
         if "original_negative" not in existing:
             existing["original_negative"] = existing.get("negative", "")
         existing["positive"] = positive
-        existing["negative"] = negative
+        if negative is not None:
+            existing["negative"] = negative
         with open(prompt_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)
         print(f"[BOT_LORA] 테스트 프롬프트 저장 완료: {prompt_path}")

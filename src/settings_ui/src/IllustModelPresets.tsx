@@ -10,16 +10,13 @@ import { useModelSettingsRequest, useModelSettingsScope } from "./ModelSettingsS
 export function IllustModelPresets() {
   const scope = useModelSettingsScope();
   const request = useModelSettingsRequest();
-  const { resource, action, data, setData, pending, setPending, generation, disabled } = useIllustrationModelSelection();
+  const { resource, action, data, setData, presets, pending, setPending, generation, disabled } = useIllustrationModelSelection();
   const [dialog, setDialog] = useState<"create" | "duplicate" | "rename" | "delete" | "unlock" | null>(null);
   const [builtinUnlockToken, setBuiltinUnlockToken] = useState("");
   const [name, setName] = useState("");
   useEffect(() => () => { if (builtinUnlockToken) void request(`${scope.prefix}/presets`, { action: "lock", builtin_unlock_token: builtinUnlockToken }).catch(() => {}); }, [builtinUnlockToken, request, scope]);
   if (!data) return <Panel title="그림 모델 프리셋"><IllustrationLoading error={resource.error} retry={resource.reload} /></Panel>;
   const active = data.presets.find((item: IllustrationData) => item.id === data.active_id);
-  // Each workshop API returns its own preset file, so the list is already
-  // separated upstream (illustration builtins + local, emotion local only).
-  const presets = data.presets;
   const supportsDistribution = scope.workshop !== "emotion";
   const builtin = active?.scope === "builtin";
   const locked = builtin && !builtinUnlockToken;

@@ -665,7 +665,7 @@
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
               "steps": 8,
-              "cfg": 1,
+              "cfg": 1.5,
               "sampler_name": "euler",
               "scheduler": "simple",
               "denoise": 1
@@ -682,7 +682,13 @@
                   "lora_path": "km_flat_half.safetensors",
                   "str": 0.4,
                   "BASE": "anima",
-                  "trigger": "km_flat_half"
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "hentai_style_moss.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": "@sera_hentai"
                 }
               ]
             }
@@ -708,8 +714,8 @@
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
-              "steps": 4,
-              "cfg": 1,
+              "steps": 5,
+              "cfg": 1.5,
               "sampler_name": "euler",
               "scheduler": "simple",
               "denoise": 1
@@ -724,9 +730,15 @@
                 },
                 {
                   "lora_path": "km_flat_half.safetensors",
-                  "str": 0.7,
+                  "str": 0.4,
                   "BASE": "anima",
-                  "trigger": "km_flat_half"
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "hentai_style_moss.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": "@sera_hentai"
                 }
               ]
             }
@@ -735,6 +747,225 @@
       },
       "id": "666072d4c848481aac21573e9226c192",
       "name": "공방-MOSS-4step"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
+      },
+      "workflows": {
+        "v3": {
+          "fields": {
+            "ILXL_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ANIMA_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_CHECKPOINT": "rinFlanimeIllustrious_v30.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "v3_anima": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.3
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.15
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.22
+            },
+            "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 12,
+              "cfg": 1.2,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.6,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4-29B.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_base_slider_step800.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "anima_context_detailer_base10.safetensors",
+                  "str": 0.5,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "ce2be542bc32461c801156455de4b84e",
+      "name": "공방-애니스타일2"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_MOSS_4STEP_V1.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "moss"
+      },
+      "workflows": {
+        "v3_anima": {
+          "fields": {
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.7,
+                  "BASE": "anima",
+                  "trigger": "",
+                  "enabled": true
+                },
+                {
+                  "lora_path": "hentai_style_moss.safetensors",
+                  "str": 0.7,
+                  "BASE": "anima",
+                  "trigger": "@sera_hentai"
+                },
+                {
+                  "lora_path": "anireal_moss_lora_v1.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "",
+                  "enabled": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "ef29c036686d42c9a612bddf4d5a2b61",
+      "name": "공방-MOSS-4step-H1"
     }
   ]
 }

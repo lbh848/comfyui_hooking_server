@@ -10,6 +10,7 @@ import json
 import shutil
 import traceback
 import uuid
+from urllib.parse import quote
 from PIL import Image
 from app_paths import data_root
 from asset_character_presets import AssetCharacterPresets
@@ -17,6 +18,7 @@ from illustration_json import illustration_edit_document
 from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
+from modes.lora_preview import training_preview_filename
 from lora_paths import ASSET_LORA_FOLDER
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
@@ -1361,6 +1363,7 @@ def list_lora_entries(character: str = "") -> list:
         if character and char_name != character:
             continue
         for name, info in char_entries.items():
+            filename = training_preview_filename(_training_dir(char_name, name))
             entries.append({
                 "name": name,
                 "trigger": info.get("trigger", ""),
@@ -1368,6 +1371,9 @@ def list_lora_entries(character: str = "") -> list:
                 "character": char_name,
                 "standalone": char_name == LORA_PROJECT_OWNER,
                 "representative": info.get("representative", ""),
+                "preview_url": "/api/lora/training_image/" + "/".join(
+                    quote(part, safe="") for part in (char_name, name, filename)
+                ) if filename else "",
                 "training_config": info.get("training_config", {}),
             })
     return entries

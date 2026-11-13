@@ -185,6 +185,61 @@ def resolve_font(
     return None, None
 
 
+# Pillow 의 get_variation_axes() 는 OpenType 태그(wght)가 아니라 사람이 읽는
+# 이름(Weight)을 돌려준다. 두 표기를 같은 축으로 묶는다.
+_AXIS_NAME_ALIASES = {
+    "wght": "weight",
+    "wdth": "width",
+    "opsz": "optical size",
+    "ital": "italic",
+    "slnt": "slant",
+}
+
+
+def _axis_name_key(name) -> str:
+    if isinstance(name, bytes):
+        name = name.decode("latin-1", "ignore")
+    key = str(name or "").strip().lower()
+    return _AXIS_NAME_ALIASES.get(key, key)
+
+
+def apply_variation(font, variation) -> bool:
+    """가변 폰트에 variation([("wght", 700.0)])을 적용한다.
+
+    Pillow 의 ImageFont.truetype() 는 variation 인자를 받지 않으므로(EARLY
+    버전에서도 없음) 로드한 뒤 set_variation_by_axes() 로 축을 지정해야 한다.
+    비가변 폰트이거나 축 적용에 실패하면 False.
+    """
+    if not variation:
+        return False
+    try:
+        axes = font.get_variation_axes()
+    except Exception as exc:
+        # 정적 폰트에서 축을 물으면 OSError가 난다. 정상적인 경우이므로
+        # traceback 없이 축이 없다고만 알린다.
+        print(f"[FONT_ASSETS] 가변 축 없음: {exc}")
+        return False
+    if not axes:
+        return False
+    wanted = {}
+    for tag, value in variation:
+        try:
+            wanted[_axis_name_key(tag)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    values = []
+    for axis in axes:
+        key = _axis_name_key(axis.get("name", b""))
+        values.append(wanted.get(key, float(axis.get("default", 400.0))))
+    try:
+        font.set_variation_by_axes(values)
+        return True
+    except Exception as exc:
+        print(f"[FONT_ASSETS] 가변 축 적용 실패: axes={values}, error={exc}")
+        traceback.print_exc()
+        return False
+
+
 def load_font(
     size: int,
     font_id: Optional[str] = None,
@@ -198,13 +253,9 @@ def load_font(
     path, variation = resolve_font(font_id, legacy_path)
     if path:
         try:
-            if variation:
-                try:
-                    return ImageFont.truetype(path, fs, variation=variation)
-                except (TypeError, Exception):
-                    # variation 미지원 Pillow / 비변수폰트 → 일반 로드
-                    return ImageFont.truetype(path, fs)
-            return ImageFont.truetype(path, fs)
+            font = ImageFont.truetype(path, fs)
+            apply_variation(font, variation)
+            return font
         except Exception as e:
             print(f"[FONT_ASSETS] 폰트 로드 실패({path}): {e} → 시스템 폰트 fallback")
     for cand in SYSTEM_FONT_CANDIDATES:

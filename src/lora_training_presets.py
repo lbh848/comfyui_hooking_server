@@ -1,4 +1,4 @@
-"""ANIMA/ILXL training snapshots with separate release and user storage."""
+"""Model training snapshots with separate release and user storage."""
 from __future__ import annotations
 
 import copy
@@ -12,9 +12,10 @@ from app_paths import config_root, install_root, resolve_install_path
 from asset_preset_scope import AssetPresetLock, write_scope_documents
 from configuration import settings_lock
 from lora_training_steps import training_step_settings
+from lora_training_workflow import training_optimizer_type
 
 
-PROFILES = {"anima", "sdxl"}
+PROFILES = {"anima", "sdxl", "moss"}
 NUMBER_MINIMUMS = {
     "step_per_image": 1, "il_rate": .000001, "save_per_step": 1, "save_after": 0,
     "gen_w": 64, "gen_h": 64, "resolution": 64, "dim": 1, "alpha": 1,
@@ -27,7 +28,7 @@ class TrainingPresetConflict(ValueError):
 
 def validate_training_settings(value, profile):
     keys = {*NUMBER_MINIMUMS, "profile", "multi_img_folder_name", "upscale"}
-    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {"step_mode", "total_steps", "workflow_source_path"}
+    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {"step_mode", "total_steps", "workflow_source_path", "optimizer_type"}
             or value.get("profile") != profile):
         raise ValueError("학습 프로필과 설정 항목을 확인하세요.")
     for key, minimum in NUMBER_MINIMUMS.items():
@@ -45,7 +46,8 @@ def validate_training_settings(value, profile):
     if (not isinstance(workflow_source_path, str) or "\0" in workflow_source_path
             or workflow_source_path.strip() and not workflow_source_path.strip().lower().endswith(".json")):
         raise ValueError("학습 워크플로우 JSON 파일을 선택하세요.")
-    return {**copy.deepcopy(value), **training_step_settings(value), "workflow_source_path": workflow_source_path.strip()}
+    return {**copy.deepcopy(value), **training_step_settings(value), "workflow_source_path": workflow_source_path.strip(),
+            "optimizer_type": training_optimizer_type(value.get("optimizer_type", "default"))}
 
 
 class LoraTrainingPresets:
@@ -102,7 +104,7 @@ class LoraTrainingPresets:
     @staticmethod
     def _profile(profile):
         if not isinstance(profile, str) or profile not in PROFILES:
-            raise ValueError("ANIMA 또는 ILXL 학습 프로필을 선택하세요.")
+            raise ValueError("ANIMA, ILXL 또는 MOSS 학습 프로필을 선택하세요.")
         return profile
 
     def catalog(self, profile):

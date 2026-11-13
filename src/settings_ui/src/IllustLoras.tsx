@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Empty, Modal, SettingsTabs } from "./components";
+import { Empty, Modal, SettingsTabs, Toggle } from "./components";
 import { ResourceThumbnail } from "./ResourceThumbnail";
 import { resourceDisplayName, type Resources } from "./useResources";
 import type { IllustrationData } from "./illustration";
@@ -14,8 +14,8 @@ function LoraPageLink({ name, url }: { name: string; url?: string }) {
     aria-label={`${name} 모델 페이지 (새 탭)`} title="모델 페이지 (새 탭)"><ExternalLink size={13} aria-hidden="true" />페이지</a> : null;
 }
 
-export function IllustLoras({ profile, value, inventory, onChange, character = false, context, name, description }: {
-  profile: string; value: IllustrationData[]; inventory: Resources; onChange: (value: IllustrationData[]) => void; character?: boolean; context?: "asset"; name?: string; description?: string;
+export function IllustLoras({ profile, value, inventory, onChange, character = false, context, name, description, toggleable = false }: {
+  profile: string; value: IllustrationData[]; inventory: Resources; onChange: (value: IllustrationData[]) => void; character?: boolean; context?: "asset"; name?: string; description?: string; toggleable?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -32,7 +32,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
   const loading = source === "internal" ? internal.loading || inventory.loading : inventory.loading;
   const error = source === "internal" ? [internal.error, inventory.error].filter(Boolean).join("\n") : inventory.error;
   const added = (item: PickerLora) => value.some(current => selectedLoraPath(current) === loraPath(item.path));
-  const incompatibleBase = (item: PickerLora) => incompatibleLora(item, profile);
+  const incompatibleBase = (item: PickerLora) => character ? false : incompatibleLora(item, profile);
   const panelId = source === "internal" ? `${internalTabsId}-panel-${internalSource}` : `${tabsId}-panel-${source}`;
   const panelLabelledBy = source === "internal" ? `${internalTabsId}-tab-${internalSource}` : `${tabsId}-tab-${source}`;
   function refresh() {
@@ -71,8 +71,9 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
       const entry = library.find(candidate => loraPath(candidate.path) === path);
       const name = entry ? resourceDisplayName(entry) : item.name || path.split("/").pop()?.replace(/\.(safetensors|sft|ckpt|pt|pth|bin|gguf)$/i, "") || "LoRA";
       const occurrence = value.slice(0, index).filter(previous => selectedLoraPath(previous) === path).length;
+      const enabled = item.enabled !== false;
       const dropPosition = dragging && dropIndex === index && dragging.index !== index ? (dragging.index > index ? "drop-before" : "drop-after") : "";
-      return <li className={`illust-lora-entry ${dragging?.index === index ? "dragging" : ""} ${dropPosition}`} key={`${path}:${occurrence}`} aria-label={`${name} 설정`}
+      return <li className={`illust-lora-entry ${enabled ? "" : "is-off"} ${dragging?.index === index ? "dragging" : ""} ${dropPosition}`} key={`${path}:${occurrence}`} aria-label={`${name} 설정`}
         onDragOver={event => { if (dragging) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropIndex(index); } }}
         onDrop={event => {
           if (!dragging) return;
@@ -93,6 +94,10 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
               }}
               onDragEnd={() => { setDragging(null); setDropIndex(null); }}><GripVertical size={20} /></button>
             <div className="illust-lora-thumbnail"><ResourceThumbnail name={name} thumbnail={entry?.thumbnail || mediaUrl(item.preview_url || "")} /></div><h4>{index + 1}. {name} <LoraPageLink name={name} url={entry?.sourceUrl} /></h4>
+            {toggleable && <Toggle label={`${name} 사용`} checked={enabled} onChange={next => {
+              change(index, { enabled: next });
+              setMessage(next ? `${name}을 켰습니다.` : `${name}을 껐습니다. 생성 시 적용하지 않습니다.`);
+            }} />}
           </div>
           <div className="illust-actions">
             <button type="button" className="button" disabled={index === 0} aria-label={`${name} 위로 이동`} onClick={() => move(index, -1, name)}><ArrowUp size={14} />위</button>
@@ -101,7 +106,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
           </div>
         </div>
         <div className="illust-fields">
-          <label className="field">계열<select value={item.BASE || "anima"} onChange={event => change(index, { BASE: event.target.value })}><option value="anima">ANIMA</option>{((profile === "v3" || profile === "anima_ilxl") || profile === "ilxl" || item.BASE === "sdxl") && <option value="sdxl">ILXL / SDXL</option>}</select></label>
+          <label className="field">계열<select value={item.BASE || "anima"} onChange={event => change(index, { BASE: event.target.value })}><option value="anima">ANIMA</option>{((profile === "v3" || profile === "anima_ilxl") || profile === "ilxl" || item.BASE === "sdxl") && <option value="sdxl">ILXL / SDXL</option>}{(character || profile === "moss" || item.BASE === "moss") && <option value="moss">MOSS</option>}</select></label>
           <label className="field">강도<input type="number" required step="0.05" value={(character ? item.strength ?? item.str : item.str) ?? 1} onChange={event => change(index, { [character ? "strength" : "str"]: event.target.value === "" ? "" : Number(event.target.value) })} /></label>
         </div>
         <label className="field">트리거<textarea rows={2} value={item.trigger || ""} placeholder="사용할 트리거를 입력하세요" onChange={event => change(index, { trigger: event.target.value })} /></label>

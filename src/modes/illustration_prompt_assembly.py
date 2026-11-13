@@ -129,6 +129,7 @@ def symbolic_call2_template(text):
     """Show conditional template branches without choosing actual settings."""
     labels = {
         "lb-xnai.nsfw": "NSFW 설정", "lb-xnai.supplement": "보충 묘사 설정",
+        "lb-xnai.manga_composition_hint": "만화 구성 힌트 설정",
         "lb-xnai.kv.off": "대표 이미지 설정", "lb-xnai.background.minimal": "배경 묘사 설정",
         "lb-xnai.compat.comfy": "Comfy 호환 설정", "lb-xnai.compat.charPrompt": "캐릭터 프롬프트 형식",
         "lb-xnai.context": "과거 문맥 사용 설정", "lb-xnai.characters": "인물 수 설정",

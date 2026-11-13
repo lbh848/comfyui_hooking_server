@@ -10,7 +10,7 @@ import re
 import secrets
 import uuid
 
-from illustration_json import workflow_json_defaults, update_workflow_json_settings
+from illustration_json import enabled_lora_fields, workflow_json_defaults, update_workflow_json_settings
 from json_store import write_json_atomic
 from configuration import read_config
 import workflow_profiles
@@ -430,7 +430,10 @@ def apply_active_model_preset(config: dict, config_file: str | Path, builtin_fil
 
 def apply_preset_workflow(workflow: dict, preset: dict, profile: str) -> dict:
     entry = preset.get("workflows", {}).get(workflow_profiles.illustration_local_profile(profile))
-    return update_workflow_json_settings(workflow, entry["fields"]) if entry else copy.deepcopy(workflow)
+    # Switched-off LoRAs stay in the preset for later editing but must not reach
+    # the ComfyUI graph. Fields themselves keep them so the editor can toggle
+    # them back on.
+    return update_workflow_json_settings(workflow, enabled_lora_fields(entry["fields"])) if entry else copy.deepcopy(workflow)
 
 
 def register_model_preset_runtime(server, prefix, presets, on_change=None, workshop: str | None = None):

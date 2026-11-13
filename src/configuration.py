@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import threading
 
-from app_paths import SOURCE_DIR, config_root
+from app_paths import SOURCE_DIR, config_root, portable_app_paths, resolve_app_paths
 from json_store import write_json_atomic
 
 _locks: dict[str, threading.RLock] = {}
@@ -127,11 +127,15 @@ def read_config(path: str | Path) -> dict:
     value = document.get("appConfig", {}) if path.name == "settings.json" or "draft" in document else document
     if not isinstance(value, dict):
         raise ValueError("appConfig must be an object")
-    return value
+    root = path.resolve().parent.parent if path.name == "settings.json" else SOURCE_DIR
+    portable = {**value, **portable_app_paths(value, root)}
+    return {**portable, **resolve_app_paths(portable, root)}
 
 
 def write_config(path: str | Path, value: dict) -> None:
     path = Path(path)
+    root = path.resolve().parent.parent if path.name == "settings.json" else SOURCE_DIR
+    value = {**value, **portable_app_paths(value, root)}
     with settings_lock(path):
         migrate_legacy_config(path)
         document = read_document(path)

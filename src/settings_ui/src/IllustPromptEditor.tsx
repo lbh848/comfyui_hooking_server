@@ -19,11 +19,14 @@ const promptGroups: PromptGroup[] = [
   { id: "profile", title: "PROFILE-RESOLVE", description: "확정 등장인물의 프로필과 적용 시점을 결정합니다.", fields: [
     { key: "profile_resolve", label: "프로필 선택 지침" },
   ] },
-  { id: "emotion_resolve", title: "EMOTION-RESOLVE", description: "캐릭터·감정·프로필이 확정된 선택 장면마다 입을 복장 하나를 정합니다. 감정 삽화 공방에서만 사용합니다.", fields: [
+  { id: "emotion_resolve", title: "OUTFIT-RESOLVE · CURRENT 복장 결정", description: "캐릭터·감정·프로필이 확정된 선택 장면마다 입을 복장 하나를 정합니다. 감정 삽화 공방에서만 사용합니다.", fields: [
     { key: "emotion_resolve", label: "장면별 복장 결정 지침" },
   ] },
   { id: "emotion_asset", title: "EMOTION-ASSET", description: "선택 장면마다 SFW/NSFW 등급과 가장 가까운 감정 프리셋을 고르고, 프로필 카드에 없는 복장 태그를 새로 정합니다. 감정 삽화 공방에서만 사용합니다.", fields: [
     { key: "emotion_asset", label: "장면별 감정 에셋 결정 지침" },
+  ] },
+  { id: "background_card", title: "배경 카드 예측", description: "자동 배경 모드에서 원문과 세계관 설정으로 새 배경 카드의 이미지 프롬프트를 작성합니다. 기존 배경 카드는 재사용합니다.", fields: [
+    { key: "background_card", label: "배경 카드 예측 지침" },
   ] },
   { id: "outfit", title: "OUTFIT", description: "과거 문맥과 저장 이력에서 시작 복장·머리를 복원하고, 현재 원문의 변화를 추적합니다.", fields: [
     { key: "call1_enhance", label: "복장·헤어스타일 상태 추적 지침" },
@@ -38,20 +41,18 @@ const promptGroups: PromptGroup[] = [
   { id: "plan", title: "PLAN", description: "선택된 장면의 구도·동작·접촉을 계획합니다. 공용 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_plan", label: "선택 장면 구체화 지침" },
   ] },
-  { id: "manga_plan", title: "PLANNER-MANGA", description: "선택된 사건을 만화 페이지의 컷·캐릭터·상태·대사와 영역으로 구체화합니다.", fields: [
-    { key: "manga_plan", label: "만화 컷·대사 계획 지침" },
-  ] },
   { id: "detail", title: "DETAIL", description: "선택된 장면을 이미지 태그로 작성합니다. KEYVIS 통합 예측에서는 대표 이미지 지침을, 마스크 통합 예측에서는 인물 영역 배치 지침을 함께 사용합니다.", fields: [
     { key: "call2_detail", label: "이미지 태그 작성 지침" },
   ] },
   { id: "detail_moss", title: "DETAIL-MOSS", description: "MOSS 그림 모델에서 장면마다 이미지 크기를 입력받아 abs_centralized/yxyx 절대 bbox 레이아웃을 작성합니다. 이미지 중심이 (0,0)이고 y는 아래로, x는 오른쪽으로 증가합니다. 캐릭터뿐 아니라 위치가 중요한 사물도 bbox화합니다.", fields: [
     { key: "detail_moss", label: "MOSS 레이아웃 작성 지침" },
   ] },
-  { id: "manga_detail", title: "DETAIL-MANGA", description: "만화 페이지의 이미지 프롬프트를 작성합니다. PLANNER를 끄면 컷·캐릭터·대사·영역도 함께 계획합니다.", fields: [
-    { key: "manga_detail", label: "만화 페이지 묘사 지침" },
+  { id: "detail_manga", title: "DETAIL-MANGA · MOSS", description: "MOSS 그림 모델에서 만화 페이지 한 장을 page(hierarchy/flow/boundaries) + 1~5컷 panel inventory + 선택적 cross-panel actors로 작성합니다. 모델이 모든 bbox를 절대 yxyx로 계산하고, 서버가 패널·캐릭터·사물·말풍선 item으로 평면화합니다.", fields: [
+    { key: "detail_manga", label: "MOSS 만화 페이지 작성 지침" },
   ] },
   { id: "keyvis", title: "KEYVIS", description: "대표 이미지 지침·작업 지침·공통 묘사 규칙을 각각 편집합니다. 외부 LLM 호환성 지침과 NSFW 및 물리 접촉 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_keyvis", label: "대표 이미지 지침" },
+    { key: "call2_keyvis_manga", label: "대표 만화 지침 (DETAIL-MANGA 통합)" },
     { key: "call2_job", label: "KEYVIS 작업 지침" },
     { key: "call2_common", label: "KEYVIS 공통 묘사 규칙" },
   ] },
@@ -61,7 +62,7 @@ const promptGroups: PromptGroup[] = [
     { key: "call3_subtitle", label: "애니 자막 대사 지침" },
     { key: "call3_manga_nsfw", label: "만화 대사 NSFW 보강 지침" },
   ] },
-  { id: "mask", title: "MULTI-CHAR-MASK", description: "인물별 영역과 공통 배경·구도를 정합니다. 마스크 예측 방식에 따라 전용 LLM에서 사용하거나 DETAIL·KEYVIS 지침과 함께 조립합니다.", fields: [
+  { id: "mask", title: "MULTI-CHAR-MASK", description: "인물별 영역과 공통 배경·구도를 정합니다. DETAIL·KEYVIS 지침과 함께 조립하여 현재 모델에서 마스크를 예측합니다.", fields: [
     { key: "multi_char_mask", label: "인물 영역 배치 지침" },
   ] },
   { id: "visual_correction", title: "비주얼 교정기", description: "생성 이미지의 PASS 여부와 필요한 프롬프트 교정을 판단합니다.", fields: [
@@ -95,10 +96,10 @@ export function IllustPromptEditor({ prompts, savedPrompts, busy, error, message
   // DETAIL 합성 삽화 is edited from the emotion illustration workshop.
   const extraKeys = Object.keys(prompts).filter(key => !groupedKeys.has(key) && key !== "composite_detail");
   // 감정 삽화 공방은 OUTFIT·PLAN·KEYVIS·MULTI-CHAR-MASK와 대사 후처리를 사용하지 않는다.
-  // 일반 삽화 공방은 감정 삽화 전용 EMOTION-RESOLVE를 사용하지 않는다.
+  // 일반 삽화 공방은 감정 삽화 전용 OUTFIT-RESOLVE를 사용하지 않는다.
   const hiddenGroups = scope === "emotion"
-    ? new Set(["outfit", "plan", "manga_plan", "keyvis", "mask", "postprocess"])
-    : new Set(["emotion_resolve", "emotion_asset"]);
+    ? new Set(["outfit", "plan", "keyvis", "mask", "postprocess", "visual_correction", "visual_selection"])
+    : new Set(["emotion_resolve", "emotion_asset", "background_card", "mask", "visual_correction", "visual_selection"]);
   const groups = promptGroups.filter(group => !hiddenGroups?.has(group.id))
     .map(group => ({
       ...group,

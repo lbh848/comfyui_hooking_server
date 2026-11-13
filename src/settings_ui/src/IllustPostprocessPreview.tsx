@@ -1,22 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Images, RefreshCw } from "lucide-react";
 import { Empty, Modal } from "./components";
+import { imageData } from "./imageData";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
-import { illustrationApi, illustrationMedia, useIllustrationResource, type IllustrationData } from "./illustration";
+import { enc, illustrationApi, illustrationMedia, illustrationRequest, useIllustrationResource, type IllustrationData } from "./illustration";
 
-type PreviewBase = { data: string; name: string; faces?: IllustrationData[] };
+type PreviewBase = { data: string; name: string; submittedPrompt?: IllustrationData | null };
 
-function imageData(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("미리보기 이미지를 읽지 못했습니다."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-export function IllustPostprocessPreview({ mode, settings, emotionRules, validation, botName, active }: {
-  mode: string; settings: IllustrationData; emotionRules: string; validation: string; botName: string; active: boolean;
+export function IllustPostprocessPreview({ mode, settings, validation, botName, active }: {
+  mode: string; settings: IllustrationData; validation: string; botName: string; active: boolean;
 }) {
   const [speak, setSpeak] = useState('Character: "안녕하세요. 합성 결과를 확인해 보세요."');
   const [profile, setProfile] = useState("solo");
@@ -32,18 +24,15 @@ export function IllustPostprocessPreview({ mode, settings, emotionRules, validat
   useEffect(() => () => { imageVersion.current++; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
+  const mangaText = mode === "manga_text";
   let inputError = validation;
-  let payload = "";
-  try {
-    const rules = mode === "vn" ? JSON.parse(emotionRules) : [];
-    if (!Array.isArray(rules)) throw new Error("감정 추출 규칙은 배열이어야 합니다.");
-    payload = JSON.stringify({ ...settings, mode, speak, profile, bot_name: botName,
-      ...(mode === "vn" ? { emotion_extract_rules: rules } : {}),
-      ...(base ? { base: base.data, face_positions: base.faces || [] } : {}),
-    });
-  } catch { inputError = "감정 추출 규칙을 올바른 JSON 배열로 입력하세요."; }
+  if (mangaText && (!base || !base.submittedPrompt)) inputError = "백업 이미지를 선택하면 제출 프롬프트로 텍스트를 교체합니다.";
+  const payload = JSON.stringify({ ...settings, mode, speak, profile, bot_name: botName,
+    ...(mangaText && base?.submittedPrompt ? { submitted_prompt: base.submittedPrompt } : {}),
+    ...(base ? { base: base.data } : {}),
+  });
   const enabled = settings.enabled !== false;
-  const emptySpeak = !speak.trim();
+  const emptySpeak = !mangaText && !speak.trim();
   useEffect(() => {
     setError("");
     if (!active || !enabled || emptySpeak || inputError || !payload) { setBusy(false); return; }
@@ -88,8 +77,8 @@ export function IllustPostprocessPreview({ mode, settings, emotionRules, validat
     </div>
     <IllustrationFeedback error={inputError || error || baseError} />
     <button type="button" className="button" disabled={busy || !enabled || emptySpeak || !!inputError} onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} />미리보기 갱신</button>
-    <label className="field">미리보기 대사<textarea rows={3} value={speak} onChange={event => setSpeak(event.target.value)} /><small className="field-help">이름: "대사" 또는 이름: (생각) 형식으로 입력하세요.</small></label>
-    <label className="field">미리보기 이미지 크기<select value={profile} onChange={event => setProfile(event.target.value)}><option value="solo">1인 이미지 설정</option><option value="group">다인 이미지 설정</option></select><small className="field-help">기본 배경은 현재 봇의 이미지 크기를 사용합니다. 선택한 이미지는 원본 크기를 유지합니다.</small></label>
+    {mangaText ? <p className="field-help">{base?.submittedPrompt ? "선택한 백업의 제출 JSON에서 label=\"text\" 항목을 찾아 실제 글자 위치에 다시 그립니다." : "백업을 선택하면 제출된 JSON을 불러와 텍스트 교체 미리보기를 만듭니다."}</p> : <label className="field">미리보기 대사<textarea rows={3} value={speak} onChange={event => setSpeak(event.target.value)} /><small className="field-help">이름: "대사" 또는 이름: (생각) 형식으로 입력하세요.</small></label>}
+    {!mangaText && <label className="field">미리보기 이미지 크기<select value={profile} onChange={event => setProfile(event.target.value)}><option value="solo">1인 이미지 설정</option><option value="group">다인 이미지 설정</option></select><small className="field-help">기본 배경은 현재 봇의 이미지 크기를 사용합니다. 선택한 이미지는 원본 크기를 유지합니다.</small></label>}
     <div className="illust-actions"><button type="button" className="button" onClick={() => setPicker(true)}><Images size={14} />백업에서 선택</button>{base && <button type="button" className="button" onClick={() => { imageVersion.current++; setBase(null); setBaseError(""); }}>이미지 선택 해제</button>}</div>
     <label className="field">미리보기 이미지 업로드<input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void selectFile(file); }} /></label>
     <p className="field-help illust-postprocess-base-name">{base?.name || "이미지를 선택하지 않으면 기본 배경에 합성합니다."}</p>
@@ -111,7 +100,12 @@ function PreviewBackupPicker({ onClose, onSelect }: { onClose: () => void; onSel
       if (!response.ok) throw new Error("백업 이미지를 불러오지 못했습니다.");
       const blob = await response.blob();
       if (!blob.type.startsWith("image/")) throw new Error("백업 이미지 형식을 확인할 수 없습니다.");
-      onSelect({ data: await imageData(blob), name: item.name, faces: item.conversion_info?.face_positions || [] });
+      let submittedPrompt: IllustrationData | null = null;
+      try {
+        const prompt = await illustrationRequest(`backup_prompt/${enc(item.name)}?view=submitted`);
+        submittedPrompt = prompt?.submitted_prompt ?? null;
+      } catch { submittedPrompt = null; }
+      onSelect({ data: await imageData(blob), name: item.name, submittedPrompt });
     } catch (cause) { setError((cause as Error).message); }
     finally { setPending(""); }
   }

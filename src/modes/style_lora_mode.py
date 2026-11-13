@@ -179,6 +179,7 @@ def list_projects() -> list:
             "usage_count": pdata.get("usage_count", 0),
             "has_anima": any(s.get("profile") == "anima" for s in sessions.values()),
             "has_sdxl": any(s.get("profile") == "sdxl" for s in sessions.values()),
+            "has_moss": any(s.get("profile") == "moss" for s in sessions.values()),
             "created_at": pdata.get("created_at", ""),
         }
         if images:
@@ -212,7 +213,7 @@ def create_project(name: str, trigger: str = "", description: str = "") -> dict:
         "images": [],
         "test_images": [],
         "sessions": {},
-        "training_config": {"anima": {}, "sdxl": {}},
+        "training_config": {"anima": {}, "sdxl": {}, "moss": {}},
         "usage_count": 0,
         "created_at": now,
     }
@@ -245,7 +246,7 @@ def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict 
     # 학습 결과물 삭제 (anima/sdxl). 저장 경로 키: {project}
     storage_key = _safe_dirname(project_id)
     if style_lora_load_path:
-        for profile in ("anima", "sdxl"):
+        for profile in ("anima", "sdxl", "moss"):
             trained_dir = os.path.join(style_lora_load_path, profile, storage_key)
             if os.path.isdir(trained_dir):
                 try:
@@ -300,7 +301,7 @@ def get_project_detail(project_id: str, *, include_prompts: bool = True) -> dict
             "image_count": len(project.get("images", [])),
             "test_images": project.get("test_images", []),
             "sessions": project.get("sessions", {}),
-            "training_config": project.get("training_config", {"anima": {}, "sdxl": {}}),
+            "training_config": project.get("training_config", {"anima": {}, "sdxl": {}, "moss": {}}),
             "usage_count": project.get("usage_count", 0),
             "created_at": project.get("created_at", ""),
         },
@@ -857,6 +858,7 @@ def get_project_settings(project_id: str) -> dict:
         "data": {
             "anima": _merged_profile_settings(cfg.get("anima", {})),
             "sdxl": _merged_profile_settings(cfg.get("sdxl", {})),
+            "moss": _merged_profile_settings(cfg.get("moss", {})),
             "selected_profile": cfg.get("selected_profile", "both"),
         },
     }
@@ -868,12 +870,12 @@ def save_project_settings(project_id: str, settings: dict) -> dict:
     project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
-    cfg = {"anima": {}, "sdxl": {}, "selected_profile": "both"}
+    cfg = {"anima": {}, "sdxl": {}, "moss": {}, "selected_profile": "both"}
     if isinstance(settings, dict):
-        for profile in ("anima", "sdxl"):
+        for profile in ("anima", "sdxl", "moss"):
             cfg[profile] = settings.get(profile, {}) or {}
         sp = settings.get("selected_profile")
-        if sp in ("anima", "sdxl", "both"):
+        if sp in ("anima", "sdxl", "moss", "both"):
             cfg["selected_profile"] = sp
     project["training_config"] = cfg
     _save_data(data)
@@ -944,7 +946,7 @@ def list_style_trained_sessions(style_lora_load_path: str, profile: str, project
     if not style_lora_load_path:
         print("[STYLE_LORA_TRAINED] style_lora_load_path 미설정")
         return []
-    if profile not in ("anima", "sdxl"):
+    if profile not in ("anima", "sdxl", "moss"):
         print(f"[STYLE_LORA_TRAINED] 잘못된 profile: {profile}")
         return []
     entry_dir = _style_trained_dir(style_lora_load_path, profile, project_id)
@@ -1131,7 +1133,7 @@ def delete_style_trained_session(style_lora_load_path: str, profile: str, projec
 
 
 def update_style_session_representative(project_id: str, profile: str, session: str, representative: dict) -> dict:
-    if not project_id or profile not in ("anima", "sdxl") or not session:
+    if not project_id or profile not in ("anima", "sdxl", "moss") or not session:
         return {"success": False, "error": "project/profile/session 누락"}
     data = _load_data()
     project = data.get("projects", {}).get(_safe_dirname(project_id))
@@ -1148,7 +1150,7 @@ def update_style_session_representative(project_id: str, profile: str, session: 
 
 
 def update_style_session_priority(project_id: str, profile: str, sessions_list: list) -> dict:
-    if not project_id or profile not in ("anima", "sdxl"):
+    if not project_id or profile not in ("anima", "sdxl", "moss"):
         return {"success": False, "error": "project/profile 누락"}
     if not isinstance(sessions_list, list):
         return {"success": False, "error": "sessions는 배열이어야 합니다"}
@@ -1171,7 +1173,7 @@ def cleanup_style_non_representative(style_lora_load_path: str, profile: str, pr
     if not style_lora_load_path:
         print("[STYLE_LORA_CLEANUP] style_lora_load_path 미설정")
         return {"success": False, "error": "style_lora_load_path 미설정"}
-    if profile not in ("anima", "sdxl"):
+    if profile not in ("anima", "sdxl", "moss"):
         return {"success": False, "error": f"잘못된 profile: {profile}"}
 
     entry_dir = _style_trained_dir(style_lora_load_path, profile, project_id)
@@ -1278,7 +1280,7 @@ def list_style_lora_for_picker(style_lora_load_path: str = "") -> list:
     for project_id, pdata in data.get("projects", {}).items():
         profiles = {}
         storage_key = _safe_dirname(project_id)
-        for profile in ("anima", "sdxl"):
+        for profile in ("anima", "sdxl", "moss"):
             if not style_lora_load_path:
                 continue
             profile_dir = os.path.join(style_lora_load_path, profile, storage_key)

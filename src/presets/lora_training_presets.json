@@ -20,7 +20,8 @@
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
-        "upscale": false
+        "upscale": false,
+        "optimizer_type": "default"
       }
     },
     {
@@ -42,7 +43,8 @@
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_ILXL_V1_1.json",
         "profile": "sdxl",
         "multi_img_folder_name": "soya_lora",
-        "upscale": false
+        "upscale": false,
+        "optimizer_type": "default"
       }
     },
     {
@@ -64,7 +66,8 @@
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
-        "upscale": false
+        "upscale": false,
+        "optimizer_type": "default"
       }
     },
     {
@@ -85,6 +88,53 @@
         "total_steps": 2000,
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ILXL_V1_1.json",
         "profile": "sdxl",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false,
+        "optimizer_type": "default"
+      }
+    },
+    {
+      "id": "builtin-moss-style-int8",
+      "profile": "moss",
+      "name": "MOSS 그림체 · INT8 16GB",
+      "settings": {
+        "profile": "moss",
+        "il_rate": 0.0001,
+        "save_per_step": 200,
+        "save_after": 0,
+        "gen_w": 768,
+        "gen_h": 1024,
+        "resolution": 1024,
+        "dim": 16,
+        "alpha": 16,
+        "step_mode": "total",
+        "step_per_image": 100,
+        "total_steps": 3000,
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_MOSS_V1_0.json",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false,
+        "optimizer_type": "default"
+      }
+    },
+    {
+      "id": "93b1b85dc43046ef881d34dac65a618e",
+      "profile": "moss",
+      "name": "MOSS 기본",
+      "settings": {
+        "il_rate": 5e-05,
+        "save_per_step": 50,
+        "save_after": 0,
+        "gen_w": 768,
+        "gen_h": 1024,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 128,
+        "step_mode": "total",
+        "step_per_image": 100,
+        "total_steps": 300,
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_MOSS_V1_0.json",
+        "optimizer_type": "Muon",
+        "profile": "moss",
         "multi_img_folder_name": "soya_lora",
         "upscale": false
       }

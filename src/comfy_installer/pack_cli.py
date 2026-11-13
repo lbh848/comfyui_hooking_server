@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 from configuration import config_path as application_config_path, read_config
+from app_paths import resolve_install_path
 
 from .crypto import WorkflowPackError, create_workflow_pack
 from .manifest import InstallManifest, load_install_manifest
@@ -61,7 +62,7 @@ def collect_workflow_bindings(
                 )
                 continue
             raise WorkflowPackError(f"settings.json 워크플로우 경로가 비었습니다: {key}")
-        path = Path(raw_path).resolve()
+        path = resolve_install_path(raw_path, config_path.resolve().parent.parent).resolve()
         if not path.is_file():
             raise WorkflowPackError(
                 f"워크플로우 파일이 없습니다: key={key}, path={path}"

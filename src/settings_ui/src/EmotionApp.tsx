@@ -98,9 +98,14 @@ function EmotionAppContent() {
   const hasBackgroundModals = modals.some(modal => modal.backgrounded);
   const model = useIllustrationModelSelection();
   const bots = useIllustrationResource("illustration_context/bridge/bots?scope=emotion");
+  const backgroundConfig = useIllustrationResource("illustration/config?scope=emotion");
   const botAction = useIllustrationAction();
   const [botSelected, setBotSelected] = useState("");
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("manual");
+  const [backgroundPreset, setBackgroundPreset] = useState("");
+  useEffect(() => {
+    if (backgroundConfig.data) setBackgroundMode(backgroundConfig.data.config?.background_mode === "auto" ? "auto" : "manual");
+  }, [backgroundConfig.data]);
   const [addingBot, setAddingBot] = useState(false);
   const [addedBot, setAddedBot] = useState<{ name: string } | null>(null);
   const [toast, setToast] = useState("");
@@ -119,6 +124,8 @@ function EmotionAppContent() {
   // autosave is not dropped when switching tabs.
   const [modelMounted, setModelMounted] = useState(tab === "model");
   useEffect(() => { if (tab === "model") setModelMounted(true); }, [tab]);
+  const [backgroundMounted, setBackgroundMounted] = useState(tab === "background");
+  useEffect(() => { if (tab === "background") setBackgroundMounted(true); }, [tab]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 760px)").matches);
@@ -212,6 +219,7 @@ function EmotionAppContent() {
                   <span className="illust-nav-selection-caption">{id === "bot" ? "현재 선택된 봇:" : "현재 선택된 배경:"}</span>
                   <strong className="illust-nav-selection-name">{id === "bot"
                     ? (botSelected || (bots.error ? "확인할 수 없음" : bots.data ? "선택된 봇 없음" : "불러오는 중…"))
+                    : backgroundMode === "auto" && backgroundPreset ? `자동 · ${backgroundPreset}`
                     : backgroundModeShortLabels[backgroundMode]}</strong>
                 </span>}
               </a>;
@@ -250,7 +258,7 @@ function EmotionAppContent() {
             : tab === "flow" ? <IllustFlow scope="emotion" />
             : tab === "prompts" ? <EmotionBotApiProvider><IllustPrompts botSelected={botSelected} scope="emotion" /></EmotionBotApiProvider>
             : tab === "bot" ? <EmotionBotApiProvider><EmotionBots botSelected={botSelected} addedBot={addedBot} onBotSelected={selectBot} onCatalogChange={bots.reload} onAdd={() => setAddingBot(true)} /></EmotionBotApiProvider>
-            : tab === "background" ? <EmotionBackgroundSettings mode={backgroundMode} onModeChange={setBackgroundMode} />
+            : tab === "background" ? null
             : tab === "tunnel" || tab === "tailscale" ? <ExternalConnectionPage connections={connections} kind={tab} notify={setToast} />
             : tab === "work-queue" ? <WorkQueuePage notify={setToast} />
             : tab === "program-logs" ? <ProgramLogsPage notify={setToast} />
@@ -258,6 +266,9 @@ function EmotionAppContent() {
             : <LlmLogsPage notify={setToast} />)}
         <div role="tabpanel" id="emotion-panel-model" aria-labelledby="emotion-tab-model" hidden={tab !== "model"}>
           {modelMounted && <IllustModelPresets />}
+        </div>
+        <div hidden={tab !== "background"}>
+          {backgroundMounted && <EmotionBackgroundSettings mode={backgroundMode} onModeChange={setBackgroundMode} onPresetChange={setBackgroundPreset} botSelected={botSelected} />}
         </div>
         {addingBot && <EmotionBotApiProvider><AddIllustrationBot onClose={() => setAddingBot(false)} onAdded={name => { setAddedBot({ name }); bots.reload(); setAddingBot(false); }} /></EmotionBotApiProvider>}
         <footer className="page-footer">

@@ -21,6 +21,7 @@ dependencies = [
     "onnxruntime-directml; sys_platform == 'win32'",
     "onnxruntime; sys_platform != 'win32'",
     "opencv-python",
+    "rapidocr>=3.9.0",
     "mediapipe",
     "huggingface-hub",
     "lancedb>=0.34.0",
@@ -37,6 +38,9 @@ dependencies = [
 [tool.uv]
 python-downloads = "automatic"
 link-mode = "copy"
+# rapidocr는 opencv-python-headless를 끌어온다. 프로젝트의 opencv-python(4.13.0.92)과
+# cv2 모듈 파일이 겹치므로 같은 버전으로 고정해 5.x가 덮어쓰지 않게 한다.
+override-dependencies = ["opencv-python-headless==4.13.0.92"]
 
 [dependency-groups]
 dev = [

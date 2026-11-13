@@ -4,18 +4,9 @@ import { Badge, Modal, SettingsTabs } from "./components";
 import { TagTextarea } from "./TagTextarea";
 import { useTagTooltip } from "./TagTooltip";
 import { PromptEditor } from "./InternalLoraTraining";
-import { enqueueLoraRefine, imageUrl, loraPromptText, loraRequest, type LoraContext, type LoraData } from "./internalLora";
+import { contextParams, enqueueLoraRefine, imageUrl, loraPromptText, loraRequest, type LoraContext, type LoraData } from "./internalLora";
 import { isFinishedQueueItem } from "./workQueue";
-
-// Keep the original LoRA editor's comma-delimited tags and block-rule semantics.
-const promptTags = (text: string) => text.split(",").map(tag => tag.trim()).filter(Boolean);
-function matchBlockRule(tag: string, rules: string[]) {
-  const value = tag.trim().toLowerCase();
-  return rules.some(rule => {
-    const pattern = rule.trim().toLowerCase();
-    return pattern.startsWith("* ") ? value.endsWith(pattern.slice(2)) : pattern.endsWith(" *") ? value.startsWith(pattern.slice(0, -2)) : value === pattern;
-  });
-}
+import { matchBlockRule, promptTags, removeBlockedTags } from "./loraPromptTags";
 
 const descriptions = new Map<string, string>();
 function LoraPromptTag({ tag, state, blocked, showDescriptions, disabled, original, onClick }: {
@@ -93,7 +84,9 @@ export function ImageEditor({ context, image, test, shared, onClose, onSave, onR
   const [refineId, setRefineId] = useState(""), [pollRevision, setPollRevision] = useState(0);
   const refresh = useRef(onRefined); refresh.current = onRefined;
   const disabled = busy || !!refineId;
-  const canRefine = !(context.category === "bot" && (shared || context.character?.skip_training));
+  const sharedTest = context.category === "bot" && test && shared;
+  const refineContext = sharedTest ? { ...context, character: undefined } : context;
+  const canRefine = sharedTest || !(context.category === "bot" && (shared || context.character?.skip_training));
   const draftRules = ruleDraft.split("\n").map(rule => rule.trim()).filter(Boolean);
   const rulesChanged = JSON.stringify(draftRules) !== JSON.stringify(rules);
   useEffect(() => {
@@ -134,7 +127,11 @@ export function ImageEditor({ context, image, test, shared, onClose, onSave, onR
   async function refine() {
     setBusy(true); setError(""); setStatus("");
     try {
-      const ids = await enqueueLoraRefine(context, [{ ...image, original_positive: original.positive, positive, negative }], test);
+      if (sharedTest) {
+        await loraRequest("bot_lora/test_images/prompt", { ...contextParams(refineContext), filename: image.filename, positive, negative });
+        await refresh.current();
+      }
+      const ids = await enqueueLoraRefine(refineContext, [{ ...image, original_positive: original.positive, positive, negative }], test);
       if (!ids[0]) throw new Error("정제 작업 번호를 받지 못했습니다.");
       setRefineId(ids[0]); setStatus("LLM 정제 대기 중…");
     } catch (cause) { console.error("[LORA] 정제 요청 실패:", cause); setError((cause as Error).message); }
@@ -161,10 +158,15 @@ export function ImageEditor({ context, image, test, shared, onClose, onSave, onR
             {([["긍정 프롬프트", "positive", positive, setPositive], ["부정 프롬프트", "negative", negative, setNegative]] as const).map(([label, field, value, setValue]) => <LoraPromptField key={field} label={label} value={isOriginal ? original[field] : value} other={isOriginal ? value : original[field]} original={isOriginal} mode={isOriginal ? originalMode : mode} rules={draftRules} showDescriptions={showDescriptions} disabled={disabled} onChange={setValue} />)}
           </section>)}
         </div>
-        {canRefine && <p className="field-help">{context.category === "style" ? "LLM 정제는 이미지를 분석합니다." : test ? "LLM 정제는 기준 학습 이미지와 현재 테스트 프롬프트를 조합합니다." : "LLM 정제는 원본 긍정 프롬프트를 사용합니다."} 정제 결과는 자동 저장됩니다.</p>}
+        {canRefine && <p className="field-help">{sharedTest ? "LLM 정제는 공통 테스트 프롬프트의 자세·표정·구도를 정리합니다." : context.category === "style" ? "LLM 정제는 이미지를 분석합니다." : test ? "LLM 정제는 기준 학습 이미지와 현재 테스트 프롬프트를 조합합니다." : "LLM 정제는 원본 긍정 프롬프트를 사용합니다."} 정제 결과는 자동 저장됩니다.</p>}
         {status && <p role="status" className="field-help">{status}</p>}{error && <p className="field-error" role="alert">{error}{refineId && <button className="button" onClick={() => setPollRevision(value => value + 1)}>조회 다시 시도</button>}</p>}
       </div>
-      <div className="lora-prompt-footer"><div className="internal-lora-actions">{canRefine && <><button className="button" disabled={disabled} onClick={() => void refine()}><Sparkles size={14} />{refineId ? "정제 중…" : "LLM 정제"}</button><button className="button" disabled={disabled} onClick={() => setPromptEditor(true)}>LLM 프롬프트</button></>}
+      <div className="lora-prompt-footer"><div className="internal-lora-actions">{sharedTest && <button className="button secondary" disabled={disabled || rulesLoading || !!rulesError} onClick={async () => {
+          const nextPositive = removeBlockedTags(positive, draftRules);
+          setBusy(true); setError("");
+          try { await loraRequest("bot_lora/test_images/prompt", { ...contextParams(refineContext), filename: image.filename, positive: nextPositive, negative }); setPositive(nextPositive); setStatus("긍정 프롬프트에 블록 태그 규칙을 적용하고 프로젝트 테스트 프롬프트에 저장했습니다."); await refresh.current(); }
+          catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
+        }}>블록 태그 규칙 적용</button>}{canRefine && <><button className="button secondary" disabled={disabled || !positive.trim()} onClick={() => void refine()}><Sparkles size={14} />{refineId ? "정제 중…" : "LLM 정제"}</button><button className="button secondary" disabled={disabled} onClick={() => setPromptEditor(true)}>LLM 프롬프트</button></>}
         <button className="button" disabled={disabled} onClick={() => { setPositive(original.positive); setNegative(original.negative); setStatus(""); }}><RotateCcw size={14} />원본으로 되돌리기</button></div>
         <div className="internal-lora-actions"><button className="button" disabled={busy} onClick={onClose}>닫기</button><button className="button primary" disabled={disabled} onClick={async () => {
           setBusy(true); setError("");

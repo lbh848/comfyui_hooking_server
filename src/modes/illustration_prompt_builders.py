@@ -3,7 +3,16 @@ import json
 import re
 from copy import deepcopy
 
+from manga_page_sizes import MANGA_PAGE_SIZES, parse_manga_page_sizes
+from manga_page_vocabulary import vocabulary as manga_page_vocabulary
 from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_sub, variable
+
+# DETAIL-MANGA draws a whole manga page as one MOSS multi_panel image. The
+# model first writes a layered page plan (page enums, a panel inventory, and
+# optional cross-panel actors); the parser flattens it into MOSS items. Page
+# resolution and composition are independent choices. MANGA_PAGE_SIZES is the
+# full default list; the bot's manga_page_sizes setting narrows the offered
+# options.
 
 
 def blank_state_table(names, slots):
@@ -78,7 +87,15 @@ def selection_messages(prompts, role_context, scene_count, toggles, prior_status
         "joy, anger, sadness, fear, surprise). Keep each label to one word, or at most three words."
         if emotion else
         "Add scene_plan to the character-resolution response. Each item has anchor_segment, characters and a short "
-        "scene_brief stating the selection intent.")
+        "scene_brief stating the selection intent; for a directed action, the brief must make the source-supported "
+        "actor and target explicit, while a mutual action has equal endpoints.")
+    nsfw_priority = (
+        "\n\n# ACTIVE NSFW SELECTION PRIORITY\n"
+        "When explicit-scene guidance is active, a sexual or NSFW event established in CURRENT is a primary "
+        "selection target: select the anchor that visibly depicts the act instead of its setup, tease or aftermath, "
+        "and keep the source-supported actor/target direction unchanged."
+        if toggles.get("nsfw") and not emotion else ""
+    )
     return [
         {"role": "system", "content": prompt_join("\n\n", (part for part in
             (role_context, explicit, prompts[selection_key]) if part))},
@@ -99,27 +116,15 @@ def selection_messages(prompts, role_context, scene_count, toggles, prior_status
          + (" For each manga page, begin scene_brief with its source range, such as C004-C008, followed by "
             "one sentence about that passage's event. anchor_segment is the range's END: if a response or "
             "consequence is part of the selected event, place the page after that response or consequence. "
-            "Keep the selected named subjects central throughout that passage."
-            if selection_key == "manga_select" else "")},
+            "Keep the selected named subjects central throughout that passage. "
+            "Write scene_brief entirely in English; this selection stage does not output dialogue."
+            if selection_key == "manga_select" else "")
+         + nsfw_priority},
     ]
 
 def plan_messages(prompts, role_context, batch, batch_names, single_names, tracking, plan_profiles, past_text, segmented, toggles,
                   *, segment_slots=None, time_place=None, prior_status=None, prior_time_place=None, registered_names=None):
-    from modes.illustration_context_pipeline import render_call2_prompt
-
-    manga = toggles.get("illustration_output_mode") in ("manga", "manga_both")
     system = role_context + "\n\n" + prompts["call2_plan"]
-    if manga:
-        explicit = ""
-        if toggles.get("nsfw"):
-            explicit = render_call2_prompt(prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
-        else:
-            print("[ILLUST_CONTEXT:MANGA-PLAN] NSFW OFF: NSFW 및 물리 접촉 지침 제외")
-        system = prompt_join("\n\n", (part for part in (
-            role_context,
-            explicit,
-            prompts["manga_plan"],
-        ) if part))
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     return [
         {"role": "system", "content": system},
@@ -154,16 +159,9 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
          + ("\n\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시") if str(toggles.get("direction") or "").strip() else "")
          + "\n\nExpand each supplied scene_brief into a complete grounded visual brief, preserving its selection intent. "
-         + ("Each assigned scene is ONE page with 3 or 4 sequential panels. In its scene_brief, write the panel sequence, "
-            "causal links and reading order. Return canvas and panels with page-relative bounds, panel scene_brief, "
-            "and dialogue entries (speaker, text, panel-local x, y, width). Include per-panel "
-            "source anchors and resolved profile/outfit/hair/time/place/lighting. Include the supplied identity and "
-            "exclusion details needed by the detailer at each depicted time. Dialogue output language: "
-            + variable(toggles.get("speak_language") or "한국어", "만화 대사 언어") + ". " if manga else "")
          + "Keep every assigned anchor_segment and registered characters array in the same order, including an empty array. "
          + "Describe any source-grounded NPC and its policy-permitted visibility in scene_brief, not that array. "
-         + ("Use the complete scene_plan output contract in the system instructions; include every panel and its script."
-            if manga else "Return only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"],\"scene_brief\":\"complete visual brief\"}]}.")},
+         + 'Return only {"scene_plan":[{"anchor_segment":"C001","characters":["canonical name"],"scene_brief":"complete visual brief"}]}.'},
     ]
 
 def _emotion_asset_note(batch) -> str:
@@ -216,7 +214,9 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             + variable(json.dumps([scene.get("anchor_segment") or scene.get("slot") for scene in batch]), "출력할 원문 앵커 목록")
             + ". Use exactly those anchor strings as slot values. canvas is optional: copy the supplied "
             "background size when one is available, otherwise omit it. Available canvas sizes: "
-            + variable(json.dumps(canvas_sizes or {"group": [1152, 768]}), "합성 캔버스 크기")
+            + variable(json.dumps({key: value for key, value in (canvas_sizes or {}).items()
+                                   if key in ("solo", "group")} or {"group": [1152, 768]}),
+                       "합성 캔버스 크기")
             + ". Declare every distinct background exactly ONCE in a root backgrounds array of "
             "{\"id\":\"B1\",\"positive\":\"...\"} entries, and set each scene's background to the id string "
             "that supplies it. Scenes with the exact same place, time, lighting and camera MUST use the same "
@@ -250,7 +250,8 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
                    for scene in batch for character in scene.get("characters", [])}
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     prepared = [{"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"],
-                 **{key: value for key, value in scene.items() if key not in {"slot", "anchor_segment"}}}
+                 **{key: value for key, value in scene.items()
+                    if key not in {"slot", "anchor_segment", "source_context"}}}
                 for scene in batch]
     if manga:
         # Pixels are retained for the renderer; DETAIL receives the measured
@@ -389,6 +390,26 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
     return messages
 
 
+def manga_page_size_options(canvas_sizes=None):
+    """Share the bot's scaled page canvases across ordinary pages and KEYVIS."""
+    settings = canvas_sizes or {}
+    try:
+        scale = float(settings.get("manga_scale", 1.0))
+    except (TypeError, ValueError):
+        scale = 1.0
+    if not 0.2 <= scale <= 2.0:
+        scale = 1.0
+    sizes = list(parse_manga_page_sizes(settings.get("manga_page_sizes"))) or list(MANGA_PAGE_SIZES)
+    if settings.get("manga"):
+        sizes.insert(0, settings["manga"])
+    options = []
+    for width, height in sizes:
+        size = [max(16, round(int(value) * scale / 16) * 16) for value in (width, height)]
+        if size not in options:
+            options.append(size)
+    return options
+
+
 def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=None,
                          past_text="", segmented="", registered_names=None,
                          plan_profiles=None, tracking=None, time_place=None,
@@ -400,7 +421,21 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     carries the exact image_size and the output contract asks for that layout
     directly instead of the normalized V3 regions. MOSS always writes the key
     visual in this same call; ``keyvis_messages`` supplies its policy/context.
+
+    In manga output mode each assigned scene is one whole manga page. The model
+    writes a layered page plan (page enums, a 1-5 panel inventory, and optional
+    cross-panel actors) with absolute bboxes; the parser flattens it into MOSS
+    panel/character/text items. A body that breaks the frame is emitted once as
+    a cross-panel actor instead of being clipped into a panel.
     """
+    manga = (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
+    composition_hints = manga and bool((toggles or {}).get("manga_composition_hint_enabled"))
+    if manga:
+        from modes.illustration_context_pipeline import render_call2_prompt
+        detail_system = prompt_sub(
+            r"\{\{#when::lb-xnai\.manga_composition_hint::tis::1\}\}[\s\S]*?\{\{/when\}\}",
+            lambda match: render_call2_prompt(match.group(0), toggles or {}, include_server_limits=False),
+            detail_system)
     keyvis_canvas = {
         profile: [int(canvas_sizes[profile][0]), int(canvas_sizes[profile][1])]
         for profile in ("solo", "group")
@@ -420,6 +455,7 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             paragraph for paragraph in keyvis_system.split("\n\n")
             if paragraph.strip() not in detail_paragraphs)
         detail_system = prompt_join("\n\n", (
+            "MANGA PAGE INSTRUCTIONS (apply to both scenes and keyvis)" if manga else
             "ORDINARY SCENE INSTRUCTIONS (apply only to scenes)", detail_system,
             "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_system,
         ))
@@ -435,32 +471,66 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             detail_system = prompt_join("\n\n", (detail_system,
                 "REFERENCE PICTURE MODE\n"
                 "The image model receives reference pictures assigned Picture 1, 2, 3 in the order "
-                "the character items appear in each scene's items array. For every character item "
-                "whose name is supplied in the reference list, include a few concrete appearance "
-                "words in its caption (hair color and style, eye color, key outfit pieces) so the "
-                "reference picture can be matched, and do not write the character's identity name "
-                "in the caption. Do not add Picture N markers yourself; the server adds them at "
-                "encode time. Characters without a reference keep the ordinary caption rules."))
+                "the actor items appear across each scene's panels and cross_panel_actors. For every "
+                "actor whose name is supplied in the reference list, preserve the complete visible "
+                "identity and current wardrobe from its selected Profile and state in its actor instruction, "
+                "including appearance, face_tags, eye_tags, eye_prompt and absolute_tags. Reference pictures "
+                "supplement those settings; they never authorize a shorter appearance summary, omission of "
+                "distinctive tags or a different outfit. Do not write the character's identity name "
+                "in the actor instruction. Do not add Picture N markers yourself; the server adds them at "
+                "encode time. Characters without a reference keep the ordinary instruction rules."))
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     prepared = []
     for scene in batch:
         entry = {"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"]}
         entry.update({key: value for key, value in scene.items()
-                      if key not in {"slot", "anchor_segment"}})
+                      if key not in {"slot", "anchor_segment", "source_context"}})
         characters = [character for character in (entry.get("characters") or [])
                       if isinstance(character, dict)]
         profile = "group" if len(characters) >= 2 else "solo"
-        size = (canvas_sizes or {}).get(profile) or (1024, 1024)
-        entry["image_size"] = {"width": int(size[0]), "height": int(size[1])}
-        # Keep the validated size on the batch scene so the parser can verify
-        # bboxes even when the model omits image_size from its response.
-        scene.setdefault("image_size", dict(entry["image_size"]))
+        if manga:
+            # The model chooses a resolution before composing its panel boxes.
+            # The user's manga scale multiplies every
+            # offered resolution, so the page is drawn at the scaled size and
+            # its bboxes are written in that same coordinate space.
+            options = manga_page_size_options(canvas_sizes)
+            size = options[0]
+            configured = (canvas_sizes or {}).get("manga")
+            if configured:
+                entry["image_size"] = {"width": size[0], "height": size[1]}
+            else:
+                # Do not pre-pick a size for the model. The fallback canvas is
+                # kept on the scene only for validating output that omits
+                # image_size.
+                entry.pop("image_size", None)
+            scene["image_size"] = {"width": size[0], "height": size[1]}
+            # A page is one generated image, not a panel-sized ANIMA request.
+            entry["page_format"] = "manga_multi_panel"
+            entry["panel_count"] = (
+                "3-5 primary panels; choose any count to fit the source; panel counts may repeat, "
+                "but each allowed composition may be used only once per request; no reduction to 1 or 2"
+                if composition_hints else
+                "2-5 primary panels; consider 3, 4 and 5 source-supported shots first; "
+                "2 for a genuinely sparse passage or necessary sustained large framing; "
+                "1 only for an explicitly requested splash")
+            entry["page_size_options"] = options
+        else:
+            size = (canvas_sizes or {}).get(profile) or (1024, 1024)
+            entry["image_size"] = {"width": int(size[0]), "height": int(size[1])}
+            # Keep the validated size on the batch scene so the parser can
+            # verify bboxes even when the model omits image_size.
+            scene.setdefault("image_size", dict(entry["image_size"]))
         prepared.append(entry)
     batch_names = {str(character.get("name") or "") for scene in prepared
                    for character in (scene.get("characters") or []) if isinstance(character, dict)}
     user = ("# ONLY THIS BATCH'S PREPARED SCENES\n"
             + variable(json.dumps({"scenes": prepared}, ensure_ascii=False),
                        "이 호출의 장면·프로필·상태·이미지 크기(bbox 기준)"))
+    if manga and plan_profiles is not None:
+        user += ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
+                 + variable(json.dumps([item for item in plan_profiles
+                                        if item["character"] in batch_names], ensure_ascii=False),
+                            "해당 인물 프로필 타임라인"))
     if tracking is not None:
         user += ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
                  + variable(json.dumps({
@@ -502,22 +572,77 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     if keyvis_messages:
         user += ("\n\n# KEY VISUAL OUTPUT (SAME ROOT)\n"
                  "Add exactly one keyvis object to the same JSON root: "
-                 "{\"scenes\":[...],\"keyvis\":{...}}. keyvis has no slot. It uses the same MOSS "
-                 "layout fields as a scene: image_size, summary {caption}, items "
+                 "{\"scenes\":[...],\"keyvis\":{...}}. keyvis has no slot. ")
+        if manga:
+            user += ("It is one representative MANGA PAGE using the same layered schema and rules as scenes: "
+                     "image_size, page, panels and optional cross_panel_actors. Select a coherent source-supported "
+                     "sequence independently of the assigned ordinary pages. Apply the active panel-count, "
+                     "dialogue and composition rules to keyvis too. When composition hints are enabled, "
+                     "include its composition ID in summary and use a different composition across scenes and keyvis. "
+                     "Choose image_size from these page_size_options (already scaled):\n"
+                     + variable(json.dumps({"page_size_options": manga_page_size_options(canvas_sizes)},
+                                           ensure_ascii=False), "KEYVIS 만화 페이지 크기"))
+        else:
+            user += ("It uses the ordinary "
+                     "single-image MOSS layout fields: image_size, summary {caption}, items "
+                     "(label, name, caption, bbox), bbox_coord_space \"abs_centralized\", bbox_format \"yxyx\". "
+                     "Choose keyvis image_size from the supplied key visual canvases: use the group canvas "
+                     "when keyvis depicts two or three people, otherwise the solo canvas.\n"
+                     + variable(json.dumps(keyvis_canvas or {"solo": [1024, 1024], "group": [1024, 1024]},
+                                           ensure_ascii=False), "KEYVIS 캔버스 크기 (solo/group)"))
+    if manga:
+        user += ("\n\n# MANGA PAGE VOCABULARY (CLOSED ENUMS; USE ONLY THESE VALUES)\n"
+                 + variable(json.dumps(manga_page_vocabulary(), ensure_ascii=False),
+                            "페이지·패널·크로스패널·말풍선 enum"))
+        user += ("\n\nReturn one JSON object inside <lb-xnai> with a scenes array for exactly these page anchors: "
+                 + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
+                 + ". Follow the layered schema in the DETAIL-MANGA system prompt: page, panels and "
+                 "cross_panel_actors, not flat items. "
+                 + ("Use 3-5 primary panels dividing the page; choose any count to fit the source and readability. "
+                    "Panel counts may repeat freely, including three panels on every page, provided each page "
+                    "uses a different allowed composition. The catalog's five-to-three order is presentation "
+                    "only; do not require more panels or panel-count variety. "
+                    "Do not reduce a page to two panels. Each 3-5-panel scene MUST include summary as "
+                    "its chosen composition ID integer; this is required metadata, not analysis. "
+                    "Use each allowed composition ID and its actual grouping at most once across all scenes "
+                    "in this request; assign unused IDs before writing and replace any duplicates before returning. "
+                    "IDs 4 and 18 are forbidden, including via transposition. "
+                    if composition_hints else
+                    "Use 2-5 primary panels dividing the page; consider three, four and five "
+                    "source-supported shots before compressing to two. ")
+                 + "Preserve distinct action changes, causal details and responses without inventing filler. "
+                 "Apply PAGE COMPOSITION KNOWLEDGE before writing actors: compose the whole page through "
+                 "nested horizontal and vertical groups, relative panel areas and proportions, emphasis and "
+                 "a clear reading path. The sequence of moments does not dictate a single column. "
+                 "Never arrange the whole page as one horizontal row of three or four side-by-side panels. "
+                 "Express the chosen spatial relationships in the actual panel regions; shot angles and "
+                 "frame contours alone do not change the layout. "
+                 "Do not use a full-page main image with tiny inset shots. "
+                 "A single full-page panel is allowed only for an explicitly requested splash. "
+                 "Choose image_size from page_size_options first, then author absolute centered yxyx integer bboxes. "
+                 "Default to touching shared dividers with reciprocal attachedTo panelId links. "
+                 "Choose source beats and panel emphasis first. If a frame break serves that event, apply "
+                 "this geometry rule: Plan the page's foreground body first, then its crossing boxes; keep "
+                 "one viewpoint and scale across spansPanels, with a tight body bbox. "
+                 "Keep character tags in actors; apply the system's dialogue length rule to speech. "
+                 "Write all summaries, captions and instructions in English, even when the source is Korean. "
+                 "Only dialogue[].text uses the dialogue output language: "
+                 + variable((toggles or {}).get("speak_language") or "한국어", "만화 대사 언어") + ". "
+                 + ("Also include the single keyvis object described above. " if keyvis_messages else "")
+                 + "No prose outside the JSON.")
+    else:
+        user += ("\n\nReturn one JSON object inside <lb-xnai> with a scenes array for exactly these C anchors: "
+                 + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
+                 + ". Each scene has slot, image_size, summary {caption}, items "
                  "(label, name, caption, bbox), bbox_coord_space \"abs_centralized\", bbox_format \"yxyx\". "
-                 "Choose keyvis image_size from the supplied key visual canvases: use the group canvas "
-                 "when keyvis depicts two or three people, otherwise the solo canvas.\n"
-                 + variable(json.dumps(keyvis_canvas or {"solo": [1024, 1024], "group": [1024, 1024]},
-                                       ensure_ascii=False), "KEYVIS 캔버스 크기 (solo/group)"))
-    user += ("\n\nReturn one JSON object inside <lb-xnai> with a scenes array for exactly these C anchors: "
-             + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
-             + ". Each scene has slot, image_size, summary {caption}, items "
-             "(label, name, caption, bbox), bbox_coord_space \"abs_centralized\", bbox_format \"yxyx\". "
-             "Use the scene's image_size to express every bbox as absolute centered yxyx pixel offsets. "
-             "Include every registered character as a character item and every distinct visible object "
-             "whose position matters as an object item. "
-             + ("Also include the single keyvis object described above. " if keyvis_messages else "")
-             + "No prose outside the JSON.")
+                 "Use the scene's image_size to express every bbox as absolute centered yxyx pixel offsets. "
+                 "Include every registered character as a character item and every distinct visible object "
+                 "whose position matters as an object item. "
+                 + ("Also include the single keyvis object described above. " if keyvis_messages else "")
+                 + "No prose outside the JSON.")
+    if manga and (toggles or {}).get("nsfw"):
+        # Content policy lives in the system prompt; repeat only the active mode.
+        user += "\n\nNSFW mode enabled; follow the source-based content policy above."
     messages = [
         {"role": "system", "content": detail_system},
         {"role": "user", "content": user},
@@ -555,7 +680,7 @@ def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
         genre_context) if part))
 
-def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None, emotion=False):
+def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None, draw_point_anchors=None, emotion=False, background_context=None):
     # NPC candidates are part of the resolve contract regardless of whether the
     # NPC card-generation node is enabled. The toggle only controls card/image
     # creation, not whether unregistered participants are identified.
@@ -595,8 +720,13 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             "A named person who acts, speaks, is addressed or is physically depicted in CURRENT is individually "
             "identifiable, even when only part of the body or an off-frame viewpoint is shown; do not classify "
             "that person as an anonymous fragment. Do not create candidates for crowds, anonymous body fragments, "
-            "hypothetical people or merely mentioned absent people. Reuse a registered identity if its card "
-            "aliases/identity match; never generate a duplicate. "
+            "hypothetical people or merely mentioned absent people. Before returning, subtract the complete "
+            "registered roster from npc_candidates: if a candidate name or alias equals a registered canonical "
+            "name or registered card alias, or is that registered name's full-name (surname plus given name) or "
+            "localized/romanized spelling, that person IS registered; put the exact canonical name in characters "
+            "when participating and never emit an npc_candidates entry for it. A different body, gender "
+            "presentation, age or outfit in CURRENT does not make a name-matched person new. Reuse a registered "
+            "identity if its card aliases/identity match; never generate a duplicate. "
             "When a selected scene depicts an NPC candidate, use that candidate name as the scene's depicted "
             "subject (emotion scenes: scene_plan.character; scene selection: scene_plan.characters). "
             "A later stage may create their visual cards before PLAN/DETAIL; card generation can be "
@@ -608,7 +738,8 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             "then emotion (ONE short emotion word for that subject at this anchor, for example joy, anger or "
             "sadness; the label carries only the emotion, never scene or appearance description)"
             if emotion else
-            "scene_brief (one short English sentence expressing that selection intent)"
+            "scene_brief (one short English sentence expressing that selection intent; a directed action "
+            "makes its source-supported actor and target explicit)"
         )
         emotion_selection_rules = (
             "Every scene_plan item selects exactly ONE depicted subject: put that subject's exact registered name, "
@@ -694,16 +825,50 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             + (npc_policy + output_contract if selection
                else 'Return only this JSON shape:\n{"characters":[{"name":"exact registered name from the list above"}]}')
         )
+    if selection and not profile_inference_enabled and draw_point_anchors:
+        user_content += (
+            "\n\n# DRAW POINT INSERTION CANDIDATES\n"
+            + variable(json.dumps(draw_point_anchors, ensure_ascii=False), "DRAW POINT 앵커")
+            + "\nThese exact CURRENT anchors were explicitly marked as possible illustration positions. "
+            "Consider them together with the automatic anchors, preserving the requested image count. "
+            "They are optional candidates, not mandatory images and not a restriction to marked positions. "
+            "Choose source-supported scenes at those positions using the surrounding CURRENT context. "
+            "DRAW POINT is placement metadata, never dialogue, a visible object or text to draw."
+        )
     if persona_context:
         user_content = variable(persona_context, "등록 사용자 페르소나") + "\n\n" + user_content
     npc_system_requirement = (
         "NPC REGISTRATION EXTENSION ACTIVE: npc_candidates is a required top-level array in the JSON "
         "shape requested at the end of the user message; use [] only when CURRENT has no unregistered "
-        "individually identifiable participant."
+        "individually identifiable participant. npc_candidates must exclude every person whose name, "
+        "full name, localized spelling or alias matches the registered roster or a registered card alias; "
+        "such a person is registered, not an NPC."
     ) if npc_extension else ""
+    background_requirement = ""
+    if emotion and selection and background_context:
+        from emotion_background_cards import selection_instruction
+        background_requirement = (
+            "When the user supplies AUTOMATIC BACKGROUND SELECTION, its per-anchor background "
+            "field extends the preceding scene output contract. Follow that extension while "
+            "preserving every registered identity, emotion and anchor."
+        )
+        user_content += selection_instruction(background_context)
     return [
-        {"role": "system", "content": prompt_join("\n\n", [selection[0]["content"], profile_system, npc_system_requirement]) if selection else str(profile_system or "").strip()},
+        {"role": "system", "content": prompt_join("\n\n", [selection[0]["content"], profile_system, npc_system_requirement, background_requirement]) if selection else str(profile_system or "").strip()},
         {"role": "user", "content": user_content},
+    ]
+
+
+def background_card_messages(background_system, requests, segmented_current, world, by_anchor):
+    return [
+        {"role": "system", "content": background_system},
+        {"role": "user", "content": (
+            "# FULL ORIGINAL CURRENT CONTEXT\n" + variable(segmented_current, "현재 원문과 구간")
+            + "\n\n# WORLD SETTING (REFERENCE DATA)\n" + variable(str(world or "(unspecified)"), "세계관 설정")
+            + "\n\n# REQUESTED BACKGROUND CARDS\n" + variable(json.dumps(requests, ensure_ascii=False), "새 배경 카드")
+            + "\n\n# SELECTED ANCHORS AND BACKGROUNDS\n"
+            + variable(json.dumps({anchor: card["id"] for anchor, card in by_anchor.items()}, ensure_ascii=False), "앵커별 배경")
+        )},
     ]
 
 
@@ -1039,7 +1204,9 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
              if manga else
              "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its subject's visible identity, current wardrobe or coverage and main pose/action, whether registered or NPC. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own.")
             + ("" if keyvis else " For a source-supported image with no independently depicted person, return an empty regions array and describe its composition without inventing a person."),
-            ("CANVAS\n" + variable(json.dumps(canvas_sizes, ensure_ascii=False), "인물 수별 실제 캔버스 크기")
+            ("CANVAS\n" + variable(json.dumps({key: value for key, value in canvas_sizes.items()
+                                               if key in ("solo", "group")}, ensure_ascii=False),
+                                   "인물 수별 실제 캔버스 크기")
              + "\nUse the solo canvas for one independently depicted person and the group canvas for two or three, including NPCs. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes and not manga else ""),
             ("CLIENT POSITIVE NOTE\n" + variable(positive_note, "추가 긍정 프롬프트")
              + "\nUse this supplied context when planning the geometry; the renderer appends this note separately." if positive_note else ""),
@@ -1058,6 +1225,7 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
                             mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note="", toggles=None,
                             genre_prompt="", moss=False):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
+    manga = moss and (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
     # Combined generation already receives this shared context from DETAIL.
     if not (toggles or {}).get("keyvis_in_detail_enabled"):
         keyvis_system = role_context(
@@ -1080,7 +1248,10 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
         + ("\n\n# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT\n"
         + variable(json.dumps({anchors.get(key, key): value for key, value in tracking.items()}, ensure_ascii=False), "복장·머리 상태 타임라인")
            if tracking is not None else "")
-        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When a server-filled C outfit/hair timeline is supplied, it owns the current state: choose one supported instant compatible with its own C anchor state, preserving established items, colors and arrangement. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
+        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When a server-filled C outfit/hair timeline is supplied, it owns the current state: "
+        + ("choose each panel's supported instant compatible with its own C anchor state, " if manga else
+           "choose one supported instant compatible with its own C anchor state, ")
+        + "preserving established items, colors and arrangement. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
     if prior_status:
         keyvis_messages.append({"role": "user", "content": "# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
             + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장")})
@@ -1090,7 +1261,9 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
     if time_place is not None:
         keyvis_messages.append({"role": "user", "content": "# CHRONOLOGICAL TIME AND PLACE BY STORY INSTANT\n"
             + variable(json.dumps({anchors.get(key, key): value for key, value in time_place.items()}, ensure_ascii=False), "시간·장소 상태 타임라인")
-            + "\n\nUse the selected instant's own C anchor time/place/lighting together with that anchor's outfit/hair. Preserve the tracked light source and its relation to the space in this composition. A missing or unknown aspect provides no setting fact; use the source context without inventing one. Never merge different places or times into a shared scene."})
+            + ("\n\nFor each panel, use its selected instant's own C anchor time/place/lighting " if manga else
+               "\n\nUse the selected instant's own C anchor time/place/lighting ")
+            + "together with that anchor's outfit/hair. Preserve the tracked light source and its relation to the space in this composition. A missing or unknown aspect provides no setting fact; use the source context without inventing one. Never merge different places or times into a shared scene."})
     if past_text:
         keyvis_messages.append({"role": "user", "content": "# PAST CONTEXT\n" + variable(past_text, "과거 대화")})
     keyvis_messages.append({"role": "user", "content": "[Last log entry]\n" + variable(slotted, "슬롯이 삽입된 현재 원문")

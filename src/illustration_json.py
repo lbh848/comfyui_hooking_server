@@ -15,6 +15,7 @@ import math
 import mimetypes
 import re
 from pathlib import Path
+import workflow_profiles
 
 from modes.prompt_path_normalizer import _CONTROL_BLOCK_HEADER_RE, _normalize_payload_paths
 
@@ -411,6 +412,27 @@ def _is_lora_data_key(key: str) -> bool:
     return key == "LORA_DATA" or key.endswith("_LORA_DATA")
 
 
+def enabled_lora_list(value) -> list[dict]:
+    """Return the LoRA entries switched on in the preset editor.
+
+    Entries saved before the per-entry switch existed have no ``enabled`` key
+    and stay active, so existing presets keep applying every LoRA.
+    """
+    items = value.get("list") if isinstance(value, dict) else value
+    return [item for item in items or [] if isinstance(item, dict) and item.get("enabled", True) is not False]
+
+
+def enabled_lora_fields(fields: dict) -> dict:
+    """Copy preset fields with switched-off LoRAs removed for generation."""
+    fields = copy.deepcopy(fields)
+    if not isinstance(fields, dict):
+        return fields
+    for key, value in fields.items():
+        if _is_lora_data_key(key) and isinstance(value, dict) and isinstance(value.get("list"), list):
+            value["list"] = enabled_lora_list(value)
+    return fields
+
+
 _LORA_SET_SPECS: dict | None = None
 
 
@@ -498,6 +520,8 @@ def workflow_json_defaults(workflow: dict) -> dict:
             raise ValueError("Workflow JSON prompt source is not reachable")
         for selector, value_type in selectors:
             key = inputs[selector].strip().removeprefix("fields.")
+            if key.startswith("workflow.detailer."):
+                continue
             selected = sources.setdefault(source_id, {})
             if key in selected and selected[key] is not value_type:
                 raise ValueError(f"Workflow JSON field {key} has conflicting uses")
@@ -549,11 +573,12 @@ def validate_workflow_json_settings(fields: dict, defaults: dict) -> None:
             if not isinstance(value, dict) or set(value) != {"list"} or not isinstance(value["list"], list):
                 raise ValueError("LoRA 설정에는 list 배열이 필요합니다.")
             for item in value["list"]:
-                if (not isinstance(item, dict) or set(item) - {"lora_path", "str", "BASE", "trigger"}
-                        or item.get("BASE") not in {"anima", "sdxl"}
+                if (not isinstance(item, dict) or set(item) - {"lora_path", "str", "BASE", "trigger", "enabled"}
+                        or item.get("BASE") not in {"anima", "sdxl", "moss"}
                         or not isinstance(item.get("lora_path"), str) or not item["lora_path"].strip()
                         or not isinstance(item.get("str"), (int, float)) or isinstance(item["str"], bool)
                         or not math.isfinite(item["str"])
+                        or not isinstance(item.get("enabled", True), bool)
                         or not isinstance(item.get("trigger", ""), str)):
                     raise ValueError("LoRA 파일·계열·강도·트리거를 확인하세요.")
             continue
@@ -664,12 +689,12 @@ def merge_workflow_loras(fields: dict, key: str, defaults: dict, *, include_trig
     preset set is appended once per path and its triggers reach the prompt.
     """
     existing = fields.setdefault(key, {"list": []}).setdefault("list", [])
-    for item in defaults.get("list", []):
+    for item in enabled_lora_list(defaults):
         if not any(entry.get("BASE") == item["BASE"] and entry.get("lora_path", "").replace("\\", "/") == item["lora_path"].replace("\\", "/") for entry in existing):
             existing.append(copy.deepcopy(item))
         trigger = item.get("trigger", "").strip()
         if trigger and include_triggers:
-            content = "ANIMA_CONTENT" if item["BASE"] == "anima" else "SDXL_CONTENT"
+            content = "ANIMA_CONTENT" if item["BASE"] in {"anima", "moss"} else "SDXL_CONTENT"
             fields[content] = ", ".join(filter(None, [trigger, fields.get(content, "")]))
             multi = fields.get("MULTI_CHAR")
             if item["BASE"] == "anima" and isinstance(multi, dict) and multi.get("enable"):
@@ -829,10 +854,9 @@ def _moss_reference_pictures(fields: dict, bot_dir, assets: dict, layout: dict,
     items = [item for item in (layout.get("items") or [])
              if isinstance(item, dict) and item.get("label") == "character"]
     layout_names = [_text(item.get("name")) for item in items if _text(item.get("name"))]
-    order = layout_names or [entry["name"] for entry in roster]
+    order = _moss_reference_names(layout_names or [entry["name"] for entry in roster])
     by_name = {entry["name"].casefold(): entry for entry in roster}
-    unique_names = list(dict.fromkeys(name.casefold() for name in order))
-    multi = len(unique_names) >= 2
+    multi = len(order) >= 2
 
     def choose(entry):
         images, face = entry.get("images") or [], entry.get("face")
@@ -869,6 +893,19 @@ def _moss_reference_pictures(fields: dict, bot_dir, assets: dict, layout: dict,
     return pictures
 
 
+def _moss_reference_names(names) -> list[str]:
+    """Character names in first-appearance order, one entry per character.
+
+    A manga page can place the same character in several panels; every caption
+    points at that character's Picture marker, so the reference is embedded
+    once regardless of how many items use it.
+    """
+    unique = {}
+    for name in names:
+        unique.setdefault(name.casefold(), name)
+    return list(unique.values())
+
+
 def _moss_reference_from_existing(fields: dict, assets: dict, layout: dict) -> list[dict]:
     """Use already-embedded SNAPREF.references assets when the document carries them."""
     settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
@@ -883,9 +920,11 @@ def _moss_reference_from_existing(fields: dict, assets: dict, layout: dict) -> l
             by_name.setdefault(name.casefold(), []).append(item)
     items = [item for item in (layout.get("items") or [])
              if isinstance(item, dict) and item.get("label") == "character"]
-    order = [_text(item.get("name")) for item in items if _text(item.get("name"))]
+    order = _moss_reference_names(
+        [_text(item.get("name")) for item in items if _text(item.get("name"))])
     if not order:
-        order = [_text(item.get("CHAR")) for item in references if _text(item.get("CHAR"))]
+        order = _moss_reference_names(
+            [_text(item.get("CHAR")) for item in references if _text(item.get("CHAR"))])
     pictures = []
     for name in order:
         entries = by_name.get(name.casefold(), [])
@@ -923,6 +962,8 @@ def _moss_reference_from_existing(fields: dict, assets: dict, layout: dict) -> l
 
 def build_moss_reference(fields: dict, bot_dir, assets: dict, layout: dict) -> dict | None:
     """Build the ``workflow.reference`` control object, or None when disabled."""
+    if not workflow_profiles.MOSS_REFERENCE_ENABLED:
+        return None
     settings = fields.get("SNAPREF") if isinstance(fields.get("SNAPREF"), dict) else {}
     if not settings.get("enabled"):
         return None
@@ -945,16 +986,95 @@ def build_moss_reference(fields: dict, bot_dir, assets: dict, layout: dict) -> d
     }
 
 
+def disable_moss_detailer_branch(workflow: dict, document: dict) -> bool:
+    """Bypass the removed text detailer in older saved workflows.
+
+    ComfyUI executes only the ancestors of output nodes, so rewiring the
+    consumers of the detailer decode makes that whole branch dormant without
+    editing the saved workflow or the document contract.
+    """
+    if not isinstance(workflow, dict) or not workflow:
+        return False
+    reference = next((node for node in workflow.values() if isinstance(node, dict)
+                      and node.get("class_type") == "SoyaMOSSi2iReferenceV2_moss_mdsoya"), None)
+    first_image = ((reference or {}).get("inputs") or {}).get("image")
+    if not (isinstance(first_image, list) and len(first_image) == 2):
+        return False
+    samplers = {identity for identity, node in workflow.items() if isinstance(node, dict)
+                and (node.get("inputs") or {}).get("sampling_key") == "workflow.detailer.sampling"}
+    if not samplers:
+        samplers = {identity for identity, node in workflow.items() if isinstance(node, dict)
+                    and node.get("class_type") == "SoyaMossSpectrumKSamplerV2_moss_mdsoya"}
+    if not samplers:
+        return False
+    detailer_decodes = {identity for identity, node in workflow.items() if isinstance(node, dict)
+                        and node.get("class_type") in {"VAEDecode", "VAEDecodeTiled"}
+                        and any(isinstance(link, list) and len(link) == 2 and str(link[0]) in samplers
+                                for link in (node.get("inputs") or {}).values())}
+    if not detailer_decodes:
+        return False
+    changed = False
+    for node in workflow.values():
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        if not isinstance(inputs, dict):
+            continue
+        for name, link in inputs.items():
+            if isinstance(link, list) and len(link) == 2 and str(link[0]) in detailer_decodes:
+                inputs[name] = list(first_image)
+                changed = True
+    return changed
+
+
+def disable_moss_dialogue_repair_branch(workflow: dict, document: dict) -> bool:
+    """Drop the repair node from the executed graph when it cannot change output.
+
+    The repair node feeds every MOSS node, so it stays an ancestor of the output
+    even when its control block is off. Rewire its consumers to the document
+    source so an off toggle skips the 9B pass.
+    """
+    if not isinstance(workflow, dict) or not workflow:
+        return False
+    workflow_document = document.get("workflow") if isinstance(document, dict) else None
+    if not isinstance(workflow_document, dict):
+        return False
+    repair = workflow_document.get("dialogue_repair")
+    if isinstance(repair, dict) and repair.get("enabled"):
+        return False
+    repair_id = next((identity for identity, node in workflow.items()
+                      if isinstance(node, dict)
+                      and node.get("class_type") == "SoyaMossDialogueRepairV2_mdsoya"), None)
+    if repair_id is None:
+        return False
+    source = (workflow[repair_id].get("inputs") or {}).get("prompt_json")
+    if not (isinstance(source, list) and len(source) == 2):
+        return False
+    changed = False
+    for identity, node in workflow.items():
+        if str(identity) == str(repair_id) or not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for name, link in inputs.items():
+            if (isinstance(link, list) and len(link) == 2
+                    and str(link[0]) == str(repair_id)):
+                inputs[name] = list(source)
+                changed = True
+    return changed
+
+
 def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
-                       seed=None) -> str:
+                       seed=None, dialogue_repair: dict | None = None) -> str:
     """Re-emit a saved MOSS document, filling missing values from the preset."""
-    from modes.moss_prompt_builder import MossPromptBuilder, build_controller, merge_lora_lists
+    from modes.moss_prompt_builder import (
+        MossPromptBuilder, build_controller, merge_lora_lists,
+    )
 
     workflow = document.get("workflow") or {}
     reference = workflow.get("reference") if isinstance(workflow.get("reference"), dict) else {}
     if not reference and isinstance(document.get("reference"), dict):
         reference = document["reference"]
-    reference_active = bool(reference.get("activate"))
+    reference_active = workflow_profiles.MOSS_REFERENCE_ENABLED and bool(reference.get("activate"))
     saved_loras = workflow.get("loras") if isinstance(workflow.get("loras"), dict) else {}
     loras = merge_lora_lists(saved_loras)
     if not loras:
@@ -977,6 +1097,16 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         lora_filter=saved_loras.get("filter", ""),
     )
     rebuilt = MossPromptBuilder.build(document["moss"], controller)
+    # A replay keeps the source captured with the original request, but the
+    # current request owns the enabled flag: turning the toggle off must also
+    # skip repair when an already saved document is redrawn.
+    control = dialogue_repair if isinstance(dialogue_repair, dict) else workflow.get("dialogue_repair")
+    if isinstance(control, dict) and str(control.get("source") or "").strip():
+        rebuilt["workflow"]["dialogue_repair"] = {
+            "enabled": bool(control.get("enabled")),
+            "anchor": str(control.get("anchor") or ""),
+            "source": str(control.get("source") or ""),
+        }
     if reference_active:
         rebuilt["workflow"]["reference"] = copy.deepcopy(reference)
     if "assets" in document:
@@ -986,7 +1116,8 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
 
 def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: dict,
                    seed=None, single_subject: bool = False, bot_dir=None,
-                   assets: dict | None = None) -> str:
+                   assets: dict | None = None,
+                   dialogue_repair: dict | None = None) -> str:
     """Emit ``{"moss": ..., "workflow": ...}`` for a MOSS workflow."""
     from modes.moss_prompt_builder import (
         MossNpcPromptBuilder, MossPromptBuilder, build_controller, build_moss_layout,
@@ -1043,6 +1174,14 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         lora_filter=controller_loras.get("filter", ""),
     )
     rebuilt = MossPromptBuilder.build(moss, controller)
+    # The in-graph repair node reads this control block. Keep it even when the
+    # toggle is off: the node sees enabled=false and passes the document through.
+    if isinstance(dialogue_repair, dict) and str(dialogue_repair.get("source") or "").strip():
+        rebuilt["workflow"]["dialogue_repair"] = {
+            "enabled": bool(dialogue_repair.get("enabled")),
+            "anchor": str(dialogue_repair.get("anchor") or ""),
+            "source": str(dialogue_repair.get("source") or ""),
+        }
     if reference:
         # Reference control stays in the workflow section; ``moss`` is pure layout.
         rebuilt["workflow"]["reference"] = reference
@@ -1060,7 +1199,8 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
 def build_illustration_json(positive: str, negative: str, *, input_dir,
                             mask_location="region_mask", seed=None, workflow_defaults=None, bot_dir=None,
                             include_face_embeddings=True, render_target=None,
-                            moss_layout=None, npc_representative=False) -> str:
+                            moss_layout=None, npc_representative=False,
+                            dialogue_repair=None) -> str:
     saved_moss = None
     if isinstance(positive, str) and positive.lstrip().startswith("{"):
         try:
@@ -1072,7 +1212,8 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
     if saved_moss is not None:
         # Regeneration/replay keeps the saved layout, models and sampling. The
         # current preset only fills values the saved document does not carry.
-        return _moss_regeneration(saved_moss, negative, workflow_defaults or {}, seed)
+        return _moss_regeneration(saved_moss, negative, workflow_defaults or {}, seed,
+                                  dialogue_repair=dialogue_repair)
     payload = illustration_fields(positive, negative)
     fields = payload["fields"]
     if render_target is not None:
@@ -1112,7 +1253,8 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
         return _moss_document(fields, negative, moss_layout,
                               workflow_defaults=workflow_defaults or {}, seed=seed,
                               single_subject=bool(npc_representative),
-                              bot_dir=bot_dir, assets=assets)
+                              bot_dir=bot_dir, assets=assets,
+                              dialogue_repair=dialogue_repair)
     def input_path(value):
         # Resolve the Comfy directory only for legacy path-based assets.
         # Original bot references and embedded JSON must not access it.

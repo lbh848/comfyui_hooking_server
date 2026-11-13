@@ -45,7 +45,8 @@ Choose exactly one balloon type:
   It is not spoken aloud.
 
 - #thought_cloud:
-  An immediate, emotional, hesitant, or spontaneous unspoken thought.
+  An immediate, emotional, or spontaneous UNSPOKEN thought.
+  Use only with type: thought; never for spoken dialogue.
 
 - #trembling:
   Speech shaken by fear, panic, sobbing, or extreme nervousness.
@@ -64,7 +65,7 @@ Type distinctions:
 - Use #normal when no special delivery clearly applies.
 - Use #angular for controlled firmness; use #burst for shouting or explosive emotion.
 - Use #whisper for a quiet voice; use #trembling for a shaking or breaking voice.
-- Use #thought_cloud for a sudden emotional reaction or hesitation.
+- Use #thought_cloud only for an unspoken thought, with type: thought. Never pair it with type: speech: spoken hesitation, uncertainty or a trailing-off voice is #normal, #whisper or #trembling according to how it actually sounds.
 - Use #monologue_box for calm observation, judgment, analysis, or reflection.
 - Do not use #monologue_box for time, place, scene transitions, or external narration.
 - Use #charming only when affection, playfulness, coyness, or deliberate charm is clear.
@@ -88,7 +89,7 @@ Final rules:
 - Key visuals are intentionally excluded. Never output a Key Visual anchor.
 - Never omit or skip a supplied selected scene. Always emit its scene object. If no direct dialogue exists, use a context-faithful thought, inner monologue, reaction, or spoken line only when it naturally belongs to a suitable character; otherwise use entries: [].
 - A line must belong to a character visible or narratively present in that scene.
-- Use type: speech for spoken dialogue and type: thought for thoughts and inner monologues.
+- Use type: speech for spoken dialogue and type: thought for thoughts and inner monologues. The #thought_cloud tag is valid only on type: thought entries; a speech entry never uses it.
 - Set tag to exactly one of these labels, without the # prefix:
 
   #normal

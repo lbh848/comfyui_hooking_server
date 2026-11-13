@@ -3,7 +3,8 @@ from console_encoding import configure_utf8_stdio
 
 configure_utf8_stdio()
 
-from app_paths import config_root, data_root, initialize_layout
+from app_paths import config_root, data_root, initialize_layout, default_app_paths, portable_app_paths, resolve_app_paths
+from manga_page_sizes import parse_manga_page_sizes
 from lora_paths import (
     ASSET_LORA_FOLDER,
     bot_lora_load_path,
@@ -181,6 +182,7 @@ from modes.word_rules import (
     apply_weight_clamp,
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
+    apply_moss_prompt_rules as _apply_moss_prompt_word_rules,
     apply_remove_rule as _apply_remove_word_rule,
     apply_char_tag_override_rules as _apply_char_tag_override_rules,
     build_character_alias_map as _build_character_alias_map,
@@ -572,6 +574,7 @@ DEFAULT_LORA_LOAD_PATHS = default_lora_load_paths()
 
 # 기본 설정값
 DEFAULT_CONFIG = {
+    **default_app_paths(),
     "comfyui_port": 8188,  # ComfyUI 서버 포트
     "comfyui_port_2": 8187,  # 두 번째 ComfyUI 실행 포트
     "comfyui_port_3": 8186,  # 세 번째 ComfyUI 실행 포트
@@ -605,8 +608,6 @@ DEFAULT_CONFIG = {
     # Vast.ai 클라우드 GPU 백엔드(vast_backend/). API 키는 key/vast_key.json.
     "vast_enabled": False,
     "vast_vram_mode": "highvram",
-    "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
-    "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
     "webp_quality": 85,
@@ -616,20 +617,14 @@ DEFAULT_CONFIG = {
     "video_generation_defaults": copy.deepcopy(DEFAULT_VIDEO_GENERATION_DEFAULTS),
     "video_secondary_motion": True,  # H3 영상 프롬프트에 secondary character motion 블록 포함 (False=주동작만, 완전 정지 지향)
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
-    "comfy_input_dir": str(comfy_input_root(BASE_DIR)),
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "illustration_workflow_type": workflow_profiles.ILLUST_V3,
-    "illustration_workflow_source_paths": {
-        workflow_profiles.ILLUST_V3: "",
-        workflow_profiles.ILLUST_V3_ANIMA: "",
-    },
     "illustration_provider": "comfy",  # 하위 호환 파생값: comfy | chansub | hybrid
     "chansub_workflow_type": "anima",  # 챈섭 삽화 프롬프트 계열: anima | sdxl
     "chansub_max_concurrency": 1,  # 챈섭 외부 요청 동시 처리 수. 실측 범위인 1~2만 허용
     "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
     "chansub_strip_builtin_quality_tags": True,  # 챈섭 전송본에서 서버 내장 추정 품질 태그 제외
-    "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": True,  # Illustration mode is always enabled.
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
     "postprocess_enabled": False,  # 삽화 후처리([SPEAK] 합성) 마스터 스위치
@@ -642,12 +637,16 @@ DEFAULT_CONFIG = {
             "font_size": 0,             # 폰트 크기(px). 0=박스 높이 기반 자동
             "name_color": False,        # 이름 머리색 색상화
             "name_replace": {},         # 영문이름 → 표시이름 치환 맵
-        }
+        },
+        "manga_text": {},               # 텍스트 교체 (기본값은 modes.manga_text_render)
     },
     "bot_selected": "공방-테스트봇",  # 새 설치에 포함되는 기본 삽화 봇
     "emotion_bot_selected": "",  # 감정 삽화 워크숍에서 선택한 봇 (삽화 봇과 분리)
     "emotion_illustration_context_toggles": {},  # 감정 삽화 전용 생성 토글
     "emotion_postprocess_enabled": False,  # 감정 삽화 전용 후처리 마스터 스위치
+    "emotion_background_mode": "manual",
+    "emotion_background_world": "",
+    "emotion_composition_settings": {},
     "emotion_background_manual_text": "",  # 감정 삽화 수동 배경 모드 설명
     "emotion_background_manual_bg_css": "",  # 수동 배경 미리보기 배경 레이어 CSS
     "emotion_background_manual_fg_css": "",  # 수동 배경 미리보기 전면 레이어 CSS
@@ -741,6 +740,8 @@ DEFAULT_CONFIG = {
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청 래핑
     "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
     "llm_pdf_prompt_format": "pdf",       # 토큰 절약: pdf=네이티브 텍스트, image=그림 PDF
+    **{f"llm_pdf_image_{field}": default
+       for field, default in llm_service.PDF_IMAGE_DEFAULT_OPTIONS.items()},
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     "illustration_quality_inspection_enabled": False,
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
@@ -795,8 +796,7 @@ DEFAULT_CONFIG = {
         "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
         "illustration_time_place": _llm_route_defaults(),  # 캐릭터별 시간·장소 독립 추적
         "illustration_npc_generation": _llm_route_defaults(),
-        "illustration_visual_correction": _llm_route_defaults(),
-        "illustration_visual_selection": _llm_route_defaults(),
+        "illustration_background_generation": _llm_route_defaults(),
         "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물·장면 선택
         "illustration_profile_context_translate": _llm_route_defaults(),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(),  # 확정 CURRENT 다중 프로필 결정(토글 시)
@@ -806,8 +806,6 @@ DEFAULT_CONFIG = {
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga/subtitle)
         "illustration_original_asset": _llm_route_defaults(),  # 업로드 원본 에셋 단일 선택
-        "illustration_original_asset_recovery": _llm_route_defaults(),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
-        "illustration_multi_char_mask": _llm_route_defaults(),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
     "llm_max_concurrency2": 1,        # LLM2 실제 API 동시 요청 상한
@@ -826,16 +824,8 @@ DEFAULT_CONFIG = {
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
-    "anima_asset_workflow_source_path": "",  # ANIMA+ILXL 에셋 생성 워크플로우 원본 소스 전체 경로
-    "anima_only_asset_workflow_source_path": "",  # ONLY ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
-    "anima_inpainting_workflow_source_path": "",  # 설치 라이브러리의 ANIMA Inpainting 절대 경로
     "asset_workflow_type": workflow_profiles.ASSET_ILXL,
-    "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
-    "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
     "use_builtin_tagger": False,  # 내장 WD Tagger(CPU ONNX) 사용 여부. true면 모든 태그 분석 경로가 ComfyUI 대신 내장 tagger 사용
-    "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별) - 인스턴스/봇 LoRA
-    "style_lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 스타일(그림체) LoRA 학습 워크플로우 원본 소스 경로 (profile별)
-    "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
     "video_workflow_source_paths": {
         "i2v": "",
         "first_last": "",
@@ -849,7 +839,6 @@ DEFAULT_CONFIG = {
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
-    "debug_workflow_source_path": "",  # 디버그 탭 워크플로우 원본 소스 전체 경로
     "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
     "webp_lossless": False,
     "queue_type_order": dict(DEFAULT_GPU_QUEUE_TYPE_ORDER),
@@ -879,6 +868,8 @@ for _suffix in llm_service.LLM_SLOT_SUFFIXES[1:]:
         f"llm_gemini_base64{_suffix}": False,
         f"llm_pdf_prompt{_suffix}": False,
         f"llm_pdf_prompt_format{_suffix}": "pdf",
+        **{f"llm_pdf_image_{field}{_suffix}": default
+           for field, default in llm_service.PDF_IMAGE_DEFAULT_OPTIONS.items()},
     })
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -1107,6 +1098,8 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                merged.update(portable_app_paths(merged, BASE_DIR))
+                merged.update(resolve_app_paths(merged, BASE_DIR))
                 merged["comfy_input_dir"] = str(comfy_input_root(BASE_DIR))
                 # LoRA 경로는 data 폴더 기준 상대 경로로 보관하고, 사용할 때만
                 # 현재 설치 위치 기준 절대 경로로 해석한다.
@@ -1323,6 +1316,7 @@ def load_config() -> dict:
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     print(f"[CONFIG] 그림 모델 프리셋 로드 실패: {exc}")
                     workflow_profiles.normalize_workflow_config(merged)
+                merged.update(resolve_app_paths(merged, BASE_DIR))
                 return merged
         except Exception as e:
             print(f"[CONFIG] 설정 파일 로드 실패: {e}")
@@ -1330,7 +1324,9 @@ def load_config() -> dict:
         # settings.json이 없으면 기본값으로 자동 생성
         print(f"[CONFIG] settings.json이 없습니다. 기본값으로 생성합니다.")
         save_config(DEFAULT_CONFIG.copy())
-    return workflow_profiles.normalize_workflow_config(copy.deepcopy(DEFAULT_CONFIG))
+    defaults = copy.deepcopy(DEFAULT_CONFIG)
+    defaults.update(resolve_app_paths(defaults, BASE_DIR))
+    return workflow_profiles.normalize_workflow_config(defaults)
 
 
 def _config_diff_keys(old: dict, new: dict) -> list[str]:
@@ -1420,7 +1416,13 @@ app_config = load_config()
 def _migrate_illustration_setting_scopes() -> None:
     """Keep the active composition and existing genre when changing their scope."""
     from modes.bot_mode import BOT_DATA_FILE, _save_bot_data
-    from modes.postprocess import get_postprocess_config, _default_vn, _default_bubble, _default_subtitle
+    from modes.postprocess import (
+        get_postprocess_config,
+        _default_vn,
+        _default_bubble,
+        _default_subtitle,
+        _default_manga_text,
+    )
 
     postprocess = app_config.get("postprocess") or {}
     toggles = app_config.get("illustration_context_toggles") or {}
@@ -1434,7 +1436,12 @@ def _migrate_illustration_setting_scopes() -> None:
         bot = next((item for item in data.get("bots", [])
                     if item.get("name") == app_config.get("bot_selected")), {})
         postprocess = {"mode": bot.get("postprocess_mode", "vn")}
-        for mode, default in (("vn", _default_vn), ("bubble", _default_bubble), ("subtitle", _default_subtitle)):
+        for mode, default in (
+            ("vn", _default_vn),
+            ("bubble", _default_bubble),
+            ("subtitle", _default_subtitle),
+            ("manga_text", _default_manga_text),
+        ):
             stored = bot.get(f"postprocess_{mode}")
             postprocess[mode] = copy.deepcopy(stored) if isinstance(stored, dict) else default()
         app_config["postprocess"] = get_postprocess_config({"postprocess": postprocess})
@@ -2665,7 +2672,8 @@ def _capture_illustration_runtime_snapshot(
     )
     toggles["moss_reference"] = False
     toggles["moss_reference_names"] = []
-    if toggles["illustration_model_family"] == "moss" and bot:
+    if (workflow_profiles.MOSS_REFERENCE_ENABLED
+            and toggles["illustration_model_family"] == "moss" and bot):
         draw = resolve_illust_settings(bot, "solo", "illustration")
         if draw.get("snapref_enabled") and float(draw.get("snapref_strength", 1.0)) > 0:
             toggles["moss_reference"] = True
@@ -2694,11 +2702,6 @@ def _capture_illustration_runtime_snapshot(
             except Exception as exc:
                 toggles["moss_reference_names"] = []
                 print(f"[ILLUST:MOSS:REF] 레퍼런스 로스터 계산 실패: {exc}")
-    if toggles["illustration_model_family"] == "moss" and workshop != "emotion":
-        # DETAIL-MOSS always writes the key visual with the first batch, so the
-        # separate KEYVIS toggle has no meaning for this model.
-        toggles["key_visual"] = True
-        toggles["keyvis_in_detail_enabled"] = True
     if workshop == "emotion":
         # 감정 삽화는 캐릭터 시작 이미지의 복장을 재사용하므로 OUTFIT·PLAN·
         # KEYVIS 노드를 실행하지 않는다. 마스크가 필요한 경로는 현재 모델
@@ -2728,6 +2731,9 @@ def _capture_illustration_runtime_snapshot(
     toggles["original_asset_instruction"] = instruction
     snapshot = {
         "bot_name": bot_name,
+        "background_mode": config_snapshot.get("emotion_background_mode", "manual"),
+        "background_world": str(config_snapshot.get("emotion_background_world") or ""),
+        "composition_settings": copy.deepcopy(config_snapshot.get("emotion_composition_settings")),
         "workshop": workshop,
         "illustration_model_preset": model_preset,
         "illustration_quality_inspection_enabled": bool(
@@ -2967,10 +2973,27 @@ def build_prompt(positive: str, negative: str, workflow_api: dict = None,
             # node already produced; MOSS places them in its summary caption
             # instead of requiring a regional bbox.
             npc_representative=bool(raw_body.get("illustration_npc_representative")),
+            dialogue_repair=raw_body.get("illustration_dialogue_repair"),
             **({"render_target": render_target} if render_target else {}),
         )
         from illustration_flow import record_reference_images
         record_reference_images(positive)
+        # Older saved workflows may still carry the removed text detailer.
+        # Keep their outputs on the first decode so that branch never executes.
+        if isinstance(positive, str) and positive.lstrip().startswith("{"):
+            import json as _json
+            try:
+                _document = _json.loads(positive)
+            except _json.JSONDecodeError:
+                _document = None
+            from illustration_json import (disable_moss_detailer_branch,
+                                           disable_moss_dialogue_repair_branch,
+                                           is_moss_document)
+            if is_moss_document(_document):
+                if disable_moss_detailer_branch(wf, _document):
+                    log_to_file("proxy.log", "MOSS: 이전 워크플로우의 제거된 디테일러 분기 우회")
+                if disable_moss_dialogue_repair_branch(wf, _document):
+                    log_to_file("proxy.log", "MOSS 대사 교정 꺼짐: 교정 노드 우회")
     for nid, ninfo in wf.items():
         if not isinstance(ninfo, dict):
             continue
@@ -3200,6 +3223,7 @@ async def save_backup(
     llm_final_result: dict = None,
     execution_target: str = "",
     manual_character_tags: dict = None,
+    record_postprocess_stage: bool = True,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
@@ -3215,7 +3239,9 @@ async def save_backup(
     execution_target: 이미지를 실제로 생성한 Comfy 실행처("modal"/"local" 등). 빈 값이면
         CURRENT_COMFY_EXECUTION_TARGET 컨텍스트 변수에서 읽는다. provider와 함께
         execution_source(modal/chansub/local)를 산출해 _info.json에 저장하며, 프론트는
-        이 값으로 백업 카드에 M/S 딱지를 표시한다."""
+        이 값으로 백업 카드에 M/S 딱지를 표시한다.
+    record_postprocess_stage: 후처리 합성을 삽화 흐름의 별도 노드로 기록한다. 호출부가
+        이미 '이미지 후처리' 단계를 감싸고 있으면 False로 중복 노드를 막는다."""
     provider = str(provider or "comfy").strip().lower()
     if provider not in ("comfy", "chansub"):
         print(f"[BACKUP] 알 수 없는 실제 공급자 {provider!r}, comfy 사용")
@@ -3327,37 +3353,76 @@ async def save_backup(
     # _raw 저장에 성공한 확장자(".webp"). _info.json 의 raw_extension 으로 기록해
     # 이후 목록/영상화 참조 조회가 _raw 파일 탐색 없이 메타데이터로 판정하게 한다.
     raw_saved_extension = ""
-    if postprocess_settings and speak_text:
-        try:
-            postprocess_mode = postprocess_settings.get("_mode")
-            if postprocess_mode == "bubble":
-                from modes.bubble_render import compose_bubble
-                _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
-                image_bytes = await asyncio.to_thread(
-                    compose_bubble, image_bytes, speak_text, _bs, bot_name,
-                    face_positions=(backup_conversion_info or {}).get("face_positions"),
-                )
-                print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
-            elif postprocess_mode == "subtitle":
-                from modes.subtitle_render import compose_subtitle
+    postprocess_mode = (postprocess_settings or {}).get("_mode")
+    # 텍스트 교체는 SPEAK 원문 없이 제출 JSON 의 text 만 사용한다.
+    if postprocess_settings and (speak_text or postprocess_mode == "manga_text"):
+        def _postprocess_details():
+            return {"postprocess_mode": postprocess_mode or "",
+                    "postprocess_applied": composition_applied}
 
-                subtitle_settings = {
-                    key: value
-                    for key, value in postprocess_settings.items()
-                    if key != "_mode"
-                }
-                image_bytes = await asyncio.to_thread(
-                    compose_subtitle, image_bytes, speak_text, subtitle_settings, bot_name
-                )
-                print(f"[BACKUP] 애니 자막 합성 적용: speak_len={len(speak_text)}")
-            else:
-                from modes.postprocess import compose_postprocess
-                image_bytes = await asyncio.to_thread(compose_postprocess, image_bytes, speak_text, postprocess_settings, bot_name)
-                print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
-            composition_applied = True
-        except Exception as e:
-            print(f"[BACKUP] ⚠ 후처리 합성 실패, 원본 이미지로 저장: {e}")
-            traceback.print_exc()
+        async def _apply_postprocess() -> bytes:
+            nonlocal image_bytes, composition_applied
+            try:
+                if postprocess_mode == "bubble":
+                    from modes.bubble_render import compose_bubble
+                    _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
+                    image_bytes = await asyncio.to_thread(
+                        compose_bubble, image_bytes, speak_text, _bs, bot_name,
+                        face_positions=(backup_conversion_info or {}).get("face_positions"),
+                    )
+                    print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
+                elif postprocess_mode == "subtitle":
+                    from modes.subtitle_render import compose_subtitle
+
+                    subtitle_settings = {
+                        key: value
+                        for key, value in postprocess_settings.items()
+                        if key != "_mode"
+                    }
+                    image_bytes = await asyncio.to_thread(
+                        compose_subtitle, image_bytes, speak_text, subtitle_settings, bot_name
+                    )
+                    print(f"[BACKUP] 애니 자막 합성 적용: speak_len={len(speak_text)}")
+                elif postprocess_mode == "manga_text":
+                    from modes.manga_text_render import compose_manga_text
+
+                    manga_settings = {
+                        key: value
+                        for key, value in postprocess_settings.items()
+                        if key != "_mode"
+                    }
+                    image_bytes = await asyncio.to_thread(
+                        compose_manga_text,
+                        image_bytes,
+                        submitted_prompt,
+                        manga_settings,
+                        bot_name,
+                    )
+                    print(
+                        f"[BACKUP] 텍스트 교체 합성 적용: "
+                        f"submitted={bool(submitted_prompt)}, speak_len={len(speak_text)}"
+                    )
+                else:
+                    from modes.postprocess import compose_postprocess
+                    image_bytes = await asyncio.to_thread(compose_postprocess, image_bytes, speak_text, postprocess_settings, bot_name)
+                    print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
+                composition_applied = True
+            except Exception as e:
+                print(f"[BACKUP] ⚠ 후처리 합성 실패, 원본 이미지로 저장: {e}")
+                traceback.print_exc()
+            return image_bytes
+
+        # 후처리는 이미지 생성 직후 같은 큐 작업에서 실행된다. 흐름에는 별도
+        # 노드를 남겨 '생성 → 후처리' 순서가 보이게 한다. 호출부가 이미
+        # '이미지 후처리' 단계로 감싼 경우(record_postprocess_stage=False)는
+        # 중복 노드를 만들지 않는다.
+        if record_postprocess_stage:
+            _apply_postprocess = illustration_flow.stage(
+                "이미지 후처리",
+                layout_group="illustration_image_postprocess",
+                details=_postprocess_details,
+            )(_apply_postprocess)
+        image_bytes = await _apply_postprocess()
 
     # 1) 이미지를 WebP로 변환 (quality=80, 원본 워크플로우 EXIF 메타데이터 포함)
     try:
@@ -3401,7 +3466,7 @@ async def save_backup(
     if img.mode == "RGBA":
         await asyncio.to_thread(img.save, webp_path, **save_kwargs)
     else:
-        await asyncio.to_thread(img.convert("RGB").save, webp_path, **save_kwargs)
+        await asyncio.to_thread(lambda: img.convert("RGB").save(webp_path, **save_kwargs))
 
     orig_size = len(image_bytes)
     webp_size = os.path.getsize(webp_path)
@@ -3433,7 +3498,7 @@ async def save_backup(
                 elif raw_img.mode == "RGBA":
                     await asyncio.to_thread(raw_img.save, raw_path, **raw_save_kwargs)
                 else:
-                    await asyncio.to_thread(raw_img.convert("RGB").save, raw_path, **raw_save_kwargs)
+                    await asyncio.to_thread(lambda: raw_img.convert("RGB").save(raw_path, **raw_save_kwargs))
             print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
             raw_saved_extension = ".webp"
         except Exception as e:
@@ -3606,7 +3671,7 @@ async def save_backup(
         json.dump(info_to_save, f, indent=2, ensure_ascii=False)
 
     # 4) 오래된 백업 정리 — 워크숍별 폴더에서만 정리한다.
-    cleanup_backups(backup_dir)
+    await asyncio.to_thread(cleanup_backups, backup_dir)
     # 5) 필터 인덱스 캐시 무효화 (신규 백업 + 정리된 백업 반영)
     _invalidate_backup_filter_cache(backup_dir)
 
@@ -3646,14 +3711,15 @@ def cleanup_backups(backup_dir: str = ""):
             except Exception as exc:
                 print(f"[BACKUP:CLEANUP] 원본 삭제 실패: path={raw_path!r}, error={exc}")
                 traceback.print_exc()
-        poster_path = os.path.join(backup_dir, "_posters", backup_name + ".webp")
-        try:
-            os.remove(poster_path)
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            print(f"[BACKUP:CLEANUP] poster 삭제 실패: path={poster_path!r}, error={exc}")
-            traceback.print_exc()
+        for poster_dir in ("_posters", "_thumbnails"):
+            poster_path = os.path.join(backup_dir, poster_dir, backup_name + ".webp")
+            try:
+                os.remove(poster_path)
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                print(f"[BACKUP:CLEANUP] poster 삭제 실패: path={poster_path!r}, error={exc}")
+                traceback.print_exc()
 
 
 # ─── ComfyUI 프록시 ─────────────────────────────────────
@@ -5703,6 +5769,7 @@ def _get_illustration_postprocess_settings(
     try:
         from modes.postprocess import (
             get_bubble_settings,
+            get_manga_text_settings,
             get_subtitle_settings,
             get_vn_settings,
         )
@@ -5732,6 +5799,19 @@ def _get_illustration_postprocess_settings(
                 return {"_mode": "subtitle", **subtitle_settings}
             print(
                 f"[BACKUP] 자막 후처리 설정이 비어 있음: "
+                f"bot={bot_name!r}, force={force}"
+            )
+            return None
+        if postprocess_mode == "manga_text":
+            manga_text_settings = get_manga_text_settings(
+                app_config,
+                bot_name=bot_name,
+                force=force,
+            )
+            if manga_text_settings:
+                return {"_mode": "manga_text", **manga_text_settings}
+            print(
+                f"[BACKUP] 텍스트 교체 후처리 설정이 비어 있음: "
                 f"bot={bot_name!r}, force={force}"
             )
             return None
@@ -5854,6 +5934,8 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             llm_final_result=entry.get("_llm_final_result"),
             execution_target=str(state.get("execution_target") or ""),
             manual_character_tags=state.get("manual_character_tags"),
+            # 이 함수 자체가 '이미지 후처리' 단계로 감싸져 있으므로 중복 노드를 막는다.
+            record_postprocess_stage=False,
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -6261,6 +6343,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     scene_character_count,
                     context="삽화 장면 후속 처리",
                 )
+                # Native MOSS layouts bypass the RAW sections when the final
+                # document is built. Transform their captions with the same
+                # rules before handing the layout to that builder.
+                moss_layout = raw_body.get("illustration_moss_layout")
+                if isinstance(moss_layout, dict):
+                    raw_body["illustration_moss_layout"], applied_moss_rules = (
+                        _apply_moss_prompt_word_rules(moss_layout, scene_word_rules)
+                    )
+                    if applied_moss_rules:
+                        print(
+                            f"[WORD_RULE] MOSS 레이아웃 태그 규칙 적용: "
+                            f"bot={bot_name}, {applied_moss_rules}개 캡션별 규칙"
+                        )
 
                 multi_char_prompt_context = None
                 if multi_char_requested:
@@ -6474,6 +6569,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 is_multi = len(detected) >= 2
                 settings = resolve_illust_settings(bot, "group" if is_multi else "solo",
                     generation_mode=runtime_snapshot.get("generation_mode", "illustration"))
+                # Manga uses its own seed block; the general size/seed stays
+                # locked in the UI and must not decide the page seed.
+                manga_output = (runtime_snapshot.get("illustration_context_toggles") or {}).get(
+                    "illustration_output_mode") in ("manga", "manga_both")
+                if (manga_output
+                        and runtime_snapshot.get("npc_render_bot") is None
+                        and runtime_snapshot.get("generation_mode", "illustration") == "illustration"):
+                    settings = {**settings, "seed": int(settings.get("manga_seed", -1))}
                 if runtime_snapshot.get("npc_render_bot") is not None:
                     # The first representative has no existing identity image.
                     settings = {**settings, "snapref_enabled": False, "face_id_activate": False}
@@ -6757,7 +6860,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             _backup_bot_name,
             force=_force_postprocess,
         )
-        if (runtime_snapshot.get("illustration_context_toggles") or {}).get("illustration_output_mode") in ("manga", "manga_both"):
+        if ((runtime_snapshot.get("illustration_context_toggles") or {}).get("illustration_output_mode")
+                in ("manga", "manga_both")
+                and (_pp_settings or {}).get("_mode") != "manga_text"):
             _pp_settings = None
             _force_postprocess = False
             _speak_text = ""
@@ -8110,10 +8215,21 @@ def _illustration_mask_canvas_sizes(bot_name: str, *, composite: bool = False) -
     for profile in ("solo", "group"):
         settings = resolve_illust_settings(bot, profile)
         sizes[profile] = (settings.get("img_w", 756), settings.get("img_h", 756))
+    # Manga pages are drawn by scaling the model's resolution list, so the
+    # factor has to reach the DETAIL-MANGA prompt builder with the canvases.
+    solo = resolve_illust_settings(bot, "solo")
+    try:
+        scale = float(solo.get("manga_scale", 1.0))
+    except (TypeError, ValueError):
+        scale = 1.0
+    sizes["manga_scale"] = scale if math.isfinite(scale) and 0.2 <= scale <= 2.0 else 1.0
+    # The DETAIL-MANGA prompt offers only the resolutions this bot selected.
+    sizes["manga_page_sizes"] = parse_manga_page_sizes(solo.get("manga_page_sizes"))
     if composite:
         settings = resolve_illust_settings(bot, "solo", "background")
         return {"background": (settings.get("img_w", 756), settings.get("img_h", 756)),
-                "character": sizes["solo"]}
+                "character": sizes["solo"], "manga_scale": sizes["manga_scale"],
+                "manga_page_sizes": sizes["manga_page_sizes"]}
     return sizes
 
 
@@ -8152,6 +8268,23 @@ def _multi_char_queue_context(
         "mask_location": "region_mask",
         "single_char_mask_skip_enabled": False if composite_character else illust_toggles["single_char_mask_skip_enabled"],
         "single_char_mask_skip_area_percent": illust_toggles["single_char_mask_skip_area_percent"],
+    }
+
+
+def _illustration_dialogue_repair(descriptor: dict, toggles: dict) -> dict | None:
+    """Build the in-graph MOSS dialogue repair control block.
+
+    The block travels in the MOSS document under ``workflow.dialogue_repair``.
+    ``enabled`` comes from the generation toggle; the node passes the document
+    through untouched when it is false or when no source was captured.
+    """
+    source = descriptor.get("source_context")
+    if not isinstance(source, str) or not source.strip():
+        return None
+    return {
+        "enabled": bool((toggles or {}).get("moss_dialogue_repair_enabled")),
+        "anchor": str(descriptor.get("anchor_segment") or ""),
+        "source": source,
     }
 
 
@@ -8237,6 +8370,8 @@ async def process_illustration_context_queue_item(item) -> dict:
     early_dispatch = False
     # 감정 에셋 배치는 조기 등록 경로를 타지 않는다(에셋 결정 단계 뒤에 descriptor가 생성됨).
     emotion_asset_batch = False
+    background_render_task = None
+    background_context = None
     early_keyvis_pair = None
     raw_items = []
     built = {}
@@ -8684,6 +8819,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 return host_id, host
         generated = copy.deepcopy(descriptor)
         generated.pop("emotion_asset", None)
+        if generated.get("background_card"):
+            generated["render_target"] = "character"
         # 감정 에셋은 전부 일반 삽화 설정으로 그린다. 캐릭터 자동 생성 모드는
         # NPC 대표 이미지 전용이므로 여기서 붙이면 안 된다.
         return await _enqueue_child(
@@ -8757,10 +8894,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 import random
                 bot = next((entry for entry in _load_bot_data_readonly()["bots"]
                             if entry.get("name") == active_bot), {})
-                first_panel = descriptor["panels"][0]
-                profile = "group" if len(first_panel.get("characters") or []) >= 2 else "solo"
-                page_settings = resolve_illust_settings(bot, profile)
-                seed = int(page_settings.get("seed", -1))
+                page_settings = resolve_illust_settings(bot, "solo")
+                seed = int(page_settings.get("manga_seed", -1))
                 descriptor["seed"] = random.SystemRandom().randint(0, 2**32 - 1) if seed == -1 else seed
                 print(f"[MANGA:SEED] 페이지 시드 확정: slot={descriptor['slot']}, seed={descriptor['seed']}")
             pairs = []
@@ -8860,6 +8995,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             child_raw_body["illustration_canvas"] = list(descriptor["canvas"])
         if "composite_layer" in descriptor:
             child_raw_body["illustration_render_target"] = "background" if descriptor["composite_layer"] == 0 else "character"
+        elif descriptor.get("render_target"):
+            child_raw_body["illustration_render_target"] = descriptor["render_target"]
         if descriptor.get("seed") is not None:
             child_raw_body["illustration_seed"] = int(descriptor["seed"])
         if descriptor.get("kind") == "scene" and ("call1_scene_state" in descriptor
@@ -8873,6 +9010,9 @@ async def process_illustration_context_queue_item(item) -> dict:
         moss_layout = descriptor.get("moss_layout")
         if isinstance(moss_layout, dict):
             child_raw_body["illustration_moss_layout"] = copy.deepcopy(moss_layout)
+            dialogue_repair = _illustration_dialogue_repair(descriptor, illust_toggles)
+            if dialogue_repair:
+                child_raw_body["illustration_dialogue_repair"] = dialogue_repair
         moss_npc = (npc_render_bot is not None
                     and str(illust_toggles.get("illustration_model_family") or "") == "moss")
         if npc_render_bot is not None:
@@ -9084,6 +9224,14 @@ async def process_illustration_context_queue_item(item) -> dict:
                         f"slot={descriptor.get('slot')}, error={exc}"
                     )
                     traceback.print_exc()
+            background_card = descriptor.get("background_card")
+            if isinstance(background_card, dict) and background_card.get("image_path"):
+                from emotion_background_cards import compose_background
+                background_path = emotion_background_cards.image_path(background_card["bot_key"], background_card["id"])
+                image_bytes = await asyncio.to_thread(
+                    compose_background, image_bytes, str(background_path), runtime_snapshot.get("composition_settings"),
+                    view_center=background_card.get("view_center"),
+                    character_position=background_card.get("character_position", "M"))
             if isinstance(entry, dict):
                 entry.pop("_deferred_image_bytes", None)
                 entry.pop("_deferred_finalize", None)
@@ -9897,6 +10045,71 @@ async def process_illustration_context_queue_item(item) -> dict:
                 f"steps=[{step_summary}]"
             )
 
+            if (runtime_snapshot.get("workshop") == "emotion"
+                    and runtime_snapshot.get("background_mode") == "auto"):
+                from emotion_background_cards import background_bot_key
+                from emotion_composition import normalize_composition_settings
+                catalog = emotion_background_bots.snapshot()
+                if not catalog["bots"]:
+                    catalog = emotion_background_bots.change({"action": "create", "name": "기본 배경"})
+                background_bot = next(bot for bot in catalog["bots"] if bot["name"] == catalog["bot_selected"])
+                key = background_bot_key(background_bot)
+                world = runtime_snapshot["background_world"]
+                background_context = {
+                    "bot": key, "world": world,
+                    "cards": await asyncio.to_thread(emotion_background_cards.catalog, key),
+                    "composition_settings": normalize_composition_settings(runtime_snapshot.get("composition_settings")),
+                }
+
+            async def render_background_image(card):
+                descriptor = {
+                    "kind": "scene", "slot": 0, "composite_layer": 0,
+                    "generation_mode": "background", "camera": "",
+                    "scene": card["positive"], "supplement": "", "characters": [],
+                }
+                descriptor["raw_positive"], descriptor["raw_negative"] = illustration_context_pipeline.build_raw_prompt(
+                    descriptor, "", illustration_context_pipeline.load_prompt_files("emotion"),
+                    {**illust_toggles, "positive_note": "", "negative_note": ""})
+                child_id, child_item = await _enqueue_child(
+                    descriptor, 1, 1, "", illust_toggles["prompt_format"],
+                    defer_postprocess=True, start_correction=False, llm_trace=list(llm_trace))
+                binding = getattr(child_item, "_illustration_flow", None)
+                if binding:
+                    illustration_flow.update(binding[0], binding[1], label=f"배경 카드 이미지 · {card['name']}")
+                try:
+                    pixels, error, cancelled = await _await_child(child_id, child_item, "배경 카드")
+                    if cancelled:
+                        raise asyncio.CancelledError()
+                    if not pixels:
+                        raise RuntimeError(f"배경 카드 생성 실패: {error}")
+                    return pixels
+                except asyncio.CancelledError:
+                    if not child_item.completion_future.done():
+                        await queue_manager.cancel_item(child_item.id)
+                    raise
+                finally:
+                    _discard_deferred_illustration_prompt(child_id, "배경 카드 저장")
+
+            async def on_background_cards_ready(by_anchor):
+                nonlocal background_render_task
+
+                @illustration_flow.stage("장소 배경 준비")
+                async def render_cards():
+                    unique = {card["id"]: {key: value for key, value in card.items() if key not in ("view_center", "character_position")}
+                              for card in by_anchor.values()}
+                    tasks = []
+                    async with asyncio.TaskGroup() as group:
+                        for card in unique.values():
+                            tasks.append(group.create_task(emotion_background_cards.ensure(
+                                background_context["bot"], card, background_context["world"], render_background_image)))
+                    completed = [task.result() for task in tasks]
+                    ready = {card["id"]: card for card in completed}
+                    return {anchor: {**ready[card["id"]],
+                                     **{key: card[key] for key in ("view_center", "character_position") if key in card}}
+                            for anchor, card in by_anchor.items()}
+
+                background_render_task = illustration_flow.create_task(render_cards())
+
             async def render_npc_image(root, render_bot):
                 from modes.illustration_npc import character_image_descriptor
                 # 감정 삽화에서는 프리셋 설정에서 별표한 복장 대표 표정을 NPC
@@ -9958,6 +10171,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                     npc_manager=bot_mode,
                     render_npc_image=render_npc_image,
                     prepare_npc_character=prepare_npc_character,
+                    background_context=background_context,
+                    on_background_cards_ready=on_background_cards_ready,
                 )
             )
             from modes.illustration_npc import advance_lifetimes
@@ -10152,6 +10367,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 _pp_mode = "vn"
             illust_toggles["call3_prompt_mode"] = {
                 "bubble": "manga",
+                "manga_text": "manga",
                 "subtitle": "subtitle",
             }.get(_pp_mode, "speak")
 
@@ -10334,6 +10550,12 @@ async def process_illustration_context_queue_item(item) -> dict:
                     workshop=str(runtime_snapshot.get("workshop") or "illustration"),
                 )
                 illustration_flow.raise_if_cancel_requested()
+                if background_render_task is not None:
+                    backgrounds_by_anchor = await illustration_flow.join(background_render_task)
+                    for descriptor in built.get("items") or []:
+                        anchor = (descriptor.get("emotion_asset") or {}).get("anchor")
+                        if anchor in backgrounds_by_anchor:
+                            descriptor["background_card"] = copy.deepcopy(backgrounds_by_anchor[anchor])
             else:
                 print(
                     f"[ILLUST_CONTEXT] 일반 삽화 출력 토글로 OUTFIT/CALL2/CALL3·Comfy 생성 생략: "
@@ -10788,6 +11010,10 @@ async def process_illustration_context_queue_item(item) -> dict:
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
     finally:
+        if background_render_task is not None:
+            if not background_render_task.done():
+                background_render_task.cancel()
+            await asyncio.gather(background_render_task, return_exceptions=True)
         if image_model_load_task is not None and not image_model_load_task.done():
             image_model_load_task.cancel()
             await asyncio.gather(image_model_load_task, return_exceptions=True)
@@ -11570,7 +11796,7 @@ async def handle_api_illustration_prompt_structure(request: web.Request) -> web.
         )
         return web.json_response(build_prompt_structure(
             toggles=snapshot["illustration_context_toggles"], provider=snapshot["provider"],
-            workshop=workshop),
+            workshop=workshop, background_auto=snapshot.get("background_mode") == "auto"),
             headers={"Cache-Control": "no-store"})
     except ValueError as e:
         print(f"[ILLUST_CONTEXT] prompt structure 입력 파싱 실패: input={body!r}, error={e}")
@@ -11600,6 +11826,7 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
         # Credentials are held separately from persisted app_config. Use them
         # only inside this read-only plan to identify shared provider budgets.
         runtime_llm_config = llm_service.get_config()
+        config["llm_routing"] = copy.deepcopy(runtime_llm_config.get("llm_routing") or {})
         for suffix in llm_service.LLM_SLOT_SUFFIXES:
             key = f"llm_api_key{suffix}"
             config[key] = runtime_llm_config.get(key, "")
@@ -13355,6 +13582,9 @@ async def _enqueue_illustration_session_slot(
     moss_layout = descriptor.get("moss_layout")
     if isinstance(moss_layout, dict):
         generated_body["illustration_moss_layout"] = copy.deepcopy(moss_layout)
+        dialogue_repair = _illustration_dialogue_repair(descriptor, illust_toggles)
+        if dialogue_repair:
+            generated_body["illustration_dialogue_repair"] = dialogue_repair
     multi_char_context = _multi_char_queue_context(
         descriptor, illust_toggles["prompt_format"], illust_toggles, runtime_snapshot["provider"])
     if multi_char_context:
@@ -14166,13 +14396,14 @@ def _backup_image_kind(path: str) -> bool:
 
 
 def _invalidate_backup_filter_cache(backup_dir: str | None = None):
-    """백업 추가/삭제 후 캐시를 무효화한다. 진행 중인 빌드는 세대가 바뀌어 자동 중단되며,
-    다음 조회 시 새 빌드가 시작된다. ``backup_dir``이 없으면 모든 워크숍 캐시를 지운다."""
+    """Retain indexed metadata while refreshing added/deleted backups."""
     with _backup_filter_lock:
         targets = [backup_dir] if backup_dir else list(
             set(_backup_filter_caches) | set(_backup_filter_gens))
         for target in targets:
-            _backup_filter_caches.pop(target, None)
+            cache = _backup_filter_caches.get(target)
+            if cache is not None:
+                _backup_filter_caches[target] = {**cache, "building": True}
             _backup_filter_gens[target] = _backup_filter_gens.get(target, 0) + 1
 
 
@@ -14181,6 +14412,7 @@ def _empty_backup_filter_cache() -> dict:
         "name_to_bot": {},
         "name_to_method": {},
         "name_to_workshop": {},
+        "name_to_info_signature": {},
         "bot_counts": {},
         "method_counts": {},
         "total": 0,
@@ -14214,35 +14446,44 @@ def _build_backup_filter_cache_background(backup_dir: str, my_gen: int):
         files = []
         for _pat in ("*.webp", "*.avif"):
             files.extend(glob.glob(os.path.join(backup_dir, _pat)))
+        files.sort(reverse=True)  # Timestamped names put new backups first.
         total = len(files)
         name_to_bot = {}
         name_to_method = {}
         name_to_workshop = {}
+        name_to_info_signature = {}
         # Backups already bound to a flow run inherit that run's workshop even
         # when their _info.json predates the workshop stamp.
         flow_workshops = illustration_flow.backup_workshops()
         bot_counts = {}
         method_counts = {}
         scanned = 0
+        with _backup_filter_lock:
+            previous = _backup_filter_caches.get(backup_dir) or {}
+        previous_bots = previous.get("name_to_bot", {})
+        previous_methods = previous.get("name_to_method", {})
+        previous_workshops = previous.get("name_to_workshop", {})
+        previous_signatures = previous.get("name_to_info_signature", {})
 
         def _publish(building: bool):
-            """현재 누적 결과의 스냅샷을 반환. 세대가 바뀌었으면 None(중단) 반환.
-            글로벌 캐시 갱신은 이 함수를 부른 외부 스코프에서 수행한다
-            (여기서 대입하면 global 선언 없이 로컬이 되어 글로벌에 반영되지 않음)."""
+            """Publish an immutable snapshot atomically for the current generation."""
             with _backup_filter_lock:
                 if _backup_filter_gens.get(backup_dir, 0) != my_gen:
                     return None  # 세대 변경 → 중단 신호
-                return {
-                    "name_to_bot": name_to_bot,
-                    "name_to_method": name_to_method,
-                    "name_to_workshop": name_to_workshop,
-                    "bot_counts": bot_counts,
-                    "method_counts": method_counts,
+                snapshot = {
+                    "name_to_bot": dict(name_to_bot),
+                    "name_to_method": dict(name_to_method),
+                    "name_to_workshop": dict(name_to_workshop),
+                    "name_to_info_signature": dict(name_to_info_signature),
+                    "bot_counts": dict(bot_counts),
+                    "method_counts": dict(method_counts),
                     "total": scanned,
                     "total_files": total,
                     "scanned": scanned,
                     "building": building,
                 }
+                _backup_filter_caches[backup_dir] = snapshot
+                return snapshot
 
         for i, f in enumerate(files):
             if i % _BACKUP_FILTER_BUILD_BATCH == 0:
@@ -14251,13 +14492,22 @@ def _build_backup_filter_cache_background(backup_dir: str, my_gen: int):
                 if snap is None:
                     print("[BACKUP_FILTER] 빌드 중단(세대 변경)")
                     return
-                _backup_filter_caches[backup_dir] = snap
             base = os.path.splitext(os.path.basename(f))[0]
             bn = ""
             gm = ""
             ws = ""
             info_path = os.path.join(backup_dir, f"{base}_info.json")
-            if os.path.exists(info_path):
+            try:
+                info_stat = os.stat(info_path)
+                info_signature = (info_stat.st_mtime_ns, info_stat.st_size)
+            except OSError:
+                info_signature = None
+            name_to_info_signature[base] = info_signature
+            if base in previous_bots and previous_signatures.get(base) == info_signature:
+                bn = previous_bots[base]
+                gm = previous_methods.get(base, "")
+                ws = previous_workshops.get(base, "")
+            elif info_signature is not None:
                 try:
                     with open(info_path, "r", encoding="utf-8") as fp:
                         d = json.load(fp)
@@ -14282,7 +14532,6 @@ def _build_backup_filter_cache_background(backup_dir: str, my_gen: int):
         if snap is None:
             print("[BACKUP_FILTER] 빌드 중단(세대 변경, 완료 직전)")
             return
-        _backup_filter_caches[backup_dir] = snap
         print(f"[BACKUP_FILTER] 캐시 구축 완료: {total}개, {time.time() - t0:.2f}s")
         # 프론트엔드에 빌드 완료 알림 (필터 드롭다운 최종 갱신용)
         if _main_event_loop is not None:
@@ -15457,9 +15706,9 @@ def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     with _backup_filter_lock:
         cache = _backup_filter_caches.get(backup_dir)
         building = backup_dir in _backup_filter_building
-    if cache is not None and not building:
+    if cache is not None and not cache.get("building", False) and not building:
         return cache  # 완전히 구축됨
-    if cache is None and not building:
+    if not building:
         _schedule_backup_filter_build(backup_dir)
     # 빌드 중이거나 방금 시작함 → 부분 결과(또는 빈 캐시)를 즉시 반환
     with _backup_filter_lock:
@@ -15494,208 +15743,237 @@ async def handle_api_backups(request: web.Request) -> web.Response:
 
     # 모아보기 필터: all(기본) / bot:{bot_name} / bot_none / method:{gen_method}
     filter_param = request.query.get("filter", "all") or "all"
+    gallery_view = request.query.get("view") == "gallery"
 
     # 워크숍별로 백업 폴더가 분리되어 있으므로 요청 scope의 폴더만 나열한다.
-    backup_dir = get_backup_base_dir(request.query.get("scope", ""))
-    def scan_files():
-        files = set()
-        for pattern in ("*.webp", "*.avif"):
-            files.update(glob.glob(os.path.join(backup_dir, pattern)))
-        return sorted(files, key=os.path.getmtime, reverse=True)
-    files = await asyncio.to_thread(scan_files)
+    # Metadata parsing and image probing must not block image requests.
+    def build_page():
+        backup_dir = get_backup_base_dir(request.query.get("scope", ""))
+        def scan_files():
+            files = set()
+            for pattern in ("*.webp", "*.avif"):
+                files.update(glob.glob(os.path.join(backup_dir, pattern)))
+            dated_files = []
+            for path in files:
+                try:
+                    dated_files.append((os.path.getmtime(path), path))
+                except FileNotFoundError:
+                    continue  # Retention cleanup may run alongside this scan.
+            return [path for _, path in sorted(dated_files, reverse=True)]
+        files = scan_files()
 
-    manual_character = str(request.query.get("manual_character") or "").strip()
-    if manual_character:
-        bot_name = str(request.query.get("bot_name") or app_config.get("bot_selected") or "")
-        profile_id = str(request.query.get("visual_profile_id") or "")
-        if not profile_id:
-            try:
-                names, profile_ids = _resolve_restore_manual_visual_profiles(bot_name, [manual_character], {})
-                manual_character = names[0]
-                profile_id = profile_ids[manual_character]
-            except Exception as error:
-                print(f"[MANUAL_HISTORY] 기본 카드 조회 실패: bot={bot_name!r}, character={manual_character!r}, error={error}")
-                traceback.print_exc()
-                return web.json_response({"error": str(error)}, status=400)
-        versions = []
-        for path in files:
-            base, extension = os.path.splitext(os.path.basename(path))
-            info = _read_backup_info_for_scan(backup_dir, base) or {}
-            snapshot = (info.get("manual_character_tags") or {}).get(manual_character)
-            if (info.get("bot_name") == bot_name and isinstance(snapshot, dict)
-                    and snapshot.get("visual_profile_id") == profile_id):
-                versions.append({
-                    "name": base,
-                    "image_url": f"/api/backup_image/{base}{extension}",
-                    "mtime": os.path.getmtime(path),
-                    "character_tags": snapshot,
-                })
-        versions.sort(key=lambda item: (item["character_tags"].get("version", 0), item["mtime"]), reverse=True)
-        print(f"[MANUAL_HISTORY] 버전 조회: bot={bot_name!r}, character={manual_character!r}, "
-              f"profile={profile_id!r}, found={len(versions)}, shown={min(8, len(versions))}")
-        return web.json_response({"backups": versions[:8], "limit": 8, "has_more": False})
+        manual_character = str(request.query.get("manual_character") or "").strip()
+        if manual_character:
+            bot_name = str(request.query.get("bot_name") or app_config.get("bot_selected") or "")
+            profile_id = str(request.query.get("visual_profile_id") or "")
+            if not profile_id:
+                try:
+                    names, profile_ids = _resolve_restore_manual_visual_profiles(bot_name, [manual_character], {})
+                    manual_character = names[0]
+                    profile_id = profile_ids[manual_character]
+                except Exception as error:
+                    print(f"[MANUAL_HISTORY] 기본 카드 조회 실패: bot={bot_name!r}, character={manual_character!r}, error={error}")
+                    traceback.print_exc()
+                    return web.json_response({"error": str(error)}, status=400)
+            versions = []
+            for path in files:
+                base, extension = os.path.splitext(os.path.basename(path))
+                info = _read_backup_info_for_scan(backup_dir, base) or {}
+                snapshot = (info.get("manual_character_tags") or {}).get(manual_character)
+                if (info.get("bot_name") == bot_name and isinstance(snapshot, dict)
+                        and snapshot.get("visual_profile_id") == profile_id):
+                    versions.append({
+                        "name": base,
+                        "image_url": f"/api/backup_image/{base}{extension}",
+                        "mtime": os.path.getmtime(path),
+                        "character_tags": snapshot,
+                    })
+            versions.sort(key=lambda item: (item["character_tags"].get("version", 0), item["mtime"]), reverse=True)
+            print(f"[MANUAL_HISTORY] 버전 조회: bot={bot_name!r}, character={manual_character!r}, "
+                  f"profile={profile_id!r}, found={len(versions)}, shown={min(8, len(versions))}")
+            return web.json_response({"backups": versions[:8], "limit": 8, "has_more": False})
 
-    # 공방 범위는 위에서 고른 폴더 자체로 이미 분리되어 있다. 폴더 안의
-    # 백업을 workshop 태그로 한 번 더 걸러내지 않는다(로딩 후 필터링 금지).
+        # 공방 범위는 위에서 고른 폴더 자체로 이미 분리되어 있다. 폴더 안의
+        # 백업을 workshop 태그로 한 번 더 걸러내지 않는다(로딩 후 필터링 금지).
 
-    # ─── 필터 적용 ───
-    if filter_param.startswith("flow:"):
-        run = illustration_flow.find_run(filter_param[5:])
-        names = set(run.get("backup_names", [])) if run else set()
-        files = [path for path in files if os.path.splitext(os.path.basename(path))[0] in names]
-        total_count = len(files)
-    elif filter_param == "bot_none" or filter_param.startswith("bot:"):
-        # bot_name 기준 필터는 info 파일을 읽어야 하므로 캐시된 인덱스 사용.
-        target_bot = filter_param[4:] if filter_param.startswith("bot:") else None  # bot_none → None
-        cache = _ensure_backup_filter_cache(backup_dir)
-        name_to_bot = cache["name_to_bot"]
-        if target_bot is None:
-            files = [f for f in files if not name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "")]
+        # ─── 필터 적용 ───
+        if filter_param.startswith("flow:"):
+            run = illustration_flow.find_run(filter_param[5:])
+            names = set(run.get("backup_names", [])) if run else set()
+            files = [path for path in files if os.path.splitext(os.path.basename(path))[0] in names]
+            total_count = len(files)
+        elif filter_param == "bot_none" or filter_param.startswith("bot:"):
+            # bot_name 기준 필터는 info 파일을 읽어야 하므로 캐시된 인덱스 사용.
+            target_bot = filter_param[4:] if filter_param.startswith("bot:") else None  # bot_none → None
+            cache = _ensure_backup_filter_cache(backup_dir)
+            name_to_bot = cache["name_to_bot"]
+            if target_bot is None:
+                files = [f for f in files if not name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "")]
+            else:
+                files = [f for f in files if name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "") == target_bot]
+            total_count = len(files)
+        elif filter_param.startswith("method:"):
+            # 생성 방법(gen_method) 기준 필터.
+            target_method = filter_param[7:]
+            cache = _ensure_backup_filter_cache(backup_dir)
+            name_to_method = cache["name_to_method"]
+            files = [f for f in files if name_to_method.get(os.path.splitext(os.path.basename(f))[0], "") == target_method]
+            total_count = len(files)
         else:
-            files = [f for f in files if name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "") == target_bot]
-        total_count = len(files)
-    elif filter_param.startswith("method:"):
-        # 생성 방법(gen_method) 기준 필터.
-        target_method = filter_param[7:]
-        cache = _ensure_backup_filter_cache(backup_dir)
-        name_to_method = cache["name_to_method"]
-        files = [f for f in files if name_to_method.get(os.path.splitext(os.path.basename(f))[0], "") == target_method]
-        total_count = len(files)
-    else:
-        # all: 필터 없음
-        total_count = len(files)
+            # all: 필터 없음
+            total_count = len(files)
 
-    # Search the entire filename index before slicing; captions remain page-sized.
-    search = request.query.get("search", "")
-    if search.strip():
-        from image_name_search import matches_image_name
-        files = [path for path in files if matches_image_name(os.path.basename(path), search)]
-        total_count = len(files)
+        # Search the entire filename index before slicing; captions remain page-sized.
+        search = request.query.get("search", "")
+        if search.strip():
+            from image_name_search import matches_image_name
+            files = [path for path in files if matches_image_name(os.path.basename(path), search)]
+            total_count = len(files)
 
-    # 페이지네이션 적용
-    files = files[offset:offset + limit]
+        # 페이지네이션 적용
+        files = files[offset:offset + limit]
 
-    inspection_backups = {
-        str(image.get("backup_name") or "")
-        for record in lighbd_service._load_lighbd_history()
-        if record.get("task_key") == illustration_quality_inspection.TASK_KEY
-        for image in (record.get("inspection_images") or [])
-        if isinstance(image, dict)
-    }
-    backups = []
-    for f in files:
-        base, ext = os.path.splitext(os.path.basename(f))  # ext: 실제 파일 확장자 (.webp / .avif)
-        is_animated = _backup_image_kind(f)
-        info_path = os.path.join(backup_dir, f"{base}_info.json")
-        prompt_path_json = os.path.join(backup_dir, f"{base}.json")
-        prompt_path_txt = os.path.join(backup_dir, f"{base}.txt")
-        prompt_path = prompt_path_json if os.path.exists(prompt_path_json) else prompt_path_txt
-
-        info = {}
-        if os.path.exists(info_path):
+        # Current backups carry their trace ids. Only consult the full LLM log
+        # for older backups without them, once per page.
+        inspection_backups = None
+        backups = []
+        for f in files:
             try:
-                with open(info_path, "r", encoding="utf-8") as fp:
-                    info = json.load(fp)
-            except:
-                pass
+                file_size = os.path.getsize(f)
+                file_mtime = os.path.getmtime(f)
+            except FileNotFoundError:
+                continue
+            base, ext = os.path.splitext(os.path.basename(f))  # ext: 실제 파일 확장자 (.webp / .avif)
+            is_animated = _backup_image_kind(f)
+            info_path = os.path.join(backup_dir, f"{base}_info.json")
+            prompt_path_json = os.path.join(backup_dir, f"{base}.json")
+            prompt_path_txt = os.path.join(backup_dir, f"{base}.txt")
+            prompt_path = prompt_path_json if os.path.exists(prompt_path_json) else prompt_path_txt
 
-        positive, negative = "", ""
-        video_prompt_metadata = {
-            "is_video_prompt": False,
-            "video_instruction": "",
-            "video_instruction_source": "",
-            "video_auto_instruction": None,
-            "video_visual_context": "",
-            "video_visual_context_source": "",
-        }
-        if os.path.exists(prompt_path):
-            positive, negative = _extract_prompts_from_backup(prompt_path)
-            video_prompt_metadata = _extract_video_prompt_metadata(prompt_path)
+            info = {}
+            if os.path.exists(info_path):
+                try:
+                    with open(info_path, "r", encoding="utf-8") as fp:
+                        info = json.load(fp)
+                except:
+                    pass
 
-        # Check if this backup is scheduled for reschedule
-        is_scheduled = reschedule_queue is not None and reschedule_queue["name"] == base
+            positive, negative = "", ""
+            video_prompt_metadata = {
+                "is_video_prompt": False,
+                "video_instruction": "",
+                "video_instruction_source": "",
+                "video_auto_instruction": None,
+                "video_visual_context": "",
+                "video_visual_context_source": "",
+            }
+            if not gallery_view and os.path.exists(prompt_path):
+                positive, negative = _extract_prompts_from_backup(prompt_path)
+                video_prompt_metadata = _extract_video_prompt_metadata(prompt_path)
 
-        # 강화 프롬프트 로드
-        enhanced_positive = ""
-        enhanced_path = os.path.join(backup_dir, f"{base}_enhanced.txt")
-        if os.path.exists(enhanced_path):
-            try:
-                with open(enhanced_path, "r", encoding="utf-8") as ef:
-                    enhanced_positive = ef.read()
-            except:
-                pass
+            # Check if this backup is scheduled for reschedule
+            is_scheduled = reschedule_queue is not None and reschedule_queue["name"] == base
 
-        # NSFW 와일드카드 정보 로드
-        wildcard_info = {}
-        wildcard_path = os.path.join(backup_dir, f"{base}_wildcard.json")
-        if os.path.exists(wildcard_path):
-            try:
-                with open(wildcard_path, "r", encoding="utf-8") as wf:
-                    wildcard_info = json.load(wf)
-            except:
-                pass
+            # 강화 프롬프트 로드
+            enhanced_positive = ""
+            enhanced_path = os.path.join(backup_dir, f"{base}_enhanced.txt")
+            if not gallery_view and os.path.exists(enhanced_path):
+                try:
+                    with open(enhanced_path, "r", encoding="utf-8") as ef:
+                        enhanced_positive = ef.read()
+                except:
+                    pass
 
-        # 후처리 원본(_raw) 존재 여부 — 후처리 적용 백업에 한해 대사 없는 원본이 보존됨.
-        # 새 백업은 _info.json 의 raw_extension 메타데이터(저장 시 기록)를 우선하고,
-        # 메타데이터 없는 구 백업만 기존처럼 실제 파일 탐색으로 판정한다.
-        raw_extension = ""
-        recorded_raw_extension = (
-            info.get("raw_extension")
-            if isinstance(info, dict)
-            else None
-        )
-        if isinstance(recorded_raw_extension, str) and recorded_raw_extension:
-            raw_path_meta = os.path.join(
-                backup_dir, "_raw", f"{base}{recorded_raw_extension}"
+            # NSFW 와일드카드 정보 로드
+            wildcard_info = {}
+            wildcard_path = os.path.join(backup_dir, f"{base}_wildcard.json")
+            if not gallery_view and os.path.exists(wildcard_path):
+                try:
+                    with open(wildcard_path, "r", encoding="utf-8") as wf:
+                        wildcard_info = json.load(wf)
+                except:
+                    pass
+
+            # 후처리 원본(_raw) 존재 여부 — 후처리 적용 백업에 한해 대사 없는 원본이 보존됨.
+            # 새 백업은 _info.json 의 raw_extension 메타데이터(저장 시 기록)를 우선하고,
+            # 메타데이터 없는 구 백업만 기존처럼 실제 파일 탐색으로 판정한다.
+            raw_extension = ""
+            recorded_raw_extension = (
+                info.get("raw_extension")
+                if isinstance(info, dict)
+                else None
             )
-            raw_extension = recorded_raw_extension if os.path.exists(raw_path_meta) else ""
-        if not raw_extension:
-            raw_extension = next(
-                (
-                    candidate_extension
-                    for candidate_extension in (".avif", ".webp")
-                    if os.path.exists(
-                        os.path.join(backup_dir, "_raw", f"{base}{candidate_extension}")
-                    )
-                ),
-                "",
-            )
-        # 영상화 가능 판정: _raw 실제 파일이 있거나, 대사 합성이 적용되지 않아
-        # 메인 이미지 자체가 깨끗한 원본인 백업(key visual 등)도 포함한다.
-        # 위에서 이미 읽은 info 로 판정해 info.json 재독기를 피한다.
-        has_raw = backup_clean_source_from_info(bool(raw_extension), info)
+            if isinstance(recorded_raw_extension, str) and recorded_raw_extension:
+                raw_path_meta = os.path.join(
+                    backup_dir, "_raw", f"{base}{recorded_raw_extension}"
+                )
+                raw_extension = recorded_raw_extension if os.path.exists(raw_path_meta) else ""
+            if not raw_extension:
+                raw_extension = next(
+                    (
+                        candidate_extension
+                        for candidate_extension in (".avif", ".webp")
+                        if os.path.exists(
+                            os.path.join(backup_dir, "_raw", f"{base}{candidate_extension}")
+                        )
+                    ),
+                    "",
+                )
+            # 영상화 가능 판정: _raw 실제 파일이 있거나, 대사 합성이 적용되지 않아
+            # 메인 이미지 자체가 깨끗한 원본인 백업(key visual 등)도 포함한다.
+            # 위에서 이미 읽은 info 로 판정해 info.json 재독기를 피한다.
+            has_raw = backup_clean_source_from_info(bool(raw_extension), info)
 
-        backups.append({
-            "name": base,
-            "image_url": f"/api/backup_image/{base}{ext}",
-            "is_animated": is_animated,
-            # animated: 정지 poster(첫 프레임) URL. 정적이면 원본과 동일.
-            "poster_url": (f"/api/backup_poster/{base}" if is_animated
-                           else f"/api/backup_image/{base}{ext}"),
-            # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 실제 _raw
-            # 파일이 있을 때만 유효하므로 raw_extension 기준으로 판정한다.
-            "raw_url": (f"/api/backup_raw/{base}" if raw_extension else None),
-            "has_raw": has_raw,
-            "raw_extension": raw_extension,
-            "file_size_bytes": os.path.getsize(f),
-            "has_prompt": os.path.exists(prompt_path),
-            "positive": positive,
-            "negative": negative,
-            **video_prompt_metadata,
-            "enhanced_positive": enhanced_positive,
-            "wildcard_info": wildcard_info,
-            "conversion_info": info,
-            "mtime": os.path.getmtime(f),
-            "is_scheduled": is_scheduled,
-            "has_llm_trace": bool(info.get("llm_trace")) or base in inspection_backups,
+            has_llm_trace = bool(info.get("llm_trace"))
+            if not has_llm_trace:
+                if inspection_backups is None:
+                    inspection_backups = {
+                        str(image.get("backup_name") or "")
+                        for record in lighbd_service._load_lighbd_history()
+                        if record.get("task_key") == illustration_quality_inspection.TASK_KEY
+                        for image in (record.get("inspection_images") or [])
+                        if isinstance(image, dict)
+                    }
+                has_llm_trace = base in inspection_backups
+
+            image_url = f"/api/backup_image/{base}{ext}?v=2-{file_mtime}-{file_size}"
+            backups.append({
+                "name": base,
+                "image_url": image_url,
+                "thumbnail_url": f"/api/backup_poster/{base}?thumbnail=1&v=1-{file_mtime}-{file_size}",
+                "is_animated": is_animated,
+                # animated: 정지 poster(첫 프레임) URL. 정적이면 원본과 동일.
+                "poster_url": (f"/api/backup_poster/{base}" if is_animated
+                               else image_url),
+                # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 실제 _raw
+                # 파일이 있을 때만 유효하므로 raw_extension 기준으로 판정한다.
+                "raw_url": (f"/api/backup_raw/{base}" if raw_extension else None),
+                "has_raw": has_raw,
+                "raw_extension": raw_extension,
+                "file_size_bytes": file_size,
+                "has_prompt": os.path.exists(prompt_path),
+                "positive": positive,
+                "negative": negative,
+                **video_prompt_metadata,
+                "enhanced_positive": enhanced_positive,
+                "wildcard_info": wildcard_info,
+                # The LLM output can dwarf the image itself; the editor and
+                # analysis actions fetch their documents separately on demand.
+                "conversion_info": ({key: value for key, value in info.items()
+                                     if key != "llm_final_result"} if gallery_view else info),
+                "mtime": file_mtime,
+                "is_scheduled": is_scheduled,
+                "has_llm_trace": has_llm_trace,
+            })
+        return web.json_response({
+            "backups": backups,
+            "total": total_count,
+            "offset": offset,
+            "limit": limit,
+            "has_more": (offset + limit) < total_count
         })
-    return web.json_response({
-        "backups": backups,
-        "total": total_count,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total_count
-    })
+
+    return await asyncio.to_thread(build_page)
 
 
 def _load_llm_trace_records(
@@ -16210,7 +16488,7 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
     # 필터도 요청 scope의 워크숍 폴더만 집계한다.
     backup_dir = get_backup_base_dir(request.query.get("scope", ""))
     try:
-        cache = _ensure_backup_filter_cache(backup_dir)
+        cache = await asyncio.to_thread(_ensure_backup_filter_cache, backup_dir)
     except Exception:
         traceback.print_exc()
         return web.json_response({"error": "필터 인덱스 구축 실패"}, status=500)
@@ -16249,23 +16527,11 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
 
 
 async def handle_api_backup_image(request: web.Request) -> web.Response:
-    """백업 이미지를 서빙한다. 파일을 직접 읽어 바이트로 전송.
+    """Read bytes directly, avoiding the old sendfile/304 corrupted-cache path.
 
-    web.FileResponse 를 쓰면 aiohttp 가 파일의 ETag/Last-Modified 를 자동
-    설정하고 조건부 GET(If-None-Match) 에 304 Not Modified 를 반환한다.
-    asyncio sendfile 공유 버퍼 레이스 시대(Python <3.12.11) 에 Chrome 이
-    캐시한 손상 WebP 바이트가 ETag 와 함께 들러붙어 있으면, 서버가 지금은
-    깨끗해도 304 → Chrome 이 옛 손상 캐시 바디를 계속 써서 하단이 노이즈/
-    검게 표시된다. 파일이 안 변하면 ETag 도 안 변해 304 가 영원히 나온다.
-    따라서 FileResponse(ETag/304 경로) 를 쓰지 않고 body 로 직접 보내 매
-    요청 200 + Cache-Control: no-store 로 Chrome 이 항상 fresh 올바른
-    바이트를 쓰게 한다(옛 손상 캐시는 다음 요청에서 자연스럽게 덮어씀).
-
-    추가로 aiohttp FileResponse 는 전역 mimetypes 가 아닌 자체 MimeTypes
-    인스턴스(CONTENT_TYPES, .webp 모름) 를 써 .webp 가 application/octet-stream
-    으로 나가므로 content_type 을 명시적으로 image/webp 로 준다.
-    server.py 상단의 mimetypes.add_type('image/webp','.webp') 는 FileResponse
-    경로엔 영향이 없었음.
+    Only URLs carrying the current file version can be cached. The v=2 namespace
+    starts with fresh bytes; unversioned and stale URLs still bypass the cache.
+    Explicit image MIME types also avoid FileResponse's older WebP MIME mapping.
     """
     filename = request.match_info.get("filename", "")
     if ".." in filename or "/" in filename or "\\" in filename:
@@ -16273,7 +16539,7 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
         return web.Response(status=400, text="Invalid filename")
 
     # 이미지 URL은 워크숍 표식을 싣지 않으므로 두 백업 폴더에서 이름으로 찾는다.
-    path = find_backup_file(filename)
+    path = await asyncio.to_thread(find_backup_file, filename)
 
     if not path:
         return web.Response(status=404)
@@ -16287,9 +16553,16 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
         ".jpeg": "image/jpeg",
     }.get(ext, "application/octet-stream")
 
-    try:
+    def read_image():
         with open(path, "rb") as f:
             data = f.read()
+            stat = os.fstat(f.fileno())
+        return data, stat
+
+    try:
+        data, stat = await asyncio.to_thread(read_image)
+    except FileNotFoundError:
+        return web.Response(status=404)
     except Exception:
         print(f"[BACKUP_IMAGE] 파일 읽기 실패: {path!r}")
         traceback.print_exc()
@@ -16298,7 +16571,11 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
     return web.Response(
         body=data,
         content_type=content_type,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        headers={"Cache-Control": (
+            "private, max-age=31536000, immutable"
+            if request.query.get("v") == f"2-{stat.st_mtime}-{stat.st_size}"
+            else "no-store, no-cache, must-revalidate"
+        )},
     )
 
 
@@ -16308,59 +16585,76 @@ async def handle_api_backup_poster(request: web.Request) -> web.Response:
     호버 재생 UI가 기본으로 보여줄 "정지 첫 프레임" 용도. 원본(animated webp/avif)에서
     첫 프레임을 뽑아 정적 webp로 변환해 backup_dir/_posters/{name}.webp에 mtime 캐싱한다.
     원본이 갱신되면(mtime이 poster보다 새면) 다시 생성한다. 정적 원본이 들어오면 그냥
-    첫(유일) 프레임을 저장한다."""
+    첫(유일) 프레임을 저장한다. thumbnail=1은 갤러리용 640px 축소본이며,
+    원본 버전을 포함한 URL만 브라우저 캐시를 허용한다."""
     name = request.match_info.get("name", "")
     if ".." in name or "/" in name or "\\" in name:
         print(f"[BACKUP_POSTER] 잘못된 name 요청 거부: {name!r}")
         return web.Response(status=400, text="Invalid name")
+    thumbnail = request.query.get("thumbnail") == "1"
 
     # 원본이 실제로 들어 있는 워크숍 폴더에 poster 캐시를 만든다.
-    src_path = next(
-        (find_backup_file(name, ext) for ext in (".webp", ".avif")
-         if find_backup_file(name, ext)),
-        "",
-    )
-    if not src_path:
-        return web.Response(status=404)
+    def build_poster():
+        src_path = find_backup_file(name, ".webp") or find_backup_file(name, ".avif")
+        if not src_path:
+            return web.Response(status=404)
 
-    poster_dir = os.path.join(os.path.dirname(src_path), "_posters")
-    try:
-        os.makedirs(poster_dir, exist_ok=True)
-    except Exception:
-        print(f"[BACKUP_POSTER] ⚠ poster 폴더 생성 실패: {poster_dir!r}")
-        traceback.print_exc()
-        return web.Response(status=500, text="poster dir error")
+        poster_dir = os.path.join(os.path.dirname(src_path), "_thumbnails" if thumbnail else "_posters")
+        try:
+            os.makedirs(poster_dir, exist_ok=True)
+        except Exception:
+            print(f"[BACKUP_POSTER] ⚠ poster 폴더 생성 실패: {poster_dir!r}")
+            traceback.print_exc()
+            return web.Response(status=500, text="poster dir error")
 
-    poster_path = os.path.join(poster_dir, f"{name}.webp")
-    try:
-        src_mt = os.path.getmtime(src_path)
-        # 캐시 hit: poster가 원본보다 새로 작성되었으면 재사용
-        if not (os.path.exists(poster_path) and os.path.getmtime(poster_path) >= src_mt):
-            with Image.open(src_path) as img:
-                if getattr(img, "is_animated", False):
-                    img.seek(0)  # 첫 프레임으로
-                poster = img.convert("RGB")
-            poster.save(poster_path, format="WEBP", quality=80)
-            print(f"[BACKUP_POSTER] poster 생성: {name}.webp ({src_path})")
-    except Exception:
-        print(f"[BACKUP_POSTER] ⚠ poster 생성 실패: {src_path!r}")
-        traceback.print_exc()
-        return web.Response(status=500, text="poster gen error")
+        poster_path = os.path.join(poster_dir, f"{name}.webp")
+        try:
+            src_stat = os.stat(src_path)
+            src_mt = src_stat.st_mtime
+            # 캐시 hit: poster가 원본보다 새로 작성되었으면 재사용
+            if not (os.path.exists(poster_path) and os.path.getmtime(poster_path) >= src_mt):
+                with Image.open(src_path) as img:
+                    if getattr(img, "is_animated", False):
+                        img.seek(0)  # 첫 프레임으로
+                    if thumbnail:
+                        poster = img.convert("RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB")
+                        poster.thumbnail((640, 640), Image.Resampling.LANCZOS)
+                    else:
+                        poster = img.convert("RGB")
+                # A second request must never read a half-written preview.
+                temporary_path = poster_path + f".{uuid.uuid4().hex}.tmp"
+                try:
+                    poster.save(temporary_path, format="WEBP", quality=80)
+                    os.replace(temporary_path, poster_path)
+                finally:
+                    if os.path.exists(temporary_path):
+                        os.remove(temporary_path)
+                print(f"[BACKUP_POSTER] poster 생성: {name}.webp ({src_path})")
+        except Exception:
+            print(f"[BACKUP_POSTER] ⚠ poster 생성 실패: {src_path!r}")
+            traceback.print_exc()
+            return web.Response(status=500, text="poster gen error")
 
-    try:
-        with open(poster_path, "rb") as fp:
-            data = fp.read()
-    except Exception:
-        print(f"[BACKUP_POSTER] ⚠ poster 파일 읽기 실패: {poster_path!r}")
-        traceback.print_exc()
-        return web.Response(status=500, text="poster read error")
+        try:
+            with open(poster_path, "rb") as fp:
+                data = fp.read()
+        except Exception:
+            print(f"[BACKUP_POSTER] ⚠ poster 파일 읽기 실패: {poster_path!r}")
+            traceback.print_exc()
+            return web.Response(status=500, text="poster read error")
 
-    return web.Response(
-        body=data,
-        content_type="image/webp",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
-    )
+        return web.Response(
+            body=data,
+            content_type="image/webp",
+            headers={"Cache-Control": (
+                "private, max-age=31536000, immutable"
+                if thumbnail and request.query.get("v") == f"1-{src_mt}-{src_stat.st_size}"
+                else "no-store, no-cache, must-revalidate"
+            )},
+        )
 
+
+    return await asyncio.to_thread(build_poster)
 
 async def handle_api_backup_raw(request: web.Request) -> web.Response:
     """GET /api/backup_raw/{name} — 후처리(대사/말풍선) 적용 전 원본 이미지를 반환한다.
@@ -16412,7 +16706,9 @@ async def handle_api_backup_prompt(request: web.Request) -> web.Response:
         if path:
             with open(path, "r", encoding="utf-8") as f:
                 return web.json_response({"submitted_prompt": json.load(f)})
-        return web.json_response({"submitted_prompt": None})
+        path = find_backup_file(name, ".json") or find_backup_file(name, ".txt")
+        positive, negative = _extract_prompts_from_backup(path) if path else ("", "")
+        return web.json_response({"submitted_prompt": None, "positive": positive, "negative": negative})
     path = find_backup_file(name, ".json") or find_backup_file(name, ".txt")
     if path:
         if request.query.get("view") == "edit":
@@ -16499,6 +16795,7 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
         os.path.join("_raw", f"{name}.webp"),
         os.path.join("_raw", f"{name}.avif"),
         os.path.join("_posters", f"{name}.webp"),
+        os.path.join("_thumbnails", f"{name}.webp"),
     ]
     deleted, failed = [], []
     try:
@@ -18333,10 +18630,10 @@ async def handle_api_postprocess_settings(request: web.Request) -> web.Response:
             if not isinstance(body, dict):
                 raise ValueError("합성 설정을 확인하세요.")
             if "mode" in body:
-                if body["mode"] not in ("vn", "bubble", "subtitle"):
+                if body["mode"] not in ("vn", "bubble", "subtitle", "manga_text"):
                     raise ValueError("합성 방식을 확인하세요.")
                 settings["mode"] = body["mode"]
-            for mode in ("vn", "bubble", "subtitle"):
+            for mode in ("vn", "bubble", "subtitle", "manga_text"):
                 if mode in body:
                     if not isinstance(body[mode], dict):
                         raise ValueError("합성 설정을 확인하세요.")
@@ -18347,7 +18644,7 @@ async def handle_api_postprocess_settings(request: web.Request) -> web.Response:
                 return web.json_response({"saved": True})
         if legacy_mode == "vn":
             return web.json_response(settings["vn"])
-        if legacy_mode in ("bubble", "subtitle"):
+        if legacy_mode in ("bubble", "subtitle", "manga_text"):
             return web.json_response({legacy_mode: settings[legacy_mode], "mode": settings["mode"]})
         return web.json_response(settings)
     except (ValueError, TypeError) as exc:
@@ -18592,6 +18889,44 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             }
             composed = compose_subtitle(
                 base_bytes, speak, subtitle_settings, bot_name
+            )
+            return web.Response(body=composed, content_type="image/png")
+        if mode == "manga_text":
+            from modes.manga_text_render import (
+                compose_manga_text,
+                extract_text_items,
+                normalize_manga_text_settings,
+            )
+
+            submitted = body.get("submitted_prompt")
+            if isinstance(submitted, str):
+                try:
+                    submitted = json.loads(submitted)
+                except ValueError:
+                    submitted = None
+            if not has_real_base:
+                return web.json_response(
+                    {"error": "텍스트 교체 미리보기에는 백업 이미지가 필요합니다."},
+                    status=400,
+                )
+            if not isinstance(submitted, dict):
+                return web.json_response(
+                    {"error": "이 백업에는 제출 프롬프트가 없습니다."},
+                    status=400,
+                )
+            manga_settings = normalize_manga_text_settings(body)
+            with Image.open(BytesIO(base_bytes)) as probe:
+                if not extract_text_items(submitted, image_size=probe.size):
+                    return web.json_response(
+                        {"error": "제출 프롬프트에 label=\"text\" 항목이 없습니다."},
+                        status=400,
+                    )
+            composed = await asyncio.to_thread(
+                compose_manga_text,
+                base_bytes,
+                submitted,
+                manga_settings,
+                bot_name,
             )
             return web.Response(body=composed, content_type="image/png")
 
@@ -22133,6 +22468,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
             body = await request.json()
             modal_worker_settings_changed = False
             modal_autoscaler_settings_changed = False
+            body.update(portable_app_paths(body, BASE_DIR))
+            body.update(resolve_app_paths(body, BASE_DIR))
 
             # 어느 UI 지점이 저장했는지 남긴다. 설정이 조용히 되돌아갈 때
             # [CONFIG_DIFF] 로그와 짝지어 범인을 특정하기 위한 것이다.
@@ -23008,6 +23345,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_gemini_base64{_sfx}": app_config.get(f"llm_gemini_base64{_sfx}", False),
                     f"llm_pdf_prompt{_sfx}": app_config.get(f"llm_pdf_prompt{_sfx}", False),
                     f"llm_pdf_prompt_format{_sfx}": app_config.get(f"llm_pdf_prompt_format{_sfx}", "pdf"),
+                    **{f"llm_pdf_image_{field}{_sfx}": app_config.get(
+                        f"llm_pdf_image_{field}{_sfx}", default)
+                       for field, default in llm_service.PDF_IMAGE_DEFAULT_OPTIONS.items()},
                 })
             llm_service.update_config(_llm_runtime_cfg)
 
@@ -23678,7 +24018,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                     restore_provider,
                 )
                 if restore_provider == "comfy" and prompt_format == "v3":
-                    manual_illust_toggles = copy.deepcopy(
+                    manual_illust_toggles = illustration_context_pipeline.merged_toggles(
                         app_config.get("illustration_context_toggles") or {}
                     )
                     manual_multi_char_mask_active = (
@@ -23703,6 +24043,11 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                             "[RESTORE_MANUAL:MOSS] MOSS 레이아웃 생성: "
                             f"characters={len(result_characters)}"
                         )
+                        dialogue_repair = _illustration_dialogue_repair(
+                            result, manual_illust_toggles
+                        )
+                        if dialogue_repair:
+                            raw_body["illustration_dialogue_repair"] = dialogue_repair
                     elif manual_multi_char_mask_active:
                         raw_body["illustration_multi_char"] = (
                             await _build_restore_manual_multi_char_context(result)
@@ -23779,6 +24124,262 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         print(f"[RESTORE_MANUAL] 오류: {e}")
         traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
+
+
+def _recent_session_generated_prompt(backup_name: str) -> dict | None:
+    """한 백업에서 LLM이 만든 생성 태그와 생성 레이아웃만 추출한다.
+
+    프리셋·로라·그림체·샘플링 같은 조립 설정은 의도적으로 포함하지 않는다.
+    다시 그릴 때 현재 삽화용 봇 설정과 그림 모델 설정으로 새로 조립한다.
+    단, MOSS 레이아웃의 ``image_size``는 모델이 좌표를 계산한 캔버스이므로
+    그대로 돌려주어 다시 그릴 때도 같은 크기로 출력하게 한다.
+    """
+    info = _read_backup_info(backup_name)
+    final = (
+        info.get("llm_final_result")
+        if isinstance(info.get("llm_final_result"), dict) else {}
+    )
+    raw_positive = str(final.get("raw_positive") or "").strip()
+    submitted_path = find_backup_file(backup_name, "_submitted_prompt.json")
+    document = None
+    if submitted_path and os.path.isfile(submitted_path):
+        try:
+            with open(submitted_path, "r", encoding="utf-8") as handle:
+                document = json.load(handle)
+        except Exception as exc:
+            print(
+                f"[REDRAW_SESSIONS] 제출 프롬프트 읽기 실패: "
+                f"backup={backup_name}, error={exc}"
+            )
+            traceback.print_exc()
+    from illustration_json import illustration_fields, is_moss_document
+
+    moss_layout = None
+    moss_canvas = None
+    moss = is_moss_document(document)
+    if moss:
+        layout = document.get("moss")
+        if not isinstance(layout, dict) or not isinstance(layout.get("items"), list):
+            return None
+        moss_layout = copy.deepcopy(layout)
+        # MOSS bbox 좌표는 레이아웃의 image_size를 기준으로 계산된다.
+        # 다시 그릴 때 현재 봇 해상도로 캔버스를 바꾸면 bbox와 출력이
+        # 어긋나므로, 모델이 실제로 쓴 크기를 그대로 유지한다.
+        workflow = document.get("workflow") if isinstance(
+            document.get("workflow"), dict) else {}
+        for source in (layout.get("image_size"), workflow):
+            if not isinstance(source, dict):
+                continue
+            try:
+                width = int(source.get("width") or 0)
+                height = int(source.get("height") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 16 <= width <= 8192 and 16 <= height <= 8192:
+                moss_canvas = [width, height]
+                break
+        if not raw_positive:
+            summary = layout.get("summary") if isinstance(layout.get("summary"), dict) else {}
+            caption = str(summary.get("caption") or "").strip()
+            raw_positive = f"[SETUP]\n{caption}\n[CHAR]\n\n[SUPPLEMENT]\n".strip()
+    elif not raw_positive:
+        # 구 백업은 llm_final_result가 없을 수 있으므로 최종 프롬프트의
+        # 생성 섹션만 복원하고 프리셋·로라 블록은 버린다.
+        prompt_path = find_backup_file(backup_name, ".json") or find_backup_file(
+            backup_name, ".txt")
+        if prompt_path:
+            try:
+                saved_positive, saved_negative = _extract_prompts_from_backup(prompt_path)
+                fields = illustration_fields(saved_positive, saved_negative).get("fields") or {}
+                sections = [
+                    f"[{key}]\n{str(fields.get(key) or '').strip()}"
+                    for key in ("SETUP", "CHAR", "SUPPLEMENT")
+                    if str(fields.get(key) or "").strip()
+                ]
+                if sections:
+                    raw_positive = "\n".join(sections)
+            except Exception as exc:
+                print(
+                    f"[REDRAW_SESSIONS] 생성 태그 복원 실패: "
+                    f"backup={backup_name}, error={exc}"
+                )
+                traceback.print_exc()
+    if not raw_positive:
+        return None
+    multi_char = info.get("illustration_multi_char")
+    if not isinstance(multi_char, dict) or not multi_char.get("enable"):
+        multi_char = None
+    visual_states = info.get("illustration_visual_states")
+    if not isinstance(visual_states, dict):
+        visual_states = final.get("visual_states")
+    return {
+        "family": "moss" if moss else "anima",
+        "positive": raw_positive,
+        "negative": "",
+        "multi_char": copy.deepcopy(multi_char) if multi_char else None,
+        "moss_layout": moss_layout,
+        "canvas": moss_canvas,
+        "visual_states": (
+            copy.deepcopy(visual_states) if isinstance(visual_states, dict) else None),
+    }
+
+
+async def handle_api_redraw_recent_sessions(request: web.Request) -> web.Response:
+    """최근 흐름 세션을 저장된 생성 태그로 다시 그린다.
+
+    태그 생성 LLM은 다시 호출하지 않는다. 각 백업의 LLM 응답(생성 태그)만
+    재사용하고, 프리셋·로라·그림체·샘플링은 지금의 삽화용 봇 설정과 그림
+    모델 설정을 다시 읽어 서버 빌더에서 조립한다.
+    """
+    try:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        run_id = str(body.get("run_id") or "").strip()
+        if not run_id:
+            return web.json_response(
+                {"error": "다시 그릴 최근 세션을 선택하세요."}, status=400)
+        workshop = "illustration"
+        runs = [
+            run for run in illustration_flow.history(workshop)
+            if str(run.get("id") or "") == run_id
+        ]
+        if not runs:
+            return web.json_response(
+                {"error": "보관된 최근 세션을 찾을 수 없습니다."}, status=404)
+        runtime = _capture_illustration_runtime_snapshot(workshop=workshop)
+        bot_name = str(runtime.get("bot_name") or "").strip()
+        if not bot_name:
+            return web.json_response(
+                {"error": "삽화용 봇을 먼저 선택하세요."}, status=409)
+        toggles = runtime.get("illustration_context_toggles") or {}
+        current_family = str(
+            toggles.get("illustration_model_family") or "anima").strip().lower()
+        if current_family not in ("anima", "moss"):
+            current_family = "anima"
+
+        processed: set[str] = set()
+        queued = 0
+        queued_sessions = 0
+        skipped = 0
+        # 한 번의 다시 그리기로 등록한 모든 이미지는 하나의 흐름 세션으로 묶는다.
+        redraw_run_id = ""
+        for run in runs:
+            names = [
+                str(name or "").strip()
+                for name in (run.get("backup_names") or [])
+                if str(name or "").strip() and str(name or "").strip() not in processed
+            ]
+            session_queued = False
+            for backup_name in names:
+                processed.add(backup_name)
+                try:
+                    generated = _recent_session_generated_prompt(backup_name)
+                    if generated is None:
+                        skipped += 1
+                        continue
+                    if generated["family"] != current_family:
+                        # 현재 그리기 설정의 모델 계열로만 다시 조립한다.
+                        # ANIMA 태그를 MOSS로, 또는 그 반대로 변환하지 않는다.
+                        skipped += 1
+                        continue
+                    prompt_id = f"resession-{uuid.uuid4().hex[:8]}"
+                    prompt_data = {
+                        "manual_pos": {
+                            "_meta": {"title": "긍정프롬프트"},
+                            "inputs": {"value": generated["positive"]},
+                            "class_type": "STRING",
+                        },
+                        "manual_neg": {
+                            "_meta": {"title": "부정프롬프트"},
+                            "inputs": {"value": generated["negative"]},
+                            "class_type": "STRING",
+                        },
+                    }
+                    # 실행 시점의 현재 설정이 아니라 클릭 시점의 설정으로
+                    # 배치 전체를 일관되게 조립한다.
+                    prompts[prompt_id] = {
+                        "status": "running",
+                        "prompt": prompt_data,
+                        "client_id": "",
+                        "extra_data": {},
+                        "outputs": {},
+                        "filename": None,
+                        "save_node_id": None,
+                        "image_bytes": None,
+                        "timestamp": time.time(),
+                        "_illustration_runtime_snapshot": runtime,
+                    }
+                    raw_body = {
+                        "illustration_gen_method": "최근 세션 다시 그리기",
+                        "illustration_scene_detail_authoritative": True,
+                    }
+                    if generated.get("canvas"):
+                        # 모델이 레이아웃을 계산한 원본 캔버스 크기로 그린다.
+                        raw_body["illustration_canvas"] = list(generated["canvas"])
+                    if generated["visual_states"]:
+                        raw_body["illustration_visual_states"] = generated["visual_states"]
+                    if generated["multi_char"]:
+                        raw_body["illustration_multi_char"] = generated["multi_char"]
+                    if generated["moss_layout"]:
+                        raw_body["illustration_moss_layout"] = generated["moss_layout"]
+                    params = {
+                        "prompt_id": prompt_id,
+                        "prompt_data": prompt_data,
+                        "raw_body": raw_body,
+                        "illustration_flow_auto_open": False,
+                    }
+                    if redraw_run_id:
+                        # 이후 이미지는 첫 이미지가 만든 흐름 세션에 이어 붙인다.
+                        params["illustration_flow_run_id"] = redraw_run_id
+                    queued_item = await queue_manager.add_item(
+                        "illustration",
+                        f"최근 세션 다시 그리기: {backup_name}",
+                        params,
+                        priority=0,
+                    )
+                    if not redraw_run_id:
+                        binding = getattr(queued_item, "_illustration_flow", None)
+                        if binding:
+                            redraw_run_id = str(binding[0].get("id") or "")
+                    queued += 1
+                    session_queued = True
+                except Exception as exc:
+                    print(
+                        f"[REDRAW_SESSIONS] 큐 등록 실패: "
+                        f"backup={backup_name}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    skipped += 1
+            if session_queued:
+                queued_sessions += 1
+
+        if not queued:
+            return web.json_response(
+                {
+                    "error": "현재 그림 모델 계열로 다시 그릴 수 있는 생성 태그가 없습니다.",
+                    "skipped": skipped,
+                },
+                status=409,
+            )
+        print(
+            f"[REDRAW_SESSIONS] 큐 등록 완료: sessions={queued_sessions}, "
+            f"images={queued}, skipped={skipped}, family={current_family}, "
+            f"bot={bot_name!r}"
+        )
+        return web.json_response({
+            "success": True,
+            "sessions": queued_sessions,
+            "queued": queued,
+            "skipped": skipped,
+        })
+    except Exception as exc:
+        print(f"[REDRAW_SESSIONS] 오류: {exc}")
+        traceback.print_exc()
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 def _build_restore_manual_character_choices(bot_name: str, bot: dict) -> list[dict]:
@@ -24305,6 +24906,14 @@ app.router.add_post(
     "/api/bot_mode/postprocess_subtitle",
     handle_api_postprocess_settings,
 )
+app.router.add_get(
+    "/api/bot_mode/postprocess_manga_text",
+    handle_api_postprocess_settings,
+)
+app.router.add_post(
+    "/api/bot_mode/postprocess_manga_text",
+    handle_api_postprocess_settings,
+)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt/capability", handle_api_llm_edit_capability)
 app.router.add_post(
@@ -24333,6 +24942,7 @@ app.router.add_get("/api/mode_workflow_files", handle_api_mode_workflow_files)
 # LLM / Custom Prompt API
 app.router.add_get("/api/customprompt_files", handle_api_customprompt_files)
 app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
+app.router.add_post("/api/redraw_recent_sessions", handle_api_redraw_recent_sessions)
 app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_characters)
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
@@ -32729,7 +33339,7 @@ async def handle_api_lora_training_export(request):
 app.router.add_post("/api/lora/training_images/export", handle_api_lora_training_export)
 
 
-def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, resolution: int = 1024, test_images: list = None, save_after: int = 0, dim: int = 32, alpha: int = 16) -> str:
+def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, resolution: int = 1024, test_images: list = None, save_after: int = 0, dim: int = 32, alpha: int = 16, total_steps: int | None = None) -> str:
     """LoRA 학습용 프롬프트 텍스트 생성 (긍정/부정)"""
     lines = []
     for i, img in enumerate(images, start=1):
@@ -32782,6 +33392,10 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     lines.append("[ALPHA]")
     lines.append(str(alpha))
     lines.append("[END]")
+    # Preserve the delimiters used by existing workflow regex nodes. The API
+    # workflow receives this same value directly through steps_override.
+    lines.append("[TOTAL_STEPS]")
+    lines.append(str(len(images) * step if total_steps is None else total_steps))
     return "\n".join(lines)
 
 
@@ -33937,9 +34551,9 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
 
     try:
         from lora_training_steps import prepare_training_images
-        from lora_training_workflow import training_workflow_source_path
+        from lora_training_workflow import build_training_workflow, training_workflow_source_path
         workflow_path = training_workflow_source_path(training_config)
-        images, step = prepare_training_images(
+        images, step, total_steps = prepare_training_images(
             _get_project_training_images(bot_name, project_name, cn, visual_card_id), training_config,
         )
         if not images:
@@ -33954,8 +34568,8 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
             return
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha, total_steps=total_steps)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha, total_steps=total_steps)
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
@@ -33967,13 +34581,7 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"워크플로우 변환 실패: {conv_err}"})
             return
 
-        import copy
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict): continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트": ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
 
         prompt_id, _ = await submit_to_real_comfy(
             wf,
@@ -35337,7 +35945,7 @@ async def handle_api_style_lora_training_start(request):
         profile = (body.get("profile") or "both").strip()
         if profile == "both":
             profiles = ["anima", "sdxl"]
-        elif profile in ("anima", "sdxl"):
+        elif profile in ("anima", "sdxl", "moss"):
             profiles = [profile]
         else:
             return web.json_response({"success": False, "error": f"잘못된 profile 값: {profile}"}, status=400)
@@ -35361,8 +35969,8 @@ async def handle_api_style_lora_trained_sessions(request):
     try:
         project = request.query.get("project", "")
         profile = request.query.get("profile", "")
-        if not project or profile not in ("anima", "sdxl"):
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss) 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35381,8 +35989,8 @@ async def handle_api_style_lora_trained_steps(request):
         project = request.query.get("project", "")
         profile = request.query.get("profile", "")
         session = request.query.get("session", "")
-        if not project or profile not in ("anima", "sdxl") or not session:
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss), session 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35402,8 +36010,8 @@ async def handle_api_style_lora_trained_toml(request):
         profile = request.query.get("profile", "")
         session = request.query.get("session", "")
         step = request.query.get("step", "")
-        if not project or profile not in ("anima", "sdxl") or not session or not step:
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session, step 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss") or not session or not step:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss), session, step 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35423,7 +36031,7 @@ async def handle_api_style_lora_trained_preview(request):
         profile = request.match_info.get("profile", "")
         session = request.match_info.get("session", "")
         filename = request.match_info.get("filename", "")
-        if not project or profile not in ("anima", "sdxl") or not session or not filename:
+        if not project or profile not in ("anima", "sdxl", "moss") or not session or not filename:
             return web.Response(status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
@@ -35445,8 +36053,8 @@ async def handle_api_style_lora_trained_delete(request):
         profile = body.get("profile", "")
         session = body.get("session", "")
         step = body.get("step", "")
-        if not project or profile not in ("anima", "sdxl") or not session or not step:
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session, step 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss") or not session or not step:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss), session, step 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35466,8 +36074,8 @@ async def handle_api_style_lora_trained_delete_session(request):
         project = body.get("project", "")
         profile = body.get("profile", "")
         session = body.get("session", "")
-        if not project or profile not in ("anima", "sdxl") or not session:
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss), session 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35488,8 +36096,8 @@ async def handle_api_style_lora_session_representative(request):
         profile = body.get("profile", "")
         session = body.get("session", "")
         representative = body.get("representative", {})
-        if not project or profile not in ("anima", "sdxl") or not session:
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss), session 필수"}, status=400)
         from modes.style_lora_mode import update_style_session_representative
         result = update_style_session_representative(project, profile, session, representative)
         return web.json_response(result)
@@ -35505,8 +36113,8 @@ async def handle_api_style_lora_session_priority(request):
         project = body.get("project", "")
         profile = body.get("profile", "")
         sessions = body.get("sessions", [])
-        if not project or profile not in ("anima", "sdxl"):
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss) 필수"}, status=400)
         from modes.style_lora_mode import update_style_session_priority
         result = update_style_session_priority(project, profile, sessions)
         return web.json_response(result)
@@ -35521,8 +36129,8 @@ async def handle_api_style_lora_cleanup_non_representative(request):
         body = await request.json()
         project = body.get("project", "")
         profile = body.get("profile", "")
-        if not project or profile not in ("anima", "sdxl"):
-            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        if not project or profile not in ("anima", "sdxl", "moss"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl/moss) 필수"}, status=400)
         config = load_config()
         style_lora_load_path = config.get("style_lora_load_path", "")
         if not style_lora_load_path:
@@ -35809,12 +36417,12 @@ async def handle_api_instance_lora_preview(request):
             })
 
         from lora_training_steps import prepare_training_images
-        training_images, step = prepare_training_images(training_images, ps, default_step=125)
+        training_images, step, total_steps = prepare_training_images(training_images, ps, default_step=125)
 
         positive_text = _build_lora_training_text(
             training_images, trigger, profile, step, il_rate, save_step, folder,
             "positive", lora_save_path, 1, 1, False, resolution,
-            [], 0, dim, alpha,
+            [], 0, dim, alpha, total_steps=total_steps,
         )
         positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
         positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
@@ -35822,7 +36430,7 @@ async def handle_api_instance_lora_preview(request):
         negative_text = _build_lora_training_text(
             training_images, trigger, profile, step, il_rate, save_step, folder,
             "negative", lora_save_path, 1, 1, False, resolution,
-            [], 0, dim, alpha,
+            [], 0, dim, alpha, total_steps=total_steps,
         )
 
         return web.json_response({
@@ -35845,7 +36453,7 @@ async def handle_api_style_lora_preview(request):
     try:
         project = (request.query.get("project") or "").strip()
         profile = request.query.get("profile", "anima")
-        if profile not in ("anima", "sdxl"):
+        if profile not in ("anima", "sdxl", "moss"):
             return web.json_response({"success": False, "error": "profile 오류"}, status=400)
         if not project:
             return web.json_response({"success": True, "data": {
@@ -35893,28 +36501,27 @@ async def handle_api_style_lora_preview(request):
 
         from lora_training_steps import prepare_training_images
         n_img = len(training_images)
-        picked, step = prepare_training_images(training_images, ps, default_mode="total", default_step=125)
-        total_step = len(picked) * step
+        training_images, step, total_steps = prepare_training_images(training_images, ps, default_mode="total", default_step=125)
         lora_save_path = f"SOYA_STYLE_LORA/{profile}/{project}"
 
         positive_text = _build_lora_training_text(
-            picked, trigger, profile, step, il_rate, save_step, folder,
+            training_images, trigger, profile, step, il_rate, save_step, folder,
             "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-            [], save_after, dim, alpha,
+            [], save_after, dim, alpha, total_steps=total_steps,
         )
         positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
         positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
         negative_text = _build_lora_training_text(
-            picked, trigger, profile, step, il_rate, save_step, folder,
+            training_images, trigger, profile, step, il_rate, save_step, folder,
             "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
-            [], save_after, dim, alpha,
+            [], save_after, dim, alpha, total_steps=total_steps,
         )
 
         return web.json_response({
             "success": True,
             "data": {
                 "positive": positive_text, "negative": negative_text,
-                "profile": profile, "n_img": n_img, "total_step": total_step,
+                "profile": profile, "n_img": n_img, "total_step": total_steps,
             },
         })
     except Exception as e:

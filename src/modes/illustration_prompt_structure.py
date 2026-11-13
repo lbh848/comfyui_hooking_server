@@ -1,11 +1,10 @@
 """Current prompt composition, with input values represented only by variables."""
 from modes import illustration_context_pipeline as pipeline
 from modes import illustration_prompt_builders as builders
-from modes import illustration_quality_inspection as quality
 from modes.illustration_prompt_assembly import input_variables, prompt_join, symbolic_prompts, variable
 
 
-def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", workshop="illustration"):
+def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", workshop="illustration", background_auto=False):
     # The caller supplies a read-only settings snapshot. Generation inputs remain
     # named placeholders; no session, history or LLM access is needed here.
     prompts = pipeline.load_prompt_files(workshop) if prompts is None else prompts
@@ -23,7 +22,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
     composite = toggles["illustration_output_mode"] in ("composite", "composite_both")
     if manga:
-        toggles.update(key_visual=False, speak_enabled=False, supplement=True)
+        toggles.update(speak_enabled=False, supplement=True)
     if emotion:
         # 감정 삽화는 캐릭터 시작 이미지의 복장을 재사용하므로 OUTFIT·PLAN·
         # KEYVIS·별도 MULTI-CHAR-MASK 노드를 구성하지 않는다. 마스크가 쓰이는
@@ -37,24 +36,25 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             speak_enabled=False,
         )
     moss = bool(illustration and toggles.get("illustration_model_family") == "moss")
+    # MOSS manga is a single multi_panel page layout, not the panel-by-panel
+    # ANIMA renderer. It gets its own DETAIL-MANGA prompt.
+    moss_manga = bool(moss and manga)
     mask = illustration and not moss and pipeline.should_enable_multi_char_layout(toggles, provider)
-    mask_inline = not moss and (manga or mask and toggles["multi_char_mask_inline_enabled"])
+    mask_inline = not moss and (manga or mask)
     keyvis_inline = bool(illustration and toggles["key_visual"]
                          and (moss or toggles["keyvis_in_detail_enabled"]))
     enabled = {
         "character": not manga, "manga_character": manga, "profile": None,
         "emotion_resolve": emotion,
+        "background_card": emotion,
         "call1": illustration and toggles["outfit_enabled"],
         "time_place": illustration and toggles["time_place_enabled"],
         "npc_generation": illustration and toggles["npc_generation_enabled"],
         "plan": illustration and not manga and toggles["call2_plan_enabled"],
-        "manga_plan": manga and toggles["call2_plan_enabled"],
         "detail": illustration,
         "keyvis": illustration and toggles["key_visual"] and not keyvis_inline,
         "call3": illustration and toggles["speak_enabled"],
         "mask": mask and (manga or not mask_inline), "assemble": illustration,
-        "visual_correction": illustration and toggles["visual_correction_enabled"] and toggles["visual_correction_max_redraws"] > 0,
-        "visual_selection": illustration and toggles["visual_correction_enabled"] and toggles["visual_correction_max_redraws"] > 0,
     }
     names = ["_input_"]
     batch = [{"anchor_segment": "C001", "characters": names}]
@@ -120,12 +120,14 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             "call2_explicit", "NSFW 및 물리 접촉 지침", "공유 프롬프트",
             rendered=explicit, condition="NSFW ON일 때만 포함")
         for selection_key, manga_selection in (("character", False), ("manga_character", True)):
+            if manga_selection and not moss:
+                continue
             selection_toggles = pipeline.merged_toggles(
                 {**saved_toggles, "illustration_output_mode": "manga" if manga_selection else "illustration"},
                 for_generation=True)
             stage(selection_key,
                   "MANGA-CHARACTER-RESOLVE · 등장인물·만화 사건 선택" if manga_selection else "CHARACTER-RESOLVE · 등장인물·감정 선택" if emotion else "CHARACTER-RESOLVE · 등장인물·장면 선택",
-                  "현재 등장인물과 3~4컷으로 요약할 사건 범위·페이지 삽입 앵커를 한 번에 결정합니다." if manga_selection else
+                  "현재 등장인물과 1~5컷으로 요약할 사건 범위·페이지 삽입 앵커를 한 번에 결정합니다." if manga_selection else
                   "현재 등장인물과 삽화 앵커를 정하고, 앵커마다 캐릭터 한 명과 그 감정을 한 번에 예측합니다." if emotion else
                   "현재 등장인물과 삽화 앵커를 한 번에 결정합니다.",
                   ["현재 대화의 등록 인물", "선택된 원문 앵커·캐릭터 한 명·짧은 감정" if emotion else "선택된 원문 앵커·등장인물·짧은 선택 의도"],
@@ -134,7 +136,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                   builders.resolution_messages(False, names, {}, "", "_input_", "_input_", "_input_", prompts["character_resolve"],
                       selection=builders.selection_messages(prompts, role_context, "_input_", selection_toggles, {}, "_input_", "",
                                                             emotion=emotion),
-                      anchors=["C001", "C002"], emotion=emotion),
+                      anchors=["C001", "C002"], emotion=emotion,
+                      background_context={"world": "_input_", "cards": [{"id": "_input_", "name": "_input_", "description": "_input_"}]} if emotion and background_auto else None),
                   condition="만화 삽화 또는 만화 삽화 + 원본 에셋" if manga_selection else "일반 삽화·원본 에셋 모드",
                   notes=("등장인물·요약할 사건·페이지 삽입 위치만 고릅니다. 컷 구성과 대본은 PLAN ON이면 계획자가, OFF이면 DETAIL이 준비합니다. " if manga_selection else "")
                   + ("CURRENT에서 전체 등장인물과 요청 앵커를 선택하고, 앵커마다 삽화에 그릴 캐릭터 한 명과 한 단어 수준의 감정을 예측합니다. " if emotion else
@@ -147,16 +150,24 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
               condition="여러 프로필이 등록된 캐릭터만 · 캐릭터별 병렬",
               notes="단일 프로필은 바로 사용합니다. 이전 저장 프로필을 현재 원문의 변화에 맞춰 갱신합니다. 프로필과 근거는 다음 변경점까지 이어받으며 노드 상세에서 표를 확인합니다. 추적 히스토리에 최종 상태·변경 기록을 저장해 다음 대화에 사용합니다. 사용자 페르소나는 자료가 있을 때 포함합니다.")
         if emotion:
+            stage("background_card", "배경 카드 예측", "선택된 배경 중 새 카드에만 이미지 프롬프트를 작성합니다.",
+                  ["배경 카드별 긍정 프롬프트"],
+                  [prompt_part("background_card", "배경 카드 예측 지침", "배경 카드 예측")],
+                  builders.background_card_messages(prompts["background_card"],
+                      [{"id": "_input_", "name": "_input_", "description": "_input_"}],
+                      "_input_", "_input_", {"C001": {"id": "_input_"}}),
+                  condition="자동 배경 모드 · 기존 카드에 맞는 배경이 없을 때",
+                  notes="CHARACTER-RESOLVE가 원문·세계관·기존 배경 목록으로 앵커별 배경을 선택합니다. NPC 카드 예측과 같은 STEP 2에서 새 카드만 작성하고, 배경 그리기 설정과 배경 LoRA로 이미지를 생성합니다.")
             emotion_anchor_rows = [{
                 "anchor": "C001", "character": "_input_", "emotion": "_input_",
                 "profile_id": "_input_", "profile_name": "_input_",
                 "default_outfit": "_input_", "saved_outfits": ["_input_"],
                 "previous_outfit": "_input_", "context": "_input_",
             }]
-            stage("emotion_resolve", "EMOTION-RESOLVE · 장면별 복장 결정",
+            stage("emotion_resolve", "OUTFIT-RESOLVE · CURRENT 복장 결정",
                   "캐릭터·감정·프로필이 이미 확정된 선택 앵커마다 입을 복장 하나를 정합니다.",
                   ["앵커별 복장"],
-                  [prompt_part("emotion_resolve", "장면별 복장 결정 지침", "EMOTION-RESOLVE")],
+                  [prompt_part("emotion_resolve", "장면별 복장 결정 지침", "OUTFIT-RESOLVE")],
                   builders.emotion_resolve_messages(
                       prompts["emotion_resolve"], emotion_anchor_rows, "_input_"),
                   condition="감정 삽화 공방 · 선택 장면이 있을 때만",
@@ -182,45 +193,47 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
               builders.npc_generation_messages(prompts, [{"name": "_input_", "aliases": ["_input_"], "description": "_input_", "anchors": ["C001"]}], "_input_", "_input_", toggles),
               condition="NPC 생성 노드 ON · 미등록 등장인물이 있을 때",
               notes=f"대화에 등장한 미등록 인물의 외모와 복장을 정합니다. 이 작업은 STEP 2에서 OUTFIT·TIME & PLACE와 함께 진행합니다. 그리기 설정 > 캐릭터 자동 생성 및 복장 이미지 생성 모드로 대표 이미지를 만들고 삽화용 봇 설정 > 캐릭터에 등록합니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다. 같은 봇에서 삽화를 {toggles['npc_lifetime']}회 연속 생성하는 동안 등장하지 않으면 삭제하고, 다시 등장하면 수명이 초기화됩니다. 수명은 생성 설정 > 파이프라인 > NPC 생성에서 변경할 수 있습니다.")
-        for plan_key, manga_planning in (("plan", False), ("manga_plan", True)):
-            if emotion:
-                continue
+        if not emotion:
             plan_toggles = pipeline.merged_toggles(
-                {**saved_toggles, "illustration_output_mode": "manga" if manga_planning else "illustration"},
+                {**saved_toggles, "illustration_output_mode": "illustration"},
                 for_generation=True)
-            stage(plan_key,
-                  "PLANNER-MANGA · 만화 컷·대사 계획" if manga_planning else "PLAN · 선택 장면 구체화",
-                  "선택된 사건을 3~4컷으로 나누고 컷 크기와 대본을 먼저 정합니다." if manga_planning else "선택된 앵커에서 그릴 순간을 판단하고, 프로필과 상태를 반영해 장면을 묘사합니다.",
-                  ["3~4컷 페이지 계획·컷/캐릭터 bbox", "화자·대사 원문·대사 bbox"] if manga_planning else ["구체화된 장면 계획"],
-                  shared_parts + ([explicit_part] if manga_planning else []) + [prompt_part("manga_plan" if manga_planning else "call2_plan", "만화 컷·대사 계획 지침" if manga_planning else "선택 장면 구체화 지침", "PLANNER-MANGA" if manga_planning else "PLAN")],
+            stage("plan", "PLAN · 선택 장면 구체화",
+                  "선택된 앵커에서 그릴 순간을 판단하고, 프로필과 상태를 반영해 장면을 묘사합니다.",
+                  ["구체화된 장면 계획"],
+                  shared_parts + [prompt_part("call2_plan", "선택 장면 구체화 지침", "PLAN")],
                   builders.plan_messages(prompts, role_context, batch, set(names), names if plan_toggles["character_limit"] == 1 else None, tracking, [], "_input_", "_input_", plan_toggles, time_place=time_place,
                                          prior_status=prior_status, prior_time_place=prior_time_place, registered_names=names),
-                  condition="만화 모드 · PLAN 설정 ON" if manga_planning else "일반 삽화 모드 · PLAN 설정 ON",
-                  notes=("대본을 먼저 렌더하고 실제 점유 영역을 DETAIL-MANGA에 전달합니다. " if manga_planning else "OFF이면 CHARACTER-RESOLVE 선택 장면과 원문을 DETAIL에 직접 전달합니다. ")
+                  condition="일반 삽화 모드 · PLAN 설정 ON",
+                  notes="OFF이면 CHARACTER-RESOLVE 선택 장면과 원문을 DETAIL에 직접 전달합니다. "
                   + "활성 추적 단계와 확정 프로필을 반영해 시작합니다. 설정에 따라 장면 묶음을 병렬 처리합니다. 선택된 등록 인물은 유지하며, 원문에 있는 NPC의 익명 일부·별도 인물 표현은 활성 정책과 상황에 따라 brief에 정합니다. SINGLE의 익명 상대 제한은 유지합니다. 집중 대상·연출 지시는 입력됐을 때 포함합니다.")
-        if manga and toggles["call2_plan_enabled"]:
-            batch = [{**scene, "canvas": [1728, 1728], "panels": [{
-                "panel": 1, "anchor_segment": "C001", "x": .02, "y": .02,
-                "width": .96, "height": .31, "canvas": [1504, 496],
-                "dialogue": [{"speaker": "_input_", "text": "_input_",
-                              "x": .05, "y": .05, "width": .25, "height": .15}],
-            }]} for scene in batch]
-        detail_key = ("detail_moss" if moss else
-                      "composite_detail" if composite else
-                      "manga_detail" if manga else "call2_detail")
-        detail_system = prompt_join("\n\n", (part for part in (role_context, explicit, prompts[detail_key]) if part))
+        detail_key = ("detail_manga" if moss_manga else
+                      "detail_moss" if moss else
+                      "composite_detail" if composite else "call2_detail")
+        detail_parts = ((role_context, prompts[detail_key]) if moss_manga
+                        else (role_context, explicit, prompts[detail_key]))
+        detail_system = prompt_join("\n\n", (part for part in detail_parts if part))
         detail_inputs = dict(past_text="_input_", segmented="_input_", toggles=toggles,
                              prior_status=prior_status, prior_time_place=prior_time_place, registered_names=names,
                              plan_profiles=[], tracking=tracking, time_place=time_place, segment_slots={"C001": 0})
-        stage("detail", "DETAIL-MOSS · 이미지 크기 기반 bbox 레이아웃 작성" if moss else "DETAIL 합성 삽화 · 배경·캐릭터·가로 위치 작성" if composite else "DETAIL-MANGA · 만화 페이지 작성" if manga else "DETAIL · 이미지 태그 작성", "각 장면에 배정된 원문·프로필·상태와 이미지 크기로 MOSS bbox 레이아웃을 작성합니다." if moss else "각 장면에 배정된 원문·프로필·상태로 이미지 태그를 작성합니다.",
-              ["장면별 MOSS 레이아웃", "캐릭터·사물 bbox"] if moss else ["카메라·장면 태그", "캐릭터별 긍정 태그", "보충 묘사 태그"],
-              shared_parts + [explicit_part, prompt_part(detail_key, "MOSS 레이아웃 작성 지침" if moss else "합성 삽화 묘사 지침" if composite else "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL-MOSS" if moss else "DETAIL 합성 삽화" if composite else "DETAIL-MANGA" if manga else "DETAIL")],
+        stage("detail", "DETAIL-MANGA · MOSS 만화 페이지 작성" if moss_manga else "DETAIL-MOSS · 이미지 크기 기반 bbox 레이아웃 작성" if moss else "DETAIL 합성 삽화 · 배경·캐릭터·가로 위치 작성" if composite else "DETAIL-MANGA · 만화 페이지 작성" if manga else "DETAIL · 이미지 태그 작성",
+              "각 페이지를 공간을 나눠 갖는 2~5개의 주 컷과 선택적 cross-panel actors로 작성합니다. 작은 인셋은 주 컷으로 세지 않으며 1컷은 명시적인 전면 컷 요청에만 사용합니다." if moss_manga else
+              "각 장면에 배정된 원문·프로필·상태와 이미지 크기로 MOSS bbox 레이아웃을 작성합니다." if moss else
+              "각 장면에 배정된 원문·프로필·상태로 이미지 태그를 작성합니다.",
+              ["page plan·panel inventory·cross-panel actors", "패널·캐릭터·사물·말풍선 절대 bbox"] if moss_manga else
+              ["장면별 MOSS 레이아웃", "캐릭터·사물 bbox"] if moss else
+              ["카메라·장면 태그", "캐릭터별 긍정 태그", "보충 묘사 태그"],
+              shared_parts + ([] if moss_manga else [explicit_part]) + [prompt_part(detail_key, "MOSS 만화 페이지 작성 지침" if moss_manga else "MOSS 레이아웃 작성 지침" if moss else "합성 삽화 묘사 지침" if composite else "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL-MANGA" if moss_manga else "DETAIL-MOSS" if moss else "DETAIL 합성 삽화" if composite else "DETAIL-MANGA" if manga else "DETAIL")],
               builders.detail_messages(detail_system, batch, [], canvas_sizes={"solo": (756, 756), "group": (1152, 768)}, **detail_inputs),
-              notes=("MOSS는 장면마다 image_size를 입력받아 abs_centralized/yxyx 절대 bbox로 레이아웃을 출력합니다. "
+              notes=("MOSS 만화 페이지는 모델이 page(hierarchy/flow/boundaries/instruction/caption) + panels(panelId·shape·camera·focus·actors·objects·dialogue) + cross_panel_actors를 출력하고, 서버가 이를 multi_panel MOSS items로 평면화합니다. 기본 2~5개의 주 컷이며 1컷은 명시적인 전면 컷 요청에만 사용합니다. 컷·인물 bbox는 모델이 abs_centralized/yxyx 절대 좌표로 계산합니다. 서버는 좌표를 클램프하고, 정확히 맞닿는 직선 경계에 검은 구분선 항목을 추가합니다. 컷을 넘는 몸은 원래 컷의 시점과 배율을 유지합니다."
+                     if moss_manga else
+                     "MOSS는 장면마다 image_size를 입력받아 abs_centralized/yxyx 절대 bbox로 레이아웃을 출력합니다. "
                      "이미지 중심이 (0,0)이며 y는 아래로, x는 오른쪽으로 증가합니다. 캐릭터뿐 아니라 위치가 중요한 사물도 object item으로 bbox화합니다."
                      if moss else
                      "위 블록을 순서대로 줄바꿈 두 개로 연결해 SYSTEM 메시지 하나를 만듭니다. KEYVIS 작업 지침(call2_job)과 공통 묘사 규칙(call2_common)은 DETAIL에 포함하지 않습니다. PLAN과 DETAIL 요청 수가 같으면 1:1로 연결합니다. 다르면 각 DETAIL에 배정된 장면의 PLAN이 모두 끝나는 즉시 전달합니다. PLAN OFF에서는 DETAIL 병렬 설정으로 CHARACTER-RESOLVE 선택 장면을 분배합니다. 생략한 상태·계획은 필드를 채우지 않고 원문·이전 문맥으로 DETAIL이 판단합니다."))
         detail_stage = stages[-1]
+        if moss and not emotion:
+            detail_stage["variants"] = [{"key": "separate", "label": "KEYVIS 없이 작성",
+                **{key: detail_stage[key] for key in ("messages", "input_variables", "system_parts", "outputs", "notes")}}]
         if not emotion and not moss:
             inline_detail = builders.detail_messages(
                 detail_system, batch, [], **detail_inputs, mask_inline=True,
@@ -231,11 +244,11 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                  "input_variables": input_variables(inline_detail),
                  "system_parts": [part("DETAIL·MULTI-CHAR-MASK 통합 지침", inline_detail[0]["content"],
                      "DETAIL 공용·전용 프롬프트 + prompts/lighbd/multi_char_mask.txt",
-                     condition="Comfy · V3 · MULTI-CHAR-MASK ON · 마스크 예측 방식: 현재 모델에서 예측")],
+                     condition="Comfy · V3 · 현재 모델에서 마스크 함께 예측")],
                  "outputs": ["장면별 공통 프롬프트", "캐릭터별 프롬프트·영역"],
                  "notes": "DETAIL 본문에 마스크 지침을 합치고 출력 계약은 MULTI-CHAR-MASK 형식 하나만 사용합니다. 기존 DETAIL 출력 형식은 포함하지 않습니다. 작업 흐름의 마스크 위치에는 자체 생성 결과를 표시하며 별도 LLM은 호출하지 않습니다."}]
         if not emotion:
-            keyvis_system = pipeline.render_call2_prompt("\n\n".join([
+            keyvis_system = pipeline.render_call2_prompt(prompts["call2_keyvis_manga"] if moss_manga else "\n\n".join([
                 "" if moss else prompts.get("call2_jailbreak", ""),
                 prompts.get("call2_job", ""),
                 prompts.get("call2_common", ""),
@@ -245,9 +258,11 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             keyvis_messages = builders.keyvis_context_messages(keyvis_system, "_input_", [], tracking, "_input_", "_input_", time_place=time_place,
                                                              prior_status=prior_status, prior_time_place=prior_time_place, toggles=toggles,
                                                              genre_prompt=prompts.get("genre", ""), moss=moss)
-            keyvis_messages.append(builders.keyvis_task_message(3, "_input_", names))
-            stage("keyvis", "KEYVIS · 대표 이미지", "전체 문맥에서 대표 이미지의 순간과 구도를 독립적으로 선택합니다.",
-                  ["대표 이미지 태그"], [compatibility_part,
+            if not moss:
+                keyvis_messages.append(builders.keyvis_task_message(3, "_input_", names))
+            stage("keyvis", "KEYVIS · 대표 만화" if moss_manga else "KEYVIS · 대표 이미지", "전체 문맥에서 대표 이미지의 순간과 구도를 독립적으로 선택합니다.",
+                  ["대표 만화 페이지"] if moss_manga else ["대표 이미지 태그"],
+                  [prompt_part("call2_keyvis_manga", "대표 만화 지침", "KEYVIS")] if moss_manga else [compatibility_part,
                       prompt_part("call2_job", "KEYVIS 작업 지침", "KEYVIS",
                                   rendered=pipeline.render_call2_prompt(prompts["call2_job"], toggles, include_server_limits=False)),
                       prompt_part("call2_common", "KEYVIS 공통 묘사 규칙", "KEYVIS",
@@ -282,19 +297,19 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                     canvas_sizes={"solo": (756, 756), "group": (1152, 768)}, moss=moss)
                 detail_stage.setdefault("variants", []).append({
                     "key": "keyvis_moss" if moss else variant_key,
-                    "label": "DETAIL-MOSS · KEYVIS 함께 작성" if moss else label,
+                    "label": "DETAIL-MANGA · KEYVIS 만화 함께 작성" if moss_manga else "DETAIL-MOSS · KEYVIS 함께 작성" if moss else label,
                     "messages": combined,
                     "input_variables": input_variables(combined),
-                    "system_parts": [part("DETAIL-MOSS·KEYVIS 통합 지침" if moss else "DETAIL·KEYVIS 통합 지침",
+                    "system_parts": [part("DETAIL-MANGA·KEYVIS 통합 지침" if moss_manga else "DETAIL-MOSS·KEYVIS 통합 지침" if moss else "DETAIL·KEYVIS 통합 지침",
                         combined[0]["content"],
-                        "DETAIL-MOSS + KEYVIS 프롬프트" if moss else
+                        "DETAIL-MANGA + KEYVIS 만화 프롬프트" if moss_manga else "DETAIL-MOSS + KEYVIS 프롬프트" if moss else
                         "DETAIL + KEYVIS 프롬프트" + (" + MULTI-CHAR-MASK" if variant_mask_inline else ""),
                         condition="MOSS 그림 모델 · 첫 DETAIL 배치" if moss else
                         "대표 이미지 ON · DETAIL에서 KEYVIS 함께 예측 ON · 첫 DETAIL 배치")],
-                    "outputs": ["장면별 MOSS 레이아웃", "KEYVIS MOSS 레이아웃"] if moss else
+                    "outputs": ["장면별 만화 페이지", "KEYVIS 대표 만화 1페이지"] if moss_manga else ["장면별 MOSS 레이아웃", "KEYVIS MOSS 레이아웃"] if moss else
                                ["배정된 일반 장면", "대표 이미지 한 장"],
-                    "notes": "MOSS는 첫 DETAIL 배치에서 장면과 대표 이미지를 하나의 JSON으로 함께 작성합니다. 별도 KEYVIS 호출은 없습니다."
-                             if moss else
+                    "notes": "첫 DETAIL-MANGA 배치에서 일반 만화 페이지와 KEYVIS 대표 만화 1페이지를 함께 작성합니다. 만화 크기·확대 배율·시드를 사용하며 별도 KEYVIS 호출은 없습니다."
+                             if moss_manga else "MOSS는 첫 DETAIL 배치에서 장면과 대표 이미지를 하나의 JSON으로 함께 작성합니다. 별도 KEYVIS 호출은 없습니다." if moss else
                              "첫 DETAIL 배치만 대표 이미지를 함께 작성합니다. DETAIL의 LLM·재시도 설정을 사용하며 별도 KEYVIS 호출은 없습니다. 다른 배치는 일반 장면만 작성합니다.",
                 })
                 if moss:
@@ -312,7 +327,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                  "input_variables": input_variables(inline_keyvis),
                  "system_parts": [part("KEYVIS·MULTI-CHAR-MASK 통합 지침", inline_keyvis[0]["content"],
                      "KEYVIS 공용·전용 프롬프트 + prompts/lighbd/multi_char_mask.txt",
-                     condition="Comfy · V3 · MULTI-CHAR-MASK ON · 마스크 예측 방식: 현재 모델에서 예측")],
+                     condition="Comfy · V3 · 현재 모델에서 마스크 함께 예측")],
                  "user_parts": [],
                  "outputs": ["대표 이미지 공통 프롬프트", "캐릭터별 프롬프트·영역"],
                  "notes": "KEYVIS가 대표 이미지의 구도와 인물 영역을 함께 작성합니다. 기존 KEYVIS 출력 형식은 마스크 형식으로 교체합니다. 작업 흐름의 마스크 위치에는 자체 생성 결과를 표시하며 별도 LLM은 호출하지 않습니다."}]
@@ -344,8 +359,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             stage("mask", "MULTI-CHAR-MASK · 인물 영역 배치", "단독·다인 장면의 인물별 마스크와 위치를 계산합니다.",
                   ["인물별 마스크·영역"], [prompt_part("multi_char_mask", "인물 영역 배치 지침", "MULTI-CHAR-MASK")],
                   builders.mask_messages(prompts["multi_char_mask"], {}),
-                  condition="Comfy · V3 · 인물 영역 마스크 ON · 명명된 인물 1~3명 · 마스크 예측 방식: 별도 LLM으로 예측 또는 완성 프롬프트 입력",
-                  notes="DETAIL 또는 대표 이미지 결과를 사용합니다. 장면의 이미지 생성 요청 전에 계산합니다. 마스크 예측 방식에서 현재 모델을 선택하면 DETAIL·KEYVIS 지침 모드에서 통합 계약을 확인할 수 있습니다. 이때 별도 마스크 LLM 호출 없이 같은 작업 흐름 위치에 자체 생성 결과를 표시합니다.")
+                  condition="Comfy · V3 · 명명된 인물 1~3명 · 완성 프롬프트 입력",
+                  notes="일반 삽화는 DETAIL·KEYVIS에서 마스크를 함께 예측합니다. 완성 프롬프트 입력과 수동 그리기의 영역 계산은 DETAIL의 모델·재시도 설정을 사용합니다.")
         positive, negative = pipeline.build_raw_prompt({
             "characters": [{"name": "_input_", "positive": "_input_"}],
             "camera": "_input_", "scene": "_input_", "supplement": "_input_", "speak": "_input_", "slot": 1,
@@ -354,29 +369,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
         stage("assemble", "최종 조립 · 이미지 프롬프트", "이미지 태그와 대사를 출력 템플릿의 각 위치에 넣습니다.",
               ["이미지 생성 입력"], [prompt_part("call2_preset", "이미지 출력 템플릿", "출력 템플릿"), "추가 긍정·부정 프롬프트 (입력 시)"], messages,
               notes="대표 이미지는 대사 없이 별도로 조립합니다. 추가 프롬프트는 입력했을 때만 포함합니다. 이후 캐릭터 LoRA·외형·품질 프리셋과 사용 중인 이미지 생성 형식에 맞춰 후처리합니다.")
-        review_entry = {"slot": 0, "positive": "_input_", "negative": "_input_", "descriptor": {
-            "scene_brief": "_input_", "call1_scene_state": "_input_", "time_place_scene_state": "_input_",
-        }}
-        for key, scope, title, purpose, outputs, condition, image_label in (
-            ("visual_correction", quality.CORRECTION_SCOPE, "비주얼 교정기 · VISUAL CORRECTION",
-             "생성 이미지의 결함을 판단하고 필요한 프롬프트 부분만 교정합니다.",
-             ["PASS / NonPASS", "교정 이유", "변경할 프롬프트 필드"],
-             "비주얼 교정 ON · 최대 교정 횟수 1 이상 · 남은 교정 횟수가 있을 때", "현재 생성 이미지 1장"),
-            ("visual_selection", quality.SELECTION_SCOPE, "결과 선택기 · VISUAL SELECTION",
-             "원본과 모든 교정본을 비교해 최종 결과 한 장을 선택합니다.",
-             ["선택한 후보 번호", "후보 간 비교 이유"],
-             "비주얼 교정 ON · 교정 종료 후 원본 외 교정본이 있을 때", "후보 0 원본과 모든 교정본 이미지"),
-        ):
-            messages = quality._build_image_messages("_input_", review_entry, scope=scope, prompts=prompts,
-                candidate_refs=[{"prompt_id": "_input_"}, {"prompt_id": "_input_"}] if scope == quality.SELECTION_SCOPE else None)
-            stage(key, title, purpose, outputs,
-                  [prompt_part(key, "비주얼 교정 판단·수정 지침" if key == "visual_correction" else "원본·교정본 비교 선택 지침",
-                               "비주얼 교정기" if key == "visual_correction" else "결과 선택기")], messages,
-                  condition=condition,
-                  user_parts=[part("이미지 첨부", variable("", image_label), "생성 결과 · 비전 이미지 입력")],
-                  notes="일반 장면과 대표 이미지에 각각 적용합니다. 선택 장면·복장·시간·장소는 자료가 있을 때 포함합니다. 단일 인물 정책의 익명 상대 제한도 유지합니다. 교정기는 현재 생성본을, 선택기는 원본의 장면 프롬프트를 참조합니다. 이미지는 텍스트와 별도로 전송하며 선택 후보마다 번호를 붙입니다. 인물 복제·신체 붕괴를 상황 적합성·작화보다 먼저 비교합니다.")
     active_variants = {} if emotion else {
-        "detail": ("keyvis_inline" if mask_inline else "keyvis") if keyvis_inline else ("inline" if mask_inline else "separate"),
+        "detail": ("keyvis_moss" if moss else "keyvis_inline" if mask_inline else "keyvis") if keyvis_inline else ("inline" if mask_inline else "separate"),
         "keyvis": "inline" if mask_inline else "separate",
         "call3": toggles["call3_prompt_mode"],
     }
@@ -393,7 +387,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                          outputs=["완성 합성 삽화"],
                          notes="POST PROCESS 설정과 무관하게 항상 실행합니다. DUAL_VAE 캐릭터의 투명 여백을 제외하고 비율을 유지해 배경 높이로 확대·축소합니다. "
                                + ("감정 삽화 인스턴스 에셋으로 저장합니다." if emotion else "켜진 대사 후처리와 백업을 한 번 적용합니다."))
-        if manga and entry["key"] == "detail":
+        if manga and not moss_manga and entry["key"] == "detail":
             if mask_inline and entry.get("variants"):
                 variant = next(value for value in entry["variants"] if value["key"] == "inline")
                 entry.update({key: variant[key] for key in ("messages", "input_variables", "system_parts", "outputs")})
@@ -405,6 +399,15 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             entry.pop("variants", None)
         if entry["key"] in active_variants:
             entry["active_variant"] = active_variants[entry["key"]]
+        if entry["key"] in ("detail", "keyvis") and entry.get("variants"):
+            # Keep KEYVIS comparisons, but never offer the retired mask mode.
+            retired_variants = {"separate", "keyvis"} if mask_inline else {"inline", "keyvis_inline"}
+            entry["variants"] = [variant for variant in entry["variants"]
+                                 if variant["key"] not in retired_variants]
+            if len(entry["variants"]) == 1:
+                entry.update({key: value for key, value in entry["variants"][0].items()
+                              if key not in ("key", "label")})
+                entry.pop("variants")
         if entry["key"] == "mask" and mask_inline:
             entry["condition"] = "DETAIL-MANGA에서 예측 · 별도 LLM 호출 없음" if manga else "DETAIL·KEYVIS에서 통합 예측 · 별도 LLM 호출 없음"
             if manga:
@@ -413,23 +416,23 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                              notes="인물 마스크에서 미리 렌더한 대사 영역을 제외합니다.")
         if entry["key"] == "keyvis" and keyvis_inline:
             entry["condition"] = "첫 DETAIL 배치에서 함께 예측 · 별도 KEYVIS 호출 없음"
+        if moss_manga and entry["key"] == "keyvis":
+            entry.update(purpose="전체 문맥에서 대표할 사건을 골라 컷·대사가 있는 만화 1페이지로 작성합니다.",
+                         outputs=["KEYVIS 대표 만화 1페이지"],
+                         notes="첫 DETAIL-MANGA 배치에 통합되며 만화 이미지 크기·확대 배율·시드를 사용합니다.")
     flow = [
         {"label": "출력 모드에 맞는 등장인물·사건 선택 → 프로필", "keys": ["character", "manga_character", "profile"]},
         {"label": "STEP 2 · 상태 추적·NPC 생성 병렬", "keys": ["call1", "time_place", "npc_generation"]},
-        {"label": "출력 모드에 맞는 시각 계획 · PLAN 설정 ON", "keys": ["plan", "manga_plan"]},
-        {"label": "DETAIL-MOSS · 이미지 크기 기반 bbox 레이아웃 작성" if moss else "DETAIL 합성 삽화 → 배경·캐릭터별 생성 → 최종 조립" if composite else "컷별 DETAIL·대사 렌더 → 개별 생성·페이지 합성" if manga else "DETAIL·대표 이미지 묘사 · 준비 완료 후 POST PROCESS", "keys": ["detail"] if manga else ["detail", "keyvis", "call3"]},
+        {"label": "일반 삽화 시각 계획 · PLAN 설정 ON", "keys": ["plan"]},
+        {"label": "DETAIL-MANGA · MOSS multi_panel 만화 페이지 작성" if moss_manga else "DETAIL-MOSS · 이미지 크기 기반 bbox 레이아웃 작성" if moss else "DETAIL 합성 삽화 → 배경·캐릭터별 생성 → 최종 조립" if composite else "컷별 DETAIL·대사 렌더 → 개별 생성·페이지 합성" if manga else "DETAIL·대표 이미지 묘사 · 준비 완료 후 POST PROCESS", "keys": ["detail", "keyvis"] if moss_manga else ["detail"] if manga else ["detail", "keyvis", "call3"]},
         {"label": "준비된 장면별 인물 영역 배치", "keys": ["mask"]},
         {"label": "출력 템플릿 조립 → LoRA·품질 태그 반영 → 이미지 생성", "keys": ["assemble"]},
-        {"label": "이미지 검사·교정 반복 → 원본·교정본 중 최종 선택", "keys": ["visual_correction", "visual_selection"]},
     ]
     if emotion:
         # EMOTION-RESOLVE는 NPC 생성과 같은 STEP 2에서 카드 태그 예측 뒤에 실행된다.
-        flow[1]["label"] = "STEP 2 · 상태 추적·NPC 생성·장면별 복장"
-        flow[1]["keys"].append("emotion_resolve")
-        # 감정 삽화 공방의 프롬프트 구성에서는 비주얼 교정·최종 선택 단계를
-        # 조립 흐름에 표시하지 않는다.
-        removed = {"call1", "plan", "manga_plan", "keyvis", "call3", "mask",
-                   "visual_correction", "visual_selection"}
+        flow[1]["label"] = "STEP 2 · NPC·배경 카드 예측·장면별 복장"
+        flow[1]["keys"].extend(["background_card", "emotion_resolve"])
+        removed = {"call1", "plan", "keyvis", "call3", "mask"}
         for group in flow:
             group["keys"] = [key for key in group["keys"] if key not in removed]
         flow = [group for group in flow if group["keys"]]

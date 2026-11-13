@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { Crop, Eraser, Move, RotateCcw, Undo2, Upload, ZoomIn, ZoomOut } from "lucide-react";
 import { Modal } from "./components";
-import { assetRequest, assetResponse, type AssetRecord } from "./asset";
+import { assetRequest, type AssetRecord } from "./asset";
 import { AssetEditCanvas, canvasBlob, loadEditImage, useEditCanvas, type EditPoint } from "./AssetEditCanvas";
 
 const itemPath = "asset_mode/qwen_edit/composite_items";
@@ -60,16 +60,6 @@ export function AssetEditItems({ onClose, onAdd }: { onClose: () => void; onAdd:
     const snapshot = context.getImageData(Math.round(crop.x), Math.round(crop.y), Math.max(1, Math.floor(crop.width)), Math.max(1, Math.floor(crop.height)));
     surface.restore(snapshot); surface.checkpoint(); surface.fit(); setCrop(null);
   }
-  async function removeBackground() {
-    await action(async () => {
-      setStatus("배경을 지우는 중…");
-      const form = new FormData(); form.append("image", await canvasBlob(surface.canvas.current!), "item.png");
-      const response = await assetResponse(`${itemPath}/background_remove`, form);
-      const url = URL.createObjectURL(await response.blob());
-      try { const image = await loadEditImage(url); surface.initialize(image.naturalWidth, image.naturalHeight, image, false); setCrop(null); setStatus("배경을 지웠습니다."); }
-      finally { URL.revokeObjectURL(url); }
-    });
-  }
   async function saveAndAdd() {
     await action(async () => {
       const source = surface.canvas.current!;
@@ -103,7 +93,6 @@ export function AssetEditItems({ onClose, onAdd }: { onClose: () => void; onAdd:
             <label className="asset-edit-range">지우개<input type="range" min={4} max={240} value={size} disabled={busy} onChange={event => setSize(Number(event.target.value))} /><output>{size}</output></label>
             <button type="button" className="button" disabled={busy || !surface.historyState.undo} onClick={() => { surface.historyMove(-1); setCrop(null); }}><Undo2 size={14} />실행취소</button>
             <button type="button" className="button" disabled={busy || !original.current} onClick={() => { surface.restore(original.current!); surface.checkpoint(); surface.fit(); setCrop(null); }}><RotateCcw size={14} />원본 복원</button>
-            <button type="button" className="button" disabled={busy || !loaded} onClick={() => void removeBackground()}>배경 지우기 (ONNX)</button>
           </div>
           <AssetEditCanvas surface={surface} tool={tool} size={size} busy={busy} label="합성 아이템 편집 이미지">
             {tool === "crop" && <div className="asset-edit-crop-layer" onPointerDown={event => {

@@ -2,18 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleHelp, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Empty, Panel } from "./components";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
-import { illustrationApi, illustrationRequest, type IllustrationData } from "./illustration";
+import { illustrationApi, illustrationNodeName, illustrationRequest, type IllustrationData } from "./illustration";
+export { illustrationNodeName } from "./illustration";
 
 type ThinkingStatus = "observed" | "zero" | "unknown" | "error" | "cancelled" | "checking" | "stale" | "idle";
 type ThinkingResult = { status: ThinkingStatus; label: string; signature?: string; tokens?: number; chars?: number; elapsed?: number };
 type ThinkingConnections = { routes: Record<string, { primary: string | null; fallback: string | null }>; slots: Record<string, { model: string; alias?: string; service: string; signature?: string }> };
 type ThinkingTone = "green" | "yellow" | "red" | "gray";
 type ThinkingProblem = { label: string; description: string };
-
-export function illustrationNodeName(name: string) {
-  return name.replaceAll("CALL2-SELECT", "SLOT-SELECTER").replaceAll("CALL2-PLAN", "PLAN")
-    .replaceAll("DETAIL-COMPOSITE", "DETAIL 합성 삽화").replaceAll("CALL2-DETAIL", "DETAIL").replaceAll("CALL2-KEYVIS", "KEYVIS").replaceAll("CALL3", "POST PROCESS");
-}
 
 function thinkingAssignments(nodes: IllustrationData[], connections: ThinkingConnections | null) {
   const assignments = new Map<string, Set<string>>();

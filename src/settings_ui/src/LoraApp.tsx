@@ -19,7 +19,7 @@ const projectPages = [
   { id: "bot", label: categoryLabels.bot, icon: Bot, description: "봇 캐릭터의 LoRA 이미지, 학습과 결과를 관리하세요." },
   { id: "style", label: categoryLabels.style, icon: Palette, description: "그림체 LoRA의 이미지, 학습과 결과를 관리하세요." },
 ] as const;
-const presetPages = (["anima", "sdxl"] as const).map(profile => ({
+const presetPages = (["anima", "sdxl", "moss"] as const).map(profile => ({
   id: trainingPresetPage(profile), profile,
   label: trainingProfileLabel(profile),
   title: `학습 프로필 설정 · ${trainingProfileLabel(profile)}`,
@@ -36,7 +36,7 @@ const navigationGroups = [
 
 export default function LoraApp() {
   const { active, hash, navigate } = useWorkshopScreen();
-  const pageHash = hash.replace(/^(training-(?:anima|ilxl))-(?:builtin|local)$/, "$1");
+  const pageHash = hash.replace(/^(training-(?:anima|ilxl|moss))-(?:builtin|local)$/, "$1");
   const info = pages.find(page => page.id === pageHash) || pages[0];
   const section = navigationGroups.find(group => group.pages.some(page => page.id === info.id))!.label;
   const { entries: modals } = useModalWorkspace();

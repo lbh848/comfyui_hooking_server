@@ -21,29 +21,10 @@ HF_REPO_ID = "byung-hyun/eye_segmentation_model"
 HF_REVISION = "631de80345123c291b9a2ebe6e33b44d2492ede5"
 HF_SUBFOLDER = "comfyui_hooking_server/models"
 
+# Legacy dialogue/bubble and asset background-removal models are no longer
+# required by the UI and are excluded from startup downloads.
 # filename: (size in bytes, SHA-256)
-MODEL_FILES = {
-    "anime_seg_int8.onnx": (
-        44_182_618,
-        "a7f34dc704cdf72e38205d16a0e949a40b93203ca2d941c6fd7d149b2d28c3be",
-    ),
-    "anime_seg_int8.SOURCE.md": (
-        543,
-        "290e1dad26e4cc7332ecc1e952f346b62b059995e58b78c519b727d9b8950d29",
-    ),
-    "bubble_layout.onnx": (
-        7_074,
-        "53e7cfc2403cfa67a373a470ee4062fd1d3acbd37f42ec80eb70fac9586076ac",
-    ),
-    "bubble_layout.onnx.json": (
-        1_691,
-        "57e859e1f2e8b6248e9f5c378d6819d4a9564f10861bd2ba9aac41e0eea2d513",
-    ),
-    "bubble_predictor.onnx": (
-        4_750_173,
-        "b33987460d4562c85162d8662e86220cbceba7b1c3623b2e8734d22d89c78c80",
-    ),
-}
+MODEL_FILES: dict[str, tuple[int, str]] = {}
 
 
 def _sha256(path: Path) -> str:
@@ -130,8 +111,8 @@ def _download_file(filename: str, expected_size: int, expected_sha256: str) -> N
 
 def ensure_models() -> bool:
     if not MODEL_FILES:
-        print("[MODEL][ERROR] Model manifest is empty; no files can be verified.")
-        return False
+        print("[MODEL] No startup model downloads are required.")
+        return True
 
     try:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)

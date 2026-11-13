@@ -13,6 +13,7 @@ from aiohttp import web
 
 from asset_preset_scope import AssetPresetLock, write_scope_documents
 from json_store import write_json_atomic
+from manga_page_sizes import parse_manga_page_sizes
 
 
 MODES = ("illustration", "character_auto", "background")
@@ -49,10 +50,19 @@ def normalize_settings(value, mode):
     }
     ranges = {
         "img_w": (256, 4096), "img_h": (256, 4096), "seed": (-1, 9007199254740991),
+        "manga_scale": (0.2, 2.0), "manga_seed": (-1, 9007199254740991),
         "hrf_size": (1, 3), "snapref_strength": (0, 2), "snapref_fidelity": (0, 1),
         "snapref_megapixels": (.25, 2), "face_id_str": (0, 1),
     }
     for settings in (solo, group):
+        # Keep the manga resolution selection canonical and non-empty; the
+        # model must always have at least one page size to choose from.
+        if "manga_page_sizes" in settings:
+            selected_sizes = parse_manga_page_sizes(settings["manga_page_sizes"])
+            if not selected_sizes:
+                raise ValueError("그리기 설정 값을 확인하세요: manga_page_sizes")
+            settings["manga_page_sizes"] = ",".join(
+                f"{width}x{height}" for width, height in selected_sizes)
         for key, item in settings.items():
             default = DEFAULT_ILLUST_SETTINGS[key]
             valid = True

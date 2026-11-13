@@ -10,6 +10,9 @@ import "./llm-logs.css";
 
 type Notify = (message: string) => void;
 const number = (value?: number | null, digits = 0) => value == null ? "—" : value.toLocaleString("ko-KR", { maximumFractionDigits: digits });
+// 별칭이 설정된 LLM은 기술적인 모델명 대신 별칭을 표시한다.
+const modelLabel = (entry: { llm_alias?: string; model?: string; service?: string }) =>
+  entry.llm_alias || entry.model || entry.service || "모델 미기록";
 
 function Stats({ stats }: { stats: LlmStats }) {
   return <div className="llm-log-stats">
@@ -59,7 +62,7 @@ function HistoryDetail({ selected, notify }: { selected: LlmHistory | null; noti
   const current = record?.id === identity ? record : null;
   return <div className="llm-log-detail" aria-label="선택한 로그 상세">
     <div className="llm-log-detail-heading"><h3>{selected.call_name || selected.task_key || "LLM 호출"}</h3><Status status={selected.status} /></div>
-    <p className="llm-log-meta">{selected.ts?.replace("T", " ")} · {llmSlotLabel(selected.llm_slot)} · {selected.model || selected.service || "모델 미기록"}</p>
+    <p className="llm-log-meta">{selected.ts?.replace("T", " ")} · {llmSlotLabel(selected.llm_slot)} · {modelLabel(selected)}</p>
     <Stats stats={current || selected} />
     {error ? <div className="llm-log-error" role="alert">{error}<button className="button secondary small" onClick={() => setRetry((value) => value + 1)}>다시 불러오기</button></div>
       : !current ? <p className="llm-log-message" role="status">로그 상세를 불러오는 중입니다…</p>
@@ -94,7 +97,7 @@ function LiveCard({ stream, streams, connected, follow, notify, refresh }: {
   const reasoning = stream.reasoning_text || stream.reasoning;
   return <article className="llm-live-card">
     <header><Badge tone="lavender">{llmSlotLabel(stream.llm_slot)}</Badge><strong>{stream.call_name || stream.task_key || "LLM 호출"}</strong><Badge tone={connected ? "green" : "neutral"}>{connected ? stream.status || "응답 중" : "연결 확인 중"}</Badge></header>
-    <div className="llm-log-meta">{stream.model || "모델 미기록"}{stream.race_role && <span> · {stream.race_role === "original" ? "원본" : stream.race_role === "parallel" ? "병렬 재시도" : stream.race_role}</span>}</div>
+    <div className="llm-log-meta">{modelLabel(stream)}{stream.race_role && <span> · {stream.race_role === "original" ? "원본" : stream.race_role === "parallel" ? "병렬 재시도" : stream.race_role}</span>}</div>
     <div className="llm-live-controls">
       <button className="button secondary small" disabled={busy || !connected || !!stream.race_id} title="현재 연결을 끊고 같은 요청을 다시 실행" onClick={() => void control("retry")}>재시도</button>
       <button className="button secondary small" disabled={busy || !connected || !parallelAvailable || racePeer} title="같은 요청을 하나 더 실행하고 먼저 완료된 응답을 사용" onClick={() => void control("parallel_retry")}>병렬로 재시도</button>
@@ -130,7 +133,7 @@ export function LlmLogsPage({ notify }: { notify: Notify }) {
   const search = query.trim().toLocaleLowerCase();
   const visible = records.filter((record) => (!status || (record.status || "ok") === status)
     && (!slot || record.llm_slot === slot)
-    && (!search || [record.call_name, record.task_key, record.model, record.preview, record.ts].join(" ").toLocaleLowerCase().includes(search)));
+    && (!search || [record.call_name, record.task_key, record.model, record.llm_alias, record.preview, record.ts].join(" ").toLocaleLowerCase().includes(search)));
   const connected = !!live.data && !live.error && !live.data.errors.length;
   const refresh = () => setRevision((value) => value + 1);
 
@@ -150,7 +153,7 @@ export function LlmLogsPage({ notify }: { notify: Notify }) {
               : !visible.length ? <p className="llm-log-message">{records.length ? "검색 조건에 맞는 로그가 없습니다." : "아직 기록된 LLM 호출이 없습니다."}</p>
               : visible.map((record) => <button key={record.id} className={`llm-history-row ${selected?.id === record.id ? "selected" : ""}`} aria-pressed={selected?.id === record.id} onClick={() => setSelected(record)}>
                 <span className="llm-history-row-heading"><strong>{record.call_name || record.task_key || "LLM 호출"}</strong><Status status={record.status} /></span>
-                <span className="llm-log-meta">{record.ts?.replace("T", " ")} · {llmSlotLabel(record.llm_slot)} · {record.model || record.service || "모델 미기록"}</span>
+                <span className="llm-log-meta">{record.ts?.replace("T", " ")} · {llmSlotLabel(record.llm_slot)} · {modelLabel(record)}</span>
                 <span className="llm-history-preview">{record.preview || "출력 내용 없음"}</span>
                 <span className="llm-log-meta">입력 {number(record.prompt_tokens)} · 출력(생각 포함) {number(record.completion_tokens)} · 생각 {record.reasoning_tokens_estimated ? "약 " : ""}{number(record.reasoning_tokens)} 토큰</span>
                 <span className="llm-log-meta">{number(record.elapsed, 1)}초 · {number(record.tps, 1)} 토큰/초 (생각 포함){record.tokens_estimated ? " · 추정값" : ""}</span>

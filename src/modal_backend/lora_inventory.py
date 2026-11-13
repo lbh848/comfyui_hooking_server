@@ -275,7 +275,7 @@ def _profile_items(
             character for character in raw_id if character.isalnum() or character in (" ", "_", "-", ".")
         ).strip() or "unnamed"
         files: list[dict[str, Any]] = []
-        scopes = [f"{'/'.join(prefix)}/{profile}/{storage_id}" for profile in ("anima", "sdxl")]
+        scopes = [f"{'/'.join(prefix)}/{profile}/{storage_id}" for profile in ("anima", "sdxl", "moss")]
         for profile, profile_data in (entry.get("profiles") or {}).items():
             relative = str(profile_data.get("lora_path") or "")
             if root is None:
@@ -436,7 +436,7 @@ def _remote_identity(path_value: str) -> dict[str, Any] | None:
             "detail": "로컬 현재 사용본에서 찾을 수 없습니다.",
             "scopes": [
                 f"{MANAGED_LORA_ROOT}/{parts[1]}/{profile}/{item_id}"
-                for profile in ("anima", "sdxl")
+                for profile in ("anima", "sdxl", "moss")
             ],
         }
     if len(parts) >= 6 and parts[1] == ASSET_LORA_FOLDER and parts[3] == "Lora":

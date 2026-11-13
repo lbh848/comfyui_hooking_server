@@ -1,8 +1,8 @@
 {
   "comfy": {
-    "ref": "355cd6b14c92c19ac3188fe528e47a3f21ef5178",
+    "ref": "989d93d0d968e704c589ce0146bb18c77f6b50cc",
     "repository": "https://github.com/comfyanonymous/ComfyUI.git",
-    "version": "0.42.0"
+    "version": "0.45.0"
   },
   "custom_nodes": [
     {
@@ -63,7 +63,7 @@
       "name": "comfyui-instant-lora_v_soya",
       "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
       "source_type": "git",
-      "tracking_branch": "main"
+        "ref": "8ee0896fe148cfc564beef7baf474f8a53944153"
     },
     {
       "name": "comfyui-kjnodes",
@@ -90,7 +90,7 @@
     },
     {
       "name": "comfyui-spectrum-ksampler",
-      "ref": "c806917566ee1c149575cd90da9e4c2e543de019",
+      "ref": "e4d88bdc23f671406d2cffbafb6a43cdece705e3",
       "repository": "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler.git",
       "source_type": "git"
     },
@@ -98,7 +98,13 @@
       "name": "comfyui-soya-custom-nodes",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
       "source_type": "git",
-      "ref": "fa188046a4d2dde28922dfb097ff1b80b277a855"
+      "ref": "708a344f80a6805358bbd59e9d56dcd2f0f4b767"
+    },
+    {
+      "name": "ComfyUI-MOSS-Toolkit",
+      "ref": "45083831d03249951307817bc0a3c9ed6be5754a",
+      "repository": "https://github.com/sorryhyun/ComfyUI-MOSS-Toolkit.git",
+      "source_type": "git"
     },
     {
       "name": "rgthree-comfy",
@@ -165,6 +171,20 @@
     ]
   },
   "models": [
+    {
+      "id": "manga-ocr-rec-korean",
+      "relative_path": "models/ocr/korean_PP-OCRv5_rec_mobile.onnx",
+      "sha256": "cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b",
+      "size": 13488748,
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx"
+    },
+    {
+      "id": "manga-ocr-rec-multi",
+      "relative_path": "models/ocr/PP-OCRv6_rec_small.onnx",
+      "sha256": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884",
+      "size": 21234383,
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx"
+    },
     {
       "id": "anima-2.9b-preview-v1",
       "license": "CircleStone Labs Non-Commercial License",
@@ -544,6 +564,22 @@
       "sha256": "1a77e98228242d7ca79dd01df737d751f211f2ae676f16cce664987dbf0bac05",
       "size": 148697656,
       "url": "https://huggingface.co/7err4/MOSS-Image-CharRef/resolve/main/moss_image_charref_v2.safetensors"
+    },
+    {
+      "id": "moss-i2i-swap-text-v4",
+      "license": "Apache-2.0",
+      "relative_path": "models/loras/moss_i2i_swap_text_v4.safetensors",
+      "sha256": "bba08929d69901b093eca012d81eb7818d4c365cb2236bd0ecc49552b2e98b6f",
+      "size": 149410626,
+      "url": "https://huggingface.co/sorryhyun/MOSS-I2I-LORAs/resolve/main/swap_text/moss_i2i_swap_text_v4.safetensors"
+    },
+    {
+      "id": "qwen35-9b-int8",
+      "license": "Apache-2.0",
+      "relative_path": "models/text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+      "sha256": "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
+      "size": 9748121532,
+      "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/2929efe3cdd506c0a430bcfca70a9a8d805cc095/text_encoders/qwen3.5_9b_int8_convrot.safetensors"
     }
   ],
   "python": {
@@ -912,6 +948,31 @@
           "anima-text-encoder",
           "anima-vae"
         ]
+      },
+      {
+        "id": "lora_training_workflow_source_paths.moss",
+        "bindings": [
+          "lora_training_workflow_source_paths.moss"
+        ],
+        "model_ids": [
+          "moss-image-sft-int8",
+          "moss-4step-akhaliq-v2",
+          "qwen35-9b-int8",
+          "flux2-vae-small",
+          "anime-sharp-v4-upscaler"
+        ]
+      },
+      {
+        "id": "style_lora_training_workflow_source_paths.moss",
+        "bindings": [
+          "style_lora_training_workflow_source_paths.moss"
+        ],
+        "model_ids": [
+          "moss-image-sft-int8",
+          "moss-4step-akhaliq-v2",
+          "qwen35-9b-int8",
+          "flux2-vae-small"
+        ]
       }
     ],
     "optional_bindings": [
@@ -920,7 +981,9 @@
       "workflow_pack_extra_paths.illustration_moss_8step",
       "workflow_pack_extra_paths.illustration_moss_4step",
       "workflow_pack_extra_paths.lora_training_anima_v2",
-      "workflow_pack_extra_paths.style_lora_training_anima_v2"
+      "workflow_pack_extra_paths.style_lora_training_anima_v2",
+      "lora_training_workflow_source_paths.moss",
+      "style_lora_training_workflow_source_paths.moss"
     ],
     "release_version": "v6",
     "required_bindings": [

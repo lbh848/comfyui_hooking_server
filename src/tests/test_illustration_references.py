@@ -165,6 +165,7 @@ class StageModelTests(unittest.TestCase):
             "math": math, "torch": torch, "F": F, "SnapRef": self.reference,
             "apply_spatial_loras": self.spatial,
             "comfy": SimpleNamespace(utils=SimpleNamespace(load_torch_file=self.load_lora)),
+            "load_character_lora_file": self.load_lora,
             "_resolve_lora_path": lambda path: path,
             "_parse_multi_char": lambda value: value,
             "_parse_lora_entries": lambda enabled, data, names: data if enabled else [],

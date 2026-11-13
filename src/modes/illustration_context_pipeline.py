@@ -79,6 +79,7 @@ PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
 EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
+DRAW_POINT_MARKER = "[DRAW POINT]"
 PROFILE_CONTEXT_TRANSLATE_TASK_KEY = "illustration_profile_context_translate"
 PROFILE_CONTEXT_TRANSLATE_CALL_NAME = "PROFILE-CONTEXT-TRANSLATE"
 _profile_context_translation_lock = asyncio.Lock()
@@ -120,6 +121,7 @@ PROMPT_FILES = {
     "profile_resolve": "profile.txt",
     "emotion_resolve": "emotion_resolve.txt",
     "emotion_asset": "emotion_asset.txt",
+    "background_card": "background_card.txt",
     "call2_jailbreak": "jailbreak.txt",
     "call2_job": "job.txt",
     "call2_prefill": "prefill.txt",
@@ -129,11 +131,12 @@ PROMPT_FILES = {
     "call2_plan": "plan.txt",
     "call2_detail": "detail.txt",
     "detail_moss": "detail_moss.txt",
+    # MOSS 만화 페이지: 한 장을 multi_panel 레이아웃으로 직접 작성한다.
+    "detail_manga": "detail_manga.txt",
     "manga_select": "manga_select.txt",
-    "manga_plan": "manga_plan.txt",
-    "manga_detail": "manga_detail.txt",
     "composite_detail": "composite_detail.txt",
     "call2_keyvis": "keyvisual.txt",
+    "call2_keyvis_manga": "keyvisual_manga.txt",
     "call2_fallback": "fallback.txt",
     # Combined TOON response format used by the ENQUEUE endpoint.
     "call2_format": "format.txt",
@@ -197,7 +200,7 @@ DEFAULT_TOGGLES = {
     "npc_lifetime": 30,
     "call2_plan_enabled": False,
     "visual_correction_enabled": False,
-    "visual_correction_max_redraws": 1,
+    "visual_correction_max_redraws": 0,
     "call1_context_turns": 5,
     "call2_context_turns": 5,
     "call2_parallel_enabled": False,
@@ -230,6 +233,7 @@ DEFAULT_TOGGLES = {
     "speak_emotion_enabled": False,
     "speak_emotions": "",
     "nsfw": True,
+    "manga_composition_hint_enabled": False,
     # 감정 삽화 공방 전용: 캐릭터의 NSFW 복장·감정 에셋을 함께 생성한다.
     "nsfw_asset_generation_enabled": False,
     # 감정 삽화 공방 전용 표정 프리셋 연결. 각 항목은
@@ -268,6 +272,9 @@ DEFAULT_TOGGLES = {
     # CharRef v2 reference mode for MOSS. The names list lets DETAIL-MOSS write
     # reference-friendly appearance words for characters that have a card.
     "moss_reference": False,
+    # 말풍선 한국어 교정은 항상 끈다. workflow.dialogue_repair 블록은
+    # 문서에 남고, 비활성 교정 분기는 실행 시 우회한다.
+    "moss_dialogue_repair_enabled": False,
     "moss_reference_names": [],
     "positive_note": "",
     "negative_note": "",
@@ -524,10 +531,19 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
                     f"{legacy_preset!r}, V3로 전환"
                 )
                 out["prompt_format"] = "v3"
+    # Regional masks always use the current DETAIL/KEYVIS model. Retired
+    # switches and visual correction settings cannot change generation policy.
+    out.update(multi_char_mask_enabled=True, multi_char_mask_inline_enabled=True,
+               single_char_mask_enabled=True,
+               visual_correction_enabled=False, visual_correction_max_redraws=0,
+               moss_dialogue_repair_enabled=False)
+    # KEYVIS is optional, but always shares the first DETAIL request with full
+    # background description. Ignore retired options in saved settings/API input.
+    out.update(keyvis_in_detail_enabled=True, minimal_background_description=False)
     for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "npc_generation_deferred", "call2_plan_enabled", "call2_parallel_enabled",
-                "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled",
-                "single_char_mask_skip_enabled", "visual_correction_enabled", "profile_context_translate",
-                "nsfw_asset_generation_enabled",
+                "call2_detail_parallel_enabled",
+                "single_char_mask_skip_enabled", "profile_context_translate",
+                "nsfw_asset_generation_enabled", "manga_composition_hint_enabled",
                 "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
     for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):
@@ -536,12 +552,6 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         out.get("emotion_representative"))
     from modes.illustration_npc import get_npc_lifetime
     out["npc_lifetime"] = get_npc_lifetime(out)
-    try:
-        out["visual_correction_max_redraws"] = max(0, int(out["visual_correction_max_redraws"]))
-    except (TypeError, ValueError, OverflowError) as exc:
-        print(f"[VISUAL_CORRECTION] 재생성 횟수 해석 실패, 기본값 사용: value={out['visual_correction_max_redraws']!r}, error={exc}")
-        traceback.print_exc()
-        out["visual_correction_max_redraws"] = DEFAULT_TOGGLES["visual_correction_max_redraws"]
     try:
         area_percent = float(out["single_char_mask_skip_area_percent"])
         if not math.isfinite(area_percent):
@@ -717,10 +727,15 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     # Saved/UI settings retain both sets. Runtime consumers use the active set
     # through the existing selection fields without changing the stored values.
     if for_generation and output_mode in ("manga", "manga_both"):
+        if out["illustration_model_family"] != "moss":
+            raise ValueError("만화 삽화는 MOSS 그림 모델에서만 사용할 수 있습니다.")
         for key in ("output_count_min", "output_count_max", "scene_mode", "character_limit", "focus", "direction"):
             out[key] = out["manga_" + key]
         out["speak_enabled"] = False
         out["visual_correction_enabled"] = False
+        # DETAIL-MANGA owns the page plan and dialogue. Preserve the saved PLAN
+        # preference for ordinary illustration output, but never run it for manga.
+        out["call2_plan_enabled"] = False
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
@@ -2783,6 +2798,7 @@ def _segment_current_context(
             rendered = []
             start = 0
             for index, marker in enumerate(markers):
+                draw_point = source[:marker.start()].rstrip().endswith(DRAW_POINT_MARKER)
                 # One source passage per actual insertion position. The final
                 # passage includes the tail, rather than creating another C ID
                 # and assigning it to an already occupied slot afterward.
@@ -2791,6 +2807,11 @@ def _segment_current_context(
                 projected_end = bisect_left(source_indexes, end)
                 passage = projected[projected_start:projected_end]
                 content = passage.strip()
+                if not content and draw_point:
+                    next_start = markers[index + 1].start() if index + 1 < len(markers) else len(source)
+                    projected_start = bisect_left(source_indexes, marker.end())
+                    passage = projected[projected_start:bisect_left(source_indexes, next_start)]
+                    content = passage.strip()
                 if not content:
                     print(f"[ILLUST_CONTEXT:SEGMENT] 본문 없는 삽입 후보 생략: slot={marker.group(1)}")
                     start = marker.end()
@@ -2801,6 +2822,7 @@ def _segment_current_context(
                     "id": segment_id, "text": content,
                     "start": content_start, "end": content_start + len(content),
                     "slot": int(marker.group(1)),
+                    **({"draw_point": True} if draw_point else {}),
                 }
                 rendered.append(f"[{segment_id}]\n{content}")
                 start = marker.end()
@@ -5534,13 +5556,30 @@ def insert_slots(text: str) -> str:
         [match.span() for match in re.finditer(r"\n\n+", source)],
         boundary_kind="fallback-paragraph",
     )
+    boundaries = [(start, end, False) for start, end in paragraph_boundaries]
+    for marker in re.finditer(re.escape(DRAW_POINT_MARKER), source):
+        start, end = marker.span()
+        while start > 0 and source[start - 1].isspace():
+            start -= 1
+        while end < len(source) and source[end].isspace():
+            end += 1
+        boundaries.append((start, end, True))
+    merged = []
+    for start, end, draw_point in sorted(boundaries):
+        if merged and start < merged[-1][1]:
+            previous_start, previous_end, previous_draw_point = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end), previous_draw_point or draw_point)
+        else:
+            merged.append((start, end, draw_point))
     result = source
-    for slot_index, (start, end) in reversed(list(enumerate(paragraph_boundaries))):
-        result = result[:start] + f"\n\n[Slot {slot_index}]\n\n" + result[end:]
+    for slot_index, (start, end, draw_point) in reversed(list(enumerate(merged))):
+        label = DRAW_POINT_MARKER + "\n" if draw_point else ""
+        result = result[:start] + f"\n\n{label}[Slot {slot_index}]\n\n" + result[end:]
     return result
 
 
 _SLOT_MARKER_RE = re.compile(r"\[Slot\s+(\d+)\]")
+_CONTEXT_MARKER_RE = re.compile(r"\[Slot\s+\d+\]|\[DRAW POINT\]")
 _PROTECTED_SLOT_TOKEN_RE = re.compile(r"__SLOT_[0-9]+__|\[C[0-9]+\]")
 
 
@@ -5590,7 +5629,7 @@ def _slotless_projection_with_source_indexes(text: str) -> tuple[str, list[int]]
     projected_parts = []
     source_indexes = []
     cursor = 0
-    for match in _SLOT_MARKER_RE.finditer(source):
+    for match in _CONTEXT_MARKER_RE.finditer(source):
         projected_parts.append(source[cursor:match.start()])
         source_indexes.extend(range(cursor, match.start()))
         cursor = match.end()
@@ -5781,7 +5820,7 @@ def _merge_call1_output_into_slotted(
 
 def remove_slot_markers(text: str) -> str:
     """원문 슬롯 본문에서 배치용 마커만 제거한다."""
-    return _SLOT_MARKER_RE.sub("", str(text or "")).strip()
+    return _CONTEXT_MARKER_RE.sub("", str(text or "")).strip()
 
 
 def _bool(value) -> bool:
@@ -5878,11 +5917,10 @@ def render_call2_prompt(
 
     risu_values = {
         "lb-xnai.nsfw": "1" if toggles.get("nsfw") else "0",
+        "lb-xnai.manga_composition_hint": "1" if toggles.get("manga_composition_hint_enabled") else "0",
         "lb-xnai.supplement": "1" if toggles.get("supplement") else "0",
         "lb-xnai.kv.off": "0" if toggles.get("key_visual") else "1",
-        "lb-xnai.background.minimal": (
-            "1" if toggles.get("minimal_background_description", DEFAULT_TOGGLES["minimal_background_description"]) else "0"
-        ),
+        "lb-xnai.background.minimal": "0",
         "lb-xnai.compat.comfy": "1" if toggles.get("compat_comfy") else "0",
         "lb-xnai.compat.charPrompt": "1" if toggles.get("compat_character_prompt") == "separate" else "0",
         "lb-xnai.context": "1" if toggles.get("context_history") else "0",
@@ -6157,8 +6195,16 @@ def _parse_call2_keyvis_output(
             print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
             return None, reason
         try:
+            scene = {"slot": -1}
+            if toggles.get("illustration_output_mode") in ("manga", "manga_both"):
+                layout = raw["keyvis"].get("moss", raw["keyvis"])
+                if not isinstance(layout, dict) or not layout.get("panels"):
+                    return None, "DETAIL-MANGA KEYVIS에 대표 만화 panels가 필요합니다"
+                from modes.illustration_prompt_builders import manga_page_size_options
+                width, height = manga_page_size_options(canvas_sizes)[0]
+                scene["image_size"] = {"width": width, "height": height}
             descriptor = illustration_scene_pipeline._parse_detail_moss_scene(
-                {**raw["keyvis"], "slot": -1}, {"slot": -1},
+                {**raw["keyvis"], "slot": -1}, scene,
                 canvas_sizes=canvas_sizes, kind="keyvis")
             descriptors = [descriptor]
         except (ValueError, TypeError) as exc:
@@ -7148,6 +7194,7 @@ _CALL_TASK_KEYS = {
     "CALL1": "illustration_call1",
     "TIME & PLACE": "illustration_time_place",
     "NPC 생성 노드": "illustration_npc_generation",
+    "배경 카드 예측": "illustration_background_generation",
     "CHARACTER-RESOLVE": "illustration_character_resolve",
     "CHARACTER-RESOLVE-REPAIR": "illustration_character_resolve",
     "PROFILE-RESOLVE": "illustration_profile_resolve",
@@ -7187,6 +7234,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL1": ("call1", "OUTFIT 복장·헤어 분석"),
     "TIME & PLACE": ("time_place", "TIME & PLACE 시간·장소 추적"),
     "NPC 생성 노드": ("npc_generation", "NPC 생성 노드"),
+    "배경 카드 예측": ("background_card", "배경 카드 예측"),
     "CHARACTER-RESOLVE": ("character_resolve", "CURRENT 등장인물·장면 선택"),
     "CHARACTER-RESOLVE-REPAIR": (
         "character_resolve",
@@ -7266,6 +7314,7 @@ async def _call_pipeline_llm(
         execution_id=execution_id,
         task_key=task_key,
         model=model,
+        alias=llm_service.routing_primary_alias(task_key),
         service=service,
         layout_group=(queue_subtask_group[0] if queue_subtask_group else task_key),
         layout_order=(
@@ -7387,6 +7436,7 @@ async def _call_pipeline_llm(
             recorded_event,
             llm_service._base_config_get(f"llm_model{suffix}", "") or "",
             llm_service._base_config_get(f"llm_service{suffix}", "") or "openai",
+            llm_service._base_config_get(f"llm_alias{suffix}", "") or "",
         )
         event = recorded_event
         if etype in {"attempt_start", "attempt_success", "attempt_failure"}:
@@ -9531,6 +9581,7 @@ async def _run_resolution_stage(
     selection_messages: list[dict] | None = None,
     call_name: str = "",
     emotion: bool = False,
+    background_context: dict | None = None,
 ) -> tuple[str, dict]:
     """Run one separated CHARACTER or PROFILE resolution stage.
 
@@ -9583,7 +9634,8 @@ async def _run_resolution_stage(
         profile_inference_enabled, selected_names, tracked_state, catalog,
         segmented_current, card_identity_context, persona_context, profile_system,
         selection=selection_messages, anchors=list(current_segments),
-        emotion=emotion))
+        draw_point_anchors=[key for key, value in current_segments.items() if value.get("draw_point")],
+        emotion=emotion, background_context=background_context))
 
     def validate_shape(result):
         raw = _json_object_from_text(result)
@@ -9591,6 +9643,12 @@ async def _run_resolution_stage(
             return False, f"{stage_call_name} JSON object 없음"
         if not isinstance(raw.get("characters"), list):
             return False, f"{stage_call_name} characters가 list가 아님"
+        if background_context and selection_messages is not None:
+            from emotion_background_cards import selected_background_cards
+            try:
+                selected_background_cards(raw.get("scene_plan") or [], background_context)
+            except (ValueError, TypeError, KeyError) as error:
+                return False, str(error)
         return True, ""
 
     raw_output = await _call_pipeline_llm(
@@ -9739,6 +9797,7 @@ async def _run_character_resolution(
     selection_messages: list[dict] | None = None,
     toggles: dict | None = None,
     emotion: bool = False,
+    background_context: dict | None = None,
 ) -> tuple[str, dict]:
     """Resolve CURRENT participation and optional source-anchor selection together."""
     raw_output, parsed = await _run_resolution_stage(
@@ -9756,6 +9815,7 @@ async def _run_character_resolution(
         call_name=("MANGA-CHARACTER-RESOLVE" if (toggles or {}).get("illustration_output_mode")
                    in ("manga", "manga_both") else ""),
         emotion=emotion,
+        background_context=background_context,
     )
     if selection_messages is None:
         return raw_output, parsed
@@ -10393,6 +10453,34 @@ async def _start_emotion_npc_prediction(
     return token
 
 
+async def _run_background_card_prediction(
+    *, background_system: str, scene_plan: list[dict], segmented_current: str,
+    background_context: dict, stream_notify=None, history_ids_sink=None,
+) -> tuple[str, dict]:
+    from emotion_background_cards import selected_background_cards, parse_card_predictions
+    by_anchor, requests = selected_background_cards(scene_plan, background_context)
+    raw_output = ""
+    if requests:
+        messages = _normalize_messages(prompt_builders.background_card_messages(
+            background_system, requests, segmented_current, background_context.get("world"), by_anchor))
+
+        def validate(response):
+            try:
+                parse_card_predictions(response, requests)
+                return True, ""
+            except (ValueError, TypeError) as error:
+                return False, str(error)
+
+        raw_output = await _call_pipeline_llm(
+            "배경 카드 예측", messages, stream_notify, result_validator=validate,
+            json_mode=True, history_ids_sink=history_ids_sink)
+        predicted = parse_card_predictions(raw_output, requests)
+        by_anchor = {anchor: {**predicted.get(card["id"], card),
+                              **{key: card[key] for key in ("view_center", "character_position") if key in card}}
+                     for anchor, card in by_anchor.items()}
+    return raw_output, by_anchor
+
+
 async def resolve_profiles_before_generation(
     *,
     payload: dict,
@@ -10410,6 +10498,8 @@ async def resolve_profiles_before_generation(
     npc_manager=None,
     render_npc_image=None,
     prepare_npc_character=None,
+    background_context: dict | None = None,
+    on_background_cards_ready=None,
 ) -> tuple[str, dict]:
     """Resolve CURRENT characters and every applicable multi-profile timeline."""
     # The preview supplies side-effect-free stage implementations. The actual
@@ -10483,6 +10573,7 @@ async def resolve_profiles_before_generation(
         selection_messages=selection,
         toggles=toggles,
         emotion=emotion,
+        background_context=background_context if emotion else None,
     )
     previous_state = (history_plan or {}).get("state_before") or {}
     character_result = _mark_current_characters_with_tracked_history(
@@ -10560,6 +10651,19 @@ async def resolve_profiles_before_generation(
     if emotion and toggles["illustration_enabled"]:
         emotion_scene_plan = base_result.get("scene_plan") or []
         emotion_anchors = _emotion_scene_anchors(emotion_scene_plan, current_segments)
+        if background_context and emotion_anchors:
+            if progress:
+                await progress(3.5, "background_card", "배경 카드 예측 · 기존 배경 확인")
+            background_output, backgrounds_by_anchor = await run_stage(
+                _run_background_card_prediction,
+                background_system=prompts.get("background_card", ""),
+                scene_plan=emotion_scene_plan, segmented_current=segmented_current,
+                background_context=background_context, stream_notify=stream_notify,
+                history_ids_sink=history_ids_sink)
+            base_result["background_card_output"] = background_output
+            base_result["backgrounds_by_anchor"] = backgrounds_by_anchor
+            if on_background_cards_ready is not None:
+                await on_background_cards_ready(backgrounds_by_anchor)
         # NPC 카드 태그(성별·외모·복장·얼굴·눈)를 EMOTION-ASSET 전에 예측해
         # 등록 캐릭터 카드와 동일한 레벨로 전달한다. Comfy 대표 이미지 호출만
         # 설정에 따라 STEP 6으로 미룬다.

@@ -23,7 +23,8 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
     composite = toggles["illustration_output_mode"] in ("composite", "composite_both")
     if manga:
-        toggles.update(key_visual=False, speak_enabled=False, supplement=True)
+        toggles.update(speak_enabled=False, supplement=True)
+    moss_manga = (manga and str(toggles.get("illustration_model_family") or "") == "moss")
     if emotion:
         # 감정 삽화는 시작 이미지의 복장을 재사용하며 OUTFIT·PLAN·KEYVIS·
         # 별도 MULTI-CHAR-MASK 노드를 실행 계획에 만들지 않는다. 인스턴스
@@ -39,7 +40,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     provider = snapshot["provider"]
     prompt_batch = scenario.get("protocol") == "prompt_batch_v1"
     mask_enabled = illustration and not emotion and pipeline.should_enable_multi_char_layout(toggles, provider)
-    mask_inline = mask_enabled and (manga or toggles.get("multi_char_mask_inline_enabled", False)) and not prompt_batch
+    mask_inline = mask_enabled and not prompt_batch
     keyvis_in_detail = (not emotion and toggles["key_visual"]
                         and toggles.get("keyvis_in_detail_enabled", False) and not prompt_batch)
     # Input slots are a workload assumption, not fabricated narrative/LLM output.
@@ -51,12 +52,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     if prompt_batch:
         scene_count = min(slot_count, max(1, int(scenario.get("scene_count") or toggles["output_count_max"])))
     conditional = bool(scenario.get("conditional", False))
-    postprocess_mode = postprocess_mode if postprocess_mode in ("vn", "bubble", "subtitle") else "vn"
-    mode = {"bubble": "Manga", "subtitle": "Subtitle"}.get(postprocess_mode, "Speak")
+    postprocess_mode = postprocess_mode if postprocess_mode in ("vn", "bubble", "subtitle", "manga_text") else "vn"
+    mode = {"bubble": "Manga", "subtitle": "Subtitle", "manga_text": "Text"}.get(postprocess_mode, "Speak")
     nodes, jobs, notes = [], [], []
-    if "multi_char_mask_inline_enabled" not in toggles:
-        print("[ILLUST_PREVIEW] 실행 중인 파이프라인에 통합 마스크 설정이 없어 기존 별도 호출 방식으로 표시합니다.")
-        notes.append("현재 서버에는 통합 마스크 설정이 아직 반영되지 않아 기존 별도 호출 방식으로 표시합니다. 새 생성 방식을 적용하려면 서버를 재시작하세요.")
     connections = {}
     capacities = {}
     provider_slots = getattr(llm_service, "_llm_provider_slots", None)
@@ -172,6 +170,13 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     emotion_npc_card = None
     emotion_npc_job = None
     emotion_state_context = None
+    background_auto = bool(emotion and config.get("emotion_background_mode", snapshot.get("background_mode")) == "auto")
+    background_job = None
+    background_card = (card("배경 카드 예측", 2,
+                            "CHARACTER-RESOLVE가 선택한 배경 중 새 배경 카드만 작성 · 원문·세계관 입력",
+                            enabled=illustration and not prompt_batch, group="background_card",
+                            condition="자동 배경 모드 · 기존 카드에 맞는 배경이 없을 때")
+                       if background_auto else None)
     if emotion and illustration and not prompt_batch:
         # 실제 호출 순서대로 STEP 2 안에서 NPC 카드 태그 예측 다음에
         # 장면별 복장을 정하고, 그 결과를 STEP 4의 EMOTION-ASSET으로 넘긴다.
@@ -193,7 +198,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                                   group="emotion_asset")
 
     async def preview_profile_stage(operation, *args, **kwargs):
-        nonlocal context, emotion_asset_job, emotion_npc_job, emotion_state_context
+        nonlocal context, emotion_asset_job, emotion_npc_job, emotion_state_context, background_job
         if operation is pipeline._run_character_resolution:
             context = [job(character_card, output=f"CURRENT 등장인물 {len(current_profiles)}명" + (f" · 선택 장면 {scene_count}개" if illustration else ""))]
             result = pipeline._materialize_profile_character_records(
@@ -246,6 +251,11 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 "uncertainties": [],
                 "validation_warnings": [],
             }
+        if operation is pipeline._run_background_card_prediction:
+            background_job = job(background_card, context,
+                                 input="원문·세계관·앵커별 선택 배경", output="배경 카드 프롬프트")
+            context = [background_job]
+            return "", {}
         if operation is pipeline._run_emotion_asset_resolution:
             # EMOTION-ASSET은 EMOTION-RESOLVE의 앵커 복장과 NPC 카드 태그를
             # 함께 읽으므로 두 노드에서 데이터 연결선을 그린다.
@@ -273,6 +283,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             toggles=toggles, history_plan=None, visual_profiles=profiles,
             profile_translation_namespace=snapshot["bot_name"], stage_runner=preview_profile_stage,
             workshop=snapshot.get("workshop") or "illustration",
+            background_context={"world": config.get("emotion_background_world", ""), "cards": []} if background_auto else None,
         )
         if profiles:
             notes.append(f"모의 CURRENT 등장인물 {len(current_profiles)}명: {', '.join(current_profiles) or '(없음)'}. 인원 수로 지정하면 등록 순서대로 선택합니다. ON인 프로필 준비·판정을 끝낸 뒤 다음 단계로 진행합니다.")
@@ -304,14 +315,15 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     if not emotion:
         if illustration and not prompt_batch and toggles["call2_plan_enabled"]:
             for i, batch in enumerate(plan_batches, 1):
-                plans.append(job(card("PLANNER-MANGA" if manga else "CALL2-PLAN", 3,
-                                      f"페이지 {len(batch)}개 · 3~4컷·캐릭터·대사 bbox 계획" if manga else f"장면 {len(batch)}개 시각 계획",
-                                      group="manga_plan" if manga else "call2_plan",
+                plans.append(job(card("CALL2-PLAN", 3,
+                                      f"장면 {len(batch)}개 시각 계획",
+                                      group="call2_plan",
                                       index=i, count=len(plan_batches)), front, output="시각 계획"))
         else:
-            card("PLANNER-MANGA" if manga else "CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else
+            card("CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else
                  "완성 프롬프트 입력" if prompt_batch else
-                 "PLAN OFF · 장면 선택에서 컷·대본 준비" if manga else "PLAN OFF · DETAIL에서 직접 계획", enabled=False)
+                 "PLAN OFF · DETAIL-MANGA에서 컷·대사 직접 계획" if moss_manga else
+                 "PLAN OFF · DETAIL에서 직접 계획", enabled=False)
     detail_batches = pipeline._detail_batches_for_plan_batches(
         plan_batches, toggles["call2_detail_parallel_max_concurrency"]
         if toggles["call2_detail_parallel_enabled"] else 1)
@@ -331,11 +343,12 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 if mask_inline:
                     description += " · MULTI-CHAR-MASK 함께 예측"
                 if keyvis_in_detail and i == 1:
-                    description += " · KEYVIS 대표 이미지 1장 함께 예측"
-                detail_sources.append((job(card("DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
+                    description += " · KEYVIS 대표 만화 1페이지 함께 예측" if moss_manga else " · KEYVIS 대표 이미지 1장 함께 예측"
+                detail_sources.append((job(card("DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL", 4,
+                                                f"{description} · " + (f"MOSS 만화 {len(batch)}페이지" if moss_manga else f"장면 {len(batch)}개 이미지 태그 묘사"),
                                                 group="composite_detail" if composite else "manga_detail" if manga else "call2_detail", index=i, count=len(detail_batches)),
                                            [plans[index] for index in sources] if plans else front,
-                                           output=f"장면 {len(batch)}개 묘사" + ("·마스크" if mask_inline else "")), batch, False))
+                                           output=(f"MOSS multi_panel {len(batch)}페이지" if moss_manga else f"장면 {len(batch)}개 묘사") + ("·KEYVIS" if keyvis_in_detail and i == 1 else "") + ("·마스크" if mask_inline else "")), batch, False))
     else:
         card("CALL2-DETAIL", 4, "일반 삽화 OFF" if not illustration else "완성 프롬프트 입력", enabled=False)
         if illustration:
@@ -375,6 +388,12 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 image_lanes.append([lane])
     lane_label = " / ".join(f"{lane[0]} 최대 {capacities[lane[0]]}개" for lane in image_lanes)
     npc_image = None
+    background_image = None
+    if background_job:
+        background_image = job(card("배경 카드 이미지", 2,
+            "배경 그리기 설정·배경 LoRA로 생성 · 기존 카드 이미지는 재사용",
+            group="background_image", task_key=""), [background_job], resources=image_lanes,
+            output="저장된 배경 카드 이미지")
     if npc_prediction:
         npc_deferred = bool(toggles.get("npc_generation_deferred"))
         npc_moss = toggles.get("illustration_model_family") == "moss"
@@ -392,12 +411,13 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     scene_ready, normal_ready, images = [], [], []
     image_slots = {}
     composite_count = 1 + min(toggles["character_limit"], len(current_profiles)) if composite else 1
-    image_count = sum(len(batch) for _descriptor, batch, _keyvis in detail_sources) * (4 if manga else composite_count)
+    panel_images = manga and not moss_manga
+    image_count = sum(len(batch) for _descriptor, batch, _keyvis in detail_sources) * (4 if panel_images else composite_count)
     keyvis_images = set()
     for descriptor_id, batch, is_keyvis in detail_sources:
         descriptor_card = next((node for node in nodes if any(
             entry["id"] == descriptor_id and entry["card"] == node["id"] for entry in jobs)), None)
-        for scene in ([{**scene, "composite_layer": layer} for scene in batch for layer in range(composite_count)] if composite else [{**scene, "panel": panel} for scene in batch for panel in range(1, 5)] if manga else batch):
+        for scene in ([{**scene, "composite_layer": layer} for scene in batch for layer in range(composite_count)] if composite else [{**scene, "panel": panel} for scene in batch for panel in range(1, 5)] if panel_images else batch):
             current_mask = (card(f"MULTI-CHAR-MASK slot={scene['slot']}", 5,
                                 (f"자체 생성 · {'KEYVIS' if is_keyvis else 'DETAIL'}의 장면 {scene['slot']} 마스크 사용 · 추가 LLM 호출 없음"
                                  if mask_inline else f"장면 {scene['slot']} 캐릭터 영역 계산"), group="pipeline",
@@ -410,14 +430,14 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             scene_ready.extend(filter(None, ready))
             if not is_keyvis:
                 normal_ready.extend(filter(None, ready))
-            queue_index = 1 if is_keyvis else scene["slot"] + 1 + int(bool(keyvis_card and keyvis_card["enabled"]))
-            image_prefix = "감정 에셋" if emotion else "삽화"
+            queue_index = 1 if is_keyvis else scene["slot"] + 1 + int(bool(keyvis_card and (keyvis_card["enabled"] or keyvis_in_detail)))
+            image_prefix = "감정 에셋" if emotion else "KEYVIS 만화" if moss_manga and is_keyvis else "만화" if moss_manga else "삽화"
             image_card = card(f"{image_prefix} {queue_index}/{image_count} · slot {scene['slot']}"
-                              + ((" · 배경" if scene["composite_layer"] == 0 else f" · 캐릭터 {scene['composite_layer']}") if composite else f" · 컷 {scene['panel']}" if manga else ""), 6,
+                              + ((" · 배경" if scene["composite_layer"] == 0 else f" · 캐릭터 {scene['composite_layer']}") if composite else f" · 컷 {scene['panel']}" if panel_images else ""), 6,
                               (lane_label or "활성 생성 레인이 없어 큐 대기") + " · 같은 큐 노드가 대기 후 생성",
                               group="illustration_images")
             connect(current_mask, image_card)
-            image = job(image_card, [*ready, *([npc_image] if npc_image else [])], resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
+            image = job(image_card, [*ready, *([npc_image] if npc_image else []), *([background_image] if background_image else [])], resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
                         priority=1 if mask_job and not is_keyvis else 0)
             images.append(image)
             image_slots[image] = scene["slot"]
@@ -483,12 +503,14 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             index=index, count=len(images), group="illustration_postprocess")
         saved_images.append(job(postprocess, [image, *([dialogue] if dialogue else scene_ready)],
                                 output="대사 합성 이미지·생성 기록" if compose else "원본 이미지·생성 기록"))
-    if manga:
+    if manga and not moss_manga:
         saved_images = [job(card(f"만화 페이지 합성 · slot {slot}", 7,
                             "컷별 이미지에 선렌더한 대본을 합성하고 페이지로 배치합니다.", group="illustration_postprocess"),
                             [image for image in images if image_slots[image] == slot], output="완성 만화 페이지")
                         for slot in dict.fromkeys(image_slots.values())]
         notes.append("만화 미리보기는 페이지당 4컷을 가정합니다. 실제 컷 수는 계획자가 3~4컷으로 정합니다.")
+    elif moss_manga:
+        notes.append("MOSS 만화 페이지는 DETAIL-MANGA가 page 계획 + 기본 2~5컷 panel inventory + 선택적 cross-panel actors를 한 번에 작성하고, 서버가 multi_panel 페이지 1장으로 평면화해 그대로 저장합니다. 1컷은 전면 컷을 명시적으로 요청한 경우만 사용합니다. 컷별 개별 생성·합성은 하지 않습니다.")
     if composite:
         saved_images = [job(card(f"최종 조립 · 합성 삽화 · slot {slot}", 7,
                             "DUAL_VAE 배경·캐릭터 RGBA → 배경 높이에 맞춰 가로 위치로 배치 → "
@@ -525,9 +547,10 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     if mask_enabled:
         notes.append("마스크는 실제 장면의 캐릭터 결과에 따라 필요합니다. 다중 캐릭터 마스크 가정을 켜면 모든 장면에 마스크가 필요한 경우를 계산합니다.")
     if manga:
-        notes.append("만화는 MANGA-CHARACTER-RESOLVE → "
-                     + ("PLANNER-MANGA → " if toggles["call2_plan_enabled"] else "")
-                     + "대본 선렌더 → DETAIL-MANGA 인물 배치 → 컷별 생성 → 페이지 합성 순서로 진행합니다.")
+        notes.append("만화는 MANGA-CHARACTER-RESOLVE → DETAIL-MANGA "
+                     + ("MOSS page plan + panel inventory → multi_panel 기본 2~5컷 페이지 1장 생성 순서로 진행합니다." if moss_manga else
+                        "→ " + ("PLANNER-MANGA → " if toggles["call2_plan_enabled"] else "")
+                        + "대본 선렌더 → 인물 배치 → 컷별 생성 → 페이지 합성 순서로 진행합니다."))
     return {"steps": STEPS, "nodes": nodes, "jobs": jobs, "connections": list(connections.values()), "capacities": capacities,
             "notes": notes, "scenario": {"slot_count": slot_count, "scene_count": scene_count,
                                           "character_count": len(current_profiles) if not prompt_batch else 0,
@@ -536,5 +559,6 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             "summary": f"활성 봇 {snapshot['bot_name'] or '(없음)'} · {snapshot['illustration_workflow_type']} · "
                        + ("완성 프롬프트 입력 · " if prompt_batch else
                           f"{'MANGA-CHARACTER-RESOLVE' if manga else 'CHARACTER-RESOLVE'} {len(current_profiles)}명 가정 · ")
-                       + (f"만화 {scene_count}페이지 · 페이지당 3~4컷 개별 생성·합성" if manga else
+                       + (f"만화 {scene_count}페이지" + (" + KEYVIS 1페이지" if keyvis_images else "") + " · MOSS 페이지당 기본 2~5컷 단일 생성" if moss_manga else
+                          f"만화 {scene_count}페이지 · 페이지당 3~4컷 개별 생성·합성" if manga else
                           f"일반 장면 {scene_count if illustration else 0}개 · 대사 {mode}")}

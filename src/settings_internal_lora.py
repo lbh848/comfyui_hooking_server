@@ -153,9 +153,13 @@ class InternalLoraRuntime:
             async with self.session.request(request.method, self.url + path, params=request.query,
                                             headers=headers, data=request.content if request.can_read_body else None,
                                             timeout=timeout, allow_redirects=False) as upstream:
+                cacheable_media = (illustration and request.method == "GET" and (
+                    path.startswith("/api/backup_poster/") and request.query.get("thumbnail") == "1"
+                    or path.startswith("/api/backup_image/") and bool(request.query.get("v"))
+                ))
                 response = web.StreamResponse(status=upstream.status, headers={
                     "Content-Type": upstream.headers.get("Content-Type", "application/json"),
-                    "Cache-Control": "no-store",
+                    "Cache-Control": upstream.headers.get("Cache-Control", "no-store") if cacheable_media else "no-store",
                 })
                 await response.prepare(request)
                 async for chunk in upstream.content.iter_chunked(256 * 1024):

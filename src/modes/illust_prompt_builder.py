@@ -883,7 +883,7 @@ class IllustPromptBuilder:
                 lora_path = self._resolve_lora_path(lora)
                 strength = lora.get("strength", 0.8)
 
-                if base == "anima":
+                if base in {"anima", "moss"}:
                     if trigger not in anima_triggers:
                         anima_triggers.append(trigger)
                     if trigger not in anima_triggers_by_char[char_name]:
@@ -891,7 +891,7 @@ class IllustPromptBuilder:
                     anima_loras.append({
                         "lora_path": lora_path,
                         "str": strength,
-                        "BASE": "anima",
+                        "BASE": base,
                         "CHAR": char_name,
                     })
                 elif base == "sdxl":

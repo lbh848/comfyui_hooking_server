@@ -4,7 +4,7 @@ AssetToolMode - 에셋툴 (스마트 에셋 툴)
 이미지 태그 분석 → 프리셋 매칭 → 체인 제안
 """
 
-from app_paths import data_root
+from app_paths import data_root, resolve_install_path
 from workflow_cache import copy_workflow_to_cache
 
 import asyncio
@@ -108,6 +108,7 @@ class AssetToolMode:
             stored_hash_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_hash.txt")
             slot_label = "primary"
 
+        src = str(resolve_install_path(src, BASE_DIR)) if src else ""
         if not src or not os.path.isfile(src):
             print(f"[ASSET_TOOL] 워크플로우 경로 없음 또는 파일 없음 ({slot_label}): src='{src}', exists={os.path.isfile(src) if src else False}")
             return False

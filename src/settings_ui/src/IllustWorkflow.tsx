@@ -26,7 +26,7 @@ const modelLabels: Record<string, string> = {
   "workflow.model": "MOSS 모델", "workflow.clip": "MOSS 텍스트 인코더", "workflow.vae": "MOSS VAE",
   MOSS_DIFFUSION_MODEL: "MOSS 모델", ANIMA_DIFFUSION_MODEL: "ANIMA 모델", ILXL_CHECKPOINT: "ILXL 체크포인트",
 };
-const fieldLabels: Record<string, string> = { steps: "STEP", cfg: "CFG", sampler_mode: "샘플러 종류", sampler_name: "샘플링 알고리즘", scheduler: "스케줄러", denoise: "Denoise", sage_attention: "SAGE ATTN", spd_scale: "SPD scale", spd_sigma: "SPD sigma" };
+const fieldLabels: Record<string, string> = { steps: "STEP", cfg: "CFG", sampler_mode: "샘플러 종류", sampler_name: "샘플링 알고리즘", scheduler: "스케줄러", denoise: "Denoise", shift: "Shift", uncond_skip_layers: "Uncond skip layers", sage_attention: "SAGE ATTN", spd_scale: "SPD scale", spd_sigma: "SPD sigma" };
 const samplerModeLabels: Record<string, string> = { KSampler: "KSampler · 기본", FAST: "FAST · Spectrum SPD/SPEED", SpectrumKSamplerModGuidance: "Spectrum · Mod Guidance" };
 const fastFieldOptions: Record<string, { min: number; max: number; step: number }> = {
   spd_scale: { min: 0.25, max: 1, step: 0.05 },
@@ -262,7 +262,7 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
           const labels = loraSetLabels[key] || { label: key, description: "이 워크플로우에 적용할 LoRA입니다." };
           return <section className="illust-lora-set" key={key}>
             {loraSets.length > 1 && <h3>{labels.label}</h3>}
-            <IllustLoras context={scope.prefix === "asset" ? "asset" : undefined} profile={profile} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} />
+            <IllustLoras context={scope.prefix === "asset" ? "asset" : undefined} profile={isMossWorkflow(path) ? "moss" : profile} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} toggleable />
           </section>;
         })}</fieldset></div>
       </>}

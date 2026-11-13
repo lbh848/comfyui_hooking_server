@@ -29,6 +29,8 @@ WORKFLOW_GROUPS = {
     "lora_training_workflow_source_paths.sdxl": ("LoRA 학습", "ILXL"),
     "style_lora_training_workflow_source_paths.anima": ("LoRA 학습", "ANIMA"),
     "style_lora_training_workflow_source_paths.sdxl": ("LoRA 학습", "ILXL"),
+    "lora_training_workflow_source_paths.moss": ("LoRA 학습", "MOSS"),
+    "style_lora_training_workflow_source_paths.moss": ("LoRA 학습", "MOSS"),
     "workflow_pack_extra_paths.lora_training_anima_v2": ("LoRA 학습", "ANIMA"),
     "workflow_pack_extra_paths.style_lora_training_anima_v2": ("LoRA 학습", "ANIMA"),
     "face_extract_workflow_source_path": ("공통", "얼굴 추출"),

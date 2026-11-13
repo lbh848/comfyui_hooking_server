@@ -98,6 +98,21 @@ class LlmSlot(SettingsValue):
     gemini_base64: bool = False
     pdf_prompt: bool = False
     pdf_prompt_format: Literal["pdf", "image"] = "pdf"
+    pdf_image_media_resolution: Literal["low", "medium", "high"] = "medium"
+    pdf_image_page_width: Annotated[int, Field(ge=256, le=4096)] = 1191
+    pdf_image_page_height: Annotated[int, Field(ge=256, le=4096)] = 1684
+    pdf_image_margin: Annotated[int, Field(ge=0, le=256)] = 12
+    pdf_image_font_size: Annotated[int, Field(ge=6, le=128)] = 16
+    pdf_image_line_spacing: Annotated[float, Field(ge=0.8, le=3.0)] = 1.2
+    pdf_image_font_family: Text = (
+        '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", '
+        '"Noto Sans CJK KR", sans-serif'
+    )
+    pdf_image_line_break: Literal["character", "word"] = "character"
+    pdf_image_color_mode: Literal["grayscale", "auto"] = "grayscale"
+    pdf_image_emoji: Literal["keep", "strip"] = "keep"
+    pdf_image_newline: Literal["actual", "collapse"] = "actual"
+    pdf_image_preserve_system_prompt: bool = True
     max_tokens: Annotated[int, Field(ge=0)] = 0
     context_size: Annotated[int, AfterValidator(validate_context_size)] = LLM_SP["context_size"]
     stream_idle_timeout_seconds: Annotated[float, Field(ge=0, le=3600)] = 90.0

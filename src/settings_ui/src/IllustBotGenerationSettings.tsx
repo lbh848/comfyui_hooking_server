@@ -26,9 +26,16 @@ const presetFields = Object.entries(families).flatMap(([family, label]) => Objec
 const changes = (value: IllustrationData, base: IllustrationData) => Object.fromEntries(Object.entries(value).filter(([key, item]) => item !== base[key]));
 const imageSizeSeed = ({ img_w, img_h, seed }: IllustrationData) => ({ img_w, img_h, seed });
 const settingFields = ({ generation_mode: _mode, ...settings }: IllustrationData) => settings;
+// 배율은 x2, x0.3처럼 표시하고, 계산된 픽셀 크기는 항상 정수·16배수로 맞춘다.
+const scaleValue = (value: unknown) => {
+  const number = Number(value ?? 1);
+  return Number.isFinite(number) ? Math.min(2, Math.max(0.2, number)) : 1;
+};
+const scaleLabel = (value: number) => `x${Number.isInteger(value) ? value : value.toFixed(1)}`;
 
-export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, onBusyChange }: {
+export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, onBusyChange, initialMode = "illustration" }: {
   botName: string; readOnly: boolean; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void;
+  initialMode?: GenerationMode;
 }) {
   const api = useBotApi();
   const generationModes = (api.scope === "emotion" ? emotionModes : illustrationModes) as Record<GenerationMode, string>;
@@ -37,7 +44,7 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
   const groupLocked = (generationMode: GenerationMode) =>
     generationMode === "background" || (api.scope === "emotion" && generationMode === "illustration");
   const id = useId();
-  const [mode, setMode] = useState<GenerationMode>("illustration");
+  const [mode, setMode] = useState<GenerationMode>(initialMode);
   const solo = useBotResource(`bot_mode/illust_settings?${query({ bot_name: botName, profile: "solo" })}`);
   const group = useBotResource(`bot_mode/illust_settings?${query({ bot_name: botName, profile: "group" })}`);
   const autoSolo = useBotResource(`bot_mode/illust_settings?${query({ bot_name: botName, generation_mode: "character_auto", profile: "solo" })}`);
@@ -87,6 +94,7 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
     || (!!backgroundSolo.data && backgroundSolo.data.generation_mode !== "background");
   if (!draft || !config.data || !toggles.data || !tags.data || unsupported) return <IllustrationLoading error={unsupported ? "모드별 그리기 설정을 사용하려면 프로그램을 다시 시작하세요." : resources.find(item => item.error)?.error || ""} retry={() => resources.forEach(item => item.reload())} />;
   const capabilities = config.data.capabilities || {};
+  const mangaPageSizes = config.data.manga_page_sizes;
   const presetTags = tags.data;
   const manga = ["manga", "manga_both"].includes(toggles.data.toggles.illustration_output_mode);
   const target = profile === "solo" ? "group" : "solo";
@@ -110,19 +118,25 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
         } }));
       }} />
     <form ref={form} className="illust-form" onSubmit={event => event.preventDefault()}>
-      {modeKeys.map(generationMode => <div key={generationMode} id={`${id}-panel-${generationMode}`} role="tabpanel" aria-labelledby={`${id}-tab-${generationMode}`} hidden={mode !== generationMode} className="illust-form">
-      <CommonGenerationFields value={draft[generationMode].solo} tags={presetTags} capabilities={capabilities} readOnly={readOnly}
-        update={(field, value) => update(generationMode, "solo", field, value)} onEdit={field => setEditor({ mode: generationMode, field })} />
-      <section className="illust-bot-generation-section illust-form" data-group="image-size-seed"><h3>이미지 크기·시드</h3>
-        {generationMode !== "character_auto" && <div className="illust-bot-generation-toolbar">
-          <SettingsTabs id={`${id}-${generationMode}-size`} label="이미지 크기·시드 인원 선택" values={profiles} value={profile} onChange={value => setProfile(value as Profile)} disabled={groupLocked(generationMode) ? ["group"] : []} />
-          {!groupLocked(generationMode) && <button type="button" className="button" disabled={readOnly || autosave.busy || !!autosave.inputError} onClick={() => setCopy(true)}><Copy size={14} />{profiles[target]}으로 복사</button>}
-        </div>}
-        {generationMode === "character_auto" ? <ImageSizeSeedFields value={draft[generationMode].solo} capabilities={capabilities} manga={false} readOnly={readOnly} update={(field, value) => update(generationMode, "solo", field, value)} /> : (Object.keys(profiles) as Profile[]).map(key => <div key={key} id={`${id}-${generationMode}-size-panel-${key}`} role="tabpanel" aria-labelledby={`${id}-${generationMode}-size-tab-${key}`} hidden={profile !== key}>
-          <ImageSizeSeedFields value={draft[generationMode][key]} capabilities={capabilities} manga={generationMode === "illustration" && manga} readOnly={readOnly} update={(field, value) => update(generationMode, key, field, value)} />
-        </div>)}
-      </section>
-      </div>)}
+      {modeKeys.map(generationMode => {
+        const mangaMode = generationMode === "illustration" && manga;
+        return <div key={generationMode} id={`${id}-panel-${generationMode}`} role="tabpanel" aria-labelledby={`${id}-tab-${generationMode}`} hidden={mode !== generationMode} className="illust-form">
+        <CommonGenerationFields value={draft[generationMode].solo} tags={presetTags} capabilities={capabilities} readOnly={readOnly}
+          update={(field, value) => update(generationMode, "solo", field, value)} onEdit={field => setEditor({ mode: generationMode, field })} />
+        <section className="illust-bot-generation-section illust-form" data-group="image-size-seed"><h3>이미지 크기·시드</h3>
+          {generationMode !== "character_auto" && !mangaMode && <div className="illust-bot-generation-toolbar">
+            <SettingsTabs id={`${id}-${generationMode}-size`} label="이미지 크기·시드 인원 선택" values={profiles} value={profile} onChange={value => setProfile(value as Profile)} disabled={groupLocked(generationMode) ? ["group"] : []} />
+            {!groupLocked(generationMode) && <button type="button" className="button" disabled={readOnly || autosave.busy || !!autosave.inputError} onClick={() => setCopy(true)}><Copy size={14} />{profiles[target]}으로 복사</button>}
+          </div>}
+          {generationMode === "character_auto" ? <ImageSizeSeedFields value={draft[generationMode].solo} capabilities={capabilities} manga={false} readOnly={readOnly} update={(field, value) => update(generationMode, "solo", field, value)} />
+            : mangaMode ? <ImageSizeSeedFields value={draft[generationMode].solo} capabilities={capabilities} manga readOnly={readOnly} update={(field, value) => update(generationMode, "solo", field, value)} />
+            : (Object.keys(profiles) as Profile[]).map(key => <div key={key} id={`${id}-${generationMode}-size-panel-${key}`} role="tabpanel" aria-labelledby={`${id}-${generationMode}-size-tab-${key}`} hidden={profile !== key}>
+              <ImageSizeSeedFields value={draft[generationMode][key]} capabilities={capabilities} manga={false} readOnly={readOnly} update={(field, value) => update(generationMode, key, field, value)} />
+            </div>)}
+        </section>
+        {generationMode === "illustration" && <MangaSizeSeedFields value={draft[generationMode].solo} pageSizes={mangaPageSizes} readOnly={readOnly} locked={!mangaMode} update={(field, value) => update(generationMode, "solo", field, value)} />}
+        </div>;
+      })}
     </form>
     {copy && <Modal title={`${profiles[target]} 이미지 크기·시드로 복사`} closeDisabled={autosave.busy} backgroundable={false} onClose={() => setCopy(false)}>
       <div className="illust-form"><p>{generationModes[mode]}의 {profiles[profile]} 너비·높이·시드를 같은 모드의 {profiles[target]} 설정에 복사합니다.</p>
@@ -140,7 +154,7 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, update, o
   value: IllustrationData; tags: IllustrationData; capabilities: IllustrationData; readOnly: boolean;
   update: (field: string, value: unknown) => void; onEdit: (field: string) => void;
 }) {
-  const check = (key: string, label: string) => <label className="illust-check"><input type="checkbox" checked={!!value[key]} onChange={event => update(key, event.target.checked)} />{label}</label>;
+  const check = (key: string, label: string, checked = !!value[key]) => <label className="illust-check"><input type="checkbox" checked={checked} onChange={event => update(key, event.target.checked)} />{label}</label>;
   const range = (key: string, label: string, min: number, max: number, step: number, unit = "") => <label className="field illust-bot-generation-range"><span>{label}<output>{value[key]}{unit}</output></span><input type="range" aria-label={label} min={min} max={max} step={step} value={value[key]} onChange={event => update(key, Number(event.target.value))} /></label>;
   return <fieldset className="illust-form" disabled={readOnly}>
     <section className="illust-bot-generation-section" data-group="presets"><h3>프롬프트 프리셋</h3><div className="illust-bot-generation-columns">
@@ -161,9 +175,9 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, update, o
         })}
       </fieldset>)}
     </div></section>
-    <fieldset className="illust-bot-generation-section illust-form" data-group="reference" disabled={!capabilities.moss_reference && (!capabilities.local_advanced || !capabilities.anima_presets)}><legend>이미지 레퍼런스{capabilities.moss_reference && <span>CharRef v2</span>}{capabilities.moss && !capabilities.moss_reference && <span>MOSS 미사용</span>}</legend>
-      {check("snapref_enabled", "이미지 레퍼런스 사용")}
-      {value.snapref_enabled && <div className="illust-form illust-bot-generation-dependent">
+    <fieldset className="illust-bot-generation-section illust-form" data-group="reference" disabled={capabilities.moss || (!capabilities.local_advanced || !capabilities.anima_presets)}><legend>이미지 레퍼런스{capabilities.moss && <span>CharRef v2 · 사용 중지</span>}</legend>
+      {check("snapref_enabled", "이미지 레퍼런스 사용", !capabilities.moss && !!value.snapref_enabled)}
+      {!capabilities.moss && value.snapref_enabled && <div className="illust-form illust-bot-generation-dependent">
         {!capabilities.moss_reference && <label className="field">레퍼런스 전처리<select value={value.snapref_preprocess || "none"} onChange={event => update("snapref_preprocess", event.target.value)}>{referencePreprocessOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
         {range("snapref_strength", "Strength · 레퍼런스 강도", 0, 2, .05)}
         {!capabilities.moss_reference && range("snapref_fidelity", "Fidelity · 디테일 유지", 0, 1, .05)}
@@ -184,8 +198,8 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, update, o
       </fieldset>)}</div>
       <GenerationNumberField label="FD / ED 시 고정 사이즈 (px)" value={value.face_lora_upscale_size} min={0} optional onChange={next => update("face_lora_upscale_size", next)} />
     </fieldset>
-    {capabilities.moss_reference && <p className="field-help">MOSS는 이미지 레퍼런스(CharRef v2)만 지원하며, 고해상도·디테일러 보정은 사용하지 않습니다.</p>}
-    {capabilities.moss && !capabilities.moss_reference && <p className="field-help">MOSS 그림 모델에서는 이미지 레퍼런스와 고해상도·디테일러 보정을 사용하지 않습니다.</p>}
+    {capabilities.moss_reference && <p className="field-help">MOSS의 이미지 레퍼런스(CharRef v2)는 현재 사용을 중지했습니다.</p>}
+    {capabilities.moss && !capabilities.moss_reference && <p className="field-help">MOSS 그림 모델에서는 이미지 레퍼런스·고해상도 보정·얼굴·손·눈 디테일러를 사용하지 않습니다.</p>}
     {!capabilities.local_advanced && !capabilities.moss_reference && <p className="field-help">현재 그림 모델에서는 로컬 전용 시드·레퍼런스·고해상도·디테일러 설정을 사용하지 않습니다.</p>}
   </fieldset>;
 }
@@ -212,19 +226,69 @@ function GenerationNumberField({ label, value, min, max, optional = false, snapT
 function ImageSizeSeedFields({ value, capabilities, manga, readOnly, update }: {
   value: IllustrationData; capabilities: IllustrationData; manga: boolean; readOnly: boolean; update: (field: string, value: unknown) => void;
 }) {
-  return <fieldset className="illust-form" disabled={readOnly}>
-    <fieldset className="illust-bot-generation-columns" disabled={manga}>
+  return <fieldset className={`illust-form${manga ? " illust-locked" : ""}`} disabled={readOnly || manga} aria-disabled={readOnly || manga || undefined}>
+    <fieldset className="illust-bot-generation-columns">
       <GenerationNumberField label="너비 (px)" value={value.img_w} min={256} max={4096} snapToStep={16} onChange={next => update("img_w", next)} />
       <GenerationNumberField label="높이 (px)" value={value.img_h} min={256} max={4096} snapToStep={16} onChange={next => update("img_h", next)} />
     </fieldset>
     {!manga && <p className="field-help">너비·높이는 256~4096px이며, 입력을 마치면 가장 가까운 16의 배수로 맞춰집니다.</p>}
-    {manga && <p className="field-help">만화 출력에서는 컷 구성에 맞춰 이미지 크기를 자동으로 정합니다.</p>}
+    {manga && <p className="field-help">만화 출력에서는 아래 만화 이미지 크기·시드 설정을 사용합니다. 모델이 해상도 목록에서 고른 페이지 크기에 확대 배율을 곱해 그립니다.</p>}
     <fieldset className="illust-bot-generation-seed" disabled={!capabilities.local_advanced}>
       <GenerationNumberField label="시드" value={value.seed} min={-1} onChange={next => update("seed", next)} />
       <button type="button" className="button" onClick={() => update("seed", Math.floor(Math.random() * 4294967295))}><Dice5 size={14} />무작위 값</button>
       <button type="button" className="button" onClick={() => update("seed", -1)}><RotateCcw size={14} />매번 무작위</button>
     </fieldset>
     <p className="field-help">시드가 -1이면 생성할 때마다 무작위 값을 사용합니다.</p>
+  </fieldset>;
+}
+
+type MangaPageSize = { value: string; width: number; height: number; label?: string };
+// Keep the section usable even when an older server does not list the sizes.
+const defaultMangaPageSizes: MangaPageSize[] = [
+  { value: "1152x1728", width: 1152, height: 1728 },
+  { value: "1408x1408", width: 1408, height: 1408 },
+  { value: "1056x1888", width: 1056, height: 1888 },
+  { value: "1536x1152", width: 1536, height: 1152 },
+  { value: "1728x1152", width: 1728, height: 1152 },
+];
+
+function MangaSizeSeedFields({ value, pageSizes, readOnly, locked = false, update }: {
+  value: IllustrationData; pageSizes?: MangaPageSize[]; readOnly: boolean; locked?: boolean; update: (field: string, value: unknown) => void;
+}) {
+  const shown = scaleValue(value.manga_scale);
+  const sizes = pageSizes?.length ? pageSizes : defaultMangaPageSizes;
+  const saved = value.manga_page_sizes === undefined || value.manga_page_sizes === null
+    ? sizes.map(item => item.value).join(",") : String(value.manga_page_sizes);
+  const selected = new Set(saved.split(",").map(item => item.trim()).filter(Boolean));
+  // Show the size the page will actually be drawn at for the current scale.
+  const scaled = (width: number, height: number) => [width, height]
+    .map(size => Math.max(16, Math.round(size * shown / 16) * 16)).join("×");
+  const toggle = (token: string, checked: boolean) => {
+    const next = new Set(selected);
+    if (checked) next.add(token); else next.delete(token);
+    // The model needs at least one page size to choose from.
+    if (!next.size) return;
+    update("manga_page_sizes", sizes.filter(item => next.has(item.value)).map(item => item.value).join(","));
+  };
+  return <fieldset className={`illust-bot-generation-section illust-form${locked ? " illust-locked" : ""}`} data-group="manga-image-size-seed" disabled={readOnly || locked} aria-disabled={readOnly || locked || undefined}>
+    <legend>만화 이미지 크기·시드{locked && <span>일반 삽화에서는 잠김</span>}</legend>
+    <label className="field illust-bot-generation-range"><span>확대 배율<output>{scaleLabel(shown)}</output></span>
+      <input type="range" aria-label="만화 확대 배율" min={0.2} max={2} step={0.1} value={shown} onChange={event => update("manga_scale", Number(event.target.value))} /></label>
+    <p className="field-help">x1이 원본(기본값)입니다. x0.2~x2 범위에서 0.1 단위로 조절하며, 모델이 고른 페이지 해상도에 배율을 곱한 뒤 16배수 정수로 맞춰 그립니다.</p>
+    <fieldset className="illust-bot-generation-sizes">
+      <legend>해상도 목록</legend>
+      {sizes.map(item => <label className="illust-check" key={item.value}>
+        <input type="checkbox" checked={selected.has(item.value)} onChange={event => toggle(item.value, event.target.checked)} />
+        <span>{item.label || `${item.width}×${item.height}`}{shown !== 1 && <small> → {scaled(item.width, item.height)}</small>}</span>
+      </label>)}
+    </fieldset>
+    <p className="field-help">모델은 체크한 해상도 중에서 페이지 크기를 고릅니다. 여러 개를 중복 선택할 수 있으며, 최소 하나는 선택해야 합니다.</p>
+    <fieldset className="illust-bot-generation-seed">
+      <GenerationNumberField label="시드" value={value.manga_seed} min={-1} onChange={next => update("manga_seed", next)} />
+      <button type="button" className="button" onClick={() => update("manga_seed", Math.floor(Math.random() * 4294967295))}><Dice5 size={14} />무작위 값</button>
+      <button type="button" className="button" onClick={() => update("manga_seed", -1)}><RotateCcw size={14} />매번 무작위</button>
+    </fieldset>
+    <p className="field-help">시드가 -1이면 페이지를 그릴 때마다 무작위 값을 사용합니다.</p>
   </fieldset>;
 }
 

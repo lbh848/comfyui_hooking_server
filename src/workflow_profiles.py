@@ -16,6 +16,9 @@ ILLUST_V3_ANIMA = "v3_anima"
 ILLUST_CHANSUB = "chansub"
 ILLUST_CHANSUB_V3_ANIMA = "chansub_v3_anima"
 
+# Keep the CharRef implementation available while its current adapter is disabled.
+MOSS_REFERENCE_ENABLED = False
+
 ILLUSTRATION_WORKFLOW_TYPES = (
     ILLUST_V3,
     ILLUST_V3_ANIMA,
@@ -241,14 +244,11 @@ def illustration_capabilities(
             "multi_char_mask": False,
             "v1_limited": False,
         }
-    # MOSS has no HIRESFIX/detailer stages, but the MOSS workflows now carry the
-    # integrated CharRef v2 reference path. Keep the two capabilities separate so
-    # the UI unlocks only image references. The family follows the user's model
-    # selection and only falls back to the workflow filename for old presets.
+    # The family follows the selected model, with filename fallback for old presets.
     family = illustration_model_family(workflow_type, workflow_source_path, model_family)
     capabilities["model_family"] = family
     capabilities["moss"] = family == "moss"
-    capabilities["moss_reference"] = capabilities["moss"]
+    capabilities["moss_reference"] = capabilities["moss"] and MOSS_REFERENCE_ENABLED
     return capabilities
 
 

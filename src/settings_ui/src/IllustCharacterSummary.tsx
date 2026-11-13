@@ -23,13 +23,14 @@ function LoraStatus({ entries }: { entries: IllustrationData[] }) {
   })}</ul>;
 }
 
-export function IllustCharacterSummary({ characterName, card, render, index, count, isDefault, references, imagesLoaded, imagesError, hasFace, saved, patch, patchLoading, patchError, readOnly, persona, dirty, busy, onChangeProfile, onPreview, onShowDetails, onEnter, onDelete, onRegenerate, npc, onRename }: {
+export function IllustCharacterSummary({ characterName, card, render, index, count, isDefault, references, imagesLoaded, imagesError, hasFace, saved, patch, patchLoading, patchError, readOnly, persona, dirty, busy, onChangeProfile, onPreview, onShowDetails, onEnter, onDelete, onRegenerate, npc, onRename, onRenewNpcLifetime, renewNpcLifetimeBusy = false }: {
   characterName: string; card: IllustrationData; render: IllustrationData; index: number; count: number; isDefault: boolean;
   references: IllustrationData[]; imagesLoaded: boolean; imagesError: string; hasFace: boolean; saved: boolean;
   patch?: IllustrationData; patchLoading: boolean; patchError: string; readOnly: boolean; persona: boolean; dirty: boolean; busy: boolean;
   onChangeProfile: (index: number) => void; onPreview: (image: IllustrationData) => void; onShowDetails: () => void; onEnter?: () => void;
   onDelete?: () => void; npc?: IllustrationData;
   onRegenerate?: (image: IllustrationData) => void; onRename?: () => void;
+  onRenewNpcLifetime?: () => void; renewNpcLifetimeBusy?: boolean;
 }) {
   const api = useBotApi();
   const [selection, setSelection] = useState({ profileId: card.id, index: 0 });
@@ -44,10 +45,10 @@ export function IllustCharacterSummary({ characterName, card, render, index, cou
   const patchReady = !!patch?.face;
   const patchHint = `FACE 이미지 ${patchReady ? "있음" : "없음"}`;
   return <>
-    <header className="illust-summary-heading">
+    <header className={`illust-summary-heading${npc ? " has-npc" : ""}`}>
       <div><div className="illust-summary-title"><h2>{characterName}</h2>{onRename && <button type="button" className="icon-button illust-character-rename" aria-label={`${characterName} 캐릭터 이름 변경`} title={dirty ? "변경 사항을 먼저 저장하세요" : "캐릭터 이름 변경"} disabled={readOnly || busy || dirty} onClick={onRename}><Pencil size={14} aria-hidden="true" /></button>}</div><p>{card.label}{isDefault && <Badge>기본</Badge>}</p></div>
       <div className="illust-summary-heading-actions">
-        <div className="illust-summary-badges">{npc && <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, npc.npc_lifetime - npc.npc_idle_calls)}회</Badge>}{persona && <Badge tone="lavender">페르소나</Badge>}{readOnly && <Badge>읽기 전용</Badge>}{dirty && <Badge tone="rose">미저장 변경</Badge>}</div>
+        <div className="illust-summary-badges">{npc && <>{onRenewNpcLifetime && <button type="button" className="button secondary small" disabled={readOnly || busy} onClick={onRenewNpcLifetime} title="남은 수명을 설정된 최대 횟수로 갱신합니다" aria-label={`${characterName} 수명 갱신`}><RefreshCw size={13} aria-hidden="true" />{renewNpcLifetimeBusy ? "갱신 중…" : "수명 갱신"}</button>}<Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, npc.npc_lifetime - npc.npc_idle_calls)}회</Badge></>}{persona && <Badge tone="lavender">페르소나</Badge>}{readOnly && <Badge>읽기 전용</Badge>}{dirty && <Badge tone="rose">미저장 변경</Badge>}</div>
         {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
       </div>
     </header>

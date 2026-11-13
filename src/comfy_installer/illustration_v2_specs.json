@@ -1716,5 +1716,109 @@
     ],
     "input_is_list": false,
     "output_node": false
+  },
+  "SoyaMOSSi2iReferenceV2_moss_mdsoya": {
+    "name": "SoyaMOSSi2iReferenceV2_moss_mdsoya",
+    "base": "SoyaMossI2iReferenceV2_mdsoya",
+    "display_name": "MOSS i2i Reference V2 (Soya JSON)",
+    "json_inputs": {
+      "lora_name": {
+        "key": "workflow.detailer.lora",
+        "type": "STRING"
+      },
+      "strength": {
+        "key": "workflow.detailer.strength",
+        "type": "FLOAT"
+      },
+      "resolution": {
+        "key": "workflow.detailer.resolution",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {
+      "task": "auto",
+      "ref_scale": 1,
+      "ref_cache": "off",
+      "bypass": false
+    },
+    "output": [
+      "MODEL",
+      "LATENT"
+    ],
+    "output_name": [
+      "MODEL",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaMossSpectrumKSamplerV2_moss_mdsoya": {
+    "name": "SoyaMossSpectrumKSamplerV2_moss_mdsoya",
+    "base": "MossSpectrumKSampler",
+    "display_name": "KSampler (Spectrum for MOSS, Soya JSON)",
+    "json_inputs": {
+      "seed": {
+        "key": "workflow.detailer.seed",
+        "type": "INT"
+      },
+      "uncond_skip_layers": {
+        "key": "workflow.detailer.uncond_skip_layers",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {
+      "spectrum": true,
+      "flex_window": 0.5,
+      "compile": true
+    },
+    "sampling": {
+      "key": "workflow.detailer.sampling",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise",
+        "shift"
+      ]
+    },
+    "output": [
+      "LATENT"
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaCLIPTextEncodeV2_moss_detailer_negative_mdsoya": {
+    "name": "SoyaCLIPTextEncodeV2_moss_detailer_negative_mdsoya",
+    "base": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (MOSS detailer negative)",
+    "json_inputs": {
+      "text": {
+        "key": "workflow.detailer.negative",
+        "type": "STRING"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
   }
 }

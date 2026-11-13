@@ -5,6 +5,7 @@
 
 from app_paths import data_root
 from lora_paths import bot_lora_load_path
+from lora_training_progress import LoraTrainingProgress
 
 import asyncio
 import aiohttp
@@ -1333,7 +1334,16 @@ class QueueManager:
         return True
 
     def _item_status_dict(self, item: QueueItem) -> dict:
-        data = item.to_dict()
+        if item.type in {"illustration", "illustration_llm_build"}:
+            # Status polling and WebSocket updates need identifiers/progress,
+            # not the workflow, chat or embedded reference images. Filter before
+            # asdict() so each update also avoids deep-copying those documents.
+            snapshot = copy.copy(item)
+            snapshot.params = {key: value for key, value in item.params.items()
+                               if key not in {"prompt_data", "raw_body", "payload"}}
+            data = snapshot.to_dict()
+        else:
+            data = item.to_dict()
         execution_area, provider = self._item_execution_area(item)
         data["execution_area"] = execution_area
         data["provider"] = provider
@@ -4483,9 +4493,9 @@ class QueueManager:
         alpha = training_config.get("alpha", 16)
 
         from lora_training_steps import prepare_training_images
-        from lora_training_workflow import training_workflow_source_path
+        from lora_training_workflow import build_training_workflow, training_workflow_source_path
         workflow_path = training_workflow_source_path(training_config)
-        images, step = prepare_training_images(list_training_images(character, entry), training_config)
+        images, step, total_steps = prepare_training_images(list_training_images(character, entry), training_config)
         if not images:
             raise ValueError("학습 이미지가 없습니다")
 
@@ -4505,12 +4515,12 @@ class QueueManager:
         positive_text = self.build_lora_training_text(
             images, trigger, profile, step, il_rate, save_step, folder,
             "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-            test_images, save_after, dim, alpha,
+            test_images, save_after, dim, alpha, total_steps=total_steps,
         )
         negative_text = self.build_lora_training_text(
             images, trigger, profile, step, il_rate, save_step, folder,
             "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
-            test_images, save_after, dim, alpha,
+            test_images, save_after, dim, alpha, total_steps=total_steps,
         )
 
         # 워크플로우 로드 & 변환
@@ -4523,15 +4533,7 @@ class QueueManager:
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict):
-                continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트":
-                ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트":
-                ninfo["inputs"]["value"] = negative_text
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
 
         # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
         try:
@@ -4622,9 +4624,9 @@ class QueueManager:
         lora_save_path = training_save_path(bot_name, project_name, char_name, visual_card_id, training_config)
 
         from lora_training_steps import prepare_training_images
-        from lora_training_workflow import training_workflow_source_path
+        from lora_training_workflow import build_training_workflow, training_workflow_source_path
         workflow_path = training_workflow_source_path(training_config)
-        images, step = prepare_training_images(
+        images, step, total_steps = prepare_training_images(
             _get_project_training_images(bot_name, project_name, char_name, visual_card_id), training_config,
         )
         if not images:
@@ -4645,12 +4647,12 @@ class QueueManager:
         positive_text = self.build_lora_training_text(
             images, trigger, profile, step, il_rate, save_step, folder,
             "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-            effective_test_images, save_after, dim, alpha,
+            effective_test_images, save_after, dim, alpha, total_steps=total_steps,
         )
         negative_text = self.build_lora_training_text(
             images, trigger, profile, step, il_rate, save_step, folder,
             "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
-            effective_test_images, save_after, dim, alpha,
+            effective_test_images, save_after, dim, alpha, total_steps=total_steps,
         )
 
         feedback_context = None
@@ -4681,15 +4683,7 @@ class QueueManager:
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict):
-                continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트":
-                ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트":
-                ninfo["inputs"]["value"] = negative_text
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
 
         # 진행률 알림
         if self.notify_frontend:
@@ -5541,9 +5535,9 @@ class QueueManager:
             alpha = profile_settings.get("alpha", 16)
 
             from lora_training_steps import prepare_training_images
-            from lora_training_workflow import training_workflow_source_path
+            from lora_training_workflow import build_training_workflow, training_workflow_source_path
             workflow_path = training_workflow_source_path(profile_settings)
-            training_images, step = prepare_training_images(
+            training_images, step, total_steps = prepare_training_images(
                 training_images, profile_settings,
                 default_mode="total" if source == "style_lora" else "per_image", default_step=125,
             )
@@ -5571,7 +5565,7 @@ class QueueManager:
             positive_text = self.build_lora_training_text(
                 training_images, trigger, profile, step, il_rate, save_step, folder,
                 "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-                test_images_list, save_after, dim, alpha,
+                test_images_list, save_after, dim, alpha, total_steps=total_steps,
             )
             # "instance" preview 폴백 주입은 인스턴스 계열(source != style_lora)에서만.
             # 스타일은 실제 테스트 프롬프트를 그대로 써야 SAVE_PER_STEP 기반 preview 가 동작한다.
@@ -5582,7 +5576,7 @@ class QueueManager:
             negative_text = self.build_lora_training_text(
                 training_images, trigger, profile, step, il_rate, save_step, folder,
                 "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
-                [], save_after, dim, alpha,
+                [], save_after, dim, alpha, total_steps=total_steps,
             )
 
             # 워크플로우 로드
@@ -5595,15 +5589,7 @@ class QueueManager:
             if conv_err or api_wf is None:
                 raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-            wf = copy.deepcopy(api_wf)
-            for nid, ninfo in wf.items():
-                if not isinstance(ninfo, dict):
-                    continue
-                title = ninfo.get("_meta", {}).get("title", "")
-                if title == "긍정프롬프트":
-                    ninfo["inputs"]["value"] = positive_text
-                elif title == "부정프롬프트":
-                    ninfo["inputs"]["value"] = negative_text
+            wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, profile_settings.get("optimizer_type", "default"))
 
             # 진행률 알림 (style 도 동일 이벤트, payload 에 source/project 추가)
             profile_label = f" ({profile})" if len(profiles_to_train) > 1 else ""
@@ -5773,6 +5759,7 @@ class QueueManager:
         반환값: (prompt_id, submit_result)
         """
         import aiohttp as _aiohttp
+        training_progress = LoraTrainingProgress()
         if CURRENT_COMFY_EXECUTION_TARGET.get() == VAST_COMFY_TARGET:
             if not callable(self.run_vast_workflow):
                 print(
@@ -5800,7 +5787,7 @@ class QueueManager:
                 raise ValueError("Vast 학습의 LoRA 결과 경로가 없습니다")
 
             async def on_vast_progress(progress: dict) -> None:
-                detail = {**dict(progress or {}), **(extra_data or {})}
+                detail = training_progress.update({**dict(progress or {}), **(extra_data or {})})
                 if detail.get("phase") == "all_complete":
                     detail["phase"] = "training_complete"
                     detail["percentage"] = 99
@@ -5945,7 +5932,7 @@ class QueueManager:
                         },
                     )
                 async def on_modal_progress(progress: dict) -> None:
-                    detail = {**dict(progress or {}), **(extra_data or {})}
+                    detail = training_progress.update({**dict(progress or {}), **(extra_data or {})})
                     # 원격 custom node의 all_complete는 GPU 학습 완료를 뜻한다.
                     # 로컬 다운로드까지 끝난 최종 all_complete와 구분한다.
                     if detail.get("phase") == "all_complete":
@@ -6081,15 +6068,12 @@ class QueueManager:
 
                             if msg_type == "md_soya_progress":
                                 phase = msg_data.get("phase", "")
+                                detail = training_progress.update({**msg_data, **(extra_data or {})})
                                 # 큐 진행률 업데이트
-                                await self._notify_progress(item, {
-                                    **msg_data,
-                                    **(extra_data or {}),
-                                })
+                                await self._notify_progress(item, detail)
                                 # 기존 탭 UI 업데이트용 이벤트
                                 if self.notify_frontend:
-                                    fwd_data = {**msg_data, **(extra_data or {})}
-                                    await self.notify_frontend(event_type, fwd_data)
+                                    await self.notify_frontend(event_type, detail)
                                 if phase == "all_complete":
                                     completed = True
                                     if on_complete:
@@ -6792,8 +6776,8 @@ class QueueManager:
             return await self._handle_bot_lora_test_setup(item, params)
 
         # bot_lora_char_test_setup: 캐릭터별 테스트 이미지 단일 정제 (공통→char_test 복사 없이 positive만 교체).
-        if source_type == "bot_lora_char_test_setup":
-            return await self._handle_bot_lora_char_test_setup(item, params)
+        if source_type in ("bot_lora_char_test_setup", "bot_lora_shared_test"):
+            return await self._handle_bot_lora_test_refine(item, params)
 
         # asset_test_setup: 에셋(asset) 테스트 이미지 일괄 세팅 (entry 단위, bot/project 미사용).
         if source_type == "asset_test_setup":
@@ -7341,11 +7325,11 @@ class QueueManager:
             traceback.print_exc()
             return f"{type(e).__name__}: {e}"
 
-    async def _handle_bot_lora_char_test_setup(self, item: QueueItem, params: dict) -> dict:
-        """캐릭터별 테스트 이미지 단일 정제: 텍스트 LLM으로 테스트 프롬프트 재생성 →
-        이미 존재하는 char_test 이미지의 positive만 교체 (공통→char_test 복사 없음).
-        카드(캐릭터 복장/외모) 소스 = 캐릭터 학습 이미지 positive."""
+    async def _handle_bot_lora_test_refine(self, item: QueueItem, params: dict) -> dict:
+        """Refine an existing shared or character test prompt, preserving its negative prompt."""
         from modes.instance_lora_mode import run_auto_refine_test_setup
+        source_type = params.get("source_type", "bot_lora_char_test_setup")
+        shared_test = source_type == "bot_lora_shared_test"
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
@@ -7356,8 +7340,8 @@ class QueueManager:
         test_positive = params.get("test_positive", "")
         event_type = "lora_prompt_refine_progress"
 
-        if not bot_name or not project_name or not char_name:
-            raise ValueError("bot_lora_char_test_setup은 bot_name, project_name, char_name이 필요합니다")
+        if not bot_name or not project_name or (not shared_test and not char_name):
+            raise ValueError("테스트 정제에 필요한 봇/프로젝트/캐릭터 정보가 없습니다")
         if not test_filename:
             raise ValueError("test_filename이 필요합니다")
 
@@ -7365,7 +7349,7 @@ class QueueManager:
         if self.notify_frontend:
             await self.notify_frontend(event_type, {
                 "phase": "running",
-                "source_type": "bot_lora_char_test_setup",
+                "source_type": source_type,
                 "bot_name": bot_name,
                 "project_name": project_name,
                 "char_name": char_name,
@@ -7381,7 +7365,7 @@ class QueueManager:
                 test_positive=test_positive,
                 bot_name=bot_name,
                 project_name=project_name,
-                source_type="bot_lora_char_test_setup",
+                source_type=source_type,
                 card_filename=card_filename,
                 visual_card_id=visual_card_id,
             )
@@ -7391,7 +7375,7 @@ class QueueManager:
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
                         "phase": "failed",
-                        "source_type": "bot_lora_char_test_setup",
+                        "source_type": source_type,
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
@@ -7405,15 +7389,16 @@ class QueueManager:
 
             # 영속화: 복사 없이 기존 char_test 이미지의 positive만 교체.
             try:
-                from modes.bot_lora_mode import save_bot_char_test_prompt_positive_only
-                sv = save_bot_char_test_prompt_positive_only(
-                    bot_name,
-                    project_name,
-                    char_name,
-                    test_filename,
-                    refined_positive,
-                    visual_card_id,
-                )
+                from modes.bot_lora_mode import get_bot_test_image_path, save_bot_test_prompt, save_bot_char_test_prompt_positive_only
+                if shared_test:
+                    if not get_bot_test_image_path(bot_name, project_name, test_filename):
+                        raise ValueError("프로젝트 테스트 이미지를 찾을 수 없습니다")
+                    sv = save_bot_test_prompt(bot_name, project_name, test_filename, refined_positive, None)
+                else:
+                    sv = save_bot_char_test_prompt_positive_only(
+                        bot_name, project_name, char_name, test_filename,
+                        refined_positive, visual_card_id,
+                    )
                 if not sv.get("success"):
                     persist_err = sv.get("error", "테스트 프롬프트 저장 실패")
                 else:
@@ -7428,7 +7413,7 @@ class QueueManager:
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
                         "phase": "failed",
-                        "source_type": "bot_lora_char_test_setup",
+                        "source_type": source_type,
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
@@ -7442,7 +7427,7 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "completed",
-                    "source_type": "bot_lora_char_test_setup",
+                    "source_type": source_type,
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
@@ -7458,7 +7443,7 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "failed",
-                    "source_type": "bot_lora_char_test_setup",
+                    "source_type": source_type,
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,

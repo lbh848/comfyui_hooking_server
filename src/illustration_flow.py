@@ -921,12 +921,29 @@ def stage(label, *, executor="process", layout_group=None, details=None):
                 failed = isinstance(result, tuple) and len(result) == 2 and not result[0]
                 output = serializable(result)
                 preview = {}
-                if (run.get("kind") == "illustration"
-                        and layout_group == "illustration_generation"
-                        and isinstance(result, tuple) and result
-                        and isinstance(result[0], bytes) and result[0]):
-                    run["nodes"][node_id]["_preview_image"] = result[0]
-                    preview["image_url"] = f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1&v={time.time_ns()}"
+                preview_bytes = None
+                if run.get("kind") == "illustration":
+                    if (layout_group == "illustration_generation"
+                            and isinstance(result, tuple) and result
+                            and isinstance(result[0], bytes) and result[0]):
+                        preview_bytes = result[0]
+                    elif (layout_group == "illustration_image_postprocess"
+                            and isinstance(result, bytes) and result):
+                        preview_bytes = result
+                if preview_bytes is not None:
+                    if layout_group == "illustration_generation":
+                        run["nodes"][node_id]["_preview_image"] = preview_bytes
+                        preview["image_url"] = f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1&v={time.time_ns()}"
+                    else:
+                        # 후처리 결과는 원본 이미지 노드의 미리보기를 갱신해 같은
+                        # 바이트를 별도 노드에 중복 저장하지 않는다.
+                        for source_id in dependencies:
+                            source = run["nodes"].get(source_id)
+                            if source and source.get("image_url"):
+                                update(run, source_id, _preview_image=preview_bytes,
+                                       image_url=f"/api/illustration_flow?run={run['id']}&node={source_id}&image=1&v={time.time_ns()}")
+                                print(f"[ILLUST_FLOW] 후처리 결과 미리보기 갱신: node={source_id}")
+                                break
                 if queued_image:
                     output = {"generation": output}
                 update(run, node_id,
@@ -1386,19 +1403,19 @@ def record_state_table(table, *, label, field):
     print(f"[ILLUST_FLOW:{label}] 상태표를 연결할 노드 없음: frontier={_frontier.get()!r}")
 
 
-def llm_attempt(event, model, service):
+def llm_attempt(event, model, service, alias=""):
     run, node_id = _run.get(), _node.get()
     if run is None or node_id is None:
         return
     event = {k: str(v) if isinstance(v, BaseException) else v for k, v in event.items()}
-    event.update(model=model, service=service)
+    event.update(model=model, service=service, alias=alias)
     node = run["nodes"][node_id]
     node["attempts"].append(event)
     timing_keys = ("thinking_started_at", "thinking_ended_at", "response_started_at", "response_ended_at", "tps")
     timing = dict.fromkeys(timing_keys) if event.get("type") == "attempt_start" else {
         key: event[key] for key in timing_keys if key in event
     }
-    llm_metadata(model=model, service=service, phase=event.get("phase"),
+    llm_metadata(model=model, service=service, alias=alias, phase=event.get("phase"),
                  llm_slot=event.get("slot"), attempt=event.get("attempt"),
                  status="waiting" if event.get("type") in {"attempt_start", "attempt_failure"} else node["status"], **timing)
 

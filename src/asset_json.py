@@ -101,7 +101,8 @@ def prepare_asset_mask_document(document: dict) -> dict:
         raise ValueError("공통 LoRA 트리거 형식을 확인하세요.")
     # The model preset may add style LoRAs after the browser assembled its tags.
     style_triggers = [item.get("trigger", "").strip() for item in fields.get("STYLE_LORA_DATA", {}).get("list", [])
-                      if item.get("BASE", "anima") == "anima" and item.get("trigger")]
+                      if item.get("enabled", True) is not False
+                      and item.get("BASE", "anima") == "anima" and item.get("trigger")]
     multi["background_trigger_list"] = list(dict.fromkeys([*background_triggers, *style_triggers]))
     groups = [list(dict.fromkeys([*group, *style_triggers])) for group in multi["char_trigger_list"]]
     if len(names) == 1 and not any(part.strip() for part in [*shared["before_char"], *shared["after_char"], *multi["background_trigger_list"], multi.get("background_prompt", "")]):

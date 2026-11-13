@@ -6,13 +6,14 @@ export const internalLoraLabels = { asset: "에셋", bot: "봇", style: "그림�
 export type InternalLoraSource = keyof typeof internalLoraLabels;
 export type InternalLoraFilter = InternalLoraSource | "all";
 export const internalLoraFilterLabels: Record<InternalLoraFilter, string> = { all: "전체", ...internalLoraLabels };
-export type PickerLora = LoraEntry & { sourceUrl?: string; internalSource?: InternalLoraSource; detail?: string };
+export type PickerLora = LoraEntry & { sourceUrl?: string; internalSource?: InternalLoraSource; detail?: string;
+  botName?: string; projectName?: string; characterName?: string; visualCardId?: string };
 const folders: Record<InternalLoraSource, string> = { asset: "SOYA_ASSET_LORA", bot: "SOYA_BOT_LORA", style: "SOYA_STYLE_LORA" };
 export const loraPath = (value = "") => value.replaceAll("\\", "/").replace(/^loras\//i, "");
 export const isInternalLora = (item: Pick<PickerLora, "path" | "internalSource">) => !!item.internalSource || /^SOYA_CHAR_LORA\//i.test(loraPath(item.path));
 export const defaultLoraTrigger = (item: PickerLora) => item.customTrigger?.trim() || item.trigger?.trim() || "";
-export const loraBase = (item: PickerLora) => /sdxl|sd xl|ilxl|illustrious|pony|noobai/i.test(item.family) ? "sdxl" : "anima";
-export const incompatibleLora = (item: PickerLora, profile: string) => profile === "ilxl" ? loraBase(item) !== "sdxl" : !["v3", "anima_ilxl"].includes(profile) && loraBase(item) === "sdxl";
+export const loraBase = (item: PickerLora) => /moss/i.test(item.family) ? "moss" : /sdxl|sd xl|ilxl|illustrious|pony|noobai/i.test(item.family) ? "sdxl" : "anima";
+export const incompatibleLora = (item: PickerLora, profile: string) => profile === "moss" ? loraBase(item) !== "moss" : loraBase(item) === "moss" || (profile === "ilxl" ? loraBase(item) !== "sdxl" : !["v3", "anima_ilxl"].includes(profile) && loraBase(item) === "sdxl");
 
 export function selectedLoraPath(item: IllustrationData): string {
   const path = loraPath(item.lora_path);
@@ -56,9 +57,11 @@ export function internalPickerLoras(source: InternalLoraSource, data: LoraData):
   function add(path: string, name: string, base: string, trigger: string, thumbnail: string, detail: string) {
     if (!path || path.startsWith("(수동)")) return;
     const fullPath = `SOYA_CHAR_LORA/${folders[source]}/${loraPath(path)}`;
-    rows.push({ id: fullPath, path: fullPath, name, family: base === "sdxl" || base === "ilxl" ? "SDXL" : "ANIMA",
+    const item: PickerLora = { id: fullPath, path: fullPath, name, family: base === "moss" ? "MOSS" : base === "sdxl" || base === "ilxl" ? "SDXL" : "ANIMA",
       category: internalLoraLabels[source], internalSource: source, trigger: trigger || "", thumbnail, detail,
-      weight: 0.5, enabled: false });
+      weight: 0.5, enabled: false };
+    rows.push(item);
+    return item;
   }
   if (source === "asset") {
     for (const group of data.groups || []) for (const entry of group.entries || []) {
@@ -76,8 +79,10 @@ export function internalPickerLoras(source: InternalLoraSource, data: LoraData):
     for (const bot of data.groups || []) for (const project of bot.projects || []) for (const character of project.characters || []) {
       let thumbnail = preview(character.preview_url || "", ["bot_lora", "trained", "preview", bot.bot_name, project.project_name, character.char_name, character.session]);
       if (thumbnail && character.visual_card_id && !thumbnail.includes("visual_card_id=")) thumbnail += `${thumbnail.includes("?") ? "&" : "?"}visual_card_id=${enc(character.visual_card_id)}`;
-      add(character.lora_path, `${character.char_name} · ${character.visual_card_label || character.visual_card_id || "기본 카드"}`,
+      const item = add(character.lora_path, `${character.char_name} · ${character.visual_card_label || character.visual_card_id || "기본 카드"}`,
         character.BASE || "anima", character.trigger, thumbnail, `봇 · ${bot.bot_name} · ${project.project_name} · ${character.session}`);
+      if (item) Object.assign(item, { botName: bot.bot_name, projectName: project.project_name,
+        characterName: character.char_name, visualCardId: character.visual_card_id || "" });
     }
   } else {
     for (const item of data.items || []) for (const [base, raw] of Object.entries(item.profiles || {})) {

@@ -9,14 +9,14 @@ export type LlmStats = {
 };
 export type LlmHistory = LlmStats & {
   id: string; ts?: string; call_name?: string; task_key?: string;
-  model?: string; service?: string; status?: string; llm_slot?: string;
+  model?: string; llm_alias?: string; service?: string; status?: string; llm_slot?: string;
   preview?: string; input?: unknown; output?: unknown; error?: string;
   reasoning?: string; reasoning_text?: string; race_id?: string; race_role?: string; race_status?: string;
   [key: string]: unknown;
 };
 export type LlmStream = LlmStats & {
   stream_id: string; source: "settings" | "internal-lora"; active: boolean;
-  call_name?: string; task_key?: string; llm_slot?: string; model?: string;
+  call_name?: string; task_key?: string; llm_slot?: string; model?: string; llm_alias?: string;
   text?: string; reasoning?: string; reasoning_text?: string; status?: string; started_at?: number;
   race_id?: string; race_role?: string;
   parallel_retry_supported?: boolean; parallel_retry_available?: boolean;

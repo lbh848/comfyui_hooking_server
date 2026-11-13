@@ -7,6 +7,7 @@ RAW 프롬프트의 섹션 구조를 유지하면서 다음 범위에 규칙을 
 - SETUP/CHAR/SUPPLEMENT: LLM 가중치 클램프 후 치환, 제거, 가중치 조정 규칙 적용
 """
 
+from copy import deepcopy
 import math
 import re
 
@@ -654,6 +655,33 @@ def _apply_rules_to_single_prompt(text: str, rules: list[dict]) -> tuple[str, in
     clamped = apply_weight_clamp(text, rules)
     transformed, _unused_negative, applied = apply_prompt_rules(clamped, "", rules)
     return transformed, applied + int(clamped != text)
+
+
+def apply_moss_prompt_rules(layout: dict, rules: list[dict]) -> tuple[dict, int]:
+    """Apply RAW tag rules to native MOSS captions before prompt assembly.
+
+    MOSS consumes these captions directly instead of the transformed RAW
+    sections. Keep dialogue text, reference names and layout geometry intact.
+    The caller supplies the same character-count-filtered rules as for RAW.
+    """
+    if not layout or not rules:
+        return layout, 0
+
+    transformed = deepcopy(layout)
+    sections = [transformed.get("summary"), *(transformed.get("items") or [])]
+    applied_total = 0
+    for section in sections:
+        if not isinstance(section, dict) or not isinstance(section.get("caption"), str):
+            continue
+        caption = section["caption"]
+        # The server prepends panel ownership to manga captions. It is not a
+        # tag: keep it outside matching so the first tag follows RAW semantics.
+        panel_marker = re.match(r"\s*PANEL\s+\d+\.\s*", caption, re.IGNORECASE)
+        prefix = caption[:panel_marker.end()] if panel_marker else ""
+        caption, applied = _apply_rules_to_single_prompt(caption[len(prefix):], rules)
+        section["caption"] = prefix + caption
+        applied_total += applied
+    return transformed, applied_total
 
 
 def apply_speak_name_replacements(speak_text: str, rules: list[dict]) -> tuple[str, int]:

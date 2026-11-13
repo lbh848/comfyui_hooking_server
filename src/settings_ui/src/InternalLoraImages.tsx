@@ -171,7 +171,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
       else for (const filename of selected) { const img = category === "style" ? (await loraRequest(`style_lora/test_images/prompt?${query({ ...params, filename })}`)).data : images.find(i => i.filename === filename)!; const prompt = { ...img, positive: img.positive || "", negative }; await loraRequest(category === "style" ? "style_lora/test_images/prompt" : `${imagePrefix}/prompt`, { ...params, filename, ...(category === "style" ? { prompt } : prompt) }); }
       notify("부정 프롬프트를 적용했습니다."); await refresh();
     }} />}
-    {testSetup && <BotTestSetup context={context} detail={detail} tests={images.filter(i => selectedNames.has(i.filename))} onClose={() => setTestSetup(false)} notify={notify} />}
+    {testSetup && <BotTestSetup context={context} detail={detail} tests={images.filter(i => selectedNames.has(i.filename))} onClose={() => setTestSetup(false)} refresh={refresh} notify={notify} />}
     {filtering && <LoraImageFilter context={context} total={images.length} refresh={refresh} onClose={() => setFiltering(false)} />}
   </div>;
 }

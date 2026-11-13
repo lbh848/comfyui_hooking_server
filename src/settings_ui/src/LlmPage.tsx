@@ -2,7 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import { ChevronRight, FlaskConical, KeyRound, Plus, Trash2 } from "lucide-react";
 import { Badge, CredentialField, Empty, Modal, Panel, Toggle } from "./components";
 import { type Draft } from "./data";
-import { llmSp, llmSpProfile, llmSlotLabel, services, serviceName, type LlmSlot } from "./llm";
+import { imagePdfDefaults, llmSp, llmSpProfile, llmSlotLabel, services, serviceName, type LlmSlot } from "./llm";
 import { httpUrl } from "./urls";
 import { LlmTestModal } from "./LlmTestModal";
 import { LlmRoutingPanel } from "./LlmRoutingPanel";
@@ -93,6 +93,7 @@ export function LlmPage({ draft, setDraft, apiKeys, setApiKeys, isSaved, revisio
   const [newConcurrency, setNewConcurrency] = useState(1);
   const [keyValid, setKeyValid] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [imagePdfReset, setImagePdfReset] = useState(0);
   const slot = draft.llms.find((entry) => entry.id === selected)!;
   const spProfile = llmSpProfile(slot.id);
   const provider = draft.llmProviders.find((entry) => entry.id === slot.providerId);
@@ -102,6 +103,10 @@ export function LlmPage({ draft, setDraft, apiKeys, setApiKeys, isSaved, revisio
   const affectedSlots = draft.llms.filter((entry) => entry.providerId === deletingId);
   function edit(patch: Partial<LlmSlot>) {
     setDraft((current) => ({ ...current, llms: current.llms.map((entry) => entry.id === slot.id ? { ...entry, ...patch } : entry) }));
+  }
+  function resetImagePdf() {
+    edit({ ...imagePdfDefaults });
+    setImagePdfReset((value) => value + 1);
   }
   function toggle(field: "stream" | "vision_compress" | "gemini_base64" | "pdf_prompt", label: string, help: string) {
     return <div className="setting-row"><div><strong>{label}</strong><p>{help}</p></div>
@@ -211,6 +216,41 @@ export function LlmPage({ draft, setDraft, apiKeys, setApiKeys, isSaved, revisio
                 <div className="llm-token-saving-controls">
                   <label className="field">토큰 절약 형식<select disabled={!slot.pdf_prompt} value={slot.pdf_prompt_format} onChange={(e) => edit({ pdf_prompt_format: e.target.value as "pdf" | "image" })}><option value="pdf">PDF</option><option value="image">이미지</option></select></label>
                   <Toggle label="토큰 절약" checked={slot.pdf_prompt} onChange={(pdf_prompt) => edit({ pdf_prompt })} />
+                </div>
+              </div>}
+              {gemini && slot.pdf_prompt && slot.pdf_prompt_format === "image" && <div className="llm-image-pdf-settings" role="group" aria-label="Gemini PDF (이미지) 변환 설정">
+                <div className="setting-row no-top">
+                  <div><strong>Gemini PDF (이미지) 변환 설정</strong><p>지침과 대화를 글자 그림으로 그린 PDF로 전송합니다. 원본 시스템 프롬프트 보존을 켜면 첫 시스템 지침은 PDF가 아닌 텍스트로 전달됩니다.</p></div>
+                  <button type="button" className="button secondary" onClick={resetImagePdf}>렌더링 초기화</button>
+                </div>
+                <div className="llm-fields">
+                  <label className="field">미디어 해상도<select value={slot.pdf_image_media_resolution} onChange={(e) => edit({ pdf_image_media_resolution: e.target.value as LlmSlot["pdf_image_media_resolution"] })}>
+                    <option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option>
+                  </select></label>
+                  <label className="field">줄바꿈 처리<select value={slot.pdf_image_newline} onChange={(e) => edit({ pdf_image_newline: e.target.value as LlmSlot["pdf_image_newline"] })}>
+                    <option value="actual">실제 줄바꿈</option><option value="collapse">공백으로 합치기</option>
+                  </select></label>
+                  <label className="field">이모지<select value={slot.pdf_image_emoji} onChange={(e) => edit({ pdf_image_emoji: e.target.value as LlmSlot["pdf_image_emoji"] })}>
+                    <option value="keep">그대로 그리기</option><option value="strip">제거</option>
+                  </select></label>
+                  <NumberField key={`${slot.id}-${imagePdfReset}-page-width`} label="페이지 폭 (px)" value={slot.pdf_image_page_width} min={256} max={4096} onChange={(pdf_image_page_width) => edit({ pdf_image_page_width })} />
+                  <NumberField key={`${slot.id}-${imagePdfReset}-page-height`} label="페이지 높이 (px)" value={slot.pdf_image_page_height} min={256} max={4096} onChange={(pdf_image_page_height) => edit({ pdf_image_page_height })} />
+                  <NumberField key={`${slot.id}-${imagePdfReset}-margin`} label="여백 (px)" value={slot.pdf_image_margin} min={0} max={256} onChange={(pdf_image_margin) => edit({ pdf_image_margin })} />
+                  <NumberField key={`${slot.id}-${imagePdfReset}-font-size`} label="글자 크기 (px)" value={slot.pdf_image_font_size} min={6} max={128} onChange={(pdf_image_font_size) => edit({ pdf_image_font_size })} />
+                  <NumberField key={`${slot.id}-${imagePdfReset}-line-spacing`} label="줄 간격 (배)" value={slot.pdf_image_line_spacing} min={0.8} max={3} step={0.1} onChange={(pdf_image_line_spacing) => edit({ pdf_image_line_spacing })} />
+                </div>
+                <div className="llm-fields">
+                  <label className="field">글꼴<input value={slot.pdf_image_font_family} onChange={(e) => edit({ pdf_image_font_family: e.target.value })} /></label>
+                  <label className="field">줄 나눔<select value={slot.pdf_image_line_break} onChange={(e) => edit({ pdf_image_line_break: e.target.value as LlmSlot["pdf_image_line_break"] })}>
+                    <option value="character">글자 단위</option><option value="word">단어 단위</option>
+                  </select></label>
+                  <label className="field">색 처리<select value={slot.pdf_image_color_mode} onChange={(e) => edit({ pdf_image_color_mode: e.target.value as LlmSlot["pdf_image_color_mode"] })}>
+                    <option value="grayscale">항상 회색조</option><option value="auto">자동</option>
+                  </select></label>
+                </div>
+                <div className="setting-row">
+                  <div><strong>원본 시스템 프롬프트 보존</strong><p>첫 번째 시스템 프롬프트를 PDF로 변환하지 않고 텍스트로 보존합니다. 지침 이해 능력이 떨어질 때 켜세요.</p></div>
+                  <Toggle label="원본 시스템 프롬프트 보존" checked={slot.pdf_image_preserve_system_prompt} onChange={(pdf_image_preserve_system_prompt) => edit({ pdf_image_preserve_system_prompt })} />
                 </div>
               </div>}
             </div>

@@ -1,7 +1,7 @@
 """Gemini/Vertex용 대화 transcript PDF 변환.
 
 대화의 자연어 흐름과 role 순서를 하나의 transcript로 보존하고, 기존 이미지
-파트는 PDF 뒤에 원래 순서대로 첨부한다. 기본 PDF는 1pt 텍스트와
+파트는 PDF 뒤에 원래 순서대로 첨부한다. 기본 PDF는 3pt 텍스트와
 ``ActualText``로 긴 문맥을 담는다. 이미지 모드는 9pt 글자를 손실 없는
 그림으로 그려 PDF에 담고 네이티브 텍스트 레이어를 포함하지 않는다.
 """
@@ -14,6 +14,7 @@ import base64
 import copy
 import json
 import math
+import re
 import zlib
 from pathlib import Path
 
@@ -21,8 +22,36 @@ from pathlib import Path
 PDF_MIME_TYPE = "application/pdf"
 PDF_FILENAME = "llm-conversation.pdf"
 PDF_MEDIA_RESOLUTION = "MEDIA_RESOLUTION_LOW"
-PDF_FONT_SIZE = 1.0
+PDF_FONT_SIZE = 3.0
 PDF_IMAGE_FONT_SIZE = 9.0
+
+# Image-only PDF transport defaults. These mirror the settings exposed by the
+# image prompt panel; the native-text PDF path keeps its own fixed layout.
+PDF_IMAGE_DEFAULT_OPTIONS = {
+    "media_resolution": "medium",
+    "page_width": 1191,
+    "page_height": 1684,
+    "margin": 12,
+    "font_size": 16,
+    "line_spacing": 1.2,
+    "font_family": (
+        '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", '
+        '"Noto Sans CJK KR", sans-serif'
+    ),
+    "line_break": "character",
+    "color_mode": "grayscale",
+    "emoji": "keep",
+    "newline": "actual",
+    "preserve_system_prompt": True,
+}
+_PDF_IMAGE_MEDIA_RESOLUTIONS = frozenset({"low", "medium", "high"})
+_PDF_IMAGE_LINE_BREAKS = frozenset({"character", "word"})
+_PDF_IMAGE_COLOR_MODES = frozenset({"grayscale", "auto"})
+_PDF_IMAGE_EMOJI_MODES = frozenset({"keep", "strip"})
+_PDF_IMAGE_NEWLINE_MODES = frozenset({"actual", "collapse"})
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF☀-➿️‍]"
+)
 
 _PAGE_WIDTH = 595.28
 _PAGE_HEIGHT = 841.89
@@ -62,6 +91,191 @@ def _newline_marker(count: int) -> str:
     if count == 1:
         return "\u2028"
     return "\u2029" + ("\u2028" * (count - 2))
+
+
+def normalize_image_options(options: dict | None = None) -> dict:
+    """Return image-PDF render options with validated defaults."""
+    merged = dict(PDF_IMAGE_DEFAULT_OPTIONS)
+    if isinstance(options, dict):
+        for key in merged:
+            if options.get(key) is not None:
+                merged[key] = options[key]
+
+    def integer(key: str, minimum: int, maximum: int) -> int:
+        try:
+            value = int(merged[key])
+        except (TypeError, ValueError):
+            value = PDF_IMAGE_DEFAULT_OPTIONS[key]
+        return max(minimum, min(maximum, value))
+
+    def number(key: str, minimum: float, maximum: float) -> float:
+        try:
+            value = float(merged[key])
+        except (TypeError, ValueError):
+            value = PDF_IMAGE_DEFAULT_OPTIONS[key]
+        return max(minimum, min(maximum, value))
+
+    merged["media_resolution"] = (
+        str(merged["media_resolution"]).strip().lower()
+        if str(merged["media_resolution"]).strip().lower() in _PDF_IMAGE_MEDIA_RESOLUTIONS
+        else PDF_IMAGE_DEFAULT_OPTIONS["media_resolution"]
+    )
+    merged["page_width"] = integer("page_width", 256, 4096)
+    merged["page_height"] = integer("page_height", 256, 4096)
+    merged["margin"] = integer("margin", 0, 256)
+    merged["font_size"] = integer("font_size", 6, 128)
+    merged["line_spacing"] = number("line_spacing", 0.8, 3.0)
+    merged["font_family"] = str(merged["font_family"] or PDF_IMAGE_DEFAULT_OPTIONS["font_family"])
+    merged["line_break"] = (
+        str(merged["line_break"]).strip().lower()
+        if str(merged["line_break"]).strip().lower() in _PDF_IMAGE_LINE_BREAKS
+        else PDF_IMAGE_DEFAULT_OPTIONS["line_break"]
+    )
+    merged["color_mode"] = (
+        str(merged["color_mode"]).strip().lower()
+        if str(merged["color_mode"]).strip().lower() in _PDF_IMAGE_COLOR_MODES
+        else PDF_IMAGE_DEFAULT_OPTIONS["color_mode"]
+    )
+    merged["emoji"] = (
+        str(merged["emoji"]).strip().lower()
+        if str(merged["emoji"]).strip().lower() in _PDF_IMAGE_EMOJI_MODES
+        else PDF_IMAGE_DEFAULT_OPTIONS["emoji"]
+    )
+    merged["newline"] = (
+        str(merged["newline"]).strip().lower()
+        if str(merged["newline"]).strip().lower() in _PDF_IMAGE_NEWLINE_MODES
+        else PDF_IMAGE_DEFAULT_OPTIONS["newline"]
+    )
+    merged["preserve_system_prompt"] = bool(merged["preserve_system_prompt"])
+    return merged
+
+
+_FONT_NAME_FILES = {
+    "malgun gothic": ("malgun.ttf", "malgunsl.ttf"),
+    "apple sd gothic neo": ("AppleSDGothicNeo.ttc",),
+    "noto sans kr": ("NotoSansKR-VF.ttf", "NotoSansKR-Regular.otf", "NotoSansKR-Regular.ttf"),
+    "noto sans cjk kr": ("NotoSansCJKkr-Regular.otf", "NotoSansKR-VF.ttf"),
+    "noto sans": ("NotoSansKR-VF.ttf", "NotoSans-Regular.ttf"),
+    "segoe ui": ("segoeui.ttf",),
+}
+
+
+def _font_search_dirs() -> list[Path]:
+    dirs = [data_root() / "fonts", Path("C:/Windows/Fonts"), Path("/usr/share/fonts"), Path("/System/Library/Fonts")]
+    return [directory for directory in dirs if directory.is_dir()]
+
+
+def _resolve_image_font_path(font_family: str) -> Path | None:
+    names = [
+        name.strip().strip('"').strip("'").lower()
+        for name in str(font_family or "").split(",")
+        if name.strip()
+    ]
+    search_dirs = _font_search_dirs()
+    for name in names:
+        candidates = list(_FONT_NAME_FILES.get(name, ()))
+        normalized = re.sub(r"[^a-z0-9]+", "", name)
+        for directory in search_dirs:
+            for path in directory.iterdir():
+                if not path.is_file() or path.suffix.lower() not in (".ttf", ".otf", ".ttc"):
+                    continue
+                stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower())
+                if stem == normalized or stem.startswith(normalized):
+                    return path
+        for directory in search_dirs:
+            for filename in candidates:
+                path = directory / filename
+                if path.is_file():
+                    return path
+    fallback = data_root() / "fonts" / "NotoSansKR-VF.ttf"
+    return fallback if fallback.is_file() else None
+
+
+def _load_image_font(font_family: str, font_size: int):
+    from PIL import ImageFont
+
+    path = _resolve_image_font_path(font_family)
+    if path is not None:
+        try:
+            return ImageFont.truetype(str(path), size=font_size)
+        except OSError:
+            pass
+    return ImageFont.load_default(size=font_size)
+
+
+def _strip_emoji(text: str) -> str:
+    return _EMOJI_RE.sub("", text)
+
+
+def _char_chunks(text: str, font, usable_width: float, width_scale: float = 1.0) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for character in text:
+        if current and font.getlength(current + character) * width_scale > usable_width:
+            chunks.append(current)
+            current = character
+        else:
+            current += character
+    chunks.append(current)
+    return chunks
+
+
+def _wrap_image_line(text: str, font, usable_width: float, line_break: str,
+                     width_scale: float = 1.0) -> list[str]:
+    if not text:
+        return [""]
+    if line_break != "word":
+        return _char_chunks(text, font, usable_width, width_scale)
+    chunks: list[str] = []
+    current = ""
+    for token in re.findall(r"\S+|\s+", text):
+        candidate = current + token
+        if not current or font.getlength(candidate.rstrip()) * width_scale <= usable_width:
+            current = candidate
+            continue
+        if current.strip():
+            chunks.append(current.rstrip())
+        current = token.lstrip()
+        if font.getlength(current) * width_scale > usable_width:
+            broken = _char_chunks(current, font, usable_width, width_scale)
+            chunks.extend(broken[:-1])
+            current = broken[-1]
+    if current or not chunks:
+        chunks.append(current.rstrip())
+    return chunks
+
+
+def _paginate_image_text(
+    text: str, *,
+    width: int, height: int, margin: int, font, font_size: int,
+    line_spacing: float, line_break: str, emoji: str, newline: str,
+    character_width_ratio: float = _CHARACTER_WIDTH_RATIO,
+) -> tuple[list[list[str]], int]:
+    usable_width = max(1, width - (2 * margin))
+    width_scale = max(0.1, character_width_ratio / _CHARACTER_WIDTH_RATIO)
+    usable_height = max(1, height - (2 * margin))
+    line_height = max(1, round(font_size * line_spacing))
+    lines_per_page = max(1, usable_height // line_height)
+    source = str(text)
+    if emoji == "strip":
+        source = _strip_emoji(source)
+    source = source.replace("\r\n", "\n").replace("\r", "\n")
+    if newline == "collapse":
+        source = re.sub(r"[ \t]*\n[ \t]*", " ", source)
+    rendered_lines: list[str] = []
+    for logical_line in source.split("\n"):
+        if not logical_line:
+            rendered_lines.append("")
+            continue
+        rendered_lines.extend(
+            _wrap_image_line(logical_line, font, usable_width, line_break, width_scale)
+        )
+    if not rendered_lines:
+        rendered_lines.append("")
+    return [
+        rendered_lines[offset:offset + lines_per_page]
+        for offset in range(0, len(rendered_lines), lines_per_page)
+    ], line_height
 
 
 def _paginate_text(
@@ -246,32 +460,50 @@ def _assemble_pdf(objects: list[bytes]) -> bytes:
 
 def build_text_pdf(
     text: str, *, character_width_ratio: float = _CHARACTER_WIDTH_RATIO,
-    prompt_format: str = "pdf",
+    prompt_format: str = "pdf", image_options: dict | None = None,
 ) -> tuple[bytes, int]:
-    """1pt 네이티브 텍스트 또는 텍스트 레이어 없는 9pt 그림 PDF를 만든다."""
+    """Build a native-text PDF or a text-layer-free pictured PDF."""
     if prompt_format == "image":
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
 
-        font = ImageFont.truetype(
-            str(data_root() / "fonts" / "NotoSansKR-VF.ttf"),
-            size=round(PDF_IMAGE_FONT_SIZE * 2),
+        options = normalize_image_options(image_options)
+        page_width = options["page_width"]
+        page_height = options["page_height"]
+        margin = options["margin"]
+        font = _load_image_font(options["font_family"], options["font_size"])
+        pages, line_height = _paginate_image_text(
+            str(text).expandtabs(4),
+            width=page_width,
+            height=page_height,
+            margin=margin,
+            font=font,
+            font_size=options["font_size"],
+            line_spacing=options["line_spacing"],
+            line_break=options["line_break"],
+            emoji=options["emoji"],
+            newline=options["newline"],
+            character_width_ratio=character_width_ratio,
         )
-        pages = _paginate_text(
-            str(text).expandtabs(4), font=font, character_width_ratio=character_width_ratio,
-        )
+        # The pictured canvas is drawn at 2x density; the PDF page uses points.
+        page_width_pt = page_width / 2
+        page_height_pt = page_height / 2
+        color_mode = "L" if options["color_mode"] == "grayscale" else "RGB"
+        background = 255 if color_mode == "L" else (255, 255, 255)
+        text_color = 0 if color_mode == "L" else (0, 0, 0)
+        color_space = "/DeviceGray" if color_mode == "L" else "/DeviceRGB"
         page_references = " ".join(f"{3 + index * 3} 0 R" for index in range(len(pages)))
         objects = [
             b"<< /Type /Catalog /Pages 2 0 R >>",
             (f"<< /Type /Pages /Kids [{page_references}] /Count {len(pages)} "
-             f"/MediaBox [0 0 {_pdf_number(_PAGE_WIDTH)} {_pdf_number(_PAGE_HEIGHT)}] >>").encode("ascii"),
+             f"/MediaBox [0 0 {_pdf_number(page_width_pt)} {_pdf_number(page_height_pt)}] >>").encode("ascii"),
         ]
         for page_index, lines in enumerate(pages):
-            with Image.new("L", (math.ceil(_PAGE_WIDTH * 2), math.ceil(_PAGE_HEIGHT * 2)), 255) as image:
+            with Image.new(color_mode, (page_width, page_height), background) as image:
                 draw = ImageDraw.Draw(image)
                 for line_index, line in enumerate(lines):
                     draw.text(
-                        (_PAGE_MARGIN * 2, _PAGE_MARGIN * 2 + line_index * sum(font.getmetrics())),
-                        line["glyphs"], font=font, fill=0, anchor="lt",
+                        (margin, margin + line_index * line_height),
+                        line, font=font, fill=text_color, anchor="lt",
                     )
                 # Lossless pixels only: no hidden text, font, ActualText or OCR layer.
                 pixels = zlib.compress(image.tobytes())
@@ -282,11 +514,11 @@ def build_text_pdf(
                 (f"<< /Type /Page /Parent 2 0 R /Contents {content_number} 0 R "
                  f"/Resources << /XObject << /PicturedText {image_number} 0 R >> >> >>").encode("ascii"),
                 _deflated_stream(
-                    (f"q {_pdf_number(_PAGE_WIDTH)} 0 0 {_pdf_number(_PAGE_HEIGHT)} 0 0 cm "
+                    (f"q {_pdf_number(page_width_pt)} 0 0 {_pdf_number(page_height_pt)} 0 0 cm "
                      "/PicturedText Do Q").encode("ascii")
                 ),
                 (f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
-                 f"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode "
+                 f"/ColorSpace {color_space} /BitsPerComponent 8 /Filter /FlateDecode "
                  f"/Length {len(pixels)} >>\nstream\n").encode("ascii") + pixels + b"\nendstream",
             ])
         return _assemble_pdf(objects), len(pages)
@@ -412,9 +644,30 @@ def prepare_pdf_prompt_messages(
     encode_transcript: bool,
     character_width_ratio: float = _CHARACTER_WIDTH_RATIO,
     prompt_format: str = "pdf",
+    image_options: dict | None = None,
+    preserve_system_prompt: bool | None = None,
 ) -> tuple[list, dict]:
     """대화를 PDF 한 파트와 원본 이미지 파트들로 변환한다."""
-    transcript, media_parts = build_conversation_transcript(messages)
+    options = normalize_image_options(image_options) if prompt_format == "image" else None
+    if preserve_system_prompt is None:
+        preserve_system_prompt = bool(options and options["preserve_system_prompt"])
+    preserved_system = ""
+    transcript_messages = list(messages or [])
+    if (
+        preserve_system_prompt
+        and transcript_messages
+        and isinstance(transcript_messages[0], dict)
+        and transcript_messages[0].get("role") == "system"
+    ):
+        preserved_media: list[dict] = []
+        preserved_system = _plain_content(
+            transcript_messages[0].get("content", ""), preserved_media
+        ).strip()
+        transcript_messages = transcript_messages[1:]
+
+    transcript, media_parts = build_conversation_transcript(transcript_messages)
+    if preserved_system:
+        media_parts = preserved_media + media_parts
     pdf_text = (
         base64.b64encode(transcript.encode("utf-8")).decode("ascii")
         if encode_transcript
@@ -425,6 +678,7 @@ def prepare_pdf_prompt_messages(
         layout_options["character_width_ratio"] = character_width_ratio
     if prompt_format == "image":
         layout_options["prompt_format"] = "image"
+        layout_options["image_options"] = options
     pdf_bytes, page_count = build_text_pdf(pdf_text, **layout_options)
     pdf_data_url = (
         f"data:{PDF_MIME_TYPE};base64,"
@@ -437,22 +691,39 @@ def prepare_pdf_prompt_messages(
     )
     if prompt_format == "image":
         bootstrap = IMAGE_BASE64_TRANSCRIPT_BOOTSTRAP if encode_transcript else IMAGE_TRANSCRIPT_BOOTSTRAP
-    transformed = [
-        {"role": "system", "content": bootstrap},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "file",
-                    "file": {
-                        "filename": PDF_FILENAME,
-                        "file_data": pdf_data_url,
-                    },
+    transformed = [{"role": "system", "content": bootstrap}]
+    if preserved_system:
+        bootstrap += (
+            "\n\nThe original system message is preserved below in plain text, "
+            "not inside the attached PDF, and must be read as plain text."
+        )
+        transformed[0]["content"] = bootstrap
+        preserved_message = {
+            "role": "system",
+            "content": (
+                "### PRESERVED ORIGINAL SYSTEM PROMPT (PLAIN TEXT — "
+                "DO NOT BASE64-DECODE)\n" + preserved_system
+            ),
+        }
+        if encode_transcript:
+            # The protocol is prepended later; mark this message so the encoder
+            # leaves the instruction text readable instead of hiding it in a
+            # Base64 block the model has to decode from a pictured PDF.
+            preserved_message["_base64_exempt"] = True
+        transformed.append(preserved_message)
+    transformed.append({
+        "role": "user",
+        "content": [
+            {
+                "type": "file",
+                "file": {
+                    "filename": PDF_FILENAME,
+                    "file_data": pdf_data_url,
                 },
-                *media_parts,
-            ],
-        },
-    ]
+            },
+            *media_parts,
+        ],
+    })
     return transformed, {
         "page_count": page_count,
         "pdf_bytes": len(pdf_bytes),
@@ -462,5 +733,8 @@ def prepare_pdf_prompt_messages(
         "base64_transcript": encode_transcript,
         "character_width_ratio": character_width_ratio,
         "prompt_format": prompt_format,
+        "font_size": options["font_size"] if options else PDF_FONT_SIZE,
+        "preserved_system_chars": len(preserved_system),
+        "image_options": options or {},
     }
 

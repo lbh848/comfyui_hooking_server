@@ -1,8 +1,6 @@
 """Shared step settings and image scheduling for LoRA training and previews."""
 from __future__ import annotations
 
-import random
-
 
 def training_step_settings(settings: dict, *, default_mode="per_image", default_step=50) -> dict:
     step_mode = settings.get("step_mode", default_mode)
@@ -17,16 +15,14 @@ def training_step_settings(settings: dict, *, default_mode="per_image", default_
     return {"step_mode": step_mode, "step_per_image": int(step_per_image), "total_steps": int(total_steps)}
 
 
-def prepare_training_images(images: list, settings: dict, *, default_mode="per_image", default_step=50) -> tuple[list, int]:
-    """Reuse style LoRA's full passes + sampled remainder for an exact total.
+def prepare_training_images(images: list, settings: dict, *, default_mode="per_image", default_step=50) -> tuple[list, int, int]:
+    """Return source images, per-image steps and the exact training step limit.
 
-    A fixed sampling seed keeps previews, captions and exported images aligned.
-    Per-image mode leaves the original dataset and repeat count unchanged.
+    Repetition belongs to the trainer, not to exported files or image tensors.
+    Total mode keeps every source image once, regardless of the step budget.
     """
     steps = training_step_settings(settings, default_mode=default_mode, default_step=default_step)
     if steps["step_mode"] == "per_image":
-        return images, steps["step_per_image"]
-    if not images:
-        return [], 1
-    full, remainder = divmod(steps["total_steps"], len(images))
-    return images * full + random.Random(0).sample(images, remainder), 1
+        step = steps["step_per_image"]
+        return images, step, len(images) * step
+    return images, 1, steps["total_steps"] if images else 0

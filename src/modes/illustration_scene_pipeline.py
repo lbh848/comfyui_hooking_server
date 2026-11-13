@@ -23,7 +23,14 @@ from modes import postprocess
 from modes.illustration_prompt_assembly import prompt_join, variable
 from modes import illustration_prompt_builders as prompt_builders
 from modes import illustration_composite
+from modes.moss_prompt_builder import MANGA_META
 from modes.visual_profiles import profile_by_id, resolve_visual_base
+from manga_page_vocabulary import (
+    ACTOR_PANEL_RELATION, BALLOON, BALLOON_TAIL, BOUNDARY_PHRASES,
+    PAGE_BOUNDARIES, PANEL_CAMERA_ANGLE, SHARED_DIVIDER_PREFIX,
+    PANEL_CAMERA_DISTANCE, PANEL_EDGE, PANEL_FOCUS, PANEL_SHAPE, balloon_caption,
+    normalize_choice, panel_caption,
+)
 
 
 def _fail(stage: str, reason: str, value=None, *, warning: bool = False) -> None:
@@ -360,7 +367,7 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
                     and not scene.get("emotions")):
                 _fail(stage, "비어 있는 장면 brief", scene, warning=True)
             if set(scene) - {"anchor_segment", "characters", "scene_brief", "emotions",
-                             "character", "emotion", "cast", "canvas", "panels"}:
+                             "character", "emotion", "background", "cast", "canvas", "panels"}:
                 _fail(stage, "추가 장면 필드; 원문 유지", scene, warning=True)
             used_slots.add(slot)
             last_rank = rank
@@ -380,6 +387,15 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     """Pass selected profiles and only the enabled trackers' own slot state."""
     anchor = plan["anchor_segment"]
     scene = {"anchor_segment": anchor, "slot": int(slot_map[anchor]), "characters": []}
+    # The MOSS dialogue repair node needs the current source as [Cxxx] blocks.
+    # Attach it once per scene; the batch reuses the same string.
+    source_context = "\n\n".join(
+        f"[{segment_id}]\n{segment.get('text') or ''}"
+        for segment_id, segment in (segments or {}).items()
+        if isinstance(segment, dict) and str(segment.get("text") or "").strip()
+    )
+    if source_context:
+        scene["source_context"] = source_context
     if "scene_brief" in plan:
         scene["brief"] = plan["scene_brief"]
     if isinstance(plan.get("emotions"), dict) and plan["emotions"]:
@@ -451,6 +467,388 @@ def _moss_bbox(value, field: str, width: int, height: int) -> list[int]:
             max(-half_h, min(half_h, y1)), max(-half_w, min(half_w, x1))]
 
 
+_MANGA_NON_RECT_FRAME_WORDS = (
+    "trapezoid", "parallelogram", "slanted band", "wedge", "diagonal",
+    "irregular quadrilateral", "angled", "corner-cut",
+)
+_MANGA_FRAME_SHAPES = (
+    "trapezoid, slanted bottom edge, thin black border",
+    "parallelogram, leaning right, thin black border",
+    "slanted band, diagonal top edge, thin black border",
+    "wedge inset, one angled corner, thin black border",
+)
+
+
+def _diversify_manga_panel_frames(items: list[dict], summary_caption: str) -> str:
+    """Guarantee angled frames when DETAIL-MANGA returns an all-rectangle page.
+
+    MOSS only stores axis-aligned bboxes, so the visible frame lives in the
+    panel caption. If a 3+ panel page comes back entirely rectangular, the
+    image model has no reason to vary the page. Rewrite the first and last
+    panel captions with a concrete frame clause; the LLM's composition text is
+    preserved and the bboxes are untouched.
+    """
+    panels = [entry for entry in items
+              if entry.get("label") == "object"
+              and str(entry.get("caption") or "").strip().upper().startswith("PANEL ")
+              and "INSET FRAME" not in str(entry.get("caption") or "").upper()]
+    if len(panels) < 3:
+        return summary_caption
+    if any(any(word in str(entry.get("caption") or "").lower()
+               for word in _MANGA_NON_RECT_FRAME_WORDS)
+           for entry in panels):
+        return summary_caption
+    for index, entry in enumerate((panels[0], panels[-1])):
+        caption = str(entry.get("caption") or "").strip()
+        match = re.match(r"(?i)^PANEL\s+(\d+)\.\s*", caption)
+        if not match:
+            continue
+        rest = caption[match.end():].strip()
+        first, separator, tail = rest.partition(". ")
+        # Drop a leading "A rectangular manga panel with a thin border" clause;
+        # the FRAME clause replaces it. Keep composition sentences.
+        if "panel" in first.lower() or "border" in first.lower():
+            rest = tail.strip() if separator else ""
+        entry["caption"] = (
+            f"PANEL {match.group(1)}. FRAME: {_MANGA_FRAME_SHAPES[index]}. {rest}".strip())
+    if "diagonal" not in summary_caption.lower() and "angled" not in summary_caption.lower():
+        summary_caption = (
+            summary_caption.rstrip()
+            + " Dynamic manga page with angled panels."
+        ).strip()
+    print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 전부 직사각형인 페이지에 사선 컷 프레임 보정 적용: "
+          f"panels={len(panels)}")
+    return summary_caption
+
+
+def _manga_panel_id(value, index: int, used: set[str]) -> str:
+    candidate = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,23}", candidate or ""):
+        candidate = f"p{index}"
+    if candidate in used:
+        raise ValueError(f"DETAIL-MANGA panelId 중복: {candidate!r}")
+    used.add(candidate)
+    return candidate
+
+
+def _manga_actor_id(value) -> str:
+    return str(value or "").strip().strip('\"“”').strip()
+
+
+def _manga_attach_note(panel: dict, panel_ids: dict[str, int] | None) -> str:
+    entries = panel.get("attachedTo")
+    if not isinstance(entries, list) or not panel_ids:
+        return ""
+    parts = []
+    for entry in entries:
+        if isinstance(entry, str):
+            panel_id, edge = entry, ""
+        elif isinstance(entry, dict):
+            panel_id = str(entry.get("panelId") or "")
+            edge = str(entry.get("edge") or "").strip().lower()
+        else:
+            continue
+        panel_id = panel_id.strip().lower().replace("-", "_").replace(" ", "_")
+        target = panel_ids.get(panel_id)
+        if not target:
+            print(f"[ILLUST_CONTEXT:DETAIL-MANGA] attachedTo panelId 무시: {panel_id!r}")
+            continue
+        parts.append(f"PANEL {target} at the {edge} edge" if edge in PANEL_EDGE
+                     else f"PANEL {target}")
+    if not parts:
+        return ""
+    return ("Shares one black dividing stroke with " + " and ".join(parts)
+            + "; the artwork on both sides meets directly at that stroke.")
+
+
+def _manga_panel_item(number: int, panel: dict, width: int, height: int,
+                      panel_ids: dict[str, int] | None = None, *,
+                      boundaries: str = "separated") -> dict:
+    shape = normalize_choice(panel.get("shape"), PANEL_SHAPE, "regular", "shape")
+    distance = normalize_choice(panel.get("camera_distance"), PANEL_CAMERA_DISTANCE,
+                                "medium", "camera_distance")
+    angle = normalize_choice(panel.get("camera_angle"), PANEL_CAMERA_ANGLE,
+                             "eye_level", "camera_angle")
+    focus = normalize_choice(panel.get("focus"), PANEL_FOCUS, "deep_focus", "focus")
+    attach_note = _manga_attach_note(panel, panel_ids)
+    caption = panel_caption(number, panel, shape=shape, camera_distance=distance,
+                            camera_angle=angle, focus=focus,
+                            shared_dividers=boundaries == "touching" or bool(attach_note))
+    if attach_note:
+        caption = f"{caption} {attach_note}"
+    return {
+        "label": "object",
+        "caption": caption,
+        "bbox": _moss_bbox(panel.get("bbox"), f"panels[{number - 1}].bbox", width, height),
+    }
+
+
+def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int) -> dict:
+    actor_id = _manga_actor_id(actor.get("actorId"))
+    if not actor_id:
+        raise ValueError(f"DETAIL-MANGA {field}.actorId가 비어 있습니다")
+    instruction = str(actor.get("instruction") or "").strip()
+    if not instruction:
+        raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
+    return {
+        "label": "character",
+        "name": actor_id,
+        "caption": f"PANEL {number}. {instruction}",
+        "bbox": _moss_bbox(actor.get("bbox"), f"{field}.bbox", width, height),
+    }
+
+
+def _manga_object_item(number: int, obj: dict, field: str, width: int, height: int) -> dict:
+    instruction = str(obj.get("instruction") or "").strip()
+    if not instruction:
+        raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
+    return {
+        "label": "object",
+        "caption": instruction,
+        "bbox": _moss_bbox(obj.get("bbox"), f"{field}.bbox", width, height),
+    }
+
+
+def _manga_dialogue_item(number: int, dialogue: dict, field: str,
+                         width: int, height: int) -> dict:
+    spoken = pipeline.multi_char_mask._prompt_text(
+        dialogue.get("text"), f"{field}.text", required=False)
+    if not spoken:
+        raise ValueError(f"DETAIL-MANGA {field}.text가 비어 있습니다")
+    balloon = normalize_choice(dialogue.get("balloon"), BALLOON, "oval", "balloon")
+    tail = normalize_choice(dialogue.get("tail"), BALLOON_TAIL, "none", "tail")
+    speaker = _manga_actor_id(dialogue.get("speaker"))
+    owner = f"Speaker: {speaker}. " if speaker and balloon != "narration" else ""
+    return {
+        "label": "text",
+        "caption": f"PANEL {number}. {owner}{balloon_caption(balloon, tail)}",
+        "text": spoken,
+        "bbox": _moss_bbox(dialogue.get("bbox"), f"{field}.bbox", width, height),
+    }
+
+
+def _manga_shared_dividers(panels: list[dict], width: int, height: int) -> list[dict]:
+    """Project exact shared straight edges to thin ink-rule layout items.
+
+    An enclosing bbox cannot locate an irregular/slanted frame edge. Only
+    ordinary rectangular panels qualify; panel and actor boxes never move.
+    Each unordered pair is visited once, so reciprocal attachments cannot
+    duplicate the stroke. Small model-authored gaps are not silently bridged.
+    """
+    rectangular = {"regular", "wide", "tall"}
+    regions = [_moss_bbox(panel.get("bbox"), f"panels[{index}].bbox", width, height)
+               for index, panel in enumerate(panels)
+               if str(panel.get("shape") or "regular").strip().lower() in rectangular]
+    thickness = max(2, round(min(width, height) / 192))
+    before, after = thickness // 2, thickness - thickness // 2
+    dividers = []
+    seen = set()
+    for index, box in enumerate(regions):
+        for other in regions[index + 1:]:
+            y0, x0, y1, x1 = box
+            v0, u0, v1, u1 = other
+            left, right = max(x0, u0), min(x1, u1)
+            top, bottom = max(y0, v0), min(y1, v1)
+            if left < right and (y1 == v0 or v1 == y0):
+                edge = y1 if y1 == v0 else y0
+                line, direction = [edge - before, left, edge + after, right], "horizontal"
+            elif top < bottom and (x1 == u0 or u1 == x0):
+                edge = x1 if x1 == u0 else x0
+                line, direction = [top, edge - before, bottom, edge + after], "vertical"
+            else:
+                continue
+            line = _moss_bbox(line, "shared_divider.bbox", width, height)
+            key = tuple(line)
+            if key in seen:
+                continue
+            seen.add(key)
+            views = "upper and lower" if direction == "horizontal" else "left and right"
+            dividers.append({
+                "label": "object",
+                "caption": (f"{SHARED_DIVIDER_PREFIX} {direction} ink rule separating the {views} views. "
+                            "Artwork directly touches both sides of this line."),
+                "bbox": line,
+            })
+    return dividers
+
+
+def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[list[dict], str]:
+    """Flatten the model's layered page plan into MOSS items.
+
+    Model-authored boxes are only clamped. Shared straight edges may receive
+    an ink-rule item derived from those exact edges; nothing is re-laid out.
+    """
+    panels = layout.get("panels")
+    if not isinstance(panels, list) or not panels:
+        raise ValueError("DETAIL-MANGA panels가 비어 있습니다")
+    if not 1 <= len(panels) <= 5:
+        raise ValueError(f"DETAIL-MANGA panels 수는 1~5여야 합니다: {len(panels)}")
+    page = layout.get("page") if isinstance(layout.get("page"), dict) else {}
+    summary = layout.get("summary") if isinstance(layout.get("summary"), dict) else {}
+    setting = str(page.get("caption") or summary.get("caption") or "").strip()
+    instruction = str(page.get("instruction") or "").strip()
+    boundaries = normalize_choice(page.get("boundaries"), PAGE_BOUNDARIES,
+                                  "touching", "boundaries")
+    boundary_caption = (BOUNDARY_PHRASES[boundaries].format(panel_count=len(panels))
+                        if len(panels) > 1 else "")
+    # Page composition is part of the image prompt, not merely saved planning
+    # metadata. Previously a non-empty setting silently discarded it.
+    caption = " ".join(dict.fromkeys(
+        part for part in (boundary_caption, instruction, setting) if part))
+
+    panel_ids: dict[str, int] = {}
+    used_ids: set[str] = set()
+    for index, panel in enumerate(panels):
+        if not isinstance(panel, dict):
+            raise ValueError(f"DETAIL-MANGA panels[{index}]가 object가 아닙니다")
+        panel_id = _manga_panel_id(panel.get("panelId"), index + 1, used_ids)
+        panel_ids[panel_id] = index + 1
+
+    cross_entries = layout.get("cross_panel_actors")
+    cross_entries = cross_entries if isinstance(cross_entries, list) else []
+    cross_ids: set[str] = set()
+    cross_panels: dict[str, set[int]] = {}
+    cross_items: list[dict] = []
+    for index, entry in enumerate(cross_entries):
+        if not isinstance(entry, dict):
+            continue
+        actor_id = _manga_actor_id(entry.get("actorId"))
+        if not actor_id:
+            continue
+        key = actor_id.casefold()
+        if key in cross_ids:
+            raise ValueError(f"DETAIL-MANGA cross_panel_actors actorId 중복: {actor_id!r}")
+        raw_ids = entry.get("spansPanels")
+        if raw_ids is None:
+            raw_ids = entry.get("panelIds")
+        if not isinstance(raw_ids, list):
+            raise ValueError(f"DETAIL-MANGA cross_panel_actors[{index}].spansPanels가 list가 아닙니다")
+        linked = []
+        for raw_id in raw_ids:
+            candidate = str(raw_id or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if candidate not in panel_ids:
+                print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 panelId 무시: {raw_id!r}")
+                continue
+            if candidate not in linked:
+                linked.append(candidate)
+        if len(linked) < 2:
+            print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 항목 제외(유효 panelId 2개 미만): "
+                  f"actor={actor_id!r}, panelIds={raw_ids!r}")
+            continue
+        instruction = str(entry.get("instruction") or "").strip()
+        if not instruction:
+            raise ValueError(f"DETAIL-MANGA cross_panel_actors[{index}].instruction이 비어 있습니다")
+        relation = normalize_choice(entry.get("relation"), ACTOR_PANEL_RELATION,
+                                    "breaks_border", "relation")
+        span_labels = [f"PANEL {panel_ids[panel_id]}" for panel_id in linked]
+        span_text = (", ".join(span_labels[:-1]) + " and " + span_labels[-1]
+                     if len(span_labels) > 1 else span_labels[0])
+        if relation == "page_foreground_overlay":
+            lead = (f"One continuous body drawn over {span_text} in the page foreground; "
+                    "the panel borders pass behind the body.")
+        else:
+            lead = (f"One continuous body crossing {span_text}; the shared dividing line "
+                    "passes behind the body.")
+        cross_items.append({
+            "label": "character",
+            "name": actor_id,
+            "caption": f"{lead} {instruction}",
+            "bbox": _moss_bbox(entry.get("bbox"), f"cross_panel_actors[{index}].bbox",
+                               width, height),
+        })
+        cross_ids.add(key)
+        cross_panels[key] = {panel_ids[panel_id] for panel_id in linked}
+
+    items: list[dict] = []
+    for index, panel in enumerate(panels):
+        number = index + 1
+        items.append(_manga_panel_item(number, panel, width, height, panel_ids,
+                                      boundaries=boundaries))
+        actors = panel.get("actors")
+        if isinstance(actors, list):
+            for actor_index, actor in enumerate(actors):
+                if not isinstance(actor, dict):
+                    raise ValueError(f"DETAIL-MANGA panels[{index}].actors[{actor_index}]가 object가 아닙니다")
+                actor_id = _manga_actor_id(actor.get("actorId"))
+                if number in cross_panels.get(actor_id.casefold(), set()):
+                    print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 액터의 패널 사본 제거: "
+                          f"actor={actor_id!r}, panel={number}")
+                    continue
+                items.append(_manga_actor_item(
+                    number, actor, f"panels[{index}].actors[{actor_index}]", width, height))
+        objects = panel.get("objects")
+        if isinstance(objects, list):
+            for object_index, obj in enumerate(objects):
+                if not isinstance(obj, dict):
+                    raise ValueError(f"DETAIL-MANGA panels[{index}].objects[{object_index}]가 object가 아닙니다")
+                items.append(_manga_object_item(
+                    number, obj, f"panels[{index}].objects[{object_index}]", width, height))
+        dialogues = panel.get("dialogue")
+        if isinstance(dialogues, list):
+            for dialogue_index, dialogue in enumerate(dialogues):
+                if not isinstance(dialogue, dict):
+                    raise ValueError(f"DETAIL-MANGA panels[{index}].dialogue[{dialogue_index}]가 object가 아닙니다")
+                items.append(_manga_dialogue_item(
+                    number, dialogue, f"panels[{index}].dialogue[{dialogue_index}]", width, height))
+    if boundaries == "touching":
+        items.extend(_manga_shared_dividers(panels, width, height))
+    items.extend(cross_items)
+    if not caption:
+        caption = next((str(item.get("caption") or "").strip() for item in items
+                        if item.get("caption")), "")
+    return items, caption
+
+
+def _parse_flat_moss_items(raw_items, width: int, height: int,
+                           multi_panel: bool, slot) -> list[dict]:
+    """Parse the legacy flat DETAIL-MOSS ``items`` array."""
+    parsed_items = []
+    used_names = set()
+    for index, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"DETAIL-MOSS items[{index}]가 object가 아닙니다")
+        label = str(raw_item.get("label") or "").strip().lower()
+        if label not in {"character", "object", "text"}:
+            raise ValueError(f"DETAIL-MOSS items[{index}] label이 올바르지 않습니다: {label!r}")
+        text = pipeline.multi_char_mask._prompt_text(
+            raw_item.get("caption"), f"items[{index}].caption", required=False)
+        name = str(raw_item.get("name") or "").strip().strip('\"“”').strip()
+        if label == "text":
+            # Text items own the drawn dialogue. The caption describes only the
+            # balloon; the separate text field is passed through untouched.
+            spoken = pipeline.multi_char_mask._prompt_text(
+                raw_item.get("text"), f"items[{index}].text", required=False)
+            if not spoken:
+                raise ValueError(f"DETAIL-MOSS items[{index}] text가 비어 있습니다")
+            parsed_items.append({
+                "label": "text",
+                "caption": text or "speech balloon",
+                "text": spoken,
+                "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
+            })
+            continue
+        if not text:
+            raise ValueError(f"DETAIL-MOSS items[{index}] caption이 비어 있습니다")
+        if label == "character":
+            # DETAIL owns the depicted cast. Card/profile or candidate data is
+            # supplied by the scene input; when neither exists the caption
+            # itself is enough to create the temporary character.
+            name = name or f"character {len(used_names) + 1}"
+            key = name.casefold()
+            if key in used_names and not multi_panel:
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] DETAIL-MOSS 중복 캐릭터 항목 유지: "
+                      f"slot={slot}, name={name!r}")
+                continue
+            used_names.add(key)
+        parsed_items.append({
+            "label": label,
+            **({"name": name} if name else {}),
+            "caption": text,
+            "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
+        })
+    return parsed_items
+
+
 def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
                              kind: str = "scene") -> dict:
     """Parse one DETAIL-MOSS document: absolute centered yxyx items + captions."""
@@ -468,16 +866,48 @@ def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
             ) if text
         )
     raw_items = layout.get("items")
-    if not isinstance(raw_items, list):
-        raise ValueError("DETAIL-MOSS items가 list가 아닙니다")
-    # The supplied canvas is authoritative. The model echoes it, but a wrong
-    # echo must not move absolute bboxes onto a different coordinate space.
-    # Key Visual has no prepared scene: pick the canvas from its own cast size.
-    image_size = scene.get("image_size") if isinstance(scene.get("image_size"), dict) else {}
+    layered = isinstance(layout.get("panels"), list) and bool(layout.get("panels"))
+    if layered and isinstance(raw_items, list) and raw_items:
+        print("[ILLUST_CONTEXT:DETAIL-MANGA] panels와 items가 함께 있습니다; panels 우선")
+    if not layered and not isinstance(raw_items, list):
+        raise ValueError("DETAIL-MOSS items 또는 DETAIL-MANGA panels가 필요합니다")
+    # DETAIL-MANGA reuses the MOSS layout but marks the root as a multi-panel
+    # page. Panels are object items, so the same character name may legally
+    # appear once per panel instead of being de-duplicated.
+    multi_panel = layered or str(summary.get("canvas") or "").strip().lower() == "multi_panel"
+    if not multi_panel:
+        multi_panel = any(
+            isinstance(raw, dict)
+            and str(raw.get("label") or "").strip().lower() == "object"
+            and str(raw.get("caption") or "").strip().upper().startswith("PANEL ")
+            for raw in raw_items)
+    # A multi_panel page chooses its page shape together with its panel bboxes,
+    # so the echoed image_size is the coordinate space that page was written in.
+    # Ordinary MOSS scenes keep the supplied canvas authoritative; a wrong echo
+    # must not move absolute bboxes onto a different coordinate space. Key Visual
+    # has no prepared scene: pick the canvas from its own cast size.
+    image_size = {}
+    if multi_panel and isinstance(item.get("image_size"), dict):
+        candidate = item["image_size"]
+        try:
+            if int(candidate.get("width") or 0) >= 16 and int(candidate.get("height") or 0) >= 16:
+                image_size = candidate
+        except (TypeError, ValueError):
+            image_size = {}
+    if not image_size:
+        image_size = scene.get("image_size") if isinstance(scene.get("image_size"), dict) else {}
     if not image_size and isinstance(canvas_sizes, dict):
-        character_count = sum(
-            1 for raw in raw_items if isinstance(raw, dict)
-            and str(raw.get("label") or "").strip().lower() == "character")
+        if layered:
+            character_count = sum(
+                len([actor for actor in (panel.get("actors") or [])
+                     if isinstance(actor, dict)])
+                for panel in (layout.get("panels") or []) if isinstance(panel, dict)
+            ) + sum(1 for entry in (layout.get("cross_panel_actors") or [])
+                    if isinstance(entry, dict))
+        else:
+            character_count = sum(
+                1 for raw in raw_items if isinstance(raw, dict)
+                and str(raw.get("label") or "").strip().lower() == "character")
         size = canvas_sizes.get("group" if character_count >= 2 else "solo")
         if size:
             image_size = {"width": int(size[0]), "height": int(size[1])}
@@ -490,59 +920,75 @@ def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
         raise ValueError(f"DETAIL-MOSS image_size가 올바르지 않습니다: {image_size!r}") from exc
     if width < 16 or height < 16:
         raise ValueError(f"DETAIL-MOSS image_size 범위 오류: {width}x{height}")
-    parsed_items = []
-    used_names = set()
-    for index, raw_item in enumerate(raw_items):
-        if not isinstance(raw_item, dict):
-            raise ValueError(f"DETAIL-MOSS items[{index}]가 object가 아닙니다")
-        label = str(raw_item.get("label") or "").strip().lower()
-        if label not in {"character", "object"}:
-            # Text items have no character caption; the MOSS layout node owns them.
-            if label == "text":
-                continue
-            raise ValueError(f"DETAIL-MOSS items[{index}] label이 올바르지 않습니다: {label!r}")
-        text = pipeline.multi_char_mask._prompt_text(
-            raw_item.get("caption"), f"items[{index}].caption", required=False)
-        if not text:
-            raise ValueError(f"DETAIL-MOSS items[{index}] caption이 비어 있습니다")
-        name = str(raw_item.get("name") or "").strip().strip('\"“”').strip()
-        if label == "character":
-            # DETAIL owns the depicted cast. Card/profile or candidate data is
-            # supplied by the scene input; when neither exists the caption
-            # itself is enough to create the temporary character.
-            name = name or f"character {len(used_names) + 1}"
-            key = name.casefold()
-            if key in used_names:
-                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] DETAIL-MOSS 중복 캐릭터 항목 유지: "
-                      f"slot={item['slot']}, name={name!r}")
-                continue
-            used_names.add(key)
-        parsed_items.append({
-            "label": label,
-            **({"name": name} if name else {}),
-            "caption": text,
-            "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
-        })
+    if layered:
+        parsed_items, layered_caption = _flatten_layered_manga_page(layout, width, height)
+        if layered_caption:
+            caption = layered_caption
+    else:
+        parsed_items = _parse_flat_moss_items(raw_items, width, height, multi_panel, item["slot"])
+    if multi_panel and not layered:
+        # Layered plans already choose each frame. Rewriting their shapes can
+        # contradict shared-edge geometry and a deliberately repeated shot.
+        caption = _diversify_manga_panel_frames(parsed_items, caption)
+    summary_layout = {"caption": caption}
+    if multi_panel:
+        # The server owns the fixed manga page meta; the model does not emit it.
+        summary_layout["meta"] = list(MANGA_META)
+    else:
+        meta = summary.get("meta")
+        if isinstance(meta, list) and any(str(entry).strip() for entry in meta):
+            summary_layout["meta"] = list(MANGA_META)
+    # ``summary.canvas`` is not part of the MOSS layout-JSON prompt schema
+    # (anime_tools.captions.layout_json emits only caption/meta/characters/
+    # series/artists), so a multi-panel page is signalled by its PANEL item
+    # captions and bboxes alone. Do not add a non-schema key to the prompt.
+    canvas = str(summary.get("canvas") or "").strip()
+    if not multi_panel and canvas:
+        summary_layout["canvas"] = canvas
     moss_layout = {
-        "summary": {"caption": caption},
+        "summary": summary_layout,
         "items": parsed_items,
         "bbox_coord_space": "abs_centralized",
         "bbox_format": "yxyx",
         "image_size": {"width": width, "height": height},
     }
     character_items = [entry for entry in parsed_items if entry["label"] == "character"]
+    # The descriptor's flat character list is an identity/reference catalog. In
+    # a manga page the same person legitimately repeats once per panel, so keep
+    # one entry per canonical name while the layout items retain every bbox.
+    descriptor_characters = []
+    seen_characters = set()
+    for entry in character_items:
+        key = entry["name"].casefold()
+        if key in seen_characters:
+            continue
+        seen_characters.add(key)
+        descriptor_characters.append({
+            "name": entry["name"], "positive": entry["caption"],
+            "negative": "", "position": "",
+        })
     descriptor = {
         "kind": kind, "slot": item["slot"],
         "camera": caption, "scene": "", "supplement": "", "speak": "",
-        "characters": [
-            {"name": entry["name"], "positive": entry["caption"],
-             "negative": "", "position": ""}
-            for entry in character_items
-        ],
+        "characters": descriptor_characters,
         "moss_layout": moss_layout,
         "moss_image_size": {"width": width, "height": height},
+        # The page image is generated at this exact size so every absolute
+        # bbox matches the canvas the layout was written for.
+        "canvas": [width, height],
     }
-    if not caption and not character_items:
+    if layered:
+        # Keep the structured plan for the inspection UI and future consumers;
+        # the generated MOSS document remains moss_layout.
+        descriptor["comic_page"] = {
+            "page": deepcopy(layout.get("page") or {}),
+            "panels": deepcopy(layout.get("panels") or []),
+            "cross_panel_actors": deepcopy(layout.get("cross_panel_actors") or []),
+        }
+    source_context = scene.get("source_context")
+    if isinstance(source_context, str) and source_context.strip():
+        descriptor["source_context"] = source_context
+    if not caption and not parsed_items:
         raise ValueError("DETAIL-MOSS 생성에 사용할 프롬프트가 없습니다")
     return descriptor
 
@@ -990,7 +1436,11 @@ def _emotion_asset_result(
                 f"anchor={anchor!r}, index={index}"
             )
             slot = index
-        items.append(_emotion_asset_descriptor(asset, slot, prompts, toggles))
+        descriptor = _emotion_asset_descriptor(asset, slot, prompts, toggles)
+        background = (profile_result.get("backgrounds_by_anchor") or {}).get(anchor)
+        if background:
+            descriptor["background_card"] = deepcopy(background)
+        items.append(descriptor)
     # 복장 대표 표정은 씬 결과(slot)에 섞지 않고, 씬 에셋보다 먼저 생성할 별도 목록으로 넘긴다.
     representative_items = []
     for index, asset in enumerate(
@@ -1095,12 +1545,20 @@ async def build_from_context(
         enable_multi_char_layout = False
     if manga:
         # Runtime page semantics only; never save these over ordinary-mode settings.
-        toggles.update(key_visual=False, speak_enabled=False, supplement=True)
-        print(f"[ILLUST_CONTEXT:MANGA] 3~4컷 페이지 · PLANNER={'ON' if toggles['call2_plan_enabled'] else 'OFF'} · DETAIL-MANGA")
+        toggles.update(speak_enabled=False, supplement=True)
     moss = toggles.get("illustration_model_family") == "moss"
+    # MOSS manga is one whole multi_panel page per scene, not the panel-by-panel
+    # ANIMA renderer. DETAIL-MANGA writes the panel plan and balloons itself, so
+    # PLANNER-MANGA (which pre-renders dialogue boxes) is not used.
+    moss_manga = bool(moss and manga)
+    if moss_manga:
+        toggles["call2_plan_enabled"] = False
+        print("[ILLUST_CONTEXT:MANGA] MOSS 1~5컷 multi_panel 페이지 · DETAIL-MANGA 단일 생성")
+    elif manga:
+        print(f"[ILLUST_CONTEXT:MANGA] 3~4컷 페이지 · PLANNER={'ON' if toggles['call2_plan_enabled'] else 'OFF'} · DETAIL-MANGA")
     # MOSS emits its own absolute bbox layout, so the V3 mask is not used.
-    # Its DETAIL also always writes the key visual, so KEYVIS is not separate.
-    mask_inline = bool(not moss and (manga or enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled")))
+    # An enabled KEYVIS always shares the first DETAIL request.
+    mask_inline = bool(not moss and (manga or enable_multi_char_layout))
     keyvis_in_detail = bool(toggles.get("key_visual")
                             and (moss or toggles.get("keyvis_in_detail_enabled")))
     prompts = p.load_prompt_files("emotion" if emotion or composite else "illustration")
@@ -1527,7 +1985,7 @@ async def build_from_context(
                     response, segments=segments, slot_map=segment_slots,
                     candidates=candidates, names=names, toggles=toggles,
                     single_names=single_names, assigned_scenes=batch)
-                if manga:
+                if manga and not moss_manga:
                     for page in result:
                         if not page.get("panels"):
                             _fail("MANGA-PLAN", "선렌더할 컷·대본 누락", page)
@@ -1538,7 +1996,7 @@ async def build_from_context(
                     return True, ""
                 except ValueError as exc:
                     return False, str(exc)
-            call_name = "PLANNER-MANGA" if manga else "CALL2-PLAN"
+            call_name = "CALL2-PLAN"
             if total != 1:
                 call_name += f" {index}/{total}"
             if attempt_kind == "duplicate":
@@ -1593,7 +2051,7 @@ async def build_from_context(
             # DETAIL's tiny scene input is not used here. The combined MOSS call
             # already carries the compatibility envelope and explicit policy
             # from DETAIL, so KEYVIS contributes only its own instructions.
-            keyvis_system = p.render_call2_prompt("\n\n".join([
+            keyvis_system = p.render_call2_prompt(prompts["call2_keyvis_manga"] if moss_manga else "\n\n".join([
                 "" if moss else prompts.get("call2_jailbreak", ""),
                 prompts.get("call2_job", ""),
                 prompts.get("call2_common", ""),
@@ -1674,12 +2132,12 @@ async def build_from_context(
         detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch),
                         "completed": {}, "scene_workers": {}}
                        for batch in detail_batches]
-        detail_prompt_key = ("detail_moss" if moss else
-                             "composite_detail" if composite else
-                             "manga_detail" if manga else "call2_detail")
-        detail_system = prompt_join("\n\n", (part for part in
-                                  (role_context, explicit_policy,
-                                   prompts[detail_prompt_key]) if part))
+        detail_prompt_key = ("detail_manga" if moss_manga else
+                             "detail_moss" if moss else
+                             "composite_detail" if composite else "call2_detail")
+        detail_parts = ((role_context, prompts[detail_prompt_key]) if moss_manga
+                        else (role_context, explicit_policy, prompts[detail_prompt_key]))
+        detail_system = prompt_join("\n\n", (part for part in detail_parts if part))
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
             nonlocal keyvis_descriptor, keyvis_output
@@ -1729,7 +2187,7 @@ async def build_from_context(
                     traceback.print_exc()
                     return False, str(exc)
                 for result in results:
-                    if manga:
+                    if manga and not moss_manga:
                         previous = completed.get(result["slot"], {})
                         panels = {panel["panel"]: panel for panel in previous.get("panels") or []}
                         for panel in result.get("panels") or []:
@@ -1762,7 +2220,7 @@ async def build_from_context(
                     # Also refresh it here for non-streaming responses and
                     # scenes recovered only after the response has finished.
                     retry_scenes = deepcopy(pending)
-                    if manga:
+                    if manga and not moss_manga:
                         for scene in retry_scenes:
                             done = {panel["panel"] for panel in completed.get(scene["slot"], {}).get("panels") or []}
                             scene["panels"] = [panel for panel in scene.get("panels") or [] if panel["panel"] not in done]
@@ -1782,7 +2240,8 @@ async def build_from_context(
                 validated["output"] = response
                 validated["results"] = list(completed.values())
                 return True, ""
-            call_name = ("DETAIL-MOSS" if moss else
+            call_name = ("DETAIL-MANGA" if moss_manga else
+                         "DETAIL-MOSS" if moss else
                          "DETAIL-COMPOSITE" if composite else
                          "DETAIL-MANGA" if manga else "CALL2-DETAIL")
             if attempt_kind == "duplicate":
@@ -1812,7 +2271,7 @@ async def build_from_context(
             batch = detail_jobs[batch_index - 1]["ready"].result()[0]["scenes"]
             streaming = messages is not None
             if streaming:
-                if manga:
+                if manga and not moss_manga:
                     # A page is registered after its independent descriptors are
                     # merged by validate_detail, including any missing-cut retry.
                     if stream_observer:
@@ -2000,8 +2459,8 @@ async def build_from_context(
                 return values
             return await p._run_parallel_pipeline_jobs(
                 [{"scenes": batch, "weight": len(batch)} for batch in plan_batches],
-                group_id="manga_plan" if manga else "call2_plan",
-                group_label="대사 및 컷신 계획자" if manga else "CALL2 장면 PLAN",
+                group_id="call2_plan",
+                group_label="CALL2 장면 PLAN",
                 max_concurrency=plan_request_limit,
                 slow_retry_enabled=bool(toggles["call2_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_parallel_slow_retry_remaining"]),
@@ -2018,7 +2477,7 @@ async def build_from_context(
         workers = [illustration_flow.create_task(expand_plans()), illustration_flow.create_task(
             p._run_parallel_pipeline_jobs(
                 detail_jobs, group_id="manga_detail" if manga else "call2_detail",
-                group_label="DETAIL 합성 삽화" if composite else "DETAIL-MANGA 페이지 묘사" if manga else "DETAIL 장면 묘사",
+                group_label="DETAIL 합성 삽화" if composite else "DETAIL-MANGA 만화 페이지 묘사" if manga else "DETAIL 장면 묘사",
                 max_concurrency=detail_request_limit,
                 slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),

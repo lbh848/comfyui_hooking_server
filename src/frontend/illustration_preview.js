@@ -130,7 +130,7 @@
             data-illust-preview-node="${escape(node.name)}" data-preview-id="${escape(node.id)}"
             data-enabled="${node.enabled}" data-condition="${escape(node.condition)}"
             data-batch-index="${node.index}" data-batch-count="${node.count}">
-            <strong>${escape(node.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
+            <strong>${escape(node.name.replaceAll('EMOTION-RESOLVE', 'OUTFIT-RESOLVE').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
             <span>${node.enabled ? '' : '생략 · '}${escape(node.description)}</span>
             ${node.condition && node.enabled ? `<span class="illust-preview-condition">조건: ${escape(node.condition)}</span>` : ''}
             ${node.llm ? `<span class="illust-preview-llm">${node.llm.slot.toUpperCase()} · 슬롯 공유 상한 ${node.llm.limit}개</span>` : ''}

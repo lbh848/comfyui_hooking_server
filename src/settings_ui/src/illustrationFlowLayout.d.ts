@@ -6,6 +6,8 @@ export interface FlowNode extends IllustrationData {
   status: string;
   kind?: string;
   executor?: string;
+  model?: string;
+  alias?: string;
   dependencies?: string[];
   started_at?: number | null;
   ended_at?: number | null;

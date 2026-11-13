@@ -10,6 +10,7 @@ import { IllustExtra } from "./IllustExtra";
 import { IllustLoras } from "./IllustLoras";
 import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
+import { IllustLoraBatch } from "./IllustLoraBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
 import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
 import { useCharacterImageRegeneration } from "./useCharacterImageRegeneration";
@@ -59,6 +60,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [botName, setBotName] = useState("");
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [representativeBatchOpen, setRepresentativeBatchOpen] = useState(false);
+  const [loraBatchOpen, setLoraBatchOpen] = useState(false);
   const [gallery, setGallery] = useState<{ botName: string; name: string } | null>(null);
   const listScroll = useRef(0);
   const [search, setSearch] = useState("");
@@ -162,6 +164,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("rules")}>{botToolLabels.rules}</button>
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("extra")}>캐릭터 태그 일괄 관리</button>
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("customSystemInstruction")}>커스텀 시스템 지침</button>
+      {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setLoraBatchOpen(true)}>로라 일괄 적용</button>}
     </div></Panel>}
     {bot && gallery && <nav className="illust-breadcrumb" aria-label="봇 설정 위치">
       <button type="button" onClick={() => setGallery(null)}>{bot.name}</button><ChevronRight size={14} /><span aria-current="page">{gallery.name} · 전체 이미지</span>
@@ -201,6 +204,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     </div>
     {characterAddOpen && bot && <AddIllustrationCharacter key={bot.name} botName={bot.name} characters={bot.characters} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
     {representativeBatchOpen && bot && <IllustRepresentativeBatch key={bot.name} botName={bot.name} characters={bot.characters} readOnly={locked || distributionAction.busy} onClose={() => setRepresentativeBatchOpen(false)} onChanged={() => { setCardRevision(value => value + 1); resource.reload(); }} />}
+    {loraBatchOpen && bot && <IllustLoraBatch key={bot.name} botName={bot.name} inventory={inventory} readOnly={toolsReadOnly} onClose={() => setLoraBatchOpen(false)} onChanged={refreshCharacterStatus} />}
     {dataPreparationBots.map(name => <IllustDataPreparation key={name} botName={name} characters={bots.find(item => item.name === name)?.characters || []}
       initialBackgrounded={restoredBots.current.has(`preparation:${name}`)}
       readOnly={isLocked(name) || distributionBusy} onClose={() => { restoredBots.current.delete(`preparation:${name}`); setDataPreparationBots(current => current.filter(value => value !== name)); }} onChanged={refreshCharacterStatus} />)}
@@ -264,6 +268,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const action = useIllustrationAction(); const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction(); const renameAction = useIllustrationAction();
   const outfitTagAction = useIllustrationAction();
   const outfitFolderAction = useIllustrationAction();
+  const renewNpcLifetimeAction = useIllustrationAction();
   // Remember the tags the cover prompt was made with, so saving the editor first
   // does not make the regeneration compare the new tags against themselves.
   const outfitTagsSeed = useRef<{ outfit: string; tags: string[] }>({ outfit: "", tags: [] });
@@ -286,7 +291,17 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const regeneration = useCharacterImageRegeneration(botName, characterName, !!images.data?.images.some((item: IllustrationData) => item.generated), () => {
     images.reload(); onReload?.();
   });
-  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy;
+  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || renewNpcLifetimeAction.busy;
+  const renewNpcLifetime = () => {
+    if (readOnly || busy || !draft?.npc_generated) return;
+    void renewNpcLifetimeAction.run(async () => {
+      const result = await api.request("bot_mode/action", { action: "renew_npc_lifetime", bot_name: botName, char_name: characterName });
+      const changes = { npc_idle_calls: result.npc_idle_calls, npc_lifetime: result.npc_lifetime };
+      setDraft(current => current && ({ ...current, ...changes }));
+      setBase(current => current && ({ ...current, ...changes }));
+      onReload?.();
+    }, "캐릭터 수명을 갱신했습니다.");
+  };
   const canRename = allowRename && draft?.npc_generated === true && !readOnly && !busy;
   const openRename = () => { setRenameName(characterName); setRenameOpen(true); };
   const submitRename = () => {
@@ -563,7 +578,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
       </div>
       <header className="illust-character-heading">
-        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{draft.npc_generated && <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회</Badge>}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
+        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{draft.npc_generated && <><button type="button" className="button secondary small" disabled={readOnly || busy} onClick={renewNpcLifetime} title="남은 수명을 설정된 최대 횟수로 갱신합니다" aria-label={`${characterName} 수명 갱신`}><RefreshCw size={13} aria-hidden="true" />{renewNpcLifetimeAction.busy ? "갱신 중…" : "수명 갱신"}</button><Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회</Badge></>}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
         <div className="illust-actions">
           {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
           <button type="button" className="button secondary" onClick={() => setDetail("tags")}>캐릭터 태그 편집</button>
@@ -571,6 +586,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
           {onPersona && <label className="illust-check"><input type="checkbox" checked={persona} disabled={readOnly || busy || personaBusy} onChange={event => onPersona(event.target.checked)} />페르소나</label>}
         </div>
       </header>
+      <IllustrationFeedback error={renewNpcLifetimeAction.error} message={renewNpcLifetimeAction.message} />
       <div hidden={showGallery}>
         <fieldset className="illust-card-metadata" disabled={busy || readOnly}>
           <div className="illust-form"><label className="field">카드 이름<input required value={card.label} onChange={event => update({ label: event.target.value })} /></label><label className="field">작중 별칭<textarea rows={3} value={(card.aliases || []).join("\n")} placeholder="한 줄에 별칭 하나" onChange={event => update({ aliases: event.target.value.split("\n") })} /></label></div>
@@ -631,9 +647,11 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       }, "이미지를 삭제했습니다.")}>삭제 확인</button></div></Modal>}
     </form>;
   const content = <>
+    {summaryMode && <IllustrationFeedback error={renewNpcLifetimeAction.error} message={renewNpcLifetimeAction.message} />}
     {summaryMode && draft && card ? <IllustCharacterSummary
       characterName={characterName} card={card} render={render} index={index} count={draft.profiles.length} isDefault={card.id === draft.default_visual_profile_id} npc={draft.npc_generated ? draft : undefined}
       onRename={canRename ? openRename : undefined}
+      onRenewNpcLifetime={renewNpcLifetime} renewNpcLifetimeBusy={renewNpcLifetimeAction.busy}
       references={references} imagesLoaded={!!images.data} imagesError={images.error} hasFace={!!face} saved={!!savedCard}
       patch={savedCard?.id === base?.profiles[0]?.id ? patchStatus : patchStatus?.cards?.[card.id]} patchLoading={patchLoading} patchError={patchError}
       readOnly={readOnly} persona={persona} dirty={dirty} busy={busy} onChangeProfile={changeProfile} onPreview={setPreview}

@@ -5,12 +5,12 @@ import { loraRequest, trainingDefaults, type LoraData } from "./internalLora";
 import { LoraTrainingFields, trainingPresetSettings } from "./LoraTrainingFields";
 import { useUnsavedChanges } from "./unsavedChanges";
 
-export type TrainingProfile = "anima" | "sdxl";
+export type TrainingProfile = "anima" | "sdxl" | "moss";
 export type TrainingPresetScope = "builtin" | "local";
 type TrainingPreset = { id: string; name: string; profile: TrainingProfile; scope: TrainingPresetScope; settings: LoraData };
 type Catalog = { presets: TrainingPreset[]; revision: string; saved_id?: string; builtin_unlock_token?: string };
 const scopes = { builtin: "배포 프리셋", local: "사용자 프리셋" };
-export const trainingProfileLabel = (profile: TrainingProfile) => profile === "anima" ? "ANIMA" : "ILXL";
+export const trainingProfileLabel = (profile: TrainingProfile) => ({ anima: "ANIMA", sdxl: "ILXL", moss: "MOSS" })[profile];
 export const trainingPresetPage = (profile: TrainingProfile) => `training-${trainingProfileLabel(profile).toLowerCase()}`;
 const path = (profile: TrainingProfile) => `training-presets?profile=${profile}`;
 const changedEvent = "lora-training-presets-changed";
@@ -134,7 +134,7 @@ export function LoraTrainingPresetPicker({ profile, value, disabled, onChange }:
     const load = () => {
       controller?.abort(); controller = new AbortController(); const signal = controller.signal;
       setLoading(true); setError("");
-      void Promise.all((profile ? [profile] : ["anima", "sdxl"] as TrainingProfile[]).map(item => loraRequest(path(item), undefined, signal))).then(results => {
+      void Promise.all((profile ? [profile] : ["anima", "sdxl", "moss"] as TrainingProfile[]).map(item => loraRequest(path(item), undefined, signal))).then(results => {
         if (!signal.aborted) setPresets(results.flatMap(result => result.presets));
       }).catch(cause => { if (!signal.aborted) setError(cause.message); }).finally(() => { if (!signal.aborted) setLoading(false); });
     };
@@ -143,7 +143,7 @@ export function LoraTrainingPresetPicker({ profile, value, disabled, onChange }:
     return () => { controller?.abort(); window.removeEventListener(changedEvent, load); };
   }, [profile]);
   return <div className="internal-lora-wide internal-lora-preset-picker">
-    <div className="internal-lora-actions"><label className="field internal-lora-preset-select">학습 프로필 프리셋<select value={value} disabled={disabled || loading || !!error} onChange={event => { const preset = presets.find(item => item.id === event.target.value); if (preset) onChange({ ...preset.settings }, preset.id); }}><option value="" disabled>{loading ? "불러오는 중…" : "프리셋 선택"}</option>{value && !presets.some(item => item.id === value) && <option value={value}>현재 적용된 프리셋</option>}{(profile ? [profile] : ["anima", "sdxl"] as TrainingProfile[]).flatMap(type => (["builtin", "local"] as const).map(scope => <optgroup key={`${type}-${scope}`} label={`${profile ? "" : `${trainingProfileLabel(type)} · `}${scopes[scope]}`}>{presets.filter(item => item.profile === type && item.scope === scope).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>))}</select></label><button type="button" className="button" disabled={disabled || loading} aria-label="학습 프로필 프리셋 새로고침" onClick={() => window.dispatchEvent(new Event(changedEvent))}><RefreshCw size={14} /></button></div>
+    <div className="internal-lora-actions"><label className="field internal-lora-preset-select">학습 프로필 프리셋<select value={value} disabled={disabled || loading || !!error} onChange={event => { const preset = presets.find(item => item.id === event.target.value); if (preset) onChange({ ...preset.settings }, preset.id); }}><option value="" disabled>{loading ? "불러오는 중…" : "프리셋 선택"}</option>{value && !presets.some(item => item.id === value) && <option value={value}>현재 적용된 프리셋</option>}{(profile ? [profile] : ["anima", "sdxl", "moss"] as TrainingProfile[]).flatMap(type => (["builtin", "local"] as const).map(scope => <optgroup key={`${type}-${scope}`} label={`${profile ? "" : `${trainingProfileLabel(type)} · `}${scopes[scope]}`}>{presets.filter(item => item.profile === type && item.scope === scope).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>))}</select></label><button type="button" className="button" disabled={disabled || loading} aria-label="학습 프로필 프리셋 새로고침" onClick={() => window.dispatchEvent(new Event(changedEvent))}><RefreshCw size={14} /></button></div>
     {error && <p className="field-error" role="alert">{error}</p>}
   </div>;
 }

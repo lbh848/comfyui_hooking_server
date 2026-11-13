@@ -4,7 +4,7 @@ import { Badge, Empty, Modal } from "./components";
 import { contextParams, enc, loraRepresentative, loraRequest, loraSessionsByPriority, mediaUrl, prefix, query, type LoraContext, type LoraData } from "./internalLora";
 
 type LoraResultsProps = {
-  context: LoraContext; detail: LoraData; refresh: () => Promise<void>; notify: (message: string) => void; initialSession?: string;
+  context: LoraContext; detail: LoraData; refresh: () => Promise<void>; notify: (message: string) => void; initialSession?: string; trainingRevision?: number;
 };
 
 export function InternalLoraResults(props: LoraResultsProps) {
@@ -13,12 +13,12 @@ export function InternalLoraResults(props: LoraResultsProps) {
   const style = props.context.category === "style";
   const context = style ? { ...props.context, profile } : props.context;
   return <div className="internal-lora-section">
-    {style && <label className="field internal-lora-preset-select">결과 모델<select value={profile} disabled={busy} onChange={event => setProfile(event.target.value)}><option value="anima">ANIMA</option><option value="sdxl">SDXL</option></select><span className="field-help">선택한 모델의 학습 결과를 표시합니다.</span></label>}
+    {style && <label className="field internal-lora-preset-select">결과 모델<select value={profile} disabled={busy} onChange={event => setProfile(event.target.value)}><option value="anima">ANIMA</option><option value="sdxl">SDXL</option><option value="moss">MOSS</option></select><span className="field-help">선택한 모델의 학습 결과를 표시합니다.</span></label>}
     <LoraResultsContent key={context.profile} {...props} context={context} onBusyChange={setBusy} />
   </div>;
 }
 
-function LoraResultsContent({ context, detail, refresh, notify, initialSession, onBusyChange }: LoraResultsProps & { onBusyChange: (busy: boolean) => void }) {
+function LoraResultsContent({ context, detail, refresh, notify, initialSession, trainingRevision, onBusyChange }: LoraResultsProps & { onBusyChange: (busy: boolean) => void }) {
   const [sessions, setSessions] = useState<LoraData[]>([]);
   const [session, setSession] = useState(initialSession || "");
   const [overview, setOverview] = useState(context.category === "bot" && !initialSession);
@@ -53,7 +53,7 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
     } catch (cause) { if (!signal?.aborted) setLoadError((cause as Error).message); }
     finally { if (!signal?.aborted) setLoading(false); }
   }, [root, paramsQuery]);
-  useEffect(() => { const controller = new AbortController(); void loadSessions(controller.signal); return () => controller.abort(); }, [loadSessions]);
+  useEffect(() => { const controller = new AbortController(); void loadSessions(controller.signal); return () => controller.abort(); }, [loadSessions, trainingRevision]);
   useEffect(() => {
     setSteps([]);
     if (!session || overview) { setLoadingSteps(false); return; }

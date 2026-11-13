@@ -13,6 +13,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 
 from app_paths import config_root, data_root
 from llm_token_usage import approx_tokens as _approx_tokens, output_token_stats
+from llm_failure_details import format_llm_failure
 from llm_settings import LLM_SP, LLM_SP_SLOTS, fixed_sp_slot, RuntimeSettingsReader, SLOT_COUNT, SLOT_IDS, SLOT_SUFFIXES, UNCONFIGURED_SERVICE, runtime_config
 
 import asyncio
@@ -41,6 +42,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from modes.llm_pdf_prompt import (
+    PDF_IMAGE_DEFAULT_OPTIONS,
     PDF_MEDIA_RESOLUTION,
     PDF_MIME_TYPE,
     prepare_pdf_prompt_messages,
@@ -655,6 +657,12 @@ def _slot_config_overrides(slot: str) -> dict:
     overrides["llm_pdf_prompt_format"] = _base_config_get(
         f"llm_pdf_prompt_format{suffix}", "pdf"
     )
+    # Image-PDF rendering options are independent per slot and only used when
+    # the slot's prompt format is "image".
+    for field, default in PDF_IMAGE_DEFAULT_OPTIONS.items():
+        overrides[f"llm_pdf_image_{field}"] = _base_config_get(
+            f"llm_pdf_image_{field}{suffix}", default
+        )
     return overrides
 
 
@@ -667,6 +675,7 @@ This request uses a reversible UTF-8 Base64 transport for a structured-data pipe
 4. For TOON/YAML, preserve keys, indentation, counted array labels, lists and non-string values; encode each nonempty string VALUE with the same `base64:` prefix. Never encode keys.
 5. For other structured text, copy the decoded task's exact headers, identifiers, speaker prefixes, delimiters, labels and line breaks unchanged. Encode only each speech, thought, passage or section body with `base64:`. Keep empty bodies empty. Never encode headers or the whole structured response. Example: the text `Hello` becomes `base64:SGVsbG8=` inside its original delimiters. Every payload must contain the complete encoding, without ellipses or abbreviations.
 6. For other plain-text output, encode the text as UTF-8 Base64 and prefix it with `base64:`. Output only the requested response in this transport format, without extra labels or explanations.
+7. Hangul passthrough: When a nonempty string value contains any Korean Hangul character (U+AC00–U+D7A3, U+1100–U+11FF, U+3130–U+318F), output that value as plain UTF-8 text without the `base64:` prefix, even where rules 3–6 request encoding. Keep its normal JSON/TOON quoting and escaping. Never mix encoded and plain text inside one value.
 """
 
 _GEMINI_PDF_BASE64_PROTOCOL = """### PDF Base64 Data Transport Protocol
@@ -679,6 +688,7 @@ This request transports a role-labelled conversation transcript as reversible UT
 5. For TOON/YAML, preserve keys, indentation, counted array labels, lists and non-string values; encode each nonempty string VALUE with the same `base64:` prefix. Never encode keys.
 6. For other structured text, copy the decoded task's exact headers, identifiers, speaker prefixes, delimiters, labels and line breaks unchanged. Encode only each speech, thought, passage or section body with `base64:`. Keep empty bodies empty. Never encode headers or the whole structured response. Example: the text `Hello` becomes `base64:SGVsbG8=` inside its original delimiters. Every payload must contain the complete encoding, without ellipses or abbreviations.
 7. For other plain-text output, encode the text as UTF-8 Base64 and prefix it with `base64:`. Output only the requested response in this transport format, without extra labels or explanations.
+8. Hangul passthrough: When a nonempty string value contains any Korean Hangul character (U+AC00–U+D7A3, U+1100–U+11FF, U+3130–U+318F), output that value as plain UTF-8 text without the `base64:` prefix, even where rules 4–7 request encoding. Keep its normal JSON/TOON quoting and escaping. Never mix encoded and plain text inside one value.
 """
 
 
@@ -686,7 +696,7 @@ _GEMINI_ILLUSTRATION_SCENE_BASE64_OVERRIDE = """### Illustration Scene-Isolated 
 This section replaces the response transport rules above for this illustration scene-detail call only.
 
 1. Use the output format selected by the decoded task: JSON remains JSON and TOON remains TOON. This transport changes only document framing, not the selected syntax or image fields. Split the requested scenes array into complete one-scene documents, retaining the scenes container and that scene's exact slot field inside each document. Keep `<lb-xnai>` only when the selected task format uses it.
-2. Apply the common transport rule independently to each document: preserve keys, structure, enclosing tags and non-string values; encode only nonempty string values with the `base64:` prefix. The inner slot remains part of the scene data and follows this same string-value encoding rule.
+2. Apply the common transport rule independently to each document: preserve keys, structure, enclosing tags and non-string values; encode only nonempty string values with the `base64:` prefix, except that a value containing Korean Hangul characters must remain plain UTF-8 text without that prefix. The inner slot remains part of the scene data and follows this same string-value encoding rule.
 3. Emit the encoded documents in requested plan order using exactly this ASCII envelope, replacing SLOT with that scene's exact supplied slot or C anchor:
 <lb-scene slot="SLOT">
 TRANSPORTED_DOCUMENT
@@ -752,7 +762,7 @@ def _gemini_base64_protocol(service: str) -> str:
         _gemini_base64_response_mode_ctx.get()
         == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
     ):
-        return protocol.rstrip() + "\n\n" + _GEMINI_ILLUSTRATION_SCENE_BASE64_OVERRIDE
+        protocol = protocol.rstrip() + "\n\n" + _GEMINI_ILLUSTRATION_SCENE_BASE64_OVERRIDE
     return protocol
 
 
@@ -770,21 +780,34 @@ def _prepare_gemini_pdf_messages(messages: list, service: str) -> tuple[list, di
         layout_options["character_width_ratio"] = (
             0.55 + (uuid.uuid4().int / (1 << 128)) * 0.4
         )
+    prompt_format = _current_config.get("llm_pdf_prompt_format", "pdf")
+    image_options = None
+    if prompt_format == "image":
+        image_options = {
+            field: _current_config.get(f"llm_pdf_image_{field}", default)
+            for field, default in PDF_IMAGE_DEFAULT_OPTIONS.items()
+        }
     transformed, metadata = prepare_pdf_prompt_messages(
         messages,
         encode_transcript=use_base64,
-        prompt_format=_current_config.get("llm_pdf_prompt_format", "pdf"),
+        prompt_format=prompt_format,
+        image_options=image_options,
         **layout_options,
     )
+    rendered_options = metadata.get("image_options") or {}
     _llm_log(
         "[LLM_PDF_PROMPT] 요청 변환 완료: "
         f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
         f"service={service}, pages={metadata['page_count']}, "
-        f"format={metadata['prompt_format']}, font_pt={9 if metadata['prompt_format'] == 'image' else 1}, "
-        f"resolution={PDF_MEDIA_RESOLUTION}, "
+        f"format={metadata['prompt_format']}, "
+        f"font_pt={metadata['font_size']}, "
+        f"resolution={rendered_options.get('media_resolution', PDF_MEDIA_RESOLUTION) if metadata['prompt_format'] == 'image' else PDF_MEDIA_RESOLUTION}, "
+        f"page={rendered_options.get('page_width')}x{rendered_options.get('page_height')}, "
+        f"margin={rendered_options.get('margin')}, "
         f"character_width_ratio={metadata['character_width_ratio']}, "
         f"transcript_chars={metadata['transcript_chars']}, "
         f"encoded_chars={metadata['encoded_chars']}, "
+        f"preserved_system_chars={metadata.get('preserved_system_chars', 0)}, "
         f"pdf_bytes={metadata['pdf_bytes']}, images={metadata['image_count']}, "
         f"base64_transcript={metadata['base64_transcript']}"
     )
@@ -921,6 +944,12 @@ def _encode_gemini_base64_messages(
     *,
     protocol: str = _GEMINI_BASE64_PROTOCOL,
 ) -> list:
+    if any(isinstance(message, dict) and message.get("_base64_exempt")
+           for message in messages or []):
+        protocol = protocol.rstrip() + (
+            "\n\nA separate system message explicitly labelled as plain text contains "
+            "the original system instructions. Read that message directly; do not Base64-decode it."
+        )
     encoded_messages = [{"role": "system", "content": protocol}]
     for message in messages or []:
         if not isinstance(message, dict):
@@ -929,6 +958,15 @@ def _encode_gemini_base64_messages(
                 f"dict가 아닌 항목 유지 type={type(message).__name__}"
             )
             encoded_messages.append(message)
+            continue
+        if message.get("_base64_exempt"):
+            # Preserved system instructions stay readable plain text so the
+            # model does not have to recover them from an encoded block.
+            encoded_message = {
+                key: value for key, value in message.items()
+                if key != "_base64_exempt"
+            }
+            encoded_messages.append(encoded_message)
             continue
         encoded_message = dict(message)
         encoded_message["content"] = _base64_encode_message_content(
@@ -991,6 +1029,11 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     marked = candidate.startswith("base64:")
     if marked:
         candidate = candidate[7:]
+    elif not candidate.isascii():
+        # Transported Base64 is ASCII-only. Unmarked non-ASCII text is already
+        # the plain response (Hangul passthrough), so keep it verbatim instead
+        # of attempting an impossible whole-block decode.
+        return raw
     compact = "".join(candidate.split())
     try:
         decoded = _decode_gemini_scene_document("base64:" + compact)
@@ -1108,7 +1151,12 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     # Restore only explicitly marked speech, thought and passage contents.
     if (re.match(r"\[(?:Scene\s+(?:C\d+|slot\s*=\s*-?\d+)|C\d+|Shot\s+\d+)\]", raw[start:], re.I)
             or (re.match(r"[^:\r\n]+:[ \t]*\r?\n", raw[start:])
-                and re.search(r"(?m)^[ \t]*(?:(?:\[[^\]\r\n]+\]|<[^<>\r\n]+>)[ \t]*)?base64:", raw[start:]))):
+                and re.search(r"(?m)^[ \t]*(?:(?:\[[^\]\r\n]+\]|<[^<>\r\n]+>)[ \t]*)?base64:", raw[start:]))
+            # Speaker-prefixed values may be plain Hangul now, so line format
+            # must be recognized without any `base64:` marker. JSON heads are
+            # excluded so pretty-printed JSON keeps its own decoder.
+            or (raw[start:start + 1] not in ("{", "[", '"')
+                and re.match(r"[^:\r\n]+:[ \t]*(?:[\"'«»“”„‟]|\(|base64:)", raw[start:]))):
         stop = len(raw.rstrip())
         for closing in reversed(closing_wrappers):
             if not raw[:stop].rstrip().lower().endswith(closing.lower()):
@@ -1495,12 +1543,19 @@ class _GeminiBase64StreamDecoder:
 
         # JSON structure/required wrappers are plain text. Restore available
         # value prefixes without waiting for the document's closing delimiter.
+        stripped = raw.lstrip()
+        # Speaker/section text is structured even when every value is plain
+        # Hangul (passthrough leaves those unmarked), so do not wait for a
+        # `base64:` marker before streaming it.
+        plain_line_format = bool(re.match(
+            r"(?:\[(?:Scene\s+(?:C\d+|slot\s*=\s*-?\d+)|C\d+|Shot\s+\d+)\]"
+            r"|[^:\r\n]+:[ \t]*(?:[\"'«»“”„‟]|\(|base64:))",
+            stripped,
+        ))
         if (len(self._raw_parts) == 1 or not "".join(self._raw_parts[:-1]).strip()
-                or ("base64:" in raw and not raw.lstrip().startswith(("{", "[", '"', "<", "`"))
-                    and re.match(r"[^:\r\n]+:", raw.lstrip()))):
-            self._json_response = "".join(self._raw_parts).lstrip().startswith(("{", "[", '"', "<", "`"))
-            if (not raw.lstrip().startswith(("{", "[", '"', "<", "`"))
-                    and re.match(r"[^:\r\n]+:", raw.lstrip()) and "base64:" in raw):
+                or plain_line_format):
+            self._json_response = stripped.startswith(("{", "[", '"', "<", "`"))
+            if plain_line_format and not stripped.startswith(("{", "[", '"', "<", "`")):
                 self._json_response = True
         if self._json_response:
             try:
@@ -1846,6 +1901,11 @@ def _detect_reasoning_family(model: str, preset: str) -> str:
 
 GEMINI_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
 DEFAULT_GEMINI_THINKING_LEVEL = "low"
+_PDF_IMAGE_MEDIA_RESOLUTIONS = {
+    "low": "MEDIA_RESOLUTION_LOW",
+    "medium": "MEDIA_RESOLUTION_MEDIUM",
+    "high": "MEDIA_RESOLUTION_HIGH",
+}
 
 
 def _gemini_thinking_level() -> str:
@@ -2136,7 +2196,13 @@ def _build_gemini_request_body(messages: list, model: str, *, service: str = "ge
         if temperature is not None:
             generation_config["temperature"] = float(temperature)
     if _messages_have_inline_pdf(messages):
-        generation_config["mediaResolution"] = PDF_MEDIA_RESOLUTION
+        if _current_config.get("llm_pdf_prompt_format", "pdf") == "image":
+            generation_config["mediaResolution"] = _PDF_IMAGE_MEDIA_RESOLUTIONS.get(
+                str(_current_config.get("llm_pdf_image_media_resolution", "medium")).strip().lower(),
+                "MEDIA_RESOLUTION_MEDIUM",
+            )
+        else:
+            generation_config["mediaResolution"] = PDF_MEDIA_RESOLUTION
     max_tokens = int(_current_config.get("llm_max_tokens", 0) or 0)
     if max_tokens > 0:
         generation_config["maxOutputTokens"] = max_tokens
@@ -3501,6 +3567,7 @@ async def _invoke_routed_with_retry(
     execution_context: LLMExecutionContext | None = None,
     execution_observer=None,
     attempt_events: list[dict] | None = None,
+    metadata_sink: dict | None = None,
 ):
     """한 LLM 슬롯을 설정 횟수만큼 호출하며 결과와 성공 여부를 반환한다."""
     context = execution_context or create_llm_execution_context(task_key)
@@ -3522,6 +3589,10 @@ async def _invoke_routed_with_retry(
             total_attempts=total_attempts,
             attempt_id=attempt_id,
         ).to_dict()
+        if metadata_sink is not None:
+            # A later transport failure must not inherit an earlier SAFETY/limit.
+            metadata_sink.pop("finish_reason", None)
+            metadata_sink.pop("finish_message", None)
         if attempt_events is not None:
             attempt_events.append(start_event)
         await _emit_execution_observer(execution_observer, start_event)
@@ -3586,6 +3657,7 @@ async def _invoke_routed_with_retry(
                 )
             return last_result, True, "", None
 
+        last_reason = format_llm_failure(last_reason, metadata_sink)
         _llm_log(
             f"[LLM_ROUTE] 호출 실패: task={task_key}, phase={phase}, slot={slot}, "
             f"attempt={attempt}/{total_attempts}, reason={last_reason}"
@@ -3660,6 +3732,12 @@ def routing_primary_model(task_key: str) -> str:
     return _base_config_get(f"llm_model{_slot_suffix(primary)}") or ""
 
 
+def routing_primary_alias(task_key: str) -> str:
+    """Return only the assigned slot's display alias."""
+    primary, _ = _routing_for(task_key)
+    return _base_config_get(f"llm_alias{_slot_suffix(primary)}") or ""
+
+
 
 async def _call_routed_text_slot(
     slot: str,
@@ -3711,7 +3789,8 @@ def _track_flow_llm(fn):
             suffix = _slot_suffix(slot) if slot else ""
             model = inputs.get("model") or _base_config_get(f"llm_model{suffix}") or ""
             service = _base_config_get(f"llm_service{suffix}") or "openai" or ""
-            illustration_flow.llm_attempt(event, model, service)
+            alias = _base_config_get(f"llm_alias{suffix}") or ""
+            illustration_flow.llm_attempt(event, model, service, alias)
             illustration_flow.llm_metadata(
                 label=label if queued_review else event.get("call_name") or label,
                 call_name=event.get("call_name") or label,
@@ -3868,6 +3947,7 @@ async def callLLMTaskResult(
             execution_context=context,
             execution_observer=execution_observer,
             attempt_events=attempt_events,
+            metadata_sink=metadata_sink,
         )
         final_phase = "forced"
         final_slot = force_slot_resolved
@@ -3888,6 +3968,7 @@ async def callLLMTaskResult(
             execution_context=context,
             execution_observer=execution_observer,
             attempt_events=attempt_events,
+            metadata_sink=metadata_sink,
         )
         final_phase = "primary"
         final_slot = primary
@@ -3908,6 +3989,7 @@ async def callLLMTaskResult(
                 execution_context=context,
                 execution_observer=execution_observer,
                 attempt_events=attempt_events,
+                metadata_sink=metadata_sink,
             )
             final_phase = "fallback"
             final_slot = fb_target
@@ -4153,6 +4235,7 @@ async def callLLMVisionTaskResult(
         execution_context=context,
         execution_observer=execution_observer,
         attempt_events=attempt_events,
+        metadata_sink=metadata_sink,
     )
     final_phase = "primary"
     final_slot = primary
@@ -4173,6 +4256,7 @@ async def callLLMVisionTaskResult(
             execution_context=context,
             execution_observer=execution_observer,
             attempt_events=attempt_events,
+            metadata_sink=metadata_sink,
         )
         final_phase = "fallback"
         final_slot = fb_target

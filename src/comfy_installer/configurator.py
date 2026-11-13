@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from configuration import read_config, write_config
+from app_paths import portable_app_paths, resolve_app_paths
 from lora_paths import ASSET_LORA_FOLDER, default_lora_load_paths
 
 from comfy_allocation import (
@@ -129,10 +130,12 @@ def _read_json_object(path: Path, label: str) -> dict:
     return value
 
 
-def _write_json_atomic(path: Path, value: dict) -> None:
+def _write_json_atomic(path: Path, value: dict) -> dict:
     if path.name == "settings.json":
+        value = {**value, **portable_app_paths(value, path.parent.parent)}
+        value.update(resolve_app_paths(value, path.parent.parent))
         write_config(path, value)
-        return
+        return value
     payload = (
         json.dumps(value, ensure_ascii=False, indent=2) + os.linesep
     ).encode("utf-8")
@@ -143,6 +146,7 @@ def _write_json_atomic(path: Path, value: dict) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(part_path, path)
+        return value
     except Exception:
         if part_path.exists():
             print(
@@ -410,7 +414,7 @@ def retarget_legacy_workflow_paths(
                 "워크플로우 ASCII 경로 전환 전 settings.json이 변경되었습니다."
             )
 
-        _write_json_atomic(config_file, updated)
+        updated = _write_json_atomic(config_file, updated)
         reloaded = _read_json_object(
             config_file,
             "워크플로우 ASCII 경로 전환 설정",
@@ -808,7 +812,7 @@ def retarget_config_to_embedded_comfy(
                 f"찾지 못했습니다: old_root={old_root}"
             )
 
-        _write_json_atomic(config_file, updated)
+        updated = _write_json_atomic(config_file, updated)
         reloaded = _read_json_object(config_file, "내장 Comfy 갱신 설정")
         if reloaded != updated:
             raise ConfigUpdateError(
@@ -942,7 +946,7 @@ def apply_installed_config(
             )
         print(f"[COMFY_INSTALL][CONFIG] 설정 백업 완료: {backup_path}")
 
-        _write_json_atomic(config_file, updated)
+        updated = _write_json_atomic(config_file, updated)
         reloaded = _read_json_object(config_file, "갱신 설정")
         if reloaded != updated:
             raise ConfigUpdateError("settings.json 저장 후 재검증 값이 일치하지 않습니다.")
@@ -1009,7 +1013,7 @@ def apply_repaired_workflow_bindings(
                 "워크플로우 복구 전 settings.json이 변경되어 경로 전환을 중단합니다."
             )
 
-        _write_json_atomic(config_file, updated)
+        updated = _write_json_atomic(config_file, updated)
         try:
             reloaded = _read_json_object(config_file, "워크플로우 복구 설정")
             if reloaded != updated:

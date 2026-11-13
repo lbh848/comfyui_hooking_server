@@ -5,6 +5,7 @@
 #   "packaging", "argon2-cffi", "cryptography", "google-auth", "requests",
 #   "psutil", "piexif", "pyyaml", "modal>=1.5.3,<2", "paramiko",
 #   "onnxruntime", "huggingface-hub", "opencv-python-headless",
+#   "rapidocr>=3.9.0",
 # ]
 # ///
 """Run the existing illustration and LoRA handlers on a shared local queue."""
@@ -49,6 +50,8 @@ def main() -> None:
             server.app_config = value
             server.REAL_COMFY_PORT = int(value.get("comfyui_port", 8188))
             server.REAL_COMFY_ILLUST_PORT = value.get("comfyui_port_illustration")
+            server.asset_tool.workflow_source_path = value["tag_analysis_workflow_source_path"]
+            server.asset_tool.fallback_workflow_source_path = value["asset_tag_analysis_workflow_source_path"]
             server.llm_service.update_config({key: value.get(key, default)
                 for key, default in server.llm_service.get_config().items() if key in server.DEFAULT_CONFIG})
 
@@ -89,7 +92,7 @@ def main() -> None:
                 raise web.HTTPBadRequest(text="Unsupported LoRA setting")
             for key, item in body.items():
                 if key.endswith("source_paths"):
-                    if not isinstance(item, dict) or set(item) - {"anima", "sdxl"} or not all(isinstance(v, str) for v in item.values()):
+                    if not isinstance(item, dict) or set(item) - {"anima", "sdxl", "moss"} or not all(isinstance(v, str) for v in item.values()):
                         raise web.HTTPBadRequest(text="Invalid workflow paths")
                 elif key == "use_builtin_tagger":
                     if not isinstance(item, bool):
@@ -142,12 +145,12 @@ def main() -> None:
         else:
             raise web.HTTPBadRequest()
         from lora_training_steps import prepare_training_images
-        images, step = prepare_training_images(images, cfg)
+        images, step, total_steps = prepare_training_images(images, cfg)
         args = (images, trigger, cfg.get("profile", "anima"), step,
                 cfg.get("il_rate", .0005), cfg.get("save_per_step", 50), cfg.get("multi_img_folder_name", "soya_lora"))
         kwargs = dict(lora_save_path=save_path, gen_w=cfg.get("gen_w", 1024), gen_h=cfg.get("gen_h", 1024),
                       upscale=cfg.get("upscale", False), resolution=cfg.get("resolution", 1024),
-                      test_images=tests, save_after=cfg.get("save_after", 0), dim=cfg.get("dim", 32), alpha=cfg.get("alpha", 16))
+                      test_images=tests, save_after=cfg.get("save_after", 0), dim=cfg.get("dim", 32), alpha=cfg.get("alpha", 16), total_steps=total_steps)
         return web.json_response({"success": True, "positive": server._build_lora_training_text(*args, field="positive", **kwargs),
                                   "negative": server._build_lora_training_text(*args, field="negative", **kwargs)})
 

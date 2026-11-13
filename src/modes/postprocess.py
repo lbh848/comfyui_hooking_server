@@ -2809,6 +2809,13 @@ def _default_subtitle() -> dict:
     return dict(DEFAULT_SUBTITLE_SETTINGS)
 
 
+def _default_manga_text() -> dict:
+    """Manga text replacement defaults (RapidOCR detection + JSON text re-render)."""
+    from modes.manga_text_render import DEFAULT_MANGA_TEXT_SETTINGS
+
+    return dict(DEFAULT_MANGA_TEXT_SETTINGS)
+
+
 def normalize_postprocess_settings(mode: str, settings: dict) -> dict:
     """Normalize shared composition options using the renderer's defaults."""
     if not isinstance(settings, dict):
@@ -2816,6 +2823,9 @@ def normalize_postprocess_settings(mode: str, settings: dict) -> dict:
     if mode == "subtitle":
         from modes.subtitle_render import normalize_subtitle_settings
         return normalize_subtitle_settings(settings)
+    if mode == "manga_text":
+        from modes.manga_text_render import normalize_manga_text_settings
+        return normalize_manga_text_settings(settings)
     if mode == "vn":
         clean = _merge_vn_defaults(settings) if settings else _default_vn()
         clean.pop("emotion_rows", None)
@@ -2854,7 +2864,7 @@ def normalize_postprocess_settings(mode: str, settings: dict) -> dict:
 def get_postprocess_mode(config: dict) -> str:
     """Return the shared dialogue presentation mode."""
     mode = (config.get("postprocess") or {}).get("mode", "vn")
-    return mode if mode in ("vn", "bubble", "subtitle") else "vn"
+    return mode if mode in ("vn", "bubble", "subtitle", "manga_text") else "vn"
 
 
 def get_postprocess_config(config: dict) -> dict:
@@ -2862,7 +2872,7 @@ def get_postprocess_config(config: dict) -> dict:
     stored = config.get("postprocess") or {}
     return {"scope": "global", "mode": get_postprocess_mode(config), **{
         mode: normalize_postprocess_settings(mode, stored.get(mode) or {})
-        for mode in ("vn", "bubble", "subtitle")
+        for mode in ("vn", "bubble", "subtitle", "manga_text")
     }}
 
 
@@ -3015,6 +3025,47 @@ def get_subtitle_settings(
     return normalize_subtitle_settings(subtitle)
 
 
+def get_manga_text_settings(
+    config: dict,
+    bot_name: str = "",
+    *,
+    force: bool = False,
+) -> Optional[dict]:
+    """활성 시 텍스트 교체(manga_text) 설정을 반환한다.
+
+    말풍선/자막과 동일하게 마스터 토글과 모드별 enabled 토글을 모두 요구한다.
+    force=True는 수동 후처리 테스트에서 저장값 변경 없이 활성 토글만 우회한다.
+    """
+    if not force and not is_postprocess_active(config):
+        print(
+            "[POSTPROCESS] 텍스트 교체 후처리 스킵: "
+            f"마스터 토글 비활성, bot={bot_name!r}"
+        )
+        return None
+    manga_text = normalize_postprocess_settings(
+        "manga_text", (config.get("postprocess") or {}).get("manga_text") or {}
+    )
+    if not force and not bool(manga_text.get("enabled", False)):
+        print(
+            "[POSTPROCESS] 텍스트 교체 후처리 스킵: "
+            f"공통 텍스트 교체 토글 비활성, bot={bot_name!r}"
+        )
+        return None
+    # 폰트 id → 경로 해석(번들 미설치 시 자동 다운로드). 렌더 스레드 밖에서 처리한다.
+    try:
+        from modes.font_assets import resolve_font
+
+        resolved_path, _variation = resolve_font(
+            str(manga_text.get("font_id", "") or ""),
+            str(manga_text.get("font_path", "") or ""),
+        )
+        manga_text["font_path"] = resolved_path or ""
+    except Exception as e:
+        print(f"[POSTPROCESS] manga_text 폰트 해석 실패, font_path 원본 사용: {e}")
+        traceback.print_exc()
+    return manga_text
+
+
 def default_postprocess_config() -> dict:
     """config.json postprocess 기본값."""
     return {
@@ -3026,5 +3077,6 @@ def default_postprocess_config() -> dict:
             "font_size": 0,             # 폰트 크기(px). 0=박스 높이 기반 자동
             "name_color": False,
             "name_replace": {},
-        }
+        },
+        "manga_text": _default_manga_text(),
     }

@@ -10,6 +10,8 @@ import aiohttp
 
 from aiohttp import web
 
+from manga_page_sizes import MANGA_PAGE_SIZES
+
 API_PREFIX = "/api/illust"
 
 # Keep the worker's public surface explicit. Never expose /api/config or arbitrary
@@ -32,9 +34,9 @@ READ_PATHS = {
     "bot_mode/emotion_regeneration_activity",
     "bot_mode/importable_bot_chars", "bot_mode/asset_chars_with_rep", "bot_mode/asset_character_rep_images",
     "bot_mode/word_replacements", "illustration/thinking-connections", "illustration/extra",
-    "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle",
+    "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle", "bot_mode/postprocess_manga_text",
     "postprocess/settings", "postprocess/fonts", "postprocess/face_devices", "illustration/workflow", "illustration/sampling-options", "illustration/presets",
-    "illustration/background-presets",
+    "illustration/background-presets", "illustration/background-bots", "illustration/background-cards",
     "llm_edit_prompt_template",
 }
 WRITE_PATHS = {
@@ -43,7 +45,7 @@ WRITE_PATHS = {
     "illustration/config", "illustration_context/bridge/bots",
     "illustration_context/prompts", "illustration_context/toggles",
     "illustration_context/prompt-structure", "illustration_context/execution-preview",
-    "regenerate", "reschedule", "illustration_auto_feedback", "restore_manual_draw", "illustration_flow/cancel",
+    "regenerate", "reschedule", "illustration_auto_feedback", "restore_manual_draw", "redraw_recent_sessions", "illustration_flow/cancel",
     "reschedule_with_modified_prompt", "llm_edit_prompt",
     "illustration/prepare",
     "bot_mode/action", "bot_mode/distribution", "bot_mode/upload", "bot_mode/upload_preflight", "bot_mode/delete_image",
@@ -59,12 +61,12 @@ WRITE_PATHS = {
     "bot_mode/word_replacements", "illustration/thinking-check",
     "bot_mode/emotion_profiles", "bot_mode/emotion_outfits", "bot_mode/emotion_emotions",
     "bot_mode/emotion_assets", "bot_mode/emotion_upload",
-    "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle",
+    "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle", "bot_mode/postprocess_manga_text",
     "postprocess/settings", "postprocess/preview", "postprocess/font/upload", "postprocess/font/delete", "illustration/workflow", "illustration/presets",
-    "illustration/background-presets",
+    "illustration/background-presets", "illustration/background-bots", "illustration/background-cards",
     "llm_edit_prompt_template",
 }
-MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image)"
+MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image|illustration/background-image)"
 
 
 def illustration_media_path(path: str) -> bool:
@@ -177,9 +179,11 @@ def register_illustration(app: web.Application, runtime, schema: str) -> None:
     app.router.add_delete(API_PREFIX + "/{path:.+}", gateway)
 
 
-def register_illustration_config(server, *, model_presets=None, background_preset_builtin_file=None) -> None:
+def register_illustration_config(server, *, model_presets=None, background_preset_builtin_file=None,
+                                background_bot_builtin_file=None) -> None:
     """Reuse the normal configuration writer, returning only illustration fields."""
     import workflow_profiles
+    from emotion_composition import normalize_composition_settings
 
     keys = {
         "illustration_workflow_type", "illustration_workflow_source_paths",
@@ -192,6 +196,10 @@ def register_illustration_config(server, *, model_presets=None, background_prese
 
         def emotion_values() -> dict:
             return {
+                "background_mode": str(server.app_config.get("emotion_background_mode", "manual")),
+                "background_world": str(server.app_config.get("emotion_background_world", "")),
+                "composition_settings": normalize_composition_settings(server.app_config.get("emotion_composition_settings")),
+                "composition_defaults": normalize_composition_settings(),
                 "postprocess_enabled": bool(server.app_config.get(
                     "emotion_postprocess_enabled",
                     server.DEFAULT_CONFIG.get("emotion_postprocess_enabled", False),
@@ -221,17 +229,31 @@ def register_illustration_config(server, *, model_presets=None, background_prese
         if request.method == "POST" and emotion_scope:
             body = await request.json()
             emotion_keys = {
+                "background_mode", "background_world", "composition_settings",
                 "postprocess_enabled", "background_manual_text",
                 "background_bg_css", "background_fg_css",
                 "background_preview_name", "background_preview_url",
             }
             if not isinstance(body, dict) or set(body) - emotion_keys:
                 return web.json_response({"error": "지원하지 않는 감정 삽화 설정입니다."}, status=400)
+            updates = {}
+            if "composition_settings" in body:
+                if not isinstance(body["composition_settings"], dict):
+                    return web.json_response({"error": "합성 설정 형식을 확인하세요."}, status=400)
+                try:
+                    updates["emotion_composition_settings"] = normalize_composition_settings(body["composition_settings"])
+                except ValueError as error:
+                    return web.json_response({"error": str(error)}, status=400)
+            if "background_mode" in body:
+                if body["background_mode"] not in ("manual", "auto"):
+                    return web.json_response({"error": "배경 모드를 확인하세요."}, status=400)
+                updates["emotion_background_mode"] = body["background_mode"]
             if "postprocess_enabled" in body:
                 if not isinstance(body["postprocess_enabled"], bool):
                     return web.json_response({"error": "감정 삽화 후처리 설정 값을 확인하세요."}, status=400)
-                server.app_config["emotion_postprocess_enabled"] = body["postprocess_enabled"]
+                updates["emotion_postprocess_enabled"] = body["postprocess_enabled"]
             text_fields = (
+                ("background_world", "emotion_background_world", 20000, "세계관 설정"),
                 ("background_manual_text", "emotion_background_manual_text", 20000, "배경 설명"),
                 ("background_bg_css", "emotion_background_manual_bg_css", 20000, "배경 CSS"),
                 ("background_fg_css", "emotion_background_manual_fg_css", 20000, "전면 CSS"),
@@ -245,7 +267,7 @@ def register_illustration_config(server, *, model_presets=None, background_prese
                     return web.json_response(
                         {"error": f"{label}은 {limit:,}자 이하의 문자열이어야 합니다."}, status=400
                     )
-                server.app_config[config_key] = value
+                updates[config_key] = value
             if "background_preview_url" in body:
                 value = body["background_preview_url"]
                 # 백업 이미지 경로만 허용한다. 빈 문자열은 선택 해제를 뜻한다.
@@ -255,9 +277,10 @@ def register_illustration_config(server, *, model_presets=None, background_prese
                     or (value and not value.startswith("/api/"))
                 ):
                     return web.json_response({"error": "미리보기 이미지 경로를 확인하세요."}, status=400)
-                server.app_config["emotion_background_preview_url"] = value
+                updates["emotion_background_preview_url"] = value
             if not body:
                 return web.json_response({"error": "저장할 감정 삽화 설정이 없습니다."}, status=400)
+            server.app_config.update(updates)
             server.save_config(server.app_config)
             # Return the same key set as GET so the autosave keeps a complete
             # baseline and never resends shared illustration settings.
@@ -315,6 +338,13 @@ def register_illustration_config(server, *, model_presets=None, background_prese
             "config": config_values,
             "workflow_types": workflow_profiles.ILLUSTRATION_PROFILE_LABELS,
             "local_profiles": workflow_profiles.ILLUSTRATION_LOCAL_PROFILES,
+            # Manga page sizes the DETAIL-MANGA prompt can offer; the bot's
+            # manga settings section renders these as a multi-select.
+            "manga_page_sizes": [
+                {"value": f"{width}x{height}", "width": width, "height": height,
+                 "label": f"{width}×{height}"}
+                for width, height in MANGA_PAGE_SIZES
+            ],
             "capabilities": workflow_profiles.illustration_capabilities(
                 server.app_config.get("illustration_workflow_type"),
                 server.app_config.get("chansub_workflow_type", "anima"),
@@ -378,6 +408,9 @@ def register_illustration_config(server, *, model_presets=None, background_prese
 
     server.app.router.add_get("/api/illustration/background-presets", background_presets)
     server.app.router.add_post("/api/illustration/background-presets", background_presets)
+
+    from emotion_background_bots import register_background_bots
+    register_background_bots(server, background_bot_builtin_file)
 
     async def sampling_options(request: web.Request) -> web.Response:
         return web.json_response(await illustration_sampling_options(server), headers={"Cache-Control": "no-store"})

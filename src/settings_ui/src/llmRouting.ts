@@ -10,7 +10,7 @@ export interface LlmRoute {
   fallback_max_retries: number;
 }
 
-export const llmRoutingGroups = catalog.groups;
+export const llmRoutingGroups = catalog.groups.filter((group) => !("hidden" in group && group.hidden));
 export const llmRoutingModalities = catalog.modalities;
 export const llmRoutingTasks = catalog.tasks;
 export const llmRouting: Record<string, LlmRoute> = Object.fromEntries(

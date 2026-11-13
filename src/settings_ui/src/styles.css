@@ -84,6 +84,9 @@
 .llm-token-saving-controls { display: flex; align-items: center; gap: 20px; margin-left: auto; }
 .llm-token-saving-controls .field { width: 160px; }
 .llm-token-saving-controls select:disabled { opacity: 0.55; cursor: not-allowed; }
+.llm-image-pdf-settings { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; }
+.llm-image-pdf-settings .setting-row.no-top { padding-top: 15px; }
+.llm-image-pdf-settings .llm-fields { margin-top: 14px; }
 .llm-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .llm-json { min-height: 110px; font-family: Consolas, monospace; font-size: 12px; }
 .llm-field-error { color: var(--danger); font-size: 11px; font-weight: 400; }

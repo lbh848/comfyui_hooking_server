@@ -7,7 +7,8 @@ import { llmRoutingGroups, llmRoutingModalities, llmRoutingTasks, type LlmRoute 
 
 type RouteValues = { [Field in keyof LlmRoute]: string };
 const routeFields = ["primary", "fallback_target", "retry_delay_sec", "max_retries", "fallback_retry_delay_sec", "fallback_max_retries"] as const;
-const editableTasks = llmRoutingTasks.filter((task) => !task.locked);
+const editableTasks = llmRoutingTasks.filter((task) => !task.locked && !("hidden" in task && task.hidden)
+  && llmRoutingGroups.some((group) => group.key === task.group));
 const editableGroups = llmRoutingGroups.filter((group) => editableTasks.some((task) => task.group === group.key));
 const routingModes = [["easy", "쉬운 설정"], ["detail", "상세 설정"]];
 

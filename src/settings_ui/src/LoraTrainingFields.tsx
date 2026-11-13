@@ -14,12 +14,13 @@ export const trainingFields = (config: LoraData): [string, string, number, strin
 ];
 
 export const trainingPresetSettings = (config: LoraData) => Object.fromEntries(
-  [...commonTrainingFields.map(([key]) => key), "step_mode", "step_per_image", "total_steps", "workflow_source_path", "profile", "multi_img_folder_name", "upscale"].map(key => [key, config[key]]),
+  [...commonTrainingFields.map(([key]) => key), "step_mode", "step_per_image", "total_steps", "workflow_source_path", "optimizer_type", "profile", "multi_img_folder_name", "upscale"].map(key => [key, config[key]]),
 );
 
 export function LoraTrainingFields({ value, onChange }: { value: LoraData; onChange: (patch: LoraData) => void }) {
   return <>
     <LoraTrainingWorkflow value={value} onChange={onChange} />
+    <label className="field">옵티마이저<select value={value.optimizer_type || "default"} onChange={event => onChange({ optimizer_type: event.target.value })}><option value="default">기본값 유지</option><option value="AdamW">AdamW</option><option value="AdamW8bit">AdamW8bit</option><option value="Muon">Muon</option></select></label>
     <label className="field">STEP 기준<select value={value.step_mode || "per_image"} onChange={event => onChange({
       step_mode: event.target.value,
       step_per_image: Number.isInteger(value.step_per_image) && value.step_per_image > 0 ? value.step_per_image : 1,

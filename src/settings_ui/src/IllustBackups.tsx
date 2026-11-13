@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { CalendarClock, Check, ChevronLeft, ChevronRight, Clock3, Download, FileText, GitBranch, Images, LoaderCircle, PencilLine, Plus, RefreshCw, Search, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, ChevronRight, Clock3, Download, FileText, GitBranch, History, Images, LoaderCircle, PencilLine, Plus, RefreshCw, Search, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
 import { Badge, Empty, Modal, Panel, Toggle } from "./components";
 import { IllustBackupEditor } from "./IllustBackupEditor";
 import { IllustImageAnalysis } from "./IllustImageAnalysis";
@@ -42,6 +42,7 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
   const [detailView, setDetailView] = useState("detail");
   const [drawBot, setDrawBot] = useWorkSession(manualDrawSession, "");
   const restoredDraw = useRef(!!drawBot);
+  const [sessionDraw, setSessionDraw] = useState(false);
   const { entries: openModals } = useModalWorkspace();
   // 보관(백그라운드)된 모달은 갤러리 조작을 막지 않는다. 수동 그리기처럼 오래
   // 백그라운드에 남는 작업까지 잠금 대상에 넣으면 목록은 계속 보이는데
@@ -54,6 +55,7 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
   const [scheduledName, setScheduledName] = useState("");
   const activeRequest = useRef<AbortController | null>(null);
   const requestBusy = useRef(false);
+  const refreshPending = useRef(false);
   const reload = () => { setRevision(value => value + 1); filters.reload(); flowHistory.reload(); };
   const selectedFlow = flowHistory.history.find(run => filter === `flow:${run.id}`);
   useEffect(() => {
@@ -85,10 +87,15 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
     else { restoredDraw.current = false; setDrawBot(botSelected); }
   }
 
+  // 최근 흐름 세션 하나의 저장된 LLM 응답(생성 태그)만 재사용하고, 나머지는
+  // 현재 삽화용 봇·그리기 설정으로 서버에서 다시 조립해 모든 이미지를 다시 그린다.
+  // LLM을 다시 호출하지 않으므로 태그 생성 비용은 들지 않는다.
+  const recentSessions = flowHistory.history.filter(run => Number(run.backup_count) > 0);
+
   async function load(offset: number, signal: AbortSignal) {
     requestBusy.current = true; setLoading(true); setError("");
     try {
-      const result = await illustrationRequest(`backups?${query({ filter, search: searchQuery, offset, limit: 24, scope })}`, undefined, signal);
+      const result = await illustrationRequest(`backups?${query({ filter, search: searchQuery, offset, limit: 24, scope, view: "gallery" })}`, undefined, signal);
       if (signal.aborted) return;
       setBackups(previous => {
         if (!offset) return result.backups;
@@ -98,19 +105,35 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
       setTotal(result.total); setHasMore(result.has_more);
       setNextOffset(result.offset + result.backups.length);
     } catch (e) { if (!signal.aborted) setError((e as Error).message); }
-    finally { if (!signal.aborted) { requestBusy.current = false; setLoading(false); } }
+    finally {
+      if (!signal.aborted) {
+        requestBusy.current = false; setLoading(false);
+        if (refreshPending.current) { refreshPending.current = false; setRevision(value => value + 1); }
+      }
+    }
   }
   useEffect(() => { setBackups([]); setHasMore(false); setNextOffset(0); }, [filter, searchQuery]);
   useEffect(() => {
     activeRequest.current?.abort();
+    refreshPending.current = false;
     const controller = new AbortController(); activeRequest.current = controller;
     void load(0, controller.signal);
     return () => activeRequest.current?.abort();
   }, [filter, searchQuery, revision]);
   useEffect(() => {
-    const listener = () => { setRevision(value => value + 1); filters.reload(); };
+    let timer: number | undefined;
+    const listener = () => {
+      // A saved image can be announced by both the queue and backup socket.
+      // Finish the current page instead of repeatedly aborting its refresh.
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (requestBusy.current) refreshPending.current = true;
+        else setRevision(value => value + 1);
+        filters.reload();
+      }, 150);
+    };
     window.addEventListener("illustration-completed", listener);
-    return () => window.removeEventListener("illustration-completed", listener);
+    return () => { window.clearTimeout(timer); window.removeEventListener("illustration-completed", listener); };
   }, []);
   useEffect(() => { if (reschedule.data) setScheduledName(reschedule.data.scheduled ? reschedule.data.name : ""); }, [reschedule.data]);
   useEffect(() => {
@@ -129,6 +152,7 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
     <Panel title={<>{emotionScope ? "감정 삽화 백업" : "삽화 백업"} <Badge>{total.toLocaleString()}장</Badge></>} aside={<div className="illust-actions">
       <button className="button" disabled={loading} onClick={reload}><RefreshCw size={14} />새로고침</button>
       {!emotionScope && <button className="button primary" disabled={!botSelected && !drawBot} onClick={openManualDraw}><Plus size={14} />수동 그리기</button>}
+      {!emotionScope && <button className="button" disabled={!recentSessions.length} title="최근 흐름 세션 하나를 골라, 저장된 생성 태그를 현재 삽화용 봇·그리기 설정(그림체·LoRA·프리셋)으로 다시 조립해 그 세션의 모든 이미지를 다시 그립니다." onClick={() => setSessionDraw(true)}><History size={14} />최근 세션 다시 그리기</button>}
     </div>}>
       <div className="illust-body">
         <div className="illust-backup-toolbar"><label className="field illust-filter">모아보기<select value={filter} onChange={event => setFilter(event.target.value)}>
@@ -166,6 +190,7 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
     {drawBot && <ManualDraw key={drawBot} botSelected={drawBot} initialBackgrounded={restoredDraw.current} onClose={() => {
       setDrawBot(""); clearWorkSession(`manual-draw:${drawBot}`);
     }} />}
+    {sessionDraw && <RecentSessionRedraw onClose={() => setSessionDraw(false)} />}
   </>;
 }
 
@@ -211,6 +236,20 @@ function BackupCard({ item, transparent, scheduled, onOpen }: { item: Illustrati
   const [animated, setAnimated] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [showFlow, setShowFlow] = useState(false);
+  const [failedThumbnail, setFailedThumbnail] = useState("");
+  const preloadedImage = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!animated) return;
+    const source = illustrationMedia(item.image_url);
+    if (!source || preloadedImage.current?.getAttribute("src") === source) return;
+    const timer = window.setTimeout(() => {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = source;
+      preloadedImage.current = image;
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [animated, item.image_url]);
   const id = useId();
   const prompt = useIllustrationResource(showPrompt ? `backup_prompt/${enc(item.name)}?view=submitted` : null);
   const flow = useIllustrationResource(showFlow ? `backups/${enc(item.name)}/llm_trace` : null);
@@ -226,10 +265,11 @@ function BackupCard({ item, transparent, scheduled, onOpen }: { item: Illustrati
   const sourceLabel = { modal: "Modal", vast: "Vast", chansub: "챈섭" }[source];
   const disabledReason = item.is_animated ? "움직이는 삽화에는 사용할 수 없습니다." : !item.has_prompt ? "저장된 프롬프트가 없습니다." : "";
   const submittedPrompt = prompt.data?.submitted_prompt;
+  const stillImage = (failedThumbnail !== item.thumbnail_url && item.thumbnail_url) || item.poster_url || item.image_url;
   return <article className="illust-image-card" data-gallery-retain={action.busy || !!action.error || showPrompt || showFlow || preview} aria-label={`${item.name} ${asset ? "감정 에셋" : "삽화"} 백업`}>
     <button className={`illust-image-button${transparent ? " illust-checkerboard" : ""}`} onClick={() => setPreview(true)} aria-label={`${item.name} 이미지 확대`}
       onMouseEnter={() => setAnimated(true)} onMouseLeave={() => setAnimated(false)} onFocus={() => setAnimated(true)} onBlur={() => setAnimated(false)}>
-      <img src={illustrationMedia(animated && item.is_animated ? item.image_url : item.poster_url || item.image_url)} loading="lazy" decoding="async" alt={assetLabel || (info.bot_name ? `${info.bot_name} 삽화` : item.name)} />
+      <img src={illustrationMedia(animated && item.is_animated ? item.image_url : stillImage)} loading="lazy" decoding="async" onError={() => setFailedThumbnail(item.thumbnail_url || "")} alt={assetLabel || (info.bot_name ? `${info.bot_name} 삽화` : item.name)} />
       <span className="illust-backup-badges">{sourceLabel && <Badge>{sourceLabel}</Badge>}{item.is_animated && <Badge>움직이는 삽화</Badge>}</span>
       <span className="illust-backup-zoom"><ZoomIn size={14} />확대</span>
     </button>
@@ -254,12 +294,27 @@ function BackupCard({ item, transparent, scheduled, onOpen }: { item: Illustrati
       <IllustrationFeedback {...action} />
       {item.has_prompt ? <section className="illust-backup-prompt">
         <button className="illust-backup-toggle" aria-expanded={showPrompt} aria-controls={`${id}-prompt`} onClick={() => setShowPrompt(value => !value)}><FileText size={14} />프롬프트 {showPrompt ? "접기" : "펼치기"}<ChevronRight size={14} /></button>
-        {showPrompt && <div id={`${id}-prompt`}>{!prompt.data ? <IllustrationLoading error={prompt.error} retry={prompt.reload} /> : submittedPrompt ? <IllustrationPrompt value={submittedPrompt} /> : <><IllustrationPrompt value={item.positive} label="저장된 긍정 프롬프트" /><IllustrationPrompt value={item.negative} label="저장된 부정 프롬프트" /></>}</div>}
+        {showPrompt && <div id={`${id}-prompt`}>{!prompt.data ? <IllustrationLoading error={prompt.error} retry={prompt.reload} /> : submittedPrompt ? <IllustrationPrompt value={submittedPrompt} /> : <><IllustrationPrompt value={prompt.data.positive ?? item.positive} label="저장된 긍정 프롬프트" /><IllustrationPrompt value={prompt.data.negative ?? item.negative} label="저장된 부정 프롬프트" /></>}</div>}
       </section> : <p className="field-help">저장된 프롬프트가 없습니다.</p>}
     </div>
     {showFlow && <Modal title="LLM 흐름" onClose={() => setShowFlow(false)} className="illust-detail-modal"><div className="illust-form"><p className="field-help">{item.name}</p>{!flow.data ? <IllustrationLoading error={flow.error} retry={flow.reload} /> : <>{flow.data.note && <p className="field-help">{flow.data.note}</p>}{(flow.data.records || []).map((record: IllustrationData, index: number) => <details className="illust-section" key={record.id || index} open={index === 0}><summary>{record.label || record.task || record.type || `단계 ${index + 1}`}</summary><pre className="illust-text" tabIndex={0}>{JSON.stringify(record, null, 2)}</pre></details>)}{flow.data.missing?.length > 0 && <p className="field-help">일부 단계의 기록이 보관 기간을 지나 남아 있지 않습니다.</p>}</>}</div></Modal>}
-    {preview && <Modal title={`${item.name} 이미지 확대`} onClose={() => setPreview(false)} backgroundable={false} showHeader={false} className="illust-lightbox-modal illust-backup-lightbox"><img className={`illust-asset-preview${transparent ? " illust-checkerboard" : ""}`} src={illustrationMedia(item.image_url)} alt={item.name} /><button type="button" className="icon-button illust-lightbox-close" aria-label="닫기" title="닫기" onClick={() => setPreview(false)}><X size={22} /></button></Modal>}
+    {preview && <BackupLightbox key={item.image_url} item={item} stillImage={stillImage} transparent={transparent} onClose={() => setPreview(false)} />}
   </article>;
+}
+
+function BackupLightbox({ item, stillImage, transparent, onClose }: { item: IllustrationData; stillImage: string; transparent: boolean; onClose: () => void }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const imageClass = `illust-asset-preview${transparent ? " illust-checkerboard" : ""}`;
+  return <Modal title={`${item.name} 이미지 확대`} onClose={onClose} backgroundable={false} showHeader={false} className="illust-lightbox-modal illust-backup-lightbox">
+    <div className="illust-backup-preview" aria-busy={!loaded && !failed}>
+      {!loaded && <img className={imageClass} src={illustrationMedia(stillImage)} alt={item.name} decoding="async" />}
+      {!failed && <img key={attempt} className={`${imageClass} illust-backup-full-image${loaded ? " is-ready" : ""}`} src={illustrationMedia(item.image_url)} alt={loaded ? item.name : ""} decoding="async" fetchPriority="high" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />}
+      {!loaded && <div className="illust-backup-preview-status" role="status">{failed ? <>원본 이미지를 불러오지 못했습니다.<button type="button" className="button" onClick={() => { setAttempt(value => value + 1); setFailed(false); }}>다시 시도</button></> : <><LoaderCircle size={14} className="illust-manual-spinner" />원본 이미지 불러오는 중…</>}</div>}
+    </div>
+    <button type="button" className="icon-button illust-lightbox-close" aria-label="닫기" title="닫기" onClick={onClose}><X size={22} /></button>
+  </Modal>;
 }
 
 function BackupDetails({ item, initialView, onClose, onDelete }: { item: IllustrationData; initialView: string; onClose: () => void; onDelete: () => void }) {
@@ -401,6 +456,59 @@ function ManualDraw({ botSelected, initialBackgrounded, onClose }: { botSelected
       <footer className="illust-manual-footer"><div className="illust-manual-feedback"><IllustrationFeedback {...action} />{action.busy && <p className="field-help" role="status">선택한 카드로 장면을 구성하고 있습니다.</p>}</div><div className="illust-actions"><button type="button" className="button" disabled={action.busy} onClick={onClose}>닫기</button><button type="submit" className="button primary" disabled={action.busy || !canDraw}>{action.busy ? <LoaderCircle size={16} className="illust-manual-spinner" /> : <Images size={16} />}{action.busy ? "장면 구성 중…" : "그리기"}</button></div></footer>
     </form>
     {preview && <Modal title={preview.label} onClose={() => setPreview(null)} backgroundable={false} className="illust-character-modal"><img className="illust-asset-preview" src={preview.url} alt={preview.label} /></Modal>}
+  </Modal>;
+}
+
+function RecentSessionRedraw({ onClose }: { onClose: () => void }) {
+  const flowHistory = useIllustrationFlowHistory();
+  const action = useIllustrationAction();
+  const id = useId();
+  const options = flowHistory.history.filter(run => Number(run.backup_count) > 0);
+  const optionIds = options.map(run => run.id).join("|");
+  const [runId, setRunId] = useState("");
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (!options.length) { setRunId(""); return; }
+    if (!options.some(run => run.id === runId)) setRunId(options[0].id);
+  }, [optionIds]);
+  const selected = options.find(run => run.id === runId) || null;
+  async function redraw() {
+    if (!selected || action.busy) return;
+    setNotice("");
+    await action.run(async () => {
+      const result = await illustrationRequest("redraw_recent_sessions", { run_id: selected.id });
+      const skipped = Number(result.skipped || 0);
+      setNotice(`${Number(result.queued || 0)}장을 현재 삽화용 봇·그리기 설정으로 다시 그릴 작업 큐에 등록했습니다.${skipped ? ` (${skipped}장 제외)` : ""}`);
+    }, "");
+  }
+  return <Modal title="최근 세션 다시 그리기" onClose={onClose} closeDisabled={action.busy} className="illust-manual-modal">
+    <div className="illust-manual-form">
+      <div className="illust-manual-scroll">
+        <div className="illust-manual-intro">
+          <p>세션에 저장된 LLM 생성 태그만 유지하고, 프리셋·LoRA·그림체·샘플링 같은 나머지 값은 현재 삽화용 봇 설정과 그림 모델 설정에서 새로 읽어 서버 빌더로 다시 조립합니다. 선택한 세션의 모든 이미지를 다시 그립니다.</p>
+          <Badge tone="lavender">최근 {flowHistory.history.length}개 흐름</Badge>
+        </div>
+        <IllustrationFeedback error={flowHistory.error} />
+        {!options.length ? <Empty title="다시 그릴 세션이 없습니다">삽화를 한 번 이상 생성하면 최근 흐름 세션이 여기에 표시됩니다.</Empty> : <>
+          <section className="illust-manual-section" aria-labelledby={`${id}-sessions`}>
+            <h3 id={`${id}-sessions`}>세션 선택</h3>
+            <p className="field-help">다시 그릴 최근 흐름 세션 하나를 선택하세요.</p>
+            <div className="illust-backup-flow-list">{options.map(run => <button key={run.id} type="button" className="illust-backup-flow-group" aria-pressed={runId === run.id} title={run.label} onClick={() => setRunId(run.id)}>
+              <span><GitBranch size={14} aria-hidden="true" /><strong>{run.group_label}</strong><Badge>{run.backup_count}장</Badge></span>
+              <small>{new Date(run.created_at * 1000).toLocaleString("ko-KR")} · {flowStatusLabels[run.status] || run.status}</small>
+            </button>)}</div>
+          </section>
+          {selected && <p className="field-help" role="status">이 세션의 이미지 {selected.backup_count}장을 다시 그립니다. 생성 태그 LLM은 다시 호출하지 않습니다.</p>}
+        </>}
+      </div>
+      <footer className="illust-manual-footer">
+        <div className="illust-manual-feedback"><IllustrationFeedback error={action.error} message={notice} />{action.busy && <p className="field-help" role="status">작업 큐에 등록하는 중입니다.</p>}</div>
+        <div className="illust-actions">
+          <button type="button" className="button" disabled={action.busy} onClick={onClose}>닫기</button>
+          <button type="button" className="button primary" disabled={!selected || action.busy} onClick={() => void redraw()}>{action.busy ? <LoaderCircle size={16} className="illust-manual-spinner" /> : <RefreshCw size={16} />}{action.busy ? "등록 중…" : "이 세션 다시 그리기"}</button>
+        </div>
+      </footer>
+    </div>
   </Modal>;
 }
 

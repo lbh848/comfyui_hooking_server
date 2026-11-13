@@ -6,24 +6,47 @@ const regionColors = ["#ef4444", "#22c55e", "#3b82f6"];
 const maskChannels = ["R", "G", "B"];
 export const maskRegionColor = (region: IllustrationData, index: number) => regionColors[Math.max(0, "RGB".indexOf(region.channel || "RGB"[index % 3]))];
 
+// The graph and its open detail share the same image, including in-flight reads.
+// Release bytes when the last viewer closes so changing runs cannot retain them.
+const previewImages = new Map<string, {
+  users: number; controller: AbortController; url: string; error: string;
+  ready: Promise<void>;
+}>();
+
 function usePreviewImage(path = "") {
   const [result, setResult] = useState({ path: "", url: "", error: "" });
   const inline = /^data:image\/(png|webp|jpeg);base64,/.test(path);
   useEffect(() => {
     if (!path || inline) return;
-    const controller = new AbortController();
-    let objectUrl = "";
     const source = illustrationMedia(path);
     if (!source) { setResult({ path, url: "", error: "미리보기 경로를 확인할 수 없습니다." }); return; }
-    void fetch(source, { signal: controller.signal, cache: "no-store", headers: { "X-Comfy-Settings": "1", "X-Comfy-Settings-Schema": "2" } })
-      .then(async response => {
-        if (!response.ok) throw new Error("미리보기를 불러올 수 없습니다.");
-        const blob = await response.blob();
-        if (!controller.signal.aborted) { objectUrl = URL.createObjectURL(blob); setResult({ path, url: objectUrl, error: "" }); }
-      }).catch(cause => { if (!controller.signal.aborted) setResult({ path, url: "", error: cause.message }); });
-    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    let entry = previewImages.get(source);
+    if (!entry) {
+      const controller = new AbortController();
+      const created = { users: 0, controller, url: "", error: "", ready: Promise.resolve() };
+      created.ready = fetch(source, { signal: controller.signal, cache: "no-cache", headers: { "X-Comfy-Settings": "1", "X-Comfy-Settings-Schema": "2" } })
+        .then(async response => {
+          if (!response.ok) throw new Error("미리보기를 불러올 수 없습니다.");
+          const blob = await response.blob();
+          if (!controller.signal.aborted) created.url = URL.createObjectURL(blob);
+        }).catch(cause => { if (!controller.signal.aborted) created.error = cause.message; });
+      entry = created; previewImages.set(source, entry);
+    }
+    entry.users++;
+    let active = true;
+    const receive = () => { if (active) setResult({ path, url: entry.url, error: entry.error }); };
+    if (entry.url || entry.error) receive();
+    void entry.ready.then(receive);
+    return () => {
+      active = false;
+      if (--entry.users === 0) {
+        previewImages.delete(source); entry.controller.abort();
+        if (entry.url) URL.revokeObjectURL(entry.url);
+      }
+    };
   }, [path, inline]);
-  return inline ? { url: path, error: "" } : result.path === path ? result : { url: "", error: "" };
+  const shared = previewImages.get(illustrationMedia(path));
+  return inline ? { url: path, error: "" } : shared?.url ? shared : result.path === path ? result : { url: "", error: "" };
 }
 
 export function IllustrationMaskOverlay({ layout, maskUrl, faces = [], width = 100, height = 100, label, maskOpacity = .35, maskOutline = false }: {

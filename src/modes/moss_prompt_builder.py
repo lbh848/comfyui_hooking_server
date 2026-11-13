@@ -17,11 +17,27 @@ the graph needs so each V2 wrapper reads one dotted path.
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
+import re
+import workflow_profiles
+
+from manga_page_vocabulary import SHARED_DIVIDER_NEGATIVE, SHARED_DIVIDER_PREFIX
 
 MOSS_BBOX_COORD_SPACE = "abs_centralized"
 MOSS_BBOX_FORMAT = "yxyx"
+# DETAIL-MANGA page meta is fixed by the server; the model does not emit it.
+MANGA_META = ("comic panel redraw", "full color manga", "nsfw")
+
+# The speech-bubble detailer is a second i2i pass over the first output. The
+# swap_text v4 LoRA re-letters the text items; these defaults mirror the LoRA's
+# reference workflow but the sampler values stay user-editable in
+# ``workflow.detailer.sampling``. The detailer reuses the selected diffusion
+# model; the LoRA runs on either the SFT or the distilled checkpoint.
+MOSS_TEXT_DETAILER_LORA = "moss_i2i_swap_text_v4.safetensors"
+MOSS_TEXT_DETAILER_UNCOND_SKIP = "22"
+_HANGUL_RE = re.compile(r"[가-힣]")
 
 # CharRef v2 is an ai-toolkit edit LoRA. Reference mode only adds the LoRA and
 # picture conditioning; the selected preset's model and sampling values stay
@@ -155,9 +171,32 @@ def _clamp_centered_bbox(value, image_width: int, image_height: int) -> list[int
 
 
 def _absolute_moss_layout(layout: dict, image_width: int, image_height: int) -> dict:
-    """Pass through a DETAIL-MOSS document that already uses abs_centralized yxyx."""
+    """Pass through a DETAIL-MOSS document that already uses abs_centralized yxyx.
+
+    A DETAIL-MANGA page additionally carries the server-owned ``summary.meta``
+    list and ``label:"text"`` balloon items. They are MOSS prompt fields, not
+    application metadata, so they pass through unchanged. The meta style list is
+    fixed by the server for a manga page. ``summary.canvas`` is not part of the
+    MOSS layout-JSON schema; when a legacy document still carries it, it passes
+    through, but new pages are recognised by their PANEL item captions.
+    """
     summary = layout.get("summary") if isinstance(layout.get("summary"), dict) else {}
     caption = _text(summary.get("caption"))
+    summary_out = {"caption": caption}
+    canvas = _text(summary.get("canvas"))
+    multi_panel = canvas.strip().lower() == "multi_panel" or any(
+        isinstance(entry, dict)
+        and _text(entry.get("label")).lower() == "object"
+        and _text(entry.get("caption")).strip().upper().startswith("PANEL ")
+        for entry in (layout.get("items") or []))
+    if multi_panel:
+        summary_out["meta"] = list(MANGA_META)
+    else:
+        meta = summary.get("meta")
+        if isinstance(meta, list) and any(_text(entry) for entry in meta):
+            summary_out["meta"] = list(MANGA_META)
+    if canvas:
+        summary_out["canvas"] = canvas
     items = []
     for entry in layout.get("items") or []:
         if not isinstance(entry, dict):
@@ -176,12 +215,14 @@ def _absolute_moss_layout(layout: dict, image_width: int, image_height: int) -> 
             item["name"] = name
         if label == "text":
             item["text"] = _text(entry.get("text"))
+            if "palette" in entry:
+                item["palette"] = entry["palette"]
         item["bbox"] = bbox
         items.append(item)
     if not items:
-        return {"summary": {"caption": caption}}
+        return {"summary": summary_out}
     return {
-        "summary": {"caption": caption},
+        "summary": summary_out,
         "items": items,
         "bbox_coord_space": MOSS_BBOX_COORD_SPACE,
         "bbox_format": MOSS_BBOX_FORMAT,
@@ -282,28 +323,175 @@ def build_moss_layout(layout, positive: str = "", *, fields: dict | None = None,
     }
 
 
+def build_swap_text_layout(moss, *, allow_empty: bool = False) -> dict | None:
+    """Reduce a MOSS layout to the swap_text v4 prompt format.
+
+    The training format keeps one ``text`` item per balloon with the exact
+    dialogue and the balloon bbox in absolute centred ``yxyx`` pixels. Character
+    and object items, ``image_size`` and page metadata are dropped. The summary
+    caption must be ``comic, english text`` or ``comic, korean text``.
+    """
+    if not isinstance(moss, dict):
+        return None
+    items = []
+    for entry in moss.get("items") or []:
+        if not isinstance(entry, dict):
+            continue
+        if _text(entry.get("label")).lower() != "text":
+            continue
+        text = _text(entry.get("text"))
+        if not text:
+            continue
+        bbox = entry.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            box = [int(round(float(value))) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        items.append({"label": "text", "caption": "text", "text": text, "bbox": box})
+    if not items and not allow_empty:
+        return None
+    has_korean = any(_HANGUL_RE.search(item["text"]) for item in items)
+    caption = "comic, korean text" if (has_korean or not items) else "comic, english text"
+    return {
+        "summary": {"caption": caption},
+        "items": items,
+        "bbox_coord_space": MOSS_BBOX_COORD_SPACE,
+        "bbox_format": MOSS_BBOX_FORMAT,
+    }
+
+
+MOSS_DETAILER_STRIDE = 16
+MOSS_DETAILER_AREA_TOLERANCE = 1.10
+MOSS_DETAILER_MIN_RESOLUTION = 256
+MOSS_DETAILER_MAX_RESOLUTION = 2048
+
+
+def _detailer_target_size(width: int, height: int, resolution: int) -> tuple[int, int]:
+    """The i2i node's own ``target_size``: native aspect, 16-multiples, area cap.
+
+    ``resolution`` is the node's target **area** (``resolution²``), not a side
+    length, and it never upscales past the first-pass canvas.
+    """
+    cap = resolution * resolution
+    stride, tolerance = MOSS_DETAILER_STRIDE, MOSS_DETAILER_AREA_TOLERANCE
+    if width % stride == 0 and height % stride == 0 and width * height <= cap * tolerance:
+        return width, height
+    area = min(cap, width * height)
+    aspect = width / height
+    out_w = round(math.sqrt(area * aspect) / stride) * stride
+    out_h = round(math.sqrt(area / aspect) / stride) * stride
+    out_w = max(stride, min(out_w, width // stride * stride))
+    out_h = max(stride, min(out_h, height // stride * stride))
+    return out_w, out_h
+
+
+def _scaled_detailer_layout(layout: dict, scale_x: float, scale_y: float) -> dict:
+    """Resize the whole canvas: every mask keeps its relative position and size.
+
+    The bboxes are ``yxyx`` absolute centred pixels, so x and y are scaled by the
+    target canvas ratio independently (the two ratios can differ by a few pixels
+    after the node's 16-multiple rounding). Each mask is not resized around its
+    own centre; all coordinates move with the page.
+    """
+    if scale_x == 1.0 and scale_y == 1.0:
+        return layout
+    scaled = copy.deepcopy(layout)
+    for item in scaled.get("items") or []:
+        bbox = item.get("bbox") if isinstance(item, dict) else None
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        y0, x0, y1, x1 = (float(value) for value in bbox)
+        item["bbox"] = [int(round(y0 * scale_y)), int(round(x0 * scale_x)),
+                        int(round(y1 * scale_y)), int(round(x1 * scale_x))]
+    return scaled
+
+
+def build_text_detailer(moss, *, model="", sampling=None, width=1024, height=1024,
+                        seed=0, negative="", allow_empty=False, activate=True,
+                        resolution_scale=1.0, resolution=None) -> dict | None:
+    """Controller for the in-graph swap_text pass.
+
+    ``allow_empty`` keeps the document complete for the workflows that always
+    carry the detailer branch; a textless page then runs the pass with an empty
+    item list instead of failing on a missing document key. ``sampling`` is
+    whatever the preset exposes; the caller owns steps / CFG / sampler /
+    scheduler / denoise / shift. ``negative`` is the same negative text as the
+    first pass, so it applies whenever the user raises CFG above 1.
+    ``activate`` is the per-bot 말풍선 보정 switch;
+    the submission step leaves the branch dormant when it is false.
+    ``resolution_scale`` or an explicit ``resolution`` changes only this second
+    pass. The 16-multiple target resolution is decided first, the node's
+    ``target_size`` then fixes the resized canvas, and every layout mask is
+    scaled by ``target canvas / first-pass canvas`` so its relative position and
+    size stay identical.
+    """
+    if not isinstance(sampling, dict) or not sampling:
+        return None
+    width = max(16, int(width or 1024))
+    height = max(16, int(height or 1024))
+    if resolution is not None:
+        target = int(resolution)
+    else:
+        try:
+            resolution_scale = float(resolution_scale)
+        except (TypeError, ValueError):
+            resolution_scale = 1.0
+        if not math.isfinite(resolution_scale) or not 0.2 <= resolution_scale <= 2.0:
+            resolution_scale = 1.0
+        # The node's resolution is an area (resolution²), so a linear scale s
+        # needs sqrt(width × height) × s to resize both sides by s.
+        target = math.sqrt(width * height) * resolution_scale
+    resolution = round(target / MOSS_DETAILER_STRIDE) * MOSS_DETAILER_STRIDE
+    resolution = max(MOSS_DETAILER_MIN_RESOLUTION,
+                     min(MOSS_DETAILER_MAX_RESOLUTION, resolution))
+    target_width, target_height = _detailer_target_size(width, height, resolution)
+    layout = build_swap_text_layout(moss, allow_empty=allow_empty)
+    if layout is None:
+        return None
+    layout = _scaled_detailer_layout(
+        layout, target_width / width, target_height / height)
+    return {
+        "activate": bool(activate),
+        "model": _text(model),
+        "layout": json.dumps(layout, ensure_ascii=False, separators=(",", ":")),
+        "resolution": resolution,
+        "seed": int(seed or 0),
+        "lora": MOSS_TEXT_DETAILER_LORA,
+        "strength": 1.0,
+        "negative": str(negative or ""),
+        "uncond_skip_layers": MOSS_TEXT_DETAILER_UNCOND_SKIP,
+        "sampling": copy.deepcopy(sampling),
+    }
+
+
 def merge_lora_lists(*groups) -> list[dict]:
-    """Merge LoRA sets in order, de-duplicating by normalized ``lora_path``.
+    """Merge LoRA sets, de-duplicating by normalized path and character owner.
 
     Request character LoRAs come first, then the preset's common set, so a
-    character card entry wins when the same file is configured twice.
+    character card entry wins when the same file/owner is configured twice.
+    Different characters may share a file while retaining their own bboxes.
+    An unowned duplicate never turns an earlier character adapter global.
     """
     merged = []
-    seen = set()
+    seen = {}
     for group in groups:
         items = group.get("list") if isinstance(group, dict) else group
         if not isinstance(items, list):
             continue
         for item in items:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or item.get("enabled", True) is False:
                 continue
             path = _text(item.get("lora_path"))
             if not path:
                 continue
             identity = path.replace("\\", "/")
-            if identity in seen:
+            owner = _text(item.get("CHAR"))
+            owners = seen.setdefault(identity, set())
+            if owner in owners or "" in owners or (not owner and owners):
                 continue
-            seen.add(identity)
+            owners.add(owner)
             merged.append(dict(item))
     return merged
 
@@ -313,6 +501,10 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
                      lora_list=None, lora_filter="") -> dict:
     """Build the workflow controller object shared by every MOSS V2 wrapper."""
     loras = list(lora_list or [])
+    if not workflow_profiles.MOSS_REFERENCE_ENABLED:
+        loras = [item for item in loras
+                 if _text(item.get("lora_path")).replace("\\", "/").split("/")[-1].casefold()
+                 != MOSS_CHARREF_LORA.casefold()]
     return {
         "model": _text(model),
         "clip": _text(clip),
@@ -340,6 +532,17 @@ class MossPromptBuilder:
             raise ValueError("MOSS layout must be an object")
         if not isinstance(workflow, dict):
             raise ValueError("MOSS workflow controller must be an object")
+        if any(isinstance(item, dict) and item.get("label") == "object"
+               and _text(item.get("caption")).startswith(SHARED_DIVIDER_PREFIX)
+               and " ink rule separating " in _text(item.get("caption"))
+               for item in (moss.get("items") or [])):
+            # These server-owned items exist only on touching pages. Leave
+            # deliberate separated/mixed layouts and the caller's dict alone.
+            workflow = dict(workflow)
+            negative = _text(workflow.get("negative"))
+            present = {tag.strip().casefold() for tag in negative.split(",")}
+            additions = [tag for tag in SHARED_DIVIDER_NEGATIVE if tag.casefold() not in present]
+            workflow["negative"] = ", ".join(part for part in (negative, ", ".join(additions)) if part)
         return {"moss": moss, "workflow": workflow}
 
     @staticmethod

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { Flame } from "lucide-react";
-import { illustrationRequest, type IllustrationData } from "./illustration";
+import { illustrationNodeName, illustrationRequest, type IllustrationData } from "./illustration";
 
 export const flowStatusLabels: Record<string, string> = { waiting: "대기", processing: "처리 중", cancelling: "중단 중", completed: "완료", failed: "실패", cancelled: "취소", skipped: "생략" };
 
@@ -29,6 +29,11 @@ export function useFlowPoll(path: string) {
     async function poll() {
       try {
         const data = await illustrationRequest(path, undefined, controller.signal);
+        // Preserve routing identifiers while displaying the current name in active and saved runs.
+        const displayNode = (node: IllustrationData) => node?.label?.includes("EMOTION-RESOLVE")
+          ? { ...node, label: illustrationNodeName(node.label) } : node;
+        if (Array.isArray(data.flow?.nodes)) data.flow = { ...data.flow, nodes: data.flow.nodes.map(displayNode) };
+        if (data.node) data.node = displayNode(data.node);
         if (!controller.signal.aborted) { setLoaded({ path, data }); setError(""); }
       } catch (cause) {
         if (!controller.signal.aborted) setError((cause as Error).message);

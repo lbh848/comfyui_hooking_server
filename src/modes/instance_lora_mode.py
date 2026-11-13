@@ -704,6 +704,10 @@ def _resolve_test_setup_image_paths(
     source_type = (source_type or "").strip().lower()
     resolved_card_filename = (card_filename or "").strip()
     try:
+        if source_type == "bot_lora_shared_test":
+            from modes.bot_lora_mode import get_bot_test_image_path
+            path = get_bot_test_image_path(bot_name, project_name, test_filename)
+            return [path] if path else []
         if source_type in ("bot_lora_test_setup", "bot_lora_char_test_setup"):
             from modes.bot_lora_mode import (
                 _get_project_training_images,
@@ -833,18 +837,20 @@ async def run_auto_refine_test_setup(
     messages = []
     try:
         source_type = (source_type or "bot_lora_test_setup").strip().lower()
+        shared_test = source_type == "bot_lora_shared_test"
         if source_type not in (
             "bot_lora_test_setup",
             "bot_lora_char_test_setup",
+            "bot_lora_shared_test",
             "asset_test_setup",
         ):
             print(f"[INSTANCE_LORA] 지원하지 않는 test setup source_type: {source_type}")
             return {"success": False, "error": f"지원하지 않는 test setup source_type: {source_type}"}
-        if not character:
+        if not shared_test and not character:
             return {"success": False, "error": "character 필드가 필요합니다."}
         if not test_filename:
             return {"success": False, "error": "test_filename 필드가 필요합니다."}
-        if not card_positive or not card_positive.strip():
+        if not shared_test and (not card_positive or not card_positive.strip()):
             return {"success": False, "error": "캐릭터 카드 수정 프롬프트(card_positive)가 비어 있습니다."}
         if not test_positive or not test_positive.strip():
             return {"success": False, "error": "공통 테스트 이미지 프롬프트(test_positive)가 비어 있습니다."}
@@ -861,6 +867,15 @@ async def run_auto_refine_test_setup(
             return {"success": False, "error": "bot_test_setup 프롬프트 템플릿이 비어 있습니다."}
 
         rendered = _render_bot_test_setup_prompt(template, test_positive, card_positive)
+        if shared_test:
+            rendered += (
+                "\n\nSHARED REFERENCE PASS\n"
+                "No character card is selected. Refine only the reusable test scene: "
+                "quality, pose, action, expression, framing, composition, and background. "
+                "Do not add or retain character identity, appearance, clothing, accessories, "
+                "artist names, trigger tokens, or gender/subject tags. "
+                "Do not invent details absent from the test prompt. Return the same strict JSON schema."
+            )
 
         messages = [
             {"role": "system", "content": "You are a precise prompt refiner. Follow the user's instructions exactly and respond in strict JSON."},
@@ -942,8 +957,8 @@ async def run_auto_refine_test_setup(
                         image_paths=image_paths,
                         prompt_id=prompt_id,
                         source_type=source_type,
-                        review_mode="asset_test_transfer" if is_asset_test else "test_transfer",
-                        image_roles=[
+                        review_mode="single_source" if shared_test else "asset_test_transfer" if is_asset_test else "test_transfer",
+                        image_roles=["shared test reference; supplies pose, expression, action, framing, composition, background, and quality only; exclude identity, outfit, appearance, artist names, and trigger tokens"] if shared_test else [
                             "source asset image; supplies the learned asset's defining visible properties"
                             if is_asset_test
                             else "character card image; supplies identity, appearance, outfit, and accessories only",
@@ -1128,7 +1143,7 @@ async def handle_auto_refine_enqueue(request):
         gender = (body.get("gender") or "").strip()
         is_asset = bool(body.get("is_asset", False))
 
-        if source_type not in ("bot", "bot_lora_training", "training", "bot_lora_test_setup", "bot_lora_char_test_setup", "asset_test_setup"):
+        if source_type not in ("bot", "bot_lora_training", "training", "bot_lora_test_setup", "bot_lora_char_test_setup", "bot_lora_shared_test", "asset_test_setup"):
             return web.json_response({"success": False, "error": f"지원하지 않는 source_type: {source_type}"})
 
         # ── asset_test_setup: 에셋 테스트 이미지 일괄 세팅 전용 분기 ──
@@ -1177,21 +1192,27 @@ async def handle_auto_refine_enqueue(request):
             return web.json_response({"success": True, "data": {"id": item.id}})
 
         # ── bot_lora_test_setup: 테스트 이미지 일괄 세팅 전용 분기 ──
-        if source_type == "bot_lora_test_setup":
+        if source_type in ("bot_lora_test_setup", "bot_lora_shared_test"):
+            shared_test = source_type == "bot_lora_shared_test"
             card_filename = (body.get("card_filename") or "").strip()
             card_positive = body.get("card_positive", "") or ""
             test_filename = (body.get("test_filename") or "").strip()
             test_positive = body.get("test_positive", "") or ""
             if not bot_name or not project_name:
                 return web.json_response({"success": False, "error": "bot_lora_test_setup 소스는 bot, project 필드가 필요합니다."})
-            if not char_name:
+            if not shared_test and not char_name:
                 return web.json_response({"success": False, "error": "character 필드가 필요합니다."})
-            if not card_positive.strip():
+            if not shared_test and not card_positive.strip():
                 return web.json_response({"success": False, "error": "card_positive(캐릭터 카드 수정 프롬프트) 필드가 비어 있습니다."})
             if not test_filename:
                 return web.json_response({"success": False, "error": "test_filename(공통 테스트 이미지) 필드가 필요합니다."})
             if not test_positive.strip():
                 return web.json_response({"success": False, "error": "test_positive(공통 테스트 이미지 프롬프트) 필드가 비어 있습니다."})
+            if shared_test:
+                from modes.bot_lora_mode import get_bot_test_image_path
+                if not get_bot_test_image_path(bot_name, project_name, test_filename):
+                    return web.json_response({"success": False, "error": "프로젝트 테스트 이미지를 찾을 수 없습니다."}, status=404)
+                char_name, card_filename, card_positive = "", "", ""
 
             try:
                 import server as _server
@@ -1201,7 +1222,7 @@ async def handle_auto_refine_enqueue(request):
                 traceback.print_exc()
                 return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
 
-            label = f"테스트 이미지 세팅: [bot_lora] {bot_name}/{project_name}/{char_name} test={test_filename}"
+            label = f"공통 테스트 이미지 정제: {bot_name}/{project_name}/{test_filename}" if shared_test else f"테스트 이미지 세팅: [bot_lora] {bot_name}/{project_name}/{char_name} test={test_filename}"
             item = await qm.add_item(
                 item_type="instance_lora_prompt_refine",
                 label=label,

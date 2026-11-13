@@ -29,9 +29,9 @@ const stateViews = {
     fields: [["outfit", "복장"], ["hair", "헤어"]],
   },
   emotion: {
-    title: "EMOTION-RESOLVE 장면별 복장",
-    label: "EMOTION-RESOLVE 앵커별 복장 상태",
-    help: "선택된 장면 앵커마다 확정된 복장입니다. 파란색은 EMOTION-RESOLVE가 직접 정한 값이고, 회색은 이전 저장 복장을 이어받은 값입니다.",
+    title: "OUTFIT-RESOLVE 장면별 복장",
+    label: "OUTFIT-RESOLVE 앵커별 복장 상태",
+    help: "선택된 장면 앵커마다 확정된 복장입니다. 파란색은 OUTFIT-RESOLVE가 직접 정한 값이고, 회색은 이전 저장 복장을 이어받은 값입니다.",
     fields: [["outfit", "복장"]],
   },
 } as const;

@@ -549,10 +549,13 @@
             ['PROFILE-CONTEXT-CACHE', 'profile_context_translation', 1, 1],
             ['PROFILE-CONTEXT-TRANSLATE', 'profile_context_translation', 1, 1],
             ['PROFILE-RESOLVE', 'profile_resolve', 1, 2],
+            ['OUTFIT-RESOLVE', 'emotion_resolve', 2, 4],
             ['OUTFIT', 'call1', 2, 1],
             ['CALL1', 'call1', 2, 1],
             ['TIME & PLACE', 'time_place', 2, 2],
             ['NPC 생성 노드', 'npc_generation', 2, 3],
+            ['배경 카드 예측', 'background_card', 2, 3],
+            ['배경 카드 이미지', 'background_image', 2, 4],
             ['EMOTION-RESOLVE', 'emotion_resolve', 2, 4],
             ['NPC 대표 이미지 (나중)', 'npc_generation_image', 6, 4],
             ['NPC 대표 이미지', 'npc_generation_image', 2, 4],
@@ -1188,7 +1191,7 @@
                 preview.remove(); card.style.height = ''; delete card.dataset.previewKind;
             }
             let title = card.querySelector('.if-node-title');
-            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE', 'PROFILE-RESOLVE', 'PROFILE-RESOLVE-REPAIR', 'EMOTION-RESOLVE'].includes(n.label);
+            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE', 'PROFILE-RESOLVE', 'PROFILE-RESOLVE-REPAIR', 'OUTFIT-RESOLVE', 'EMOTION-RESOLVE'].includes(n.label);
             if (title.tagName !== (hasStateTable ? 'BUTTON' : 'DIV')) {
                 const nextTitle = hasStateTable ? button(n.label, () => openDetail(n.id)) : element('div');
                 title.replaceWith(nextTitle); title = nextTitle;
@@ -1247,7 +1250,7 @@
         const isNew = current?.id !== next.id;
         for (const node of next.nodes || []) {
             for (const field of ['label', 'source_call_name']) {
-                if (typeof node[field] === 'string') node[field] = node[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                if (typeof node[field] === 'string') node[field] = node[field].replaceAll('EMOTION-RESOLVE', 'OUTFIT-RESOLVE').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             }
         }
         flows[kind] = next;
@@ -1472,16 +1475,16 @@
         const emotion = !!n.emotion_state_table;
         const data = emotion ? n.emotion_state_table : profile ? n.profile_state_table : timePlace ? n.time_place_state_table : n.call1_state_table;
         if (!data) return;
-        const title = emotion ? 'EMOTION-RESOLVE 장면별 복장' : profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
+        const title = emotion ? 'OUTFIT-RESOLVE 장면별 복장' : profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
         const fields = emotion ? [['outfit', '복장']] : profile ? [['profile', '적용 카드 ID'], ['reason', '판단 근거']] : timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
         body.append(element('h3', '', title), element('p', 'if-subtitle', emotion
-            ? '선택된 장면 앵커마다 확정된 복장입니다. 파란색은 EMOTION-RESOLVE가 직접 정한 값이고, 회색은 이전 저장 복장을 이어받은 값입니다.'
+            ? '선택된 장면 앵커마다 확정된 복장입니다. 파란색은 OUTFIT-RESOLVE가 직접 정한 값이고, 회색은 이전 저장 복장을 이어받은 값입니다.'
             : profile
             ? '파란색은 확정된 시작·변경점이고, 회색은 앞선 프로필과 근거를 이어받은 값입니다. START는 첫 등장 시의 상태이며, 이후 C 칸은 해당 원문 구간이 끝난 시점의 상태입니다.'
             : `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
         wrap.dataset.detailScrollKey = emotion ? 'emotion-state-table' : profile ? 'profile-state-table' : timePlace ? 'time-place-state-table' : 'call1-state-table';
-        table.setAttribute('aria-label', emotion ? 'EMOTION-RESOLVE 앵커별 복장 상태' : profile ? 'PROFILE-RESOLVE 구간별 프로필·판단 근거' : timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
+        table.setAttribute('aria-label', emotion ? 'OUTFIT-RESOLVE 앵커별 복장 상태' : profile ? 'PROFILE-RESOLVE 구간별 프로필·판단 근거' : timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
         const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
         data.slots.forEach(slot => {const th = element('th', '', typeof slot === 'number' ? `SLOT${slot}` : slot); th.scope = 'col'; header.append(th);});
         head.append(header); table.append(head);
@@ -1544,7 +1547,7 @@
             if (!response.ok) throw Error(response.status === 404 ? '새 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
             const {node: n} = await response.json();
             for (const field of ['label', 'source_call_name']) {
-                if (typeof n[field] === 'string') n[field] = n[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                if (typeof n[field] === 'string') n[field] = n[field].replaceAll('EMOTION-RESOLVE', 'OUTFIT-RESOLVE').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             }
             if (request !== detailRequest || runId !== flow?.id || !detailModal.open) return;
             const imageUrl = nodeImageUrl(n, flow.status);

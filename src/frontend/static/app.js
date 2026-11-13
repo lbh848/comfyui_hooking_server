@@ -19913,7 +19913,7 @@
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('5. **OUTFIT** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 PLAN/DETAIL에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
                 lines.push('6. **OUTFIT / TIME & PLACE → 선택적 PLAN → DETAIL** — 앞단에서 선택된 장면에 확정 프로필과 상태 추적 결과를 반영합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
-                lines.push('7. **DETAIL / KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS는 대표 이미지 한 장을 선택·묘사하며 설정에 따라 DETAIL에 통합하거나 별도로 호출합니다.');
+                lines.push('7. **DETAIL / KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS를 켜면 첫 DETAIL 배치에서 대표 이미지 한 장도 함께 선택·묘사합니다.');
                 lines.push('8. **MULTI-CHAR-MASK** — 필요한 다중 캐릭터 이미지의 영역을 계산합니다. 각 DETAIL 배치나 KEYVIS가 끝나면 마스크를 준비한 뒤 해당 이미지를 즉시 생성 큐에 등록합니다.');
                 lines.push('9. **POST PROCESS** (speak/manga/subtitle) — 일반 장면의 대사/생각 작성. 대표 이미지는 대사 대상에서 제외하며 이미지 생성과 병렬 실행합니다.');
                 lines.push('10. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
@@ -20725,8 +20725,8 @@
         const LLM_ROUTING_GROUPS = [
             {
                 key: 'developer_settings',
-                label: '개발자 설정',
-                description: '프로그램 개선용',
+                label: '개발자 옵션 및 비사용 옵션',
+                description: '삽화 품질 자동 검사, LoRA 프롬프트 2차 검수와 오토피드백',
                 color: '#f0a04b',
             },
             {
@@ -20762,6 +20762,7 @@
             {
                 key: 'knowledge_search',
                 label: '지식 · 태그 검색',
+                hidden: true,
                 description: '자연어 질문 분석과 Danbooru RAG 근거 선별',
                 color: '#e6a23c',
             },
@@ -20777,7 +20778,7 @@
                 description: 'I2V·FLF2V용 공식 H3 프롬프트 작성',
                 color: '#cf6bd6',
             },
-        ];
+        ].filter(group => !group.hidden);
 
         const LLM_ROUTING_TASKS = [
             { key: 'llm_thinking_check', label: 'Think 확인 (선택한 연결)', kind: '텍스트 · 슬롯 직접 선택', modality: 'text', group: 'developer_settings', locked: true },
@@ -20789,9 +20790,9 @@
             { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전', modality: 'vision', group: 'asset_management' },
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전', modality: 'vision', group: 'asset_management' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트', modality: 'text', group: 'asset_management' },
-            { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', modality: 'vision', group: 'asset_management' },
-            { key: 'lora_feedback_observe', label: '오토피드백 · 원본 관찰', kind: '비전/자연어', modality: 'vision', group: 'asset_management' },
-            { key: 'lora_feedback_compare', label: '오토피드백 · 태그·학습 결과 대조', kind: '다중 비전/태그 수정', modality: 'vision', group: 'asset_management' },
+            { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', modality: 'vision', group: 'developer_settings' },
+            { key: 'lora_feedback_observe', label: '오토피드백 · 원본 관찰', kind: '비전/자연어', modality: 'vision', group: 'developer_settings' },
+            { key: 'lora_feedback_compare', label: '오토피드백 · 태그·학습 결과 대조', kind: '다중 비전/태그 수정', modality: 'vision', group: 'developer_settings' },
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', modality: 'text', group: 'asset_management' },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', modality: 'text', group: 'asset_management' },
             { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management' },
@@ -20809,17 +20810,13 @@
             { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_emotion_resolve', label: '삽화 CURRENT 복장 결정 (EMOTION-RESOLVE)', kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소·조명)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_npc_generation', label: 'NPC 생성 노드', kind: 'JSON · NPC 캐릭터 카드 생성', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_plan',  label: '삽화·만화 PLAN',               kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline', hidden: true },
             { key: 'illustration_call2',       label: '삽화·만화 DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 POST PROCESS',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_visual_correction', label: '삽화 비주얼 교정', kind: '비전/JSON', modality: 'vision', group: 'illustration_pipeline' },
-            { key: 'illustration_visual_selection', label: '삽화 비주얼 교정 결과 선택', kind: '비전/JSON', modality: 'vision', group: 'illustration_pipeline' },
-            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline' },
             { key: 'video_instruction_translate', label: '영상 연출 영어 번역', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
             { key: 'video_prompt_i2v_compose',        label: 'H3 I2V 프롬프트 작성', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
@@ -21028,7 +21025,7 @@
             };
             let html = '';
             for (const modality of LLM_ROUTING_MODALITIES) {
-                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.modality === modality.key);
+                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && !task.hidden && task.modality === modality.key && LLM_ROUTING_GROUPS.some(group => group.key === task.group));
                 const routes = tasks.map(readDetailedLlmRoute);
                 if (routes.some(route => !route)) {
                     console.error('[LLM_ROUTE_EASY] 상세 설정을 읽지 못해 쉬운 설정 렌더링을 중단합니다:', modality.key);
@@ -21129,7 +21126,7 @@
             try {
                 const modalityInfo = LLM_ROUTING_MODALITIES.find(item => item.key === modality);
                 if (!modalityInfo) throw new Error(`알 수 없는 작업 분류입니다: ${modality}`);
-                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.modality === modality);
+                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && !task.hidden && task.modality === modality && LLM_ROUTING_GROUPS.some(group => group.key === task.group));
                 if (!tasks.length) throw new Error(`${modalityInfo.label}에 포함된 작업이 없습니다.`);
                 const routeSlots = LLM_SLOTS.map(slot => `llm${slot}`);
                 const primary = document.getElementById(`llm-route-easy-${modality}-primary`)?.value || '';
@@ -21236,7 +21233,7 @@
 
             for (const [groupIndex, group] of LLM_ROUTING_GROUPS.entries()) {
                 // 잠긴 작업은 등록과 저장값만 유지하고 분기 설정에서는 숨긴다.
-                const groupTasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.group === group.key);
+                const groupTasks = LLM_ROUTING_TASKS.filter(task => !task.locked && !task.hidden && task.group === group.key);
                 html += `<section class="llm-route-group" style="--route-group-color: ${group.color};" aria-labelledby="llm-route-group-${group.key}">`;
                 html += '<header class="llm-route-group-header">';
                 html += `<span class="llm-route-group-number">${String(groupIndex + 1).padStart(2, '0')}</span>`;
@@ -39166,7 +39163,7 @@
                     if (rb.ok) {
                         const jb = await rb.json();
                         working.bubble = _ppNormalizeBubble(jb.bubble);
-                        working.mode = ['vn', 'bubble', 'subtitle'].includes(jb.mode) ? jb.mode : 'vn';
+                        working.mode = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(jb.mode) ? jb.mode : 'vn';
                     } else {
                         working.bubble = _ppNormalizeBubble(null);
                     }
@@ -39180,7 +39177,7 @@
                     if (rs.ok) {
                         const js = await rs.json();
                         working.subtitle = _ppNormalizeSubtitle(js.subtitle);
-                        working.mode = ['vn', 'bubble', 'subtitle'].includes(js.mode) ? js.mode : working.mode;
+                        working.mode = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(js.mode) ? js.mode : working.mode;
                     } else {
                         console.error('[POSTPROCESS] subtitle 설정 응답 실패:', rs.status);
                         working.subtitle = _ppNormalizeSubtitle(null);
@@ -39198,7 +39195,7 @@
                 ppApplyBubbleToUI();
                 ppApplySubtitleToUI();
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
-                _postprocessActiveMode = ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode)
+                _postprocessActiveMode = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(ppWorking.mode)
                     ? ppWorking.mode : 'vn';
                 _applyCall3PromptModeLock();  // 생성 설정 POST PROCESS 잠금 동기화
                 renderPpModeBadges();  // 적용중 모드 딱지
@@ -39253,7 +39250,7 @@
         // 저장해야 ppWorking.mode가 바뀌므로, 탭을 눌러보기만 한 동안에는 딱지가 안 움직임.
         function renderPpModeBadges() {
             const candidate = ppWorking && ppWorking.mode;
-            const applied = ['vn', 'bubble', 'subtitle'].includes(candidate) ? candidate : 'vn';
+            const applied = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(candidate) ? candidate : 'vn';
             document.querySelectorAll('#postprocess-modal .pp-mode-badge').forEach(b => {
                 const m = b.getAttribute('data-mode');
                 if (m === applied) { b.className = 'pp-mode-badge applied'; b.textContent = '적용중'; }
@@ -39268,7 +39265,10 @@
             document.querySelectorAll('#postprocess-modal .settings-tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
             const btn = document.querySelector(`#postprocess-modal .pp-tab-btn[onclick*="'${name}'"]`);
             if (btn) btn.classList.add('active');
-            const panel = document.getElementById('postprocess-tab-' + name);
+            // 레거시 UI에는 텍스트 교체 패널이 없으므로 vn 패널을 대신 보여준다.
+            // ppActiveTab은 'manga_text'로 유지해 저장 시 활성 모드가 리셋되지 않게 한다.
+            const panel = document.getElementById('postprocess-tab-' + name)
+                || (name === 'manga_text' ? document.getElementById('postprocess-tab-vn') : null);
             if (panel) { panel.classList.add('active'); panel.style.display = 'block'; }
             // 탭 전환 시 해당 모드 미리보기 갱신 (vn 패널은 display:none 이면 입력값 안 읽히므로)
             renderPostprocessPreview();
@@ -40280,11 +40280,11 @@
         }
 
         async function ppOpenBasePicker() {
-            ppBasePickerTarget = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
+            ppBasePickerTarget = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(ppActiveTab)
                 ? ppActiveTab : 'vn';
             const titleEl = document.getElementById('pp-base-modal-title');
             if (titleEl) {
-                const labels = {vn: '대사 모드', bubble: '말풍선 모드', subtitle: '자막 모드'};
+                const labels = {vn: '대사 모드', bubble: '말풍선 모드', subtitle: '자막 모드', manga_text: '텍스트 교체 모드'};
                 titleEl.textContent = '베이스 이미지 선택 (삽화 백업) — ' + labels[ppBasePickerTarget];
             }
             document.getElementById('pp-bubble-base-modal').classList.add('visible');
@@ -40382,7 +40382,7 @@
             // 활성 탭 = 저장할 활성 모드. 사용자가 마지막에 본 탭이 적용 모드.
             // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
-            payload.mode = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
+            payload.mode = ['vn', 'bubble', 'subtitle', 'manga_text'].includes(ppActiveTab)
                 ? ppActiveTab : 'vn';
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
             try {
@@ -40449,7 +40449,7 @@
                 vn: JSON.parse(JSON.stringify(ppWorking.vn)),
                 bubble: JSON.parse(JSON.stringify(ppWorking.bubble)),
                 subtitle: JSON.parse(JSON.stringify(ppWorking.subtitle)),
-                mode: ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode) ? ppWorking.mode : 'vn',
+                mode: ['vn', 'bubble', 'subtitle', 'manga_text'].includes(ppWorking.mode) ? ppWorking.mode : 'vn',
                 ts: Date.now()
             };
             try {
@@ -40468,7 +40468,7 @@
                 vn: _ppNormalizeVn(entry.vn),
                 bubble: _ppNormalizeBubble(entry.bubble),
                 subtitle: _ppNormalizeSubtitle(entry.subtitle),
-                mode: ['vn', 'bubble', 'subtitle'].includes(entry.mode) ? entry.mode : 'vn',
+                mode: ['vn', 'bubble', 'subtitle', 'manga_text'].includes(entry.mode) ? entry.mode : 'vn',
             };
             ppApplyVnToUI();
             ppApplyBubbleToUI();
@@ -53784,7 +53784,6 @@
                                 <button id="illust-call-tab-manga" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="manga" aria-selected="false" aria-controls="illust-call-content-manga" onclick="switchIllustCallTab('manga')">DETAIL-MANGA</button>
                                 <button id="illust-call-tab-call2_keyvis" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_keyvis" aria-selected="false" aria-controls="illust-call-content-call2_keyvis" onclick="switchIllustCallTab('call2_keyvis')">KEYVIS</button>
                                 <button id="illust-call-tab-call3" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call3" aria-selected="false" aria-controls="illust-call-content-call3" onclick="switchIllustCallTab('call3')">POST PROCESS</button>
-                                <button id="illust-call-tab-multi_char_mask" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="multi_char_mask" aria-selected="false" aria-controls="illust-call-content-multi_char_mask" onclick="switchIllustCallTab('multi_char_mask')">MULTI-CHAR-MASK</button>
                                 <button id="illust-call-tab-visual_correction" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="visual_correction" aria-selected="false" aria-controls="illust-call-content-visual_correction" onclick="switchIllustCallTab('visual_correction')">비주얼 교정기</button>
                                 <button id="illust-call-tab-visual_selection" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="visual_selection" aria-selected="false" aria-controls="illust-call-content-visual_selection" onclick="switchIllustCallTab('visual_selection')">결과 선택기</button>
                                 <button id="illust-call-tab-shared" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="shared" aria-selected="false" aria-controls="illust-call-content-shared" onclick="switchIllustCallTab('shared')">공유 프롬프트</button>
@@ -53849,7 +53848,7 @@
                                 <p class="illust-prompt-node-help">선택된 사건·원문·프로필 시간표·복장/머리·시간/장소/조명·과거 문맥·등록 인물·인물 제한·집중 대상·연출 지시·만화 대사 언어를 입력받습니다. 위 전체 조립 흐름에서 이 노드를 누르면 변수와 블록별 조립 내용을 확인할 수 있습니다. 결과는 페이지별 scene_brief로 전달하며 후처리는 없습니다.</p>
                             </div>
                             <div id="illust-call-content-call2_detail" data-illust-call-panel="call2_detail" role="tabpanel" aria-labelledby="illust-call-tab-call2_detail" hidden>
-                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 외부 LLM 호환성 지침 → {lb-xnai.lb.extra 시스템 프롬프트} → 장르·세계관 공통 지침 → NSFW 및 물리 접촉 지침 → 이미지 태그 작성 지침. KEYVIS 통합 예측을 켜면 첫 배치에 대표 이미지 지침·문맥과 통합 출력 형식을 함께 전달합니다. 조립 화면에서 블록별 출처와 내용을 확인할 수 있습니다.</p>
+                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 외부 LLM 호환성 지침 → {lb-xnai.lb.extra 시스템 프롬프트} → 장르·세계관 공통 지침 → NSFW 및 물리 접촉 지침 → 이미지 태그 작성 지침. KEYVIS를 켜면 첫 배치에 대표 이미지 지침·문맥과 통합 출력 형식을 함께 전달합니다. 조립 화면에서 블록별 출처와 내용을 확인할 수 있습니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">이미지 태그 작성 지침</summary>
                                     <textarea id="lighbd-prompt-call2_detail" data-lighbd-prompt="call2_detail" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
@@ -53896,13 +53895,6 @@
                                         <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;">manga 모드이고 생성 설정의 <strong>NSFW 태깅</strong> 토글이 ON일 때만 manga 프롬프트 끝에 주입됩니다. 일반 장면엔 노출되지 않습니다.</div>
                                         <textarea id="lighbd-prompt-call3_manga_nsfw" data-lighbd-prompt="call3_manga_nsfw" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                     </details>
-                            </div>
-                            <div id="illust-call-content-multi_char_mask" data-illust-call-panel="multi_char_mask" role="tabpanel" aria-labelledby="illust-call-tab-multi_char_mask" hidden>
-                                <p class="illust-prompt-node-help">이미지 태그를 캐릭터별 영역과 공통 배경·구도로 나눕니다. 생성 설정의 ‘마스크 예측 방식’에서 ‘현재 모델에서 예측’을 선택하면 이 지침을 DETAIL·KEYVIS 본문에 합치고 마스크 출력 형식으로 한 번에 작성합니다. ‘별도 LLM으로 예측’을 선택하면 전용 LLM을 호출합니다.</p>
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">인물 영역 배치 지침</summary>
-                                    <textarea id="lighbd-prompt-multi_char_mask" data-lighbd-prompt="multi_char_mask" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                                </details>
                             </div>
                             <div id="illust-call-content-shared" data-illust-call-panel="shared" role="tabpanel" aria-labelledby="illust-call-tab-shared" hidden>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
@@ -54753,25 +54745,15 @@
                     {key: 'npc_generation_enabled', label: '미등록 인물 자동 생성', type: 'toggle', help: '대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다.'},
                     {key: 'npc_lifetime', label: '미사용 수명 (회)', type: 'number', min: 1, step: 1, help: '같은 봇에서 삽화를 이 횟수만큼 연속 생성하는 동안 등장하지 않으면 자동 생성 캐릭터를 삭제합니다. 다시 등장하면 수명이 초기화됩니다. 모든 봇의 기존·신규 자동 생성 캐릭터에 적용됩니다.'},
                     {key: 'call2_plan_enabled', label: 'PLAN 시각 계획', type: 'toggle', help: '켜면 장면·만화 컷을 미리 계획합니다. 끄면 DETAIL이 원문에서 직접 계획합니다.'},
-                    {key: 'visual_correction_enabled', label: '비주얼 교정', type: 'toggle', help: '생성 이미지를 검사하고 필요하면 다시 그린 뒤, 원본과 모든 교정본 중 LLM이 최종 결과를 선택합니다. 인물 복제·신체 붕괴 방지를 최우선으로 비교합니다.'},
-                    {key: 'visual_correction_max_redraws', label: '최대 교정 횟수', type: 'number', min: 0, step: 1, dependsOn: ['visual_correction_enabled'], help: '이미지 한 장당 다시 그릴 수 있는 최대 횟수입니다. PASS 또는 한도 도달 시 교정을 마치고, 교정본이 있으면 원본을 포함한 모든 후보에서 결과를 선택합니다. 0은 검사·재생성·선택을 모두 생략합니다.'},
-                    {key: 'key_visual', label: '대표 이미지 생성', type: 'toggle', help: '켜면 일반 장면 외에 대표 이미지 한 장을 추가합니다. 끄면 DETAIL 통합·별도 LLM 방식 모두 대표 이미지를 생성하지 않습니다.'},
-                    {key: 'keyvis_in_detail_enabled', label: 'DETAIL에서 KEYVIS 함께 예측', type: 'toggle', dependsOn: ['key_visual'], help: '켜면 첫 DETAIL 배치에서 일반 장면과 대표 이미지 한 장을 함께 작성하고 DETAIL의 LLM·재시도 설정을 사용합니다. 끄면 KEYVIS에 지정한 LLM으로 별도 예측합니다. 마스크 예측 방식은 두 모드 모두 적용됩니다.'},
-                    {key: 'minimal_background_description', label: '대표 이미지 배경 묘사 최소화', type: 'toggle', help: 'KEYVIS의 배경을 가장 작은 이야기 근거로 제한합니다. 일반 장면의 배경은 PLAN·DETAIL의 장면 설명에 따릅니다.', dependsOn: ['key_visual']},
-                    {key: 'multi_char_mask_enabled', label: '마스크 사용', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
-                    {key: 'multi_char_mask_inline_enabled', label: '마스크 예측 방식', type: 'select', options: [{value: false, label: '별도 LLM으로 예측'}, {value: true, label: '현재 모델에서 예측'}], onchange: 'onIllustrationContextToggleChange(this)', help: '일반 삽화의 마스크 예측 방식을 선택합니다. 만화는 DETAIL-MANGA에서 함께 예측합니다.', dependsOn: ['multi_char_mask_enabled']},
-                    {key: 'single_char_mask_enabled', label: '1인도 마스크', type: 'toggle', help: 'MULTI-CHAR-MASK가 켜져 있을 때 1인 장면에도 마스크를 계산합니다. 끄면 일반 삽화와 대표 이미지의 1인 장면은 마스크 없이 생성합니다.', dependsOn: ['multi_char_mask_enabled']},
-                    {key: 'single_char_mask_skip_enabled', label: '면적 기준으로 1인 마스크 생략', type: 'toggle', help: '켜면 예측한 1인 영역의 화면 점유율이 아래 기준을 초과할 때 마스크를 생략합니다. 끄면 면적과 관계없이 1인 마스크를 유지합니다. 2명 이상 장면에는 적용하지 않습니다.', dependsOn: ['multi_char_mask_enabled', 'single_char_mask_enabled']},
-                    {key: 'single_char_mask_skip_area_percent', label: '생략 기준 면적 (%)', type: 'number', min: 0, max: 100, step: 0.1, help: '예측한 인물 영역의 가로×세로 면적을 전체 화면과 비교합니다. 기본값은 30%이며, 기준과 같으면 유지하고 초과하면 생략합니다. 일반 삽화와 대표 이미지에 동일하게 적용합니다.', dependsOn: ['multi_char_mask_enabled', 'single_char_mask_enabled', 'single_char_mask_skip_enabled']},
+                    {key: 'key_visual', label: 'KEYVIS 대표 이미지 생성', type: 'toggle', help: '켜면 첫 DETAIL 배치에서 일반 장면과 대표 이미지 한 장을 함께 작성합니다.'},
                 ],
                 callInfo: [
-                    {label: '생성 순서', text: '등장인물·장면 선택 → 프로필 결정 → 켜진 상태 추적 단계 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 선택 장면과 상태·원문을 DETAIL로 직접 전달합니다. KEYVIS는 선택한 방식에 따라 첫 DETAIL 배치에서 함께 예측하거나 별도 호출합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, POST PROCESS 대사 완료를 기다리지 않습니다.'},
+                    {label: '생성 순서', text: '등장인물·장면 선택 → 프로필 결정 → 켜진 상태 추적 단계 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 선택 장면과 상태·원문을 DETAIL로 직접 전달합니다. KEYVIS를 켜면 첫 DETAIL 배치에서 함께 예측합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, POST PROCESS 대사 완료를 기다리지 않습니다.'},
                     {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 캐릭터별로 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
                     {label: 'OUTFIT 상태 추적', text: 'ON이면 복장·헤어의 시작 상태와 현재 변화 사건을 추적합니다. OFF이면 호출을 생략하고 후속 LLM이 문맥에서 판단합니다. 상태 추적·장면 계획 히스토리 범위는 채팅 히스토리 탭에서 설정합니다.'},
                     {label: 'TIME & PLACE 상태 추적', text: 'ON이면 캐릭터별 time(넓은 시간대), place(구체적인 공간), lighting(광원과 조명 상태)을 함께 추적합니다. OFF이면 후속 LLM이 원문에서 판단합니다. 각 항목은 변경된 SLOT에서만 출력하며 복장·헤어와 독립적으로 이어받습니다. DETAIL은 이 조명 조건 안에서 구도를 정합니다. 노드 상세에서 시간·장소·조명 시간표를 확인할 수 있습니다.'},
                     {label: 'DETAIL 이미지 묘사', text: '해당 장면의 프로필과 켜진 단계의 분석 결과를 이미지 태그로 확장합니다. 생략한 계획·상태는 원문과 이전 문맥에서 직접 판단합니다. 병렬 처리 여부와 최대 동시 요청 수는 DETAIL 탭에서 PLAN과 독립적으로 설정합니다. 느린 배치 재요청은 PLAN과 DETAIL이 각각 관리합니다.'},
-                    {label: 'KEYVIS 대표 이미지', text: '일반 장면 외 대표 이미지 한 장을 추가하며 POST PROCESS 대사 대상에는 포함하지 않습니다. DETAIL 통합 예측은 DETAIL의 LLM·재시도 설정을, 별도 예측은 KEYVIS 설정을 사용합니다. 대표 이미지 지침은 LLM 프롬프트 탭의 keyvisual.txt와 system.txt에서 설정합니다.'},
-                    {label: 'MULTI-CHAR-MASK', text: '마스크 기능이 켜져 있고 Comfy 공급자·V3 형식의 장면에 캐릭터가 2~3명일 때 영역을 계산합니다. 1인도 마스크를 켜면 1인 장면에도 적용합니다. 마스크 예측 방식에서 현재 모델을 선택하면 DETAIL·KEYVIS가 마스크를 함께 작성하고, 별도 LLM을 선택하면 해당 묘사 완료 후 전용 LLM으로 계산합니다. 완성 프롬프트 입력은 별도 호출을 유지합니다.'},
+                    {label: 'KEYVIS 대표 이미지', text: '첫 DETAIL 배치에서 대표 이미지 한 장을 함께 작성하며 DETAIL의 LLM·재시도 설정을 사용합니다. POST PROCESS 대사 대상에는 포함하지 않습니다. 대표 이미지 지침은 LLM 프롬프트 탭의 keyvisual.txt와 system.txt에서 설정합니다.'},
                     {label: '프롬프트·LLM 연결', text: '프롬프트 본문은 기존 Call 프롬프트·LLM 프롬프트 탭에서, 모델 연결과 재시도는 외부 LLM 분기에서 설정합니다. OUTFIT은 enhance.txt, DETAIL은 detail.txt, 마스크는 multi_char_mask.txt를 사용합니다.'},
                 ],
             },
@@ -54837,7 +54819,7 @@
                     {key: 'call2_detail_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
                 ],
                 callInfo: [
-                    {label: '대표 이미지', text: '파이프라인의 KEYVIS 묶음에서 DETAIL 통합 예측 또는 별도 LLM 예측을 선택합니다.'},
+                    {label: '대표 이미지', text: '파이프라인의 KEYVIS 스위치로 대표 이미지 생성을 켜거나 끕니다. 켜면 첫 DETAIL 배치에서 함께 작성합니다.'},
                     {label: '프롬프트', text: 'LLM 프롬프트 탭의 plan.txt와 detail.txt를 사용합니다. NSFW 태깅은 파이프라인 탭에서 설정합니다.'},
                     {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 PLAN과 DETAIL 연결은 각각 설정합니다. 느린 배치 재요청 조건도 단계별로 관리합니다.'},
                 ],
@@ -55092,22 +55074,10 @@
                     </fieldset>`).join('');
             }
             if (group.key === 'pipeline') {
-                const fieldsets = [
-                    ['KEYVIS', ['key_visual', 'keyvis_in_detail_enabled', 'minimal_background_description']],
-                    ['MULTI-CHAR-MASK', ['multi_char_mask_enabled', 'multi_char_mask_inline_enabled', 'single_char_mask_enabled', 'single_char_mask_skip_enabled', 'single_char_mask_skip_area_percent']],
-                ];
                 // 합성 삽화 모드는 감정 삽화 탭이 소유하므로 이 탭에서는 출력 모드 행을 숨긴다.
                 const compositeOutput = ['composite', 'composite_both'].includes(_illustrationContextToggles.illustration_output_mode);
-                content = group.fields.filter(field => !field.key.startsWith('visual_correction_') && !fieldsets.some(([, keys]) => keys.includes(field.key)) && !(compositeOutput && field.key === 'illustration_output_mode'))
-                    .map(field => _renderIllustrationContextField(field)).join('') + fieldsets.map(([title, keys]) => `
-                    <fieldset class="illust-settings-fieldset">
-                        <legend>${title}</legend>
-                        ${_renderIllustrationContextField(group.fields.find(field => field.key === keys[0]))}
-                        <div class="illust-settings-dependent" aria-label="${title} 세부 설정">
-                            ${group.fields.filter(field => keys.slice(1).includes(field.key))
-                                .map(field => _renderIllustrationContextField(field)).join('')}
-                        </div>
-                    </fieldset>`).join('');
+                content = group.fields.filter(field => !(compositeOutput && field.key === 'illustration_output_mode'))
+                    .map(field => _renderIllustrationContextField(field)).join('');
                 const postprocessEnabled = Boolean(currentConfig.postprocess_enabled);
                 content += `
                     <div class="illust-setting-row" data-illust-manga-disabled>
@@ -55123,12 +55093,6 @@
                             <span id="postprocess-status" class="illust-setting-state${postprocessEnabled ? ' on' : ''}">${postprocessEnabled ? 'ON' : 'OFF'}</span>
                         </div>
                     </div>`;
-            }
-            if (group.key === 'pipeline') {
-                content += `<fieldset class="illust-settings-fieldset" data-illust-manga-disabled>
-                    <legend>비주얼 교정</legend>
-                    ${group.fields.filter(field => field.key.startsWith('visual_correction_')).map(field => _renderIllustrationContextField(field)).join('')}
-                </fieldset>`;
             }
             if (group.key === 'call3') {
                 content = `
@@ -55486,6 +55450,7 @@
         function _applyCall3PromptModeLock() {
             const target = {
                 bubble: 'manga',
+                manga_text: 'manga',
                 subtitle: 'subtitle',
             }[_postprocessActiveMode] || 'speak';
             _illustrationContextToggles.call3_prompt_mode = target;
@@ -55503,7 +55468,7 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const j = await resp.json();
                 _postprocessActiveMode = (
-                    j && ['vn', 'bubble', 'subtitle'].includes(j.mode)
+                    j && ['vn', 'bubble', 'subtitle', 'manga_text'].includes(j.mode)
                 ) ? j.mode : 'vn';
             } catch (e) {
                 console.error('[POSTPROCESS] 활성 모드 조회 실패:', e);

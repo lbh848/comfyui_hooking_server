@@ -29,7 +29,9 @@ function useModelSelectionState() {
       setData(result);
     }, "그림 모델 프리셋을 적용했습니다.");
   }
-  return { resource, action, data, setData, pending, setPending, generation, disabled, select };
+  // Sort a copy for both pickers without changing the server's preset order.
+  const presets = [...(data?.presets || [])].sort((a: IllustrationData, b: IllustrationData) => a.name.localeCompare(b.name, "ko", { numeric: true }));
+  return { resource, action, data, setData, presets, pending, setPending, generation, disabled, select };
 }
 
 const ModelSelectionContext = createContext<ReturnType<typeof useModelSelectionState> | null>(null);
@@ -45,16 +47,13 @@ export function useIllustrationModelSelection() {
 
 export function ActiveIllustrationModel() {
   const scope = useModelSettingsScope();
-  const { data, disabled, select, pending } = useIllustrationModelSelection();
+  const { data, presets, disabled, select, pending } = useIllustrationModelSelection();
   const profile = data?.config?.[scope.typeKey];
   const activePreset = (data?.presets || []).find((item: IllustrationData) => item.id === data?.active_id);
   // MOSS presets share the ANIMA workflow profile, so show the selected model
   // family instead of the profile label.
   const modelLabel = scope.familyKey && illustrationPresetFamily(activePreset) === "moss"
     ? "MOSS" : profile ? scope.labels[profile] || illustrationModelLabel(profile) : "";
-  // The server returns only this workshop's preset file, so no local filtering
-  // is needed.
-  const presets = data?.presets || [];
   return <label className="field">현재 활성화된 그림 모델
     <SearchableSelect aria-label="현재 활성화된 그림 모델" value={data?.active_id || ""} disabled={disabled || !presets.length} onChange={event => void select(event.target.value)}>
       {!presets.length && <option value="">{data ? "그림 모델 프리셋 없음" : "그림 모델을 불러오는 중…"}</option>}
