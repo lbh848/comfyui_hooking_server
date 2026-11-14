@@ -10,6 +10,7 @@ import { IllustExtra } from "./IllustExtra";
 import { IllustLoras } from "./IllustLoras";
 import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
+import { IllustAutoBatch } from "./IllustAutoBatch";
 import { IllustLoraBatch } from "./IllustLoraBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
 import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
@@ -60,6 +61,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [botName, setBotName] = useState("");
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [representativeBatchOpen, setRepresentativeBatchOpen] = useState(false);
+  const [autoBatchOpen, setAutoBatchOpen] = useState(false);
   const [loraBatchOpen, setLoraBatchOpen] = useState(false);
   const [gallery, setGallery] = useState<{ botName: string; name: string } | null>(null);
   const listScroll = useRef(0);
@@ -154,6 +156,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     {bot && <Panel title="툴박스"><div className="illust-body illust-bot-toolbox" aria-label={`${bot.name} 봇 도구`}>
       <button className="button" disabled={toolsReadOnly} onClick={() => setCharacterAddOpen(true)}><Plus size={14} />캐릭터 추가</button>
       <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setRepresentativeBatchOpen(true)}><Images size={14} />대표 이미지 일괄 설정</button>
+      {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setAutoBatchOpen(true)}><Images size={14} />자동 일괄 설정</button>}
       <button className="button" disabled={toolsReadOnly} onClick={() => openAssetInstruction(bot.name)}>에셋·프로필 출력 지침</button>
       <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
         const existing = openModals.find(entry => entry.title === dataPreparationTitle(bot.name));
@@ -204,6 +207,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     </div>
     {characterAddOpen && bot && <AddIllustrationCharacter key={bot.name} botName={bot.name} characters={bot.characters} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
     {representativeBatchOpen && bot && <IllustRepresentativeBatch key={bot.name} botName={bot.name} characters={bot.characters} readOnly={locked || distributionAction.busy} onClose={() => setRepresentativeBatchOpen(false)} onChanged={() => { setCardRevision(value => value + 1); resource.reload(); }} />}
+    {autoBatchOpen && bot && <IllustAutoBatch key={bot.name} botName={bot.name} characters={bot.characters} readOnly={locked || distributionAction.busy} onClose={() => setAutoBatchOpen(false)} onChanged={() => { setCardRevision(value => value + 1); resource.reload(); }} />}
     {loraBatchOpen && bot && <IllustLoraBatch key={bot.name} botName={bot.name} inventory={inventory} readOnly={toolsReadOnly} onClose={() => setLoraBatchOpen(false)} onChanged={refreshCharacterStatus} />}
     {dataPreparationBots.map(name => <IllustDataPreparation key={name} botName={name} characters={bots.find(item => item.name === name)?.characters || []}
       initialBackgrounded={restoredBots.current.has(`preparation:${name}`)}

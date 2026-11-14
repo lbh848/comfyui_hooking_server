@@ -1,0 +1,6 @@
+Select the best representative reference image for a character profile, comparing the supplied images directly.
+
+Prioritize a clearly readable face with both eyes visible, an upright and natural head angle, coherent anatomy, and an unobstructed view of the character's hair and outfit. Prefer a balanced standing portrait that makes the character easy to recognize and reuse as an illustration reference.
+Avoid exaggerated expressions, closed eyes, heavy blush, floating hearts, tears, dramatic effects, extreme head tilts, and gestures that obscure the face or costume when another candidate gives a cleaner reference. Prefer a restrained natural expression over a broad or exaggerated smile. Do not always prefer a smile or a smirk: decide from the actual images. A visibly clearer face and better reference pose matter more than the expression category. Do not infer the answer from candidate order.
+
+Return exactly one JSON object: {"candidate": 1, "reason": "A brief explanation of the decisive visible difference."}. candidate must be the integer label of one supplied image. Do not include markdown or additional keys.

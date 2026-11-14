@@ -167,6 +167,10 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-rep-batch-table thead th { position: sticky; top: 0; background: var(--panel); }
 .illust-rep-batch-table-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .illust-rep-batch-table-heading strong { font-size: 14px; overflow-wrap: anywhere; }
+.illust-auto-batch-characters { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 12px 0; }
+.illust-auto-batch-modal > .modal-content > .illust-form { overflow-y: auto; overscroll-behavior: contain; }
+.illust-auto-batch-modal .illust-rep-batch-table th:first-child { width: 140px; overflow-wrap: anywhere; }
+.illust-auto-batch-modal .illust-rep-batch-table caption { text-align: left; padding: 8px 0; }
 .illust-rep-batch-table-heading .button { margin-left: auto; }
 .illust-rep-batch-table .illust-rep-batch-image > span[title] { min-height: 3em; line-height: 1.5; }
 .illust-rep-batch-image { display: flex; flex-direction: column; gap: 7px; min-width: 0; }

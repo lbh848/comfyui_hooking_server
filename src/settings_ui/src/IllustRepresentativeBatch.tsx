@@ -6,6 +6,7 @@ import { Badge, Empty, Modal, Toggle } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
 import { query, type IllustrationData } from "./illustration";
 import { useBotApi } from "./BotApiScope";
+import { IllustAutoBatch } from "./IllustAutoBatch";
 
 type Mode = "protect" | "push";
 
@@ -30,6 +31,7 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   const prioritySearchId = useId();
   const [priorityHelpDismissed, setPriorityHelpDismissed] = useState(false);
   const [preview, setPreview] = useState<RepBatchImage | null>(null);
+  const [autoBatch, setAutoBatch] = useState<{ characters: IllustrationData[]; indices: string } | null>(null);
 
   async function loadRow(row: RepBatchRow, signal?: AbortSignal): Promise<RepBatchRow> {
     try {
@@ -158,6 +160,7 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   return <>
     <Modal title={`${botName} · 대표 이미지 일괄 설정`} onClose={onClose} closeDisabled={busy} backgroundable={false} className="illust-rep-batch-modal illust-rep-batch-main-modal">
       <div className="illust-form">
+        {api.scope === "illust" && <div className="illust-actions"><button className="button" disabled={busy || readOnly} onClick={() => setAutoBatch({ characters, indices: commonSearch })}>자동 일괄 설정</button></div>}
         <div className="illust-rep-batch-controls">
           <label className="field">공통 파일명 검색<input type="search" value={commonSearch} disabled={busy || readOnly} onChange={event => setCommonSearch(event.target.value)} placeholder="공통 파일명 검색 (선택)" /></label>
           <label className="field">기존 대표 처리<select value={mode} disabled={busy || readOnly} onChange={event => setMode(event.target.value as Mode)}><option value="protect">보호: 자동은 빈 프로필만</option><option value="push">대체: 기존 대표도 교체</option></select></label>
@@ -241,6 +244,7 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
           <input id={prioritySearchId} type="search" value={prioritySearch} placeholder="예: 교복|미소" onChange={event => setPrioritySearch(event.target.value)} />
         </div>
         <p className="field-help" role="status">{priorityWords.length ? `일치 ${galleryRow.baseOrder.filter(priorityMatch).length}장 / ` : ""}전체 {galleryRow.baseOrder.length}장</p>
+        {api.scope === "illust" && <div className="illust-actions"><button className="button" disabled={busy || readOnly} onClick={() => setAutoBatch({ characters: characters.filter(character => character.name === galleryRow.charName), indices: prioritySearch })}>자동 일괄 설정</button></div>}
         {renderImages(galleryRow, galleryProfile, true)}
         <div className="illust-actions illust-dialog-actions"><span className="field-help">선택한 내용은 ‘일괄 설정 적용’으로 저장합니다.</span><button className="button primary" onClick={() => setGallery(null)}>선택 완료</button></div>
       </div>
@@ -248,5 +252,13 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
     {preview && <Modal title={preview.filename} onClose={() => setPreview(null)} backgroundable={false} closeOnBackdrop showHeader={false} className="illust-lightbox-modal"><figure><figcaption title={preview.filename}>{preview.filename}</figcaption><img className="illust-asset-preview" src={api.media(preview.url)} alt={preview.filename} /></figure></Modal>}
     {confirmation && <Modal title="대표 이미지 중복 확인" onClose={() => setConfirmation(null)} backgroundable={false}><div className="illust-form"><p>같은 대표 이미지가 여러 카드에 중복 설정됩니다.</p>{confirmation.plan.duplicateGroups.map(group => <p className="illust-text" key={group}>{group}</p>)}<div className="illust-actions"><button className="button" onClick={() => setConfirmation(null)}>취소</button><button className="button primary" onClick={() => void apply(confirmation.plan, confirmation.mode)}>이대로 적용</button></div></div></Modal>}
     {deleteTarget && <Modal title="캐릭터 삭제" onClose={() => setDeleteTarget("")} closeDisabled={busy} backgroundable={false}><div className="illust-form"><p>{deleteTarget}의 캐릭터 정보와 모든 이미지를 삭제합니다.</p><IllustrationFeedback error={error} /><div className="illust-actions"><button className="button" disabled={busy} onClick={() => setDeleteTarget("")}>취소</button><button className="button danger" disabled={busy || readOnly} onClick={() => { setBusy(true); setError(""); void api.request("bot_mode/action", { action: "remove_character", bot_name: botName, char_name: deleteTarget }).then(() => { setRows(current => current.filter(row => row.charName !== deleteTarget)); setDeleteTarget(""); onChanged(); }).catch(error => setError(error.message)).finally(() => setBusy(false)); }}>삭제 확인</button></div></div></Modal>}
+    {autoBatch && <IllustAutoBatch botName={botName} characters={autoBatch.characters} initialIndices={autoBatch.indices} readOnly={readOnly} onClose={() => setAutoBatch(null)} onChanged={() => {
+      onChanged();
+      const names = new Set(autoBatch.characters.map(character => character.name));
+      void ComfyRepBatch.runLimited(rows.filter(row => names.has(row.charName)).map(row => async () => {
+        const loaded = await loadRow(row);
+        setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
+      }), 10);
+    }} />}
   </>;
 }

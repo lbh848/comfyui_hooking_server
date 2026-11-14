@@ -32179,6 +32179,7 @@ app.router.add_get("/api/bot_mode/emotion_image", bot_mode.handle_emotion_store_
 app.router.add_get("/api/bot_mode/distribution", handle_bot_distribution)
 app.router.add_post("/api/bot_mode/distribution", handle_bot_distribution)
 app.router.add_post("/api/bot_mode/action", bot_mode.handle_bot_action)
+app.router.add_post("/api/bot_mode/auto_batch", bot_mode.handle_auto_batch)
 app.router.add_get("/api/bot_mode/images", bot_mode.handle_get_images)
 app.router.add_get("/api/bot_mode/image/{bot}/{character}/{filename}", bot_mode.handle_get_image)
 app.router.add_get("/api/bot_mode/face_crop_images", bot_mode.handle_get_face_crop_images)

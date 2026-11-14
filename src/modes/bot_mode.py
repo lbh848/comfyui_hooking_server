@@ -1682,6 +1682,11 @@ class BotMode:
                     return await self._reorder_rep_images(data, body)
                 elif action == "bulk_set_main_rep":
                     return await self._bulk_set_main_rep(data, body)
+                elif action == "auto_batch_apply":
+                    from modes.bot_auto_batch import checked_row, apply_items
+                    row = checked_row(data, Path(BOT_DIR), body)
+                    items = apply_items(row, body.get("selections"))
+                    return await self._bulk_set_main_rep(data, {**body, "items": items, "mode": "push"})
                 elif action == "update_eye_prompt":
                     return await self._update_eye_prompt(data, body)
                 elif action == "update_char_loras":
@@ -2418,6 +2423,29 @@ class BotMode:
             "removed": removed,
             "skipped": skipped,
         })
+
+    async def handle_auto_batch(self, request):
+        from modes.bot_auto_batch import preview, checked_row, select_candidate
+        try:
+            body = await request.json()
+            data = _load_bot_data()
+            if body.get("operation", "preview") == "preview":
+                return _json_ok(preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters")))
+            if body.get("operation") != "select":
+                raise ValueError("자동 일괄 설정 작업을 확인하세요.")
+            row = checked_row(data, Path(BOT_DIR), body)
+            group = next((group for group in row["groups"] if group["key"] == body.get("key")), None)
+            if group is None:
+                raise ValueError("선택할 프로필을 찾을 수 없습니다.")
+            prompt = body.get("prompt", "")
+            if not isinstance(prompt, str) or len(prompt) > 20000:
+                raise ValueError("선택 지침은 20,000자 이내로 입력하세요.")
+            result = await select_candidate(group, Path(BOT_DIR) / body["bot_name"] / row["character"],
+                                            prompt=prompt, metadata={"bot_name": body["bot_name"], "character": row["character"]})
+            return _json_ok({"key": group["key"], **result})
+        except Exception as exc:
+            print(f"[BOT_AUTO_BATCH] {type(exc).__name__}: {exc}")
+            return _json_error(str(exc))
 
     # ─── 이미지 목록 ─────────────────────────────────────
     async def handle_get_images(self, request):

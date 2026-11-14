@@ -76,6 +76,21 @@
   ],
   "tasks": [
     {
+      "key": "bot_auto_batch",
+      "label": "자동 일괄 설정",
+      "kind": "비전/JSON",
+      "modality": "vision",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm_sp",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
       "key": "llm_thinking_check",
       "label": "Think 확인 (선택한 연결)",
       "kind": "텍스트 · 슬롯 직접 선택",
