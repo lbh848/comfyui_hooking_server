@@ -998,6 +998,18 @@ _GEMINI_SCENE_FRAME_RE = re.compile(
 )
 
 
+def _record_response_diagnostic(message: str) -> None:
+    """Retain recovery failures for this attempt, including discarded scenes."""
+    sink = _usage_sink_ctx.get()
+    if sink is not None:
+        diagnostics = sink.setdefault("response_diagnostics", [])
+        # The wire response is stored separately; keep encoded payloads out of
+        # the error summary while retaining the field path and exception.
+        message = message.split("; value=", 1)[0][:800]
+        if message not in diagnostics:
+            diagnostics.append(message)
+
+
 def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     """JSON 값 단위 응답과 구형 전체 Base64 응답을 복호화한다."""
     raw = str(raw_text or "")
@@ -1013,6 +1025,7 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     try:
         structured = _decode_structured_base64_values(raw)
     except Exception as e:
+        _record_response_diagnostic(f"Base64 구조화 문자열 값 복호화 실패: {type(e).__name__}: {e}")
         print(
             "[LLM_GEMINI_BASE64] 구조화 문자열 값 복호화 실패: "
             f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
@@ -1046,6 +1059,7 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
         )
         traceback.print_exc()
         if marked or isinstance(e, UnicodeDecodeError):
+            _record_response_diagnostic(f"Base64 UTF-8 복원 실패: {type(e).__name__}: {e}")
             # A corrupt transported value cannot become a successful plain-text
             # result merely because its consumer checks only for nonempty text.
             return f"[LLM 실패] Base64 UTF-8 복원 실패: {e}; raw={raw!r}"
@@ -1196,13 +1210,14 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     decoder = json.JSONDecoder()
     try:
         value, end = decoder.raw_decode(raw, start)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as document_error:
         if (not partial and _gemini_base64_response_mode_ctx.get()
                 == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES):
             # A legacy combined JSON response may end during its last scene.
             # Keep only complete scene objects; never guess missing payload bits.
             opening = re.match(r'(?:\{\s*"scenes"\s*:\s*\[|\[)', raw[start:])
             if opening is not None:
+                _record_response_diagnostic(f"JSON 장면 응답 불완전/파싱 실패: {document_error}")
                 position = start + opening.end()
                 scenes = []
                 while position < len(raw):
@@ -1329,6 +1344,14 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                 scenes.append(restore(scene, f"$['scenes'][{index}]"))
             except Exception as exc:
                 changed = True
+                scene_slot = scene.get("slot") if isinstance(scene, dict) else None
+                if isinstance(scene_slot, str) and scene_slot.startswith("base64:"):
+                    try:
+                        scene_slot = _decode_gemini_scene_document(scene_slot)
+                    except (ValueError, UnicodeError):
+                        pass  # The original field error already explains the corruption.
+                _record_response_diagnostic(
+                    f"Base64 장면 복호화 실패: scene_index={index}, slot={scene_slot!r}, {exc}")
                 print(f"[LLM_GEMINI_BASE64] 삽화 장면 복호화 실패, 해당 장면만 제외: index={index}, error={exc}, input={scene!r}")
                 traceback.print_exc()
         restored = scenes if isinstance(value, list) else {**value, "scenes": scenes}
@@ -1341,6 +1364,7 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                 except Exception as exc:
                     changed = True
                     restored.pop(key)
+                    _record_response_diagnostic(f"Base64 필드 복호화 실패: field={key!r}, {exc}")
                     print(f"[LLM_GEMINI_BASE64] 삽화 응답 필드 복호화 실패, 해당 필드만 제외: field={key!r}, error={exc}, input={child!r}")
                     traceback.print_exc()
     else:
@@ -1421,6 +1445,8 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
             decoded = _decode_gemini_scene_document(frame.group(2), scene_slot=scene_slot)
         except Exception as e:
             failed_slots.append(scene_slot)
+            _record_response_diagnostic(
+                f"Base64 장면 복호화 실패: slot={scene_slot}, {type(e).__name__}: {e}")
             print(
                 "[LLM_GEMINI_BASE64] 삽화 장면 블록 복호화 실패: "
                 f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
@@ -1438,6 +1464,13 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
         decoded_documents.append(decoded)
 
     incomplete_count = max(0, open_count - len(frames))
+    if incomplete_count or close_count != open_count:
+        frame_starts = {frame.start() for frame in frames}
+        incomplete_slots = [opening.group(1) for opening in _GEMINI_SCENE_OPEN_RE.finditer(raw)
+                            if opening.start() not in frame_starts]
+        _record_response_diagnostic(
+            f"장면 응답 블록 미완성/태그 불일치: slots={incomplete_slots}, "
+            f"open={open_count}, closed={close_count}, incomplete={incomplete_count}")
     if failed_slots or incomplete_count or close_count != open_count:
         print(
             "[LLM_GEMINI_BASE64] 삽화 장면 부분 복구: "
@@ -2460,7 +2493,11 @@ def _extract_vertex_finish_details(response_or_event) -> tuple[str, str]:
     candidates = _usage_field(response_or_event, "candidates") or []
     candidate = candidates[0] if candidates else None
     if candidate is None:
-        return "", ""
+        feedback = _usage_field(response_or_event, "prompt_feedback", "promptFeedback")
+        reason = _usage_field(feedback, "block_reason", "blockReason")
+        reason = str(getattr(reason, "value", reason) or "").strip()
+        message = _usage_field(feedback, "block_reason_message", "blockReasonMessage") or ""
+        return (reason, f"프롬프트 차단 (promptFeedback): {message or reason}") if reason else ("", "")
     raw_reason = _usage_field(candidate, "finish_reason", "finishReason")
     reason_value = getattr(raw_reason, "value", raw_reason)
     reason = str(reason_value or "").strip()
@@ -3591,8 +3628,9 @@ async def _invoke_routed_with_retry(
         ).to_dict()
         if metadata_sink is not None:
             # A later transport failure must not inherit an earlier SAFETY/limit.
-            metadata_sink.pop("finish_reason", None)
-            metadata_sink.pop("finish_message", None)
+            for key in ("finish_reason", "finish_message", "response_diagnostics", "error",
+                        "transport_raw_response"):
+                metadata_sink.pop(key, None)
         if attempt_events is not None:
             attempt_events.append(start_event)
         await _emit_execution_observer(execution_observer, start_event)
@@ -6244,6 +6282,12 @@ async def _stream_gemini(messages: list, model: str, *, service: str = "gemini")
                         chunk = json.loads(data_str)
                         if chunk.get("error"):
                             raise RuntimeError(f"{service} SSE 오류: {chunk['error']}")
+                        finish = _extract_vertex_finish_details(chunk)
+                        if finish[0]:
+                            finish_reason = finish[0]
+                            finished_at = finished_at or time.monotonic()
+                        if finish[1]:
+                            finish_message = finish[1]
                         feedback = chunk.get("promptFeedback") or {}
                         if feedback.get("blockReason"):
                             raise RuntimeError(f"{service} promptFeedback: {feedback}")
@@ -6256,12 +6300,6 @@ async def _stream_gemini(messages: list, model: str, *, service: str = "gemini")
                             prompt_tokens = actual_prompt
                         if actual_completion is not None:
                             completion_tokens = actual_completion
-                        finish = _extract_vertex_finish_details(chunk)
-                        if finish[0]:
-                            finish_reason = finish[0]
-                            finished_at = finished_at or time.monotonic()
-                        if finish[1]:
-                            finish_message = finish[1]
                         candidates = chunk.get("candidates") or []
                         if candidates:
                             parts = candidates[0].get("content", {}).get("parts", []) or []

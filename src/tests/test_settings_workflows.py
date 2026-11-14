@@ -154,6 +154,8 @@ class CombinedWorkflowCatalogTests(unittest.TestCase):
         self.folder.mkdir(parents=True)
         self.library = self.root / "library"
         self.service = installer_fixture()
+        self.service.comfy_root = self.comfy
+        self.service.workflow_library_root = self.library
         self.service.workflow_library_status.side_effect = lambda: library_status(self.comfy, self.library)
 
     def write(self, name, value):
@@ -297,6 +299,17 @@ class WorkflowApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200, await response.text())
         self.installer.start_local_workflow_models.assert_called_once_with(identity="local:abc", civitai_key="")
         self.installer.start_workflow_models.assert_not_called()
+
+    async def test_cleanup_preview_can_show_shared_files_while_execution_stays_guarded(self):
+        self.runtime.manager.is_running.return_value = True
+        self.downloads.status.return_value = {"state": "running"}
+        self.installer.cleanup_workflow_models.return_value = {"removable": [], "retained": [], "revision": "current"}
+        response = await self.client.post("/api/setting/workflows/cleanup-preview", headers=self.headers, json=self.selection)
+        self.assertEqual(response.status, 200, await response.text())
+        self.installer.cleanup_workflow_models.assert_called_once_with(release_version="v6", selected_item_ids=["anima"], revision=None)
+        response = await self.client.post("/api/setting/workflows/cleanup", headers=self.headers, json={**self.selection, "revision": "current"})
+        self.assertEqual(response.status, 409)
+        self.installer.cleanup_workflow_models.assert_called_once()
 
     async def test_empty_selection_errors_and_busy_guards(self):
         for body in ({}, [], {"releaseVersion": "v6", "selectedItemIds": []}, {"releaseVersion": "v6", "selectedItemIds": [42]}):

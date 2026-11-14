@@ -12,6 +12,7 @@ import threading
 
 from asset_preset_scope import AssetPresetLock
 from json_store import write_json_atomic
+from preset_locations import PRESET_LOCATIONS
 
 
 SCOPES = ("builtin", "local")
@@ -48,10 +49,10 @@ def _validate_values(values) -> dict:
 
 class EmotionBackgroundPresets:
     def __init__(self, config_file: str | Path, builtin_file: str | Path | None = None):
-        self.local_file = Path(config_file).with_name("emotion_background_presets.json")
+        self.local_file = PRESET_LOCATIONS["emotion_background"].local_path(config_file=config_file)
         self.builtin_file = (
             Path(builtin_file) if builtin_file
-            else Path(__file__).parent / "presets" / "emotion_background_presets.json"
+            else PRESET_LOCATIONS["emotion_background"].builtin_path()
         )
         self._lock = threading.RLock()
         # 배포 프리셋은 세션 잠금을 해제한 경우에만 편집할 수 있다.

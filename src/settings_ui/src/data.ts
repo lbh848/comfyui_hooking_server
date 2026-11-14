@@ -74,7 +74,7 @@ export interface Draft {
   otherProviders: ProviderEntry[];
   runtime: { sage: boolean; loading: "auto" | "vram" | "ram" };
   updates: {
-    channel: "stable" | "preview";
+    channel: "main";
     backup: boolean;
     workflow: boolean;
     saved: boolean;
@@ -126,7 +126,7 @@ export const initialDraft: Draft = {
       enabled: false,
     },
   ],
-  updates: { channel: "stable", backup: true, workflow: true, saved: false },
+  updates: { channel: "main", backup: true, workflow: true, saved: false },
 };
 
 export function isDraft(value: unknown): value is Draft {
@@ -203,7 +203,8 @@ export function isDraft(value: unknown): value is Draft {
     bool(d.runtime.sage) &&
     ["auto", "vram", "ram"].includes(d.runtime.loading) &&
     !!d.updates &&
-    ["stable", "preview"].includes(d.updates.channel) &&
+    // Accept old saved labels; the update panel always uses main.
+    ["main", "stable", "preview"].includes(d.updates.channel) &&
     bool(d.updates.backup) &&
     bool(d.updates.workflow) &&
     bool(d.updates.saved)

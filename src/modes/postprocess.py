@@ -2861,10 +2861,17 @@ def normalize_postprocess_settings(mode: str, settings: dict) -> dict:
     return clean
 
 
-def get_postprocess_mode(config: dict) -> str:
-    """Return the shared dialogue presentation mode."""
-    mode = (config.get("postprocess") or {}).get("mode", "vn")
-    return mode if mode in ("vn", "bubble", "subtitle", "manga_text") else "vn"
+def get_postprocess_mode(config: dict, *, output_mode: str | None = None) -> str:
+    """Choose composition from the output type, ignoring legacy manual choices.
+
+    In-flight generations pass their captured output mode so changing the UI
+    while an image is rendering cannot change its composition method.
+    """
+    if output_mode is None:
+        output_mode = (config.get("illustration_context_toggles") or {}).get(
+            "illustration_output_mode", "illustration"
+        )
+    return "manga_text" if str(output_mode).strip().lower() in ("manga", "manga_both") else "subtitle"
 
 
 def get_postprocess_config(config: dict) -> dict:

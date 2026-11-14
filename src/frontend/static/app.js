@@ -3904,7 +3904,7 @@
                                 💬 채팅
                             </button>
                             <button onclick="openLlmFlowModal('${escapeAttr(b.name)}')"
-                                    ${b.has_llm_trace ? 'title="이 백업을 만든 LLM 단계의 입력/출력을 자르기 없이 보여줍니다"' : 'disabled title="LLM 흐름 기록이 없는 백업입니다(도입 전/재생성/수동 생성)"'}>
+                                    title="이 백업을 만든 LLM 단계의 입력/출력을 자르기 없이 보여줍니다">
                                 🧩 LLM 흐름
                             </button>
                             <button class="video-backup-btn" onclick="event.stopPropagation(); openVideoWorkspace('${escapeAttr(b.name)}')"

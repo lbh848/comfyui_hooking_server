@@ -31,12 +31,15 @@ class GenerationPresetTests(unittest.IsolatedAsyncioTestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.config = Path(temporary.name) / "config" / "settings.json"
-        self.store = IllustrationGenerationPresets(self.config)
+        self.builtin_files = {workshop: Path(temporary.name) / f"{workshop}_builtin.json" for workshop in ("illustration", "emotion")}
+        for path in self.builtin_files.values():
+            path.write_text('{"version":1,"modes":{}}', encoding="utf-8")
+        self.store = IllustrationGenerationPresets(self.config, self.builtin_files["illustration"])
         patcher = patch.dict(sys.modules, {"modes.bot_mode": self.bot})
         patcher.start()
         self.addCleanup(patcher.stop)
         app = web.Application()
-        register_generation_presets(app, self.config)
+        register_generation_presets(app, self.config, builtin_files=self.builtin_files)
         self.client = TestClient(TestServer(app))
         await self.client.start_server()
         self.addAsyncCleanup(self.client.close)
@@ -47,15 +50,15 @@ class GenerationPresetTests(unittest.IsolatedAsyncioTestCase):
             "group": {"img_w": 1200, "img_h": 800, "seed": 20},
         }
 
-    async def get(self, mode="illustration"):
-        response = await self.client.get("/api/illustration/generation-presets", params={"generation_mode": mode})
+    async def get(self, mode="illustration", workshop="illust"):
+        response = await self.client.get("/api/illustration/generation-presets", params={"generation_mode": mode, "scope": workshop})
         self.assertEqual(response.status, 200)
         return await response.json()
 
-    async def post(self, action="create", mode="illustration", name="테스트 프리셋", **values):
+    async def post(self, action="create", mode="illustration", name="테스트 프리셋", workshop="illust", **values):
         body = {"action": action, "generation_mode": mode, "name": name,
-                "settings": self.settings, "revision": (await self.get(mode))["revision"], **values}
-        return await self.client.post("/api/illustration/generation-presets", json=body)
+                "settings": self.settings, "revision": (await self.get(mode, workshop))["revision"], **values}
+        return await self.client.post("/api/illustration/generation-presets", params={"scope": workshop}, json=body)
 
     async def test_independent_modes_survive_restart_and_automatic_size_is_shared(self):
         self.assertEqual((await self.get())["presets"], [])
@@ -64,7 +67,7 @@ class GenerationPresetTests(unittest.IsolatedAsyncioTestCase):
         automatic = deepcopy(self.settings)
         automatic["solo"].update(seed=99, img_w=960, hrf_activate=False)
         self.assertEqual((await self.post(mode="character_auto", settings=automatic)).status, 200)
-        restarted = IllustrationGenerationPresets(self.config)
+        restarted = IllustrationGenerationPresets(self.config, self.builtin_files["illustration"])
         normal = restarted.snapshot("illustration")["presets"][0]["settings"]
         auto = restarted.snapshot("character_auto")["presets"][0]["settings"]
         self.assertEqual(normal, self.settings)
@@ -154,6 +157,46 @@ class GenerationPresetTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(response.status, 400)
         self.assertEqual(self.store.path.read_bytes(), before)
+
+    async def test_workshop_api_separates_user_and_distribution_edits_and_tokens(self):
+        for mode in ("illustration", "character_auto", "background"):
+            self.assertEqual((await self.post(mode=mode)).status, 200)
+            self.assertEqual((await self.get(mode, "emotion"))["presets"], [])
+            changed = deepcopy(self.settings)
+            changed["solo"]["seed"] = 234
+            self.assertEqual((await self.post(mode=mode, workshop="emotion", settings=changed)).status, 200)
+            self.assertEqual((await self.get(mode))["presets"][0]["settings"]["solo"]["seed"], 10)
+        original = self.store.path.read_bytes(), self.builtin_files["illustration"].read_bytes()
+        unlock = await self.post("unlock", workshop="emotion", confirmed=True)
+        token = (await unlock.json())["builtin_unlock_token"]
+        promoted = await self.post("scope", workshop="emotion", scope="local", target_scope="builtin", builtin_unlock_token=token)
+        self.assertEqual(promoted.status, 200)
+        changed = deepcopy(self.settings)
+        changed["solo"]["seed"] = 456
+        self.assertEqual((await self.post("update", workshop="emotion", scope="builtin", builtin_unlock_token=token, settings=changed)).status, 200)
+        await self.post("lock", workshop="emotion", builtin_unlock_token=token)
+        self.assertEqual((await self.post("delete", workshop="emotion", scope="builtin", builtin_unlock_token=token)).status, 400)
+        other = await self.post("unlock", confirmed=True)
+        self.assertEqual((await self.post("delete", workshop="emotion", scope="builtin", builtin_unlock_token=(await other.json())["builtin_unlock_token"])).status, 400)
+        self.assertEqual((self.store.path.read_bytes(), self.builtin_files["illustration"].read_bytes()), original)
+        restarted = IllustrationGenerationPresets(self.config, self.builtin_files["emotion"], workshop="emotion")
+        self.assertEqual(restarted.snapshot("illustration")["presets"][0]["settings"]["solo"]["seed"], 456)
+        invalid = await self.client.get("/api/illustration/generation-presets", params={"scope": "unknown", "generation_mode": "illustration"})
+        self.assertEqual(invalid.status, 400)
+
+    async def test_shared_user_presets_are_copied_once_without_overwriting_either_workshop(self):
+        legacy_config = self.config.parent / "legacy" / "settings.json"
+        illustration = IllustrationGenerationPresets(legacy_config, self.builtin_files["illustration"])
+        illustration.mutate({"action": "create", "generation_mode": "illustration", "name": "Shared",
+                             "settings": self.settings, "revision": illustration.snapshot("illustration")["revision"]})
+        before = illustration.path.read_bytes()
+        emotion = IllustrationGenerationPresets(legacy_config, self.builtin_files["emotion"], workshop="emotion")
+        self.assertEqual(emotion.snapshot("illustration")["presets"], illustration.snapshot("illustration")["presets"])
+        emotion.mutate({"action": "delete", "generation_mode": "illustration", "name": "Shared",
+                        "revision": emotion.snapshot("illustration")["revision"]})
+        restarted = IllustrationGenerationPresets(legacy_config, self.builtin_files["emotion"], workshop="emotion")
+        self.assertEqual(restarted.snapshot("illustration")["presets"], [])
+        self.assertEqual(illustration.path.read_bytes(), before)
 
 
 if __name__ == "__main__":

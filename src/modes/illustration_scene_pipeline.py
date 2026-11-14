@@ -531,7 +531,7 @@ def _manga_panel_id(value, index: int, used: set[str]) -> str:
     return candidate
 
 
-def _manga_actor_id(value) -> str:
+def _manga_actor_name(value) -> str:
     return str(value or "").strip().strip('\"“”').strip()
 
 
@@ -584,15 +584,15 @@ def _manga_panel_item(number: int, panel: dict, width: int, height: int,
 
 
 def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int) -> dict:
-    actor_id = _manga_actor_id(actor.get("actorId"))
-    if not actor_id:
-        raise ValueError(f"DETAIL-MANGA {field}.actorId가 비어 있습니다")
+    name = _manga_actor_name(actor.get("name") or actor.get("actorId"))
+    if not name:
+        raise ValueError(f"DETAIL-MANGA {field}.name이 비어 있습니다")
     instruction = str(actor.get("instruction") or "").strip()
     if not instruction:
         raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
     return {
         "label": "character",
-        "name": actor_id,
+        "name": name,
         "caption": f"PANEL {number}. {instruction}",
         "bbox": _moss_bbox(actor.get("bbox"), f"{field}.bbox", width, height),
     }
@@ -617,7 +617,7 @@ def _manga_dialogue_item(number: int, dialogue: dict, field: str,
         raise ValueError(f"DETAIL-MANGA {field}.text가 비어 있습니다")
     balloon = normalize_choice(dialogue.get("balloon"), BALLOON, "oval", "balloon")
     tail = normalize_choice(dialogue.get("tail"), BALLOON_TAIL, "none", "tail")
-    speaker = _manga_actor_id(dialogue.get("speaker"))
+    speaker = _manga_actor_name(dialogue.get("speaker"))
     owner = f"Speaker: {speaker}. " if speaker and balloon != "narration" else ""
     return {
         "label": "text",
@@ -706,18 +706,19 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
 
     cross_entries = layout.get("cross_panel_actors")
     cross_entries = cross_entries if isinstance(cross_entries, list) else []
-    cross_ids: set[str] = set()
+    cross_names: set[str] = set()
     cross_panels: dict[str, set[int]] = {}
     cross_items: list[dict] = []
+    foreground_overlays: dict[int, list[str]] = {}
     for index, entry in enumerate(cross_entries):
         if not isinstance(entry, dict):
             continue
-        actor_id = _manga_actor_id(entry.get("actorId"))
-        if not actor_id:
+        name = _manga_actor_name(entry.get("name") or entry.get("actorId"))
+        if not name:
             continue
-        key = actor_id.casefold()
-        if key in cross_ids:
-            raise ValueError(f"DETAIL-MANGA cross_panel_actors actorId 중복: {actor_id!r}")
+        key = name.casefold()
+        if key in cross_names:
+            raise ValueError(f"DETAIL-MANGA cross_panel_actors name 중복: {name!r}")
         raw_ids = entry.get("spansPanels")
         if raw_ids is None:
             raw_ids = entry.get("panelIds")
@@ -733,7 +734,7 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                 linked.append(candidate)
         if len(linked) < 2:
             print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 항목 제외(유효 panelId 2개 미만): "
-                  f"actor={actor_id!r}, panelIds={raw_ids!r}")
+                  f"name={name!r}, panelIds={raw_ids!r}")
             continue
         instruction = str(entry.get("instruction") or "").strip()
         if not instruction:
@@ -745,34 +746,49 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                      if len(span_labels) > 1 else span_labels[0])
         if relation == "page_foreground_overlay":
             lead = (f"One continuous body drawn over {span_text} in the page foreground; "
-                    "the panel borders pass behind the body.")
+                    "the panel borders and inset artwork pass behind the body. "
+                    "The foreground silhouette occludes the crossed inset edge: its ink line "
+                    "stops at the body contour and resumes beyond it, never crossing the skin or clothing. "
+                    "Separate figures inside the inset pictures remain independent shots.")
+            for panel_id in linked[1:]:
+                foreground_overlays.setdefault(panel_ids[panel_id], []).append(name)
         else:
             lead = (f"One continuous body crossing {span_text}; the shared dividing line "
                     "passes behind the body.")
         cross_items.append({
             "label": "character",
-            "name": actor_id,
+            "name": name,
             "caption": f"{lead} {instruction}",
             "bbox": _moss_bbox(entry.get("bbox"), f"cross_panel_actors[{index}].bbox",
                                width, height),
         })
-        cross_ids.add(key)
-        cross_panels[key] = {panel_ids[panel_id] for panel_id in linked}
+        cross_names.add(key)
+        # A page overlay owns its home shot; crossed inset pictures may show
+        # independent occurrences of the same character at other instants.
+        owned = linked[:1] if relation == "page_foreground_overlay" else linked
+        cross_panels[key] = {panel_ids[panel_id] for panel_id in owned}
 
     items: list[dict] = []
     for index, panel in enumerate(panels):
         number = index + 1
-        items.append(_manga_panel_item(number, panel, width, height, panel_ids,
-                                      boundaries=boundaries))
+        panel_item = _manga_panel_item(number, panel, width, height, panel_ids,
+                                       boundaries=boundaries)
+        for name in foreground_overlays.get(number, []):
+            panel_item["caption"] += (
+                f" This inset picture lies BEHIND {name}'s continuous foreground body. "
+                "Hide the inset artwork and border wherever that body overlaps; the border "
+                "ends at the foreground silhouette and resumes beyond it."
+            )
+        items.append(panel_item)
         actors = panel.get("actors")
         if isinstance(actors, list):
             for actor_index, actor in enumerate(actors):
                 if not isinstance(actor, dict):
                     raise ValueError(f"DETAIL-MANGA panels[{index}].actors[{actor_index}]가 object가 아닙니다")
-                actor_id = _manga_actor_id(actor.get("actorId"))
-                if number in cross_panels.get(actor_id.casefold(), set()):
+                name = _manga_actor_name(actor.get("name") or actor.get("actorId"))
+                if number in cross_panels.get(name.casefold(), set()):
                     print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 액터의 패널 사본 제거: "
-                          f"actor={actor_id!r}, panel={number}")
+                          f"name={name!r}, panel={number}")
                     continue
                 items.append(_manga_actor_item(
                     number, actor, f"panels[{index}].actors[{actor_index}]", width, height))
@@ -994,7 +1010,8 @@ def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
 
 
 def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
-                        single_char_mask_enabled: bool = True, moss: bool = False) -> dict:
+                        single_char_mask_enabled: bool = True, moss: bool = False,
+                        diagnostics: list[str] | None = None) -> dict:
     if moss:
         return _parse_detail_moss_scene(item, scene)
     # Registered character names cannot contain double quotes. Normalize only
@@ -1068,7 +1085,8 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                             "regions[].character_prompt", required=False)) if text)
                     panel_input["regions"].append(region)
                 panel = _parse_detail_scene({**panel_input, "slot": item["slot"]}, scene,
-                    mask_inline=True, single_char_mask_enabled=single_char_mask_enabled)
+                    mask_inline=True, single_char_mask_enabled=single_char_mask_enabled,
+                    diagnostics=diagnostics)
                 panel.update({key: deepcopy(value) for key, value in planned[panel_id].items()
                               if key in {"panel", "x", "y", "width", "height", "canvas", "scene_brief",
                                          "anchor_segment", "dialogue", "dialogue_overlay", "dialogue_mask"}})
@@ -1077,6 +1095,11 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                         dialogue_mask=panel["dialogue_mask"])
                 panels.append(panel)
             except (KeyError, ValueError, TypeError) as exc:
+                if diagnostics is not None:
+                    panel_id = raw_panel.get("panel") if isinstance(raw_panel, dict) else None
+                    diagnostics.append(
+                        f"컷 파싱/검증 실패: slot={item['slot']}, panel={panel_id!r}, "
+                        f"{type(exc).__name__}: {exc}")
                 print(f"[DETAIL-MANGA] 사용할 수 없는 컷만 제외: input={raw_panel!r}, error={exc}")
                 traceback.print_exc()
         if not panels:
@@ -1234,7 +1257,7 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                        slot_map: dict[str, int] | None = None,
                        streaming: bool = False, mask_inline: bool = False,
                        single_char_mask_enabled: bool = True, composite: bool = False,
-                       moss: bool = False) -> list[dict]:
+                       moss: bool = False, diagnostics: list[str] | None = None) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
     if not streaming and len(blocks) != 1:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
@@ -1294,13 +1317,17 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
         if decoded:
             documents.append(json.dumps({"scenes": decoded}, ensure_ascii=False))
     parsed_documents, backgrounds = [], {}
-    for document in documents:
+    for document_index, document in enumerate(documents):
         raw = pipeline._json_object_from_text(document, array_key="scenes")
         if isinstance(raw, dict) and "scenes" not in raw and "slot" in raw:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 단일 장면 루트 복구: slot={raw['slot']!r}")
             raw = {"scenes": [raw]}
         if not isinstance(raw, dict) or not isinstance(raw.get("scenes"), list):
             if allow_partial:
+                if diagnostics is not None and not streaming:
+                    diagnostics.append(
+                        f"장면 문서 파싱 실패: document={document_index + 1}, "
+                        + ("복구 가능한 scenes 배열 없음" if document.strip() else "빈 응답"))
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 파싱 불가 장면 문서 제외, 다른 장면 보존: input={document[:500]!r}")
                 continue
             _fail("CALL2-DETAIL", "복구 가능한 scenes 배열 없음", document[:500])
@@ -1324,6 +1351,9 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
     anchor_slots = {scene.get("anchor_segment"): scene["slot"] for scene in scenes if scene.get("anchor_segment")}
     anchor_slots.update(slot_map or {})
     for item in items:
+        # KEYVIS shares the MOSS scenes array but is consumed by its own parser.
+        if moss and isinstance(item, dict) and item.get("slot") in (-1, "-1"):
+            continue
         slot = None
         try:
             if not isinstance(item, dict) or "slot" not in item:
@@ -1345,12 +1375,14 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                 item, expected_by_slot[slot], backgrounds=backgrounds) if composite else
                 _parse_detail_scene(item, expected_by_slot[slot],
                     mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled,
-                    moss=moss))
+                    moss=moss, diagnostics=diagnostics))
             if slot in by_slot and descriptor != by_slot[slot]:
                 _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
         except ValueError as exc:
             if not allow_partial:
                 raise
+            if diagnostics is not None and not streaming:
+                diagnostics.append(f"장면 파싱/검증 실패: slot={slot!r}, {exc}")
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 사용할 수 없는 항목만 제외: slot={slot!r}, error={exc}, input={item!r}")
             traceback.print_exc()
             if not streaming:
@@ -2170,6 +2202,7 @@ async def build_from_context(
             def validate_detail(response):
                 nonlocal keyvis_descriptor, keyvis_output
                 keyvis_reason = ""
+                diagnostics = []
                 if owns_keyvis and -1 not in completed:
                     descriptor, keyvis_reason = p._parse_call2_keyvis_output(
                         response, toggles, names, "CALL2-DETAIL-KEYVIS",
@@ -2181,11 +2214,12 @@ async def build_from_context(
                 try:
                     results = parse_detail_batch(response, batch, allow_partial=True, slot_map=segment_slots,
                         mask_inline=mask_inline, composite=composite, moss=moss,
-                        single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
+                        single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)),
+                        diagnostics=diagnostics)
                 except ValueError as exc:
                     print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 파싱 실패, 보존 장면 유지: completed={list(completed)}, error={exc}")
                     traceback.print_exc()
-                    return False, str(exc)
+                    return False, "\n".join([*dict.fromkeys(diagnostics), str(exc)])
                 for result in results:
                     if manga and not moss_manga:
                         previous = completed.get(result["slot"], {})
@@ -2211,8 +2245,24 @@ async def build_from_context(
                     reason = ("완료 컷 보존; 누락 컷만 재시도" if manga else
                               f"장면 성공 {successful_count}/{len(batch)}개: 75% 미만; 누락 장면만 재시도"
                               if retry_missing else "일부 장면/대표 이미지 누락; 사용 가능한 결과로 계속")
+                    missing_panels = {
+                        scene["slot"]: completed[scene["slot"]]["missing_panels"]
+                        if scene["slot"] in completed else [panel["panel"] for panel in scene.get("panels") or []]
+                        for scene in pending if scene.get("panels")
+                        or completed.get(scene["slot"], {}).get("missing_panels")
+                    }
+                    details = list(dict.fromkeys(diagnostics))
+                    if pending:
+                        details.append(f"누락 장면: {[scene['slot'] for scene in pending]} "
+                                       f"(완료 {successful_count}/{len(batch)})")
+                    if missing_panels:
+                        details.append(f"누락 컷 (slot: panels): {missing_panels}")
+                    if missing_keyvis:
+                        details.append(f"대표 이미지 누락: {keyvis_reason or '응답에 사용 가능한 대표 이미지 없음'}")
+                    reason = "\n".join([*details, f"처리: {reason}"])
                     _fail("CALL2-DETAIL", reason,
                           {"missing_slots": [scene["slot"] for scene in pending],
+                           "missing_panels": missing_panels, "response_diagnostics": diagnostics,
                            "missing_keyvis": missing_keyvis, "keyvis_reason": keyvis_reason,
                            "output": response}, warning=True)
                 if retry_missing:

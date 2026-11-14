@@ -78,7 +78,7 @@ def _initial_document(root: Path) -> dict:
         "providers": [{"id": "openai", "name": "OpenAI", "endpoint": "", "model": "", "enabled": True}],
         "otherProviders": [{"id": "other-civitai", "name": "Civitai", "endpoint": "", "model": "", "enabled": True}],
         "runtime": {"sage": True, "loading": "auto"},
-        "updates": {"channel": "stable", "backup": True, "workflow": True, "saved": False},
+        "updates": {"channel": "main", "backup": True, "workflow": True, "saved": False},
     }}, root)
 
 

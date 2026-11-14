@@ -89,7 +89,7 @@ from .node_compatibility import validate_instant_lora_export_order
 from .execution_profile import (
     cpu_workflow_bindings, custom_nodes_for_profile, installed_cpu_runtime, profile_kind,
 )
-from .operations import uv_python_path
+from .operations import CommandCancelled, uv_python_path
 from .pack_cli import collect_workflow_bindings
 from .process_guard import comfy_install_blockers
 from .runtime_state import (
@@ -114,7 +114,6 @@ from .workflow_library import (
     embedded_workflow_base_dir,
     install_default_workflows,
     install_managed_workflows,
-    hide_unready_workflows,
     library_status,
     latest_release_version,
     basic_workflow_item_ids,
@@ -552,13 +551,7 @@ class ComfyInstallerService:
 
     def workflow_library_status(self) -> dict:
         with self._lock:
-            library = library_status(self.comfy_root, self.workflow_library_root)
-            if self._thread is None or not self._thread.is_alive():
-                hidden = hide_unready_workflows(comfy_root=self.comfy_root, library_root=self.workflow_library_root,
-                                               library=library, log=self._log)
-                if hidden:
-                    library = library_status(self.comfy_root, self.workflow_library_root)
-            return library
+            return library_status(self.comfy_root, self.workflow_library_root)
 
     def workflow_integrity_report(
         self, *, release_version: str | None = None,
@@ -1792,7 +1785,6 @@ class ComfyInstallerService:
             if revision != plan["revision"]:
                 raise InstallerServiceError("모델 또는 공유 상태가 변경되었습니다. 정리 목록을 다시 확인하세요.")
             result = cleanup.delete(plan)
-            hide_unready_workflows(comfy_root=self.comfy_root, library_root=self.workflow_library_root, log=self._log)
             return result
 
     def start_workflow_models(self, *, release_version: str, selected_item_ids: list[str], civitai_key: str = "") -> dict:
@@ -3282,7 +3274,7 @@ class ComfyInstallerService:
             if process is not None:
                 process.stop()
 
-    def _run_update(self, *, install_mode: str) -> None:
+    def _run_update(self, *, install_mode: str, component: str | None = None, manifest_override: InstallManifest | None = None) -> None:
         process: ComfyProcess | None = None
         transaction: dict[str, Any] | None = None
         transaction_cleanup: dict[str, Any] | None = None
@@ -3292,6 +3284,8 @@ class ComfyInstallerService:
         managed_runtime_active = False
         runtime_resume_result: Any = None
         started_monotonic = time.monotonic()
+        update_config_backup_dir = (data_root(self.project_root) / "update_backup" / "config"
+                                    if component is not None else self.config_backup_dir)
         old_manifest = self.manifest
         mode = normalize_install_mode(install_mode)
 
@@ -3312,7 +3306,7 @@ class ComfyInstallerService:
                 )
             return restore_verified_config_snapshot(
                 config_path=self.config_path,
-                backup_dir=self.config_backup_dir,
+                backup_dir=update_config_backup_dir,
                 backup_path=backup_path,
                 expected_sha256=expected_sha256,
             )
@@ -3443,7 +3437,7 @@ class ComfyInstallerService:
             self._set_phase("config_backup")
             config_backup = backup_current_config(
                 config_path=self.config_path,
-                backup_dir=self.config_backup_dir,
+                backup_dir=update_config_backup_dir,
                 reason="hooking_update",
             )
 
@@ -3451,12 +3445,12 @@ class ComfyInstallerService:
             hooking_result = update_hooking_server_main(
                 project_root=self.project_root,
                 config_path=self.config_path,
-                backup_dir=self.config_backup_dir,
+                backup_dir=update_config_backup_dir,
                 cancel_event=self._cancel,
                 log=self._log,
                 config_backup=config_backup,
-            )
-            restart_required = _hooking_server_restart_required(
+            ) if component is None else {"changed": False, "restart_required": False}
+            restart_required = component is None and _hooking_server_restart_required(
                 startup_head=self._startup_project_head,
                 update_result=hooking_result,
             )
@@ -3515,7 +3509,7 @@ class ComfyInstallerService:
                 return
 
             self._set_phase("manifest")
-            new_manifest = load_install_manifest()
+            new_manifest = manifest_override or load_install_manifest(self.manifest.source_path)
             self.manifest = new_manifest
             with self._lock:
                 self._state["manifest"] = {
@@ -3649,17 +3643,22 @@ class ComfyInstallerService:
             else:
                 runtime_pause_token = {"status": "not-managed"}
 
+            from .panel_updates import SOYA_NODE_NAMES
+            update_node_names = {node["name"] for node in new_manifest.custom_nodes
+                                 if component is None or ((node["name"] in SOYA_NODE_NAMES) == (component == "soya"))}
             self._set_phase("transaction")
             transaction = create_runtime_transaction(
                 comfy_root=self.comfy_root,
                 manifest=new_manifest,
                 config_backup=config_backup,
                 log=self._log,
+                update_comfy=component != "soya",
+                update_node_names=update_node_names,
             )
 
             reasons = set(inventory["runtime_change_reasons"])
-            source_changed = "comfy_ref" in reasons
-            python_changed = bool(
+            source_changed = component != "soya" and "comfy_ref" in reasons
+            python_changed = component != "soya" and bool(
                 {"missing_receipt", "python_profile", "gpu_profile"}.intersection(
                     reasons
                 )
@@ -3672,7 +3671,7 @@ class ComfyInstallerService:
             )
 
             self._set_phase("venv")
-            python = create_comfy_venv(
+            python = uv_python_path(self.comfy_root / ".venv") if component == "soya" else create_comfy_venv(
                 comfy_root=self.comfy_root,
                 python_version=str(new_manifest.python["version"]),
                 cancel_event=self._cancel,
@@ -3681,14 +3680,15 @@ class ComfyInstallerService:
             )
 
             self._set_phase("source")
-            update_comfy_source(
-                destination=self.comfy_root,
-                repository=str(new_manifest.comfy["repository"]),
-                ref=str(new_manifest.comfy["ref"]),
-                cancel_event=self._cancel,
-                log=self._log,
-                requirements_dir=self.runtime_backup_dir,
-            )
+            if component != "soya":
+                update_comfy_source(
+                    destination=self.comfy_root,
+                    repository=str(new_manifest.comfy["repository"]),
+                    ref=str(new_manifest.comfy["ref"]),
+                    cancel_event=self._cancel,
+                    log=self._log,
+                    requirements_dir=self.runtime_backup_dir,
+                )
 
             self._set_phase("core_dependencies")
             if source_changed or python_changed:
@@ -3717,18 +3717,20 @@ class ComfyInstallerService:
                         else []
                     ),
                 }
-            python_result["manager"] = install_manager_dependencies(
-                comfy_root=self.comfy_root,
-                python=python,
-                cancel_event=self._cancel,
-                log=self._log,
-            )
+            if component != "soya":
+                python_result["manager"] = install_manager_dependencies(
+                    comfy_root=self.comfy_root,
+                    python=python,
+                    cancel_event=self._cancel,
+                    log=self._log,
+                )
 
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
             node_paths = update_custom_nodes(
                 nodes=custom_nodes_for_profile(
-                    new_manifest.custom_nodes, cpu_only=profile.get("kind") == "cpu",
+                    [node for node in new_manifest.custom_nodes if node["name"] in update_node_names],
+                    cpu_only=profile.get("kind") == "cpu",
                 ),
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
@@ -3767,7 +3769,7 @@ class ComfyInstallerService:
             from .model_installer import install_models, missing_models
             required_models = [
                 model for model in new_manifest.models
-                if model["id"] in _UPDATE_REQUIRED_MODEL_IDS
+                if component != "soya" and model["id"] in _UPDATE_REQUIRED_MODEL_IDS
             ]
             missing_required = missing_models(
                 models=required_models, comfy_root=self.comfy_root
@@ -3841,7 +3843,7 @@ class ComfyInstallerService:
             self._set_phase("config")
             config_update = apply_installed_config(
                 config_path=self.config_path,
-                requirements_dir=self.config_backup_dir,
+                requirements_dir=update_config_backup_dir,
                 comfy_root=self.comfy_root,
                 workflow_bindings=workflow_bindings,
                 required_bindings=workflow_bindings.keys(),
@@ -3871,6 +3873,7 @@ class ComfyInstallerService:
                 workflow_bindings=workflow_bindings,
                 selected_workflow_ids=selected_workflow_ids,
                 release_version=release_version,
+                preserve_python_receipt=component == "soya",
             )
 
             self._set_phase("runtime_resume")
@@ -3952,7 +3955,7 @@ class ComfyInstallerService:
                 "[완료] Comfy 업데이트 성공. 워크플로우 E2E는 별도 "
                 f"검사 버튼에서 선택 실행할 수 있습니다: {result_path}"
             )
-        except (ComfyE2ECancelled, DownloadCancelled) as exc:
+        except (ComfyE2ECancelled, DownloadCancelled, CommandCancelled) as exc:
             self._log(f"[중단] {exc}", "warning")
             try:
                 rollback_result = rollback_after_failure()

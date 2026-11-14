@@ -523,6 +523,58 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
     }
 
 
+def _moss_render_panel_captions(moss: dict) -> dict:
+    """Translate internal panel references into spatial prose at the image-model boundary."""
+    prefix = re.compile(r"^\s*PANEL\s+(\d+)\.\s*", re.IGNORECASE)
+    frames = {}
+    for item in moss.get("items") or []:
+        if not isinstance(item, dict) or item.get("label") != "object":
+            continue
+        match = prefix.match(_text(item.get("caption")))
+        bbox = item.get("bbox")
+        if (match and isinstance(bbox, (list, tuple)) and len(bbox) == 4
+                and all(isinstance(v, (int, float)) and math.isfinite(v) for v in bbox)):
+            frames[match.group(1)] = (bbox, _text(item.get("caption")))
+    if not frames:
+        return moss
+
+    top = min(box[0] for box, _ in frames.values())
+    left = min(box[1] for box, _ in frames.values())
+    bottom = max(box[2] for box, _ in frames.values())
+    right = max(box[3] for box, _ in frames.values())
+    names = {}
+    for number, (box, caption) in frames.items():
+        if list(box) == [top, left, bottom, right] and "borderless" in caption.lower():
+            names[number] = "the continuous full-page scene"
+            continue
+        cy, cx = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        row = "upper" if cy < top + (bottom - top) / 3 else (
+            "lower" if cy > top + 2 * (bottom - top) / 3 else "middle")
+        col = "left" if cx < left + (right - left) / 3 else (
+            "right" if cx > left + 2 * (right - left) / 3 else "center")
+        names[number] = f"the {row}-{col} framed scene"
+
+    rendered = copy.deepcopy(moss)
+    reference = re.compile(r"\bPANEL\s+(\d+)\b", re.IGNORECASE)
+    entries = [rendered.get("summary"), *(rendered.get("items") or [])]
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("caption"), str):
+            continue
+        caption = entry["caption"]
+        heading = prefix.match(caption)
+        if heading:
+            caption = prefix.sub("", caption, count=1)
+            caption = re.sub(r"^(?:FRAME|REGION):\s*", "", caption, count=1)
+            scene = names.get(heading.group(1), "the corresponding scene")
+            if entry.get("label") == "object" and heading.group(1) in frames:
+                caption = f"{scene.capitalize()} is a distinct scene region. {caption}"
+            else:
+                caption = f"Within {scene}, {caption}"
+        entry["caption"] = reference.sub(
+            lambda match: names.get(match.group(1), "the corresponding scene"), caption)
+    return rendered
+
+
 class MossPromptBuilder:
     """Assembles the MOSS document from a layout and a workflow controller."""
 
@@ -543,7 +595,7 @@ class MossPromptBuilder:
             present = {tag.strip().casefold() for tag in negative.split(",")}
             additions = [tag for tag in SHARED_DIVIDER_NEGATIVE if tag.casefold() not in present]
             workflow["negative"] = ", ".join(part for part in (negative, ", ".join(additions)) if part)
-        return {"moss": moss, "workflow": workflow}
+        return {"moss": _moss_render_panel_captions(moss), "workflow": workflow}
 
     @staticmethod
     def dumps(document: dict) -> str:

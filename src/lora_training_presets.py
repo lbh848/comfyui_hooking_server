@@ -13,6 +13,7 @@ from asset_preset_scope import AssetPresetLock, write_scope_documents
 from configuration import settings_lock
 from lora_training_steps import training_step_settings
 from lora_training_workflow import training_optimizer_type
+from preset_locations import PRESET_LOCATIONS
 
 
 PROFILES = {"anima", "sdxl", "moss"}
@@ -53,8 +54,8 @@ def validate_training_settings(value, profile):
 class LoraTrainingPresets:
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root)
-        self.path = config_root(project_root) / "lora_training_presets.json"
-        self.builtin_file = Path(project_root) / "presets/lora_training_presets.json"
+        self.path = PRESET_LOCATIONS["lora_training"].local_path(project_root)
+        self.builtin_file = PRESET_LOCATIONS["lora_training"].builtin_path(project_root)
         self.lock = AssetPresetLock()
 
     @staticmethod

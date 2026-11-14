@@ -131,7 +131,8 @@ class LlmSlot(SettingsValue):
 
 
 class UpdateSettings(SettingsValue):
-    channel: Literal["stable", "preview"]
+    # Legacy documents may retain their old label; execution always uses main.
+    channel: Literal["main", "stable", "preview"]
     backup: bool
     workflow: bool
     saved: bool

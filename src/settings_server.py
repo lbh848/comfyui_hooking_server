@@ -65,6 +65,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     workflow_groups = WorkflowGroups(project_root)
     store_lock = asyncio.Lock()
     installer_lock = asyncio.Lock()
+    update_panel = None
     resource_lock = asyncio.Lock()
     preset_lock = asyncio.Lock()
     emotion_group_lock = asyncio.Lock()
@@ -571,9 +572,9 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                     if state.get("state") == "running":
                         raise InstallerServiceError("진행 중인 설치·검증 작업이 끝난 뒤 다시 시도하세요.")
                     if action in {"cleanup-preview", "cleanup"}:
-                        if downloads is not None and downloads.status().get("state") == "running":
+                        if action == "cleanup" and downloads is not None and downloads.status().get("state") == "running":
                             raise InstallerServiceError("모델 다운로드를 일시 정지하거나 완료한 뒤 정리하세요.")
-                        if any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
+                        if action == "cleanup" and any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
                             raise InstallerServiceError("실행 중인 Comfy를 모두 종료한 뒤 모델을 정리하세요.")
                         revision = body.get("revision") if action == "cleanup" else None
                         if action == "cleanup" and (not isinstance(revision, str) or not revision):
@@ -671,6 +672,45 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
             return web.json_response({"error": str(exc)}, status=409, headers=headers)
         except OSError:
             return web.json_response({"error": "설치 파일을 준비할 수 없습니다. 파일과 폴더 권한을 확인하세요."}, status=500, headers=headers)
+
+    async def updates(request: web.Request) -> web.Response:
+        nonlocal installer, update_panel
+        headers = {"Cache-Control": "no-store"}
+        if request.headers.get("X-Comfy-Settings") != "1":
+            return web.json_response({"error": "허용되지 않은 업데이트 요청입니다."}, status=403, headers=headers)
+        from comfy_installer.service import ComfyInstallerService, InstallerServiceError
+        from comfy_installer.panel_updates import WorkshopUpdates
+        from comfy_installer.operations import CommandError
+        from comfy_installer.manifest import ManifestError
+        try:
+            async with installer_lock:
+                if installer is None:
+                    installer = await asyncio.to_thread(ComfyInstallerService, project_root=project_root)
+                if update_panel is None:
+                    update_panel = WorkshopUpdates(installer)
+                if request.method == "GET":
+                    result = await asyncio.to_thread(update_panel.status)
+                else:
+                    action = request.match_info["action"]
+                    if action == "clear-backups":
+                        result = await asyncio.to_thread(update_panel.clear_backups)
+                    else:
+                        if action not in {"fetch", "cancel"}:
+                            if any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
+                                return web.json_response({"error": "실행 중인 Comfy를 모두 종료한 뒤 업데이트하세요."}, status=409, headers=headers)
+                            if downloads is not None and downloads.status()["state"] == "running":
+                                return web.json_response({"error": "모델 다운로드가 끝난 뒤 업데이트하세요."}, status=409, headers=headers)
+                        if action == "cancel":
+                            await asyncio.to_thread(installer.cancel)
+                            result = await asyncio.to_thread(update_panel.status)
+                        else:
+                            async with store_lock:
+                                settings_value, _ = await asyncio.to_thread(store.read)
+                            workflow_key = (settings_value or {}).get("apiKeys", {}).get("workflow-key", "")
+                            result = await asyncio.to_thread(update_panel.start, action, workflow_key=workflow_key)
+            return web.json_response(result, headers=headers)
+        except (InstallerServiceError, CommandError, ManifestError, ValueError, OSError, RuntimeError) as exc:
+            return web.json_response({"error": str(exc)}, status=409, headers=headers)
 
     async def stop_installer(app: web.Application) -> None:
         if downloads is not None:
@@ -796,6 +836,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_get("/api/setting/install", install)
     app.router.add_post("/api/setting/install", install)
     app.router.add_post("/api/setting/install/cancel", install)
+    app.router.add_get("/api/setting/updates", updates)
+    app.router.add_post("/api/setting/updates/{action:fetch|application|soya|comfy|cancel|clear-backups}", updates)
     app.on_cleanup.append(stop_installer)
     from settings_shutdown import register_program_shutdown
 

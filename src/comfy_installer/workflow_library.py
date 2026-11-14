@@ -815,24 +815,30 @@ def _load_release(library_root: Path, release_version: str) -> tuple[Path, dict]
         raise WorkflowLibraryError(
             f"워크플로우 팩 폴더와 상태 버전이 다릅니다: {root}"
         )
-    return root, _resolve_model_metadata(state, load_install_manifest())
+    return root, _resolve_model_metadata(state, load_install_manifest(), workflow_root=root)
 
 
-def _resolve_model_metadata(state: dict, manifest: InstallManifest) -> dict:
-    """Keep fixed dependency IDs in packs; resolve their metadata from one catalog."""
+def _resolve_model_metadata(state: dict, manifest: InstallManifest, *, workflow_root: Path | None = None) -> dict:
+    """Add current preset requirements in memory; keep pack dependencies fixed."""
+    from .preset_models import distribution_preset_models
     result = {key: value for key, value in state.items()
               if key not in {"install_manifest", "install_manifest_sha256"}}
     models = {str(model["id"]): model for model in manifest.models}
+    preset_models = distribution_preset_models(manifest, state.get("items", []), workflow_root=workflow_root)
     items = []
     for item in state.get("items", []):
-        model_ids = item.get("model_ids", [])
+        fixed_ids = item.get("fixed_model_ids", item.get("model_ids", []))
+        requirements = preset_models[item["id"]]
+        model_ids = sorted(set(fixed_ids) | requirements["ids"])
         unknown = set(model_ids) - models.keys()
         if unknown:
             raise WorkflowLibraryError(
                 f"프로젝트 설치 명세에 없는 고정 모델입니다: {', '.join(sorted(unknown))}"
             )
         sizes = {identity: int(models[identity]["size"]) for identity in model_ids}
-        items.append({**item, "model_sizes": sizes, "model_count": len(sizes),
+        items.append({**item, "model_ids": model_ids, "fixed_model_ids": list(fixed_ids),
+                      "preset_model_ids": sorted(requirements["ids"]), "preset_model_errors": requirements["errors"],
+                      "model_sizes": sizes, "model_count": len(sizes),
                       "model_bytes": sum(sizes.values())})
     result["items"] = items
     return result
@@ -1299,8 +1305,10 @@ def install_managed_workflows(
     selected_item_ids: Iterable[str],
     log: LogCallback | None = None,
     allow_missing_models: bool = False,
+    backup_dir: Path | None = None,
+    retired_item_ids: Iterable[str] = (),
 ) -> WorkflowSelection:
-    """Replace selected workflows without backups, then protect them read-only."""
+    """Replace selected workflows, optionally preserving replaced files."""
     selection = resolve_distribution_selection(
         library_root=library_root, release_version=release_version,
         selected_item_ids=selected_item_ids,
@@ -1321,6 +1329,8 @@ def install_managed_workflows(
         raise WorkflowLibraryError("관리 워크플로우 상태 파일이 심볼릭 링크입니다.")
     state = _read_json_object(state_path, "관리 워크플로우 상태") if state_path.exists() else {"version": 1, "files": {}}
     previous_paths = managed_workflow_paths(comfy)
+    previous_files = dict(state["files"])
+    retired = set(retired_item_ids)
     planned = []
     names = set()
     bindings = {}
@@ -1342,17 +1352,25 @@ def install_managed_workflows(
             "allow_missing_models": allow_missing_models,
         }
     state_path.parent.mkdir(parents=True, exist_ok=True)
+    def backup_replaced_workflow(path: Path) -> None:
+        expected_hash = previous_files.get(path.name, {}).get("sha256")
+        if backup_dir is not None and path.is_file() and _sha256_bytes(path.read_bytes()) != expected_hash:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup_dir / path.name)
+
     # Item IDs stay stable when a pack renames files. Remove only that item's
     # previously managed name; unrelated user workflows are never inferred.
     for previous in previous_paths:
         if (
-            state["files"][previous.name].get("item_id") in selection.selected_item_ids
+            (previous_files[previous.name].get("item_id") in selection.selected_item_ids
+             or previous_files[previous.name].get("item_id") in retired)
             and previous.name.casefold() not in names
         ):
             if previous.exists():
                 if not previous.is_file():
                     raise WorkflowLibraryError(f"관리 워크플로우가 일반 파일이 아닙니다: {previous}")
                 _make_file_writable(previous)
+                backup_replaced_workflow(previous)
                 previous.unlink()
             del state["files"][previous.name]
     changed = [path for path, payload in planned if not path.exists() or path.read_bytes() != payload]
@@ -1360,6 +1378,7 @@ def install_managed_workflows(
         try:
             if destination in changed:
                 if destination.exists():
+                    backup_replaced_workflow(destination)
                     _make_file_writable(destination)
                     destination.unlink()
                 _write_bytes_new(destination, payload)
@@ -1411,7 +1430,10 @@ def hide_unready_workflows(
                 if version not in manifests:
                     manifests[version] = release_install_manifest(library_root=library_root, release_version=version)
                 by_id = {model["id"]: model for model in manifests[version].models}
-                if not missing_models(models=[by_id[identity] for identity in item["model_ids"]], comfy_root=comfy):
+                # Preset edits affect installation readiness, not whether an
+                # existing workflow is automatically moved out of its folder.
+                fixed_ids = item.get("fixed_model_ids", item["model_ids"])
+                if not missing_models(models=[by_id[identity] for identity in fixed_ids], comfy_root=comfy):
                     ready = True
                     break
             if ready:
@@ -1482,6 +1504,8 @@ def resolve_distribution_selection(
         source_files: list[str] = []
         for item_id in requested:
             item = items_by_id[item_id]
+            if item.get("preset_model_errors"):
+                raise WorkflowLibraryError("\n".join(item["preset_model_errors"]))
             filename = Path(str(item.get("filename", ""))).name
             source = release_root / filename
             if not source.is_file():
@@ -1589,6 +1613,8 @@ def selection_requirements(
     model_sizes: dict[str, int] = {}
     for item_id in requested:
         item = items_by_id[item_id]
+        if item.get("preset_model_errors"):
+            raise WorkflowLibraryError("\n".join(item["preset_model_errors"]))
         raw_sizes = item.get("model_sizes", {})
         if isinstance(raw_sizes, dict):
             for model_id, size in raw_sizes.items():
@@ -1637,6 +1663,8 @@ def library_status(
                     f"path={child}, error={exc}"
                 )
                 traceback.print_exc()
+    latest = max(releases, key=lambda release: int(release["release_version"][1:]), default={})
+    distribution_hashes = {item["sha256"] for item in latest.get("items", []) if item.get("sha256")}
     workflow_files = []
     workflow_files_error = ""
     visited: set[Path] = set()
@@ -1680,10 +1708,18 @@ def library_status(
                 ):
                     continue
                 seen.add(resolved_file)
+                digest = _sha256_bytes(payload)
+                # Exact pack copies remain distribution files even if renamed.
+                # Repair lost file attributes without touching edited user JSON.
+                if digest in distribution_hashes and not _is_read_only_file(path):
+                    try:
+                        path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+                    except OSError:
+                        workflow_files_error = "일부 배포 워크플로우의 읽기 전용 설정에 실패했습니다. 파일 권한을 확인하세요."
                 workflow_files.append({
                     "name": path.name, "path": str(path), "size": len(payload),
                     "relative_path": path.relative_to(user_root).as_posix(),
-                    "sha256": _sha256_bytes(payload),
+                    "sha256": digest,
                 })
     except (OSError, RuntimeError):
         workflow_files_error = "워크플로우 폴더를 읽지 못했습니다. 폴더 위치와 접근 권한을 확인하세요."

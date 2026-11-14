@@ -9,6 +9,7 @@ from data_backups import BackupPolicy, backup_json_file, backup_policy
 from json_store import write_json_atomic
 from asset_preset_scope import AssetPresetLock, without_local_reference_images
 from configuration import settings_lock
+from preset_locations import PRESET_LOCATIONS
 import hashlib
 import json
 import logging
@@ -22,12 +23,12 @@ log = logging.getLogger("chain_preset_mode")
 class ChainPresetMode:
     def __init__(self, preset_dir=None, backup_dir=None, builtin_dir=None):
         project_root = os.path.dirname(os.path.dirname(__file__))
-        self.preset_dir = preset_dir or os.path.join(data_root(project_root), "chain_presets")
+        self.preset_dir = preset_dir or str(PRESET_LOCATIONS["chains"].local_path(project_root))
         self.hidden_dir = os.path.join(self.preset_dir, "hidden")
         self.backup_dir = backup_dir or os.path.join(data_root(project_root), "backups")
         self.builtin_dir = str(builtin_dir or (
             Path(self.preset_dir).parent.parent / "src/presets/chain_presets"
-            if preset_dir else Path(project_root) / "presets/chain_presets"))
+            if preset_dir else PRESET_LOCATIONS["chains"].builtin_path(project_root)))
         self.lock = AssetPresetLock()
         self.catalog_path = Path(self.preset_dir) / "catalog"
 

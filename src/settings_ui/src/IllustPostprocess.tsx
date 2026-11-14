@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Save } from "lucide-react";
-import { Modal, Panel, SettingsTabs, Toggle } from "./components";
+import { Modal, Panel, Toggle } from "./components";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { illustrationRequest, useIllustrationAction, useIllustrationResource, type IllustrationData } from "./illustration";
 import { IllustPostprocessPreview } from "./IllustPostprocessPreview";
@@ -21,16 +21,16 @@ const postprocessGroups = [
 ];
 const options: Record<string, [string, string][]> = { font_weight: [["300", "Light 300"], ["400", "Regular 400"], ["500", "Medium 500"], ["600", "SemiBold 600"], ["700", "Bold 700"], ["800", "ExtraBold 800"], ["900", "Black 900"]], erase_mode: [["auto", "자동 (배경 단색이면 채우기)"], ["flat", "단색 채우기"], ["inpaint", "인페인트"]], write_area: [["detected", "검출된 실제 글자 영역"], ["json_bbox", "제출 JSON bbox"]], text_align: [["center", "가운데"], ["left", "왼쪽"], ["right", "오른쪽"]] };
 
-export function IllustPostprocess({ botName, active }: { botName: string; active: boolean }) {
+export function IllustPostprocess({ botName, active, outputMode }: { botName: string; active: boolean; outputMode: string }) {
   const [data, setData] = useState<IllustrationData | null>(null); const [baseline, setBaseline] = useState<IllustrationData | null>(null); const [error, setError] = useState(""); const [revision, setRevision] = useState(0);
-  const [mode, setMode] = useState("subtitle");
+  const mode = ["manga", "manga_both"].includes(outputMode) ? "manga_text" : "subtitle";
   const action = useIllustrationAction();
   const fonts = useIllustrationResource("postprocess/fonts");
   useEffect(() => {
     const controller = new AbortController(); setError("");
     void illustrationRequest("postprocess/settings", undefined, controller.signal).then(value => {
       if (controller.signal.aborted) return;
-      setData(value); setBaseline(value); setMode(value.mode === "manga_text" ? "manga_text" : "subtitle");
+      setData(value); setBaseline(value);
     }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
     return () => controller.abort();
   }, [revision]);
@@ -56,12 +56,12 @@ export function IllustPostprocess({ botName, active }: { botName: string; active
   return <Panel title="대사 합성 설정" className="illust-postprocess-panel"><div className="illust-body">
     {!data ? <IllustrationLoading error={error} retry={() => setRevision(value => value + 1)} /> : <form className="illust-form" onSubmit={event => { event.preventDefault(); void action.run(async () => {
       const changed = Object.fromEntries(Object.keys(postprocessModes).filter(type => data[type]).map(type => [type, Object.fromEntries(Object.entries(data[type]).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(baseline?.[type]?.[key])))]));
-      const saved = await illustrationRequest("postprocess/settings", { ...changed, ...(mode !== baseline!.mode ? { mode } : {}) });
-      setData(saved); setBaseline(saved); setMode(saved.mode === "manga_text" ? "manga_text" : "subtitle");
+      const saved = await illustrationRequest("postprocess/settings", changed);
+      setData(saved); setBaseline(saved);
     }); }}><fieldset className="illust-form" disabled={action.busy}>
-      <SettingsTabs id="illust-postprocess-mode" label="대사 합성 방식" values={postprocessModes} value={mode} onChange={setMode} />
+      <div role="status"><strong>대사 합성 방식: {postprocessModes[mode]} · 자동 선택</strong><p className="field-help">출력 방식에 따라 일반 삽화에는 자막을, 만화 삽화에는 텍스트 교체를 적용합니다.</p></div>
       <div className="illust-postprocess-workspace"><div className="illust-form">
-      <div role="tabpanel" id={`illust-postprocess-mode-panel-${mode}`} aria-labelledby={`illust-postprocess-mode-tab-${mode}`} className="illust-form">
+      <div className="illust-form" role="group" aria-label={`${postprocessModes[mode]} 설정`}>
       {postprocessGroups.filter(group => group.keys.some(key => key in modeData)).map(group => <fieldset className="illust-postprocess-group" key={group.title}><legend>{group.title}</legend>
       <div className="illust-fields">{group.keys.filter(key => key in modeData && key !== "min_font_size").map(key => key === "font_size" ? <fieldset className="illust-postprocess-font-size" key={key}><legend>글자 크기</legend>
         {"auto_font_size" in modeData && <><div className="illust-postprocess-auto-size"><span>자동 추론</span><Toggle label="자동 추론" checked={modeData.auto_font_size === true} onChange={value => update("auto_font_size", value)} /></div><p className="field-help">감지된 글자 영역과 넣을 글자 수에 맞춰 크기를 자동으로 정합니다.</p></>}

@@ -8,6 +8,7 @@ import re
 from functools import lru_cache
 
 from app_paths import SOURCE_DIR
+from preset_locations import PRESET_LOCATIONS
 
 
 def resolve_preset_tags(tags: dict, category: str, name: str) -> list[str]:
@@ -55,7 +56,7 @@ def merge_expression_presets(tags: dict) -> dict:
 
 
 def load_builtin_presets(project_root: Path = SOURCE_DIR, *, hidden: bool = False) -> dict:
-    path = Path(project_root) / "presets" / "presets.json"
+    path = PRESET_LOCATIONS["tags"].builtin_path(project_root)
     if not path.is_file():
         return {}
     stat = path.stat()

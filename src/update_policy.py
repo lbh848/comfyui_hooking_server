@@ -1,6 +1,7 @@
 """Distribution catalogs follow the release; user storage is never updated."""
 from pathlib import Path, PurePosixPath
 import subprocess
+from preset_locations import PRESET_LOCATIONS
 
 
 def is_user_data(name: str) -> bool:
@@ -13,8 +14,7 @@ def is_distribution_file(name: str) -> bool:
     path = PurePosixPath(name)
     return (len(path.parts) == 3 and path.parts[:2] == ("src", "presets") and path.suffix == ".json"
             or len(path.parts) == 4 and path.parts[:3] == ("src", "presets", "chain_presets") and path.suffix == ".json"
-            or name in {"src/defaults/illustration/bot.json", "src/defaults/emotion/bot.json",
-                        "src/prompts/bot_system_prompt/presets.json"})
+            or name in {location.builtin for location in PRESET_LOCATIONS.values() if not location.directory})
 
 
 def _git(root: Path, *args: str) -> bytes:

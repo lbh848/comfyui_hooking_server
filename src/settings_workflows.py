@@ -270,7 +270,10 @@ def workflow_catalog(service) -> dict:
         installation = {"modelsInstalled": False, "missingModelCount": None, "missingModelBytes": None,
                         "installBlockedReason": model_error or "필수 모델 목록을 확인할 수 없습니다."}
         model_ids = item.get("model_ids")
-        if not model_error and isinstance(model_ids, list) and all(model_id in models_by_id for model_id in model_ids):
+        preset_error = "\n".join(item.get("preset_model_errors", []))
+        if preset_error:
+            installation["installBlockedReason"] = preset_error
+        if not model_error and not preset_error and isinstance(model_ids, list) and all(model_id in models_by_id for model_id in model_ids):
             from comfy_installer.model_installer import missing_models
             missing = missing_models(models=[models_by_id[model_id] for model_id in model_ids], comfy_root=service.comfy_root)
             installation.update(modelsInstalled=not missing, missingModelCount=len(missing),
@@ -323,7 +326,7 @@ def workflow_catalog(service) -> dict:
             try:
                 plan = cleanup.plan(release_version=release["release_version"], selected_item_ids=[item["id"]])
                 item.update(cleanupFileCount=len(plan["removable"]), cleanupBytes=plan["removableBytes"],
-                            cleanupBlockedReason="" if plan["removable"] else "정리할 모델이 없습니다. 공유 모델은 유지합니다.")
+                            cleanupBlockedReason="")
             except (WorkflowLibraryError, OSError) as exc:
                 item["cleanupBlockedReason"] = str(exc)
     return {"releaseVersion": release["release_version"], "items": items, "defaultGroups": default_workflow_groups(items), "e2eError": error,

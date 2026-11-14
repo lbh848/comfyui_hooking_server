@@ -295,7 +295,7 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
             {item.source === "local" ? <button type="button" className="button secondary" disabled={disabled || !item.fileRevision}
               title="사용자 워크플로우 JSON 파일만 삭제합니다. 모델 파일은 유지합니다."
               onClick={() => { setDeleteItem(item); setDeleteError(""); }} aria-label={`${item.name} 워크플로우 삭제`}><Trash2 size={14} />워크플로우 삭제</button>
-            : <button type="button" className="button secondary" disabled={disabled || !item.workflowInstalled || !item.cleanupFileCount || !!item.cleanupBlockedReason}
+            : <button type="button" className="button secondary" disabled={disabled || !item.workflowInstalled || !!item.cleanupBlockedReason}
               title={!item.workflowInstalled ? "설치된 워크플로우만 모델을 정리할 수 있습니다." : item.cleanupBlockedReason || `공유하지 않는 모델 파일 ${item.cleanupFileCount}개 정리`}
               onClick={() => void previewCleanup(item)} aria-label={`${item.name} 정리`}><Trash2 size={14} />정리</button>}
             <button type="button" className="button secondary" disabled={item.source === "pack" || loading || !!loadError || !!pending || !groupRevision || !!groupError} title={item.source === "pack" ? "배포 워크플로우의 그룹은 변경할 수 없습니다." : undefined} onClick={() => openGroupMove(item)} aria-label={`${item.name} 그룹 이동`}><FolderInput size={14} />그룹 이동</button>
@@ -349,7 +349,7 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
         </div>
       </div>
     </Modal>}
-    {cleanupItem && <Modal title="워크플로우 모델 정리" onClose={() => { if (!pending) setCleanupItem(null); }} closeDisabled={!!pending} working={pending === "cleanup" || pending === "cleanup-preview"}>
+    {cleanupItem && <Modal title="정리" onClose={() => { if (!pending) setCleanupItem(null); }} closeDisabled={!!pending} working={pending === "cleanup" || pending === "cleanup-preview"}>
       <div className="form-stack" aria-busy={!!pending}>
         <p className="resource-file-path"><strong>{cleanupItem.name}</strong></p>
         {pending === "cleanup-preview" && <p role="status">모델 공유 여부를 확인하는 중…</p>}
@@ -359,7 +359,6 @@ export function WorkflowsPage({ notify }: { notify: (message: string) => void })
           {!!cleanupPlan.retained.length && <details className="workflow-integrity"><summary><strong>공유 모델 유지</strong><Badge>{cleanupPlan.retained.length}개</Badge></summary>
             {cleanupPlan.retained.map(file => <div key={file.path}><p className="resource-file-path">{file.path}</p><p>사용: {file.usedBy.join(", ")}</p></div>)}
           </details>}
-          <p className="field-help">다른 설치된 워크플로우와 사용자 워크플로우가 사용하는 모델은 유지합니다. 정리 후 필수 모델이 부족한 배포 워크플로우는 폴더에서 숨깁니다. 설치 버튼으로 다시 추가할 수 있습니다.</p>
           {!cleanupPlan.removable.length && <p>정리할 모델이 없습니다.</p>}
         </>}
         {cleanupError && <p className="field-error" role="alert">{cleanupError}</p>}

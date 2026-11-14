@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "modes": {
+    "illustration": {
+      "공방-기본": {
+        "solo": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "sdxl_artist_preset": "공방-빈 아티스트",
+          "anima_quality_preset": "공방-anima5",
+          "sdxl_quality_preset": "공방-ILXL",
+          "anima_background_preset": "공방-자유 배경",
+          "sdxl_background_preset": "",
+          "anima_negative_preset": "공방-anima2",
+          "sdxl_negative_preset": "공방-기본",
+          "hrf_activate": true,
+          "hrf_size": 1.5,
+          "hrf_restore_size": true,
+          "anima_hrf_activate": false,
+          "img_w": 864,
+          "img_h": 864,
+          "anima_fd_activate": false,
+          "anima_hd_activate": false,
+          "anima_ed_activate": false,
+          "fd_activate": false,
+          "hd_activate": false,
+          "ed_activate": false,
+          "face_id_activate": false,
+          "face_id_str": 0.55,
+          "snapref_enabled": true,
+          "snapref_preprocess": "none",
+          "snapref_strength": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "snapref_mode": "char",
+          "snapref_megapixels": 0.75,
+          "seed": -1,
+          "face_lora_upscale_size": ""
+        },
+        "group": {
+          "img_w": 1024,
+          "img_h": 752,
+          "seed": -1
+        }
+      },
+      "공방-배경합성": {
+        "solo": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "sdxl_artist_preset": "공방-빈 아티스트",
+          "anima_quality_preset": "공방-anima5",
+          "sdxl_quality_preset": "공방-ILXL",
+          "anima_background_preset": "공방-투명 배경(특수)",
+          "sdxl_background_preset": "",
+          "anima_negative_preset": "공방-anima2",
+          "sdxl_negative_preset": "공방-기본",
+          "hrf_activate": true,
+          "hrf_size": 1.5,
+          "hrf_restore_size": true,
+          "anima_hrf_activate": false,
+          "img_w": 752,
+          "img_h": 1024,
+          "anima_fd_activate": false,
+          "anima_hd_activate": false,
+          "anima_ed_activate": false,
+          "fd_activate": false,
+          "hd_activate": false,
+          "ed_activate": false,
+          "face_id_activate": false,
+          "face_id_str": 0.55,
+          "snapref_enabled": true,
+          "snapref_preprocess": "none",
+          "snapref_strength": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "snapref_mode": "char",
+          "snapref_megapixels": 0.75,
+          "seed": -1,
+          "face_lora_upscale_size": ""
+        },
+        "group": {
+          "img_w": 1024,
+          "img_h": 752,
+          "seed": -1
+        }
+      }
+    },
+    "character_auto": {
+      "공방-생성기본": {
+        "solo": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "sdxl_artist_preset": "",
+          "anima_quality_preset": "공방-anima2",
+          "sdxl_quality_preset": "",
+          "anima_background_preset": "공방-화이트 백그라운드",
+          "sdxl_background_preset": "",
+          "anima_negative_preset": "공방-anima-애니풍",
+          "sdxl_negative_preset": "",
+          "hrf_activate": false,
+          "hrf_size": 1.5,
+          "hrf_restore_size": false,
+          "anima_hrf_activate": false,
+          "img_w": 752,
+          "img_h": 1024,
+          "anima_fd_activate": false,
+          "anima_hd_activate": false,
+          "anima_ed_activate": false,
+          "fd_activate": false,
+          "hd_activate": false,
+          "ed_activate": false,
+          "face_id_activate": false,
+          "face_id_str": 0.55,
+          "snapref_enabled": true,
+          "snapref_preprocess": "none",
+          "snapref_strength": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "face_only",
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "seed": -1,
+          "face_lora_upscale_size": ""
+        },
+        "group": {
+          "img_w": 752,
+          "img_h": 1024,
+          "seed": -1
+        }
+      }
+    },
+    "background": {
+      "공방-배경기본": {
+        "solo": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "sdxl_artist_preset": "",
+          "anima_quality_preset": "공방-anima2",
+          "sdxl_quality_preset": "",
+          "anima_background_preset": "공방-자유 배경",
+          "sdxl_background_preset": "",
+          "anima_negative_preset": "공방-anima-애니풍",
+          "sdxl_negative_preset": "",
+          "hrf_activate": false,
+          "hrf_size": 1.5,
+          "hrf_restore_size": false,
+          "anima_hrf_activate": false,
+          "img_w": 1280,
+          "img_h": 720,
+          "anima_fd_activate": false,
+          "anima_hd_activate": false,
+          "anima_ed_activate": false,
+          "fd_activate": false,
+          "hd_activate": false,
+          "ed_activate": false,
+          "face_id_activate": false,
+          "face_id_str": 0.55,
+          "snapref_enabled": false,
+          "snapref_preprocess": "none",
+          "snapref_strength": 1,
+          "snapref_strength_scale": "linear",
+          "snapref_fidelity": 1,
+          "snapref_secondary_reference": "none",
+          "snapref_mode": "char",
+          "snapref_megapixels": 1,
+          "seed": -1,
+          "face_lora_upscale_size": ""
+        },
+        "group": {
+          "img_w": 756,
+          "img_h": 756,
+          "seed": -1
+        }
+      }
+    }
+  }
+}

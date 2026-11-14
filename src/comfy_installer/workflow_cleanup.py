@@ -8,6 +8,7 @@ from pathlib import Path
 from .crypto import WorkflowPackError
 from .model_installer import ModelInstallError, _safe_model_target
 from .pack_cli import _workflow_model_ids
+from .preset_models import distribution_preset_models
 from .workflow_library import WorkflowLibraryError, library_status, release_install_manifest
 
 
@@ -18,7 +19,6 @@ class WorkflowModelCleanup:
         if self.library.get("workflow_files_error"):
             raise WorkflowLibraryError("다른 워크플로우의 모델 사용 여부를 확인할 수 없습니다. " + self.library["workflow_files_error"])
         self.workflows = []
-        self.local_usage: dict[Path, set[str]] = {}
         manifests = []
         installed_hashes = {source["sha256"] for source in self.library.get("workflow_files", [])}
         for release in self.library.get("releases", []):
@@ -34,24 +34,42 @@ class WorkflowModelCleanup:
                 self.workflows.append({
                     "release": version, "id": item["id"], "sha256": item.get("sha256"),
                     "name": item.get("name") or item.get("filename") or item["id"],
-                    "models": models, "paths": {self._target(model["relative_path"]) for model in models},
+                    "filename": item["filename"], "bindings": item.get("bindings", []),
+                    "models": models,
+                    "paths": {self._target(model["relative_path"]) for model in models},
                     "installed": item.get("sha256") in installed_hashes,
                 })
-        known_hashes = {item["sha256"] for item in self.workflows if item["sha256"]}
         for source in self.library.get("workflow_files", []):
-            if source["sha256"] in known_hashes:
-                continue
-            # Personal or modified workflows have no complete dependency manifest.
-            # Preserve every known model they reference, including partial setups.
+            consumers = [item for item in self.workflows if item["sha256"] == source["sha256"]]
+            if not consumers:
+                consumer = {"id": "local:" + source["relative_path"], "release": "", "sha256": source["sha256"],
+                            "name": source["relative_path"], "filename": source["relative_path"], "bindings": [],
+                            "models": [], "paths": set(), "installed": True}
+                self.workflows.append(consumer)
+                consumers = [consumer]
+            # Cleanup must also count model/LoRA values inside editable prompt
+            # JSON; unlike pack dependencies, these are real installed consumers.
             for manifest in manifests:
                 try:
-                    model_ids = set(_workflow_model_ids(Path(source["path"]), manifest))
+                    model_ids = set(_workflow_model_ids(Path(source["path"]), manifest, include_runtime_fields=True))
                 except WorkflowPackError as exc:
                     raise WorkflowLibraryError("사용자 워크플로우의 모델 사용 여부를 확인하지 못했습니다.") from exc
                 for model in manifest.models:
                     if model["id"] in model_ids:
-                        path = self._target(model["relative_path"])
-                        self.local_usage.setdefault(path, set()).add(source["relative_path"])
+                        for consumer in consumers:
+                            consumer["paths"].add(self._target(model["relative_path"]))
+                            if model["id"] not in {entry["id"] for entry in consumer["models"]}:
+                                consumer["models"].append(model)
+        installed = [item for item in self.workflows if item["installed"]]
+        for manifest in manifests:
+            requirements = distribution_preset_models(manifest, installed, include_user=True)
+            by_id = {model["id"]: model for model in manifest.models}
+            for item in installed:
+                for identity in requirements[item["id"]]["ids"]:
+                    model = by_id[identity]
+                    item["paths"].add(self._target(model["relative_path"]))
+                    if identity not in {entry["id"] for entry in item["models"]}:
+                        item["models"].append(model)
 
     def _target(self, relative_path: str) -> Path:
         try:
@@ -68,7 +86,7 @@ class WorkflowModelCleanup:
             raise WorkflowLibraryError("정리할 워크플로우를 찾을 수 없습니다. 목록을 새로고침하세요.")
         if any(not item["installed"] for item in selected):
             raise WorkflowLibraryError("설치된 워크플로우만 모델을 정리할 수 있습니다.")
-        used_by = {path: set(names) for path, names in self.local_usage.items()}
+        used_by = {}
         for item in self.workflows:
             if item in selected or not item["installed"]:
                 continue

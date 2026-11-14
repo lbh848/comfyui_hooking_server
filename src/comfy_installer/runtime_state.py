@@ -487,6 +487,7 @@ def write_runtime_receipt(
     workflow_bindings: dict[str, str],
     selected_workflow_ids: Iterable[str],
     release_version: str | None,
+    preserve_python_receipt: bool = False,
 ) -> dict[str, Any]:
     root = Path(comfy_root).resolve()
     from .execution_profile import custom_nodes_for_profile, profile_kind
@@ -523,6 +524,9 @@ def write_runtime_receipt(
             },
         },
     }
+    if preserve_python_receipt:
+        previous = load_runtime_receipt(root)
+        value["python"] = previous.get("python", {}) if isinstance(previous, dict) else {}
     _write_json_atomic(receipt_path(root), value)
     return value
 
@@ -533,6 +537,8 @@ def create_runtime_transaction(
     manifest: InstallManifest,
     config_backup: dict[str, Any],
     log: LogCallback | None = None,
+    update_comfy: bool = True,
+    update_node_names: set[str] | None = None,
 ) -> dict[str, Any]:
     root = Path(comfy_root).resolve()
     transaction_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
@@ -544,7 +550,10 @@ def create_runtime_transaction(
     try:
         if not (root / ".git").is_dir():
             raise RuntimeStateError(f"ComfyUI Git 저장소가 없습니다: {root}")
-        node_state = collect_custom_node_state(root, manifest.custom_nodes)
+        node_state = collect_custom_node_state(root, [
+            node for node in manifest.custom_nodes
+            if update_node_names is None or node["name"] in update_node_names
+        ])
         transaction_root.mkdir(parents=True, exist_ok=False)
         database = _backup_comfy_database(root, transaction_root)
         if venv.is_dir():
@@ -558,7 +567,7 @@ def create_runtime_transaction(
             backup_root=tracked_backup_root,
             log=log,
             log_label="ComfyUI 추적 변경 백업",
-        )
+        ) if update_comfy else None
         comfy_worktree_patch = None
         if comfy_tracked_backup is not None:
             comfy_worktree_patch = Path(
@@ -592,7 +601,7 @@ def create_runtime_transaction(
             "transaction_id": transaction_id,
             "created_at": _now_iso(),
             "comfy_root": str(root),
-            "comfy_ref": git_head(root),
+            "comfy_ref": git_head(root) if update_comfy else "",
             "comfy_worktree_patch": comfy_worktree_patch,
             "comfy_tracked_changes_backup": comfy_tracked_backup,
             "custom_nodes": node_state,

@@ -287,7 +287,7 @@ function BackupCard({ item, transparent, scheduled, onOpen }: { item: Illustrati
           window.dispatchEvent(new CustomEvent("illustration-reschedule-changed", { detail: status }));
         }, "")}>{scheduled ? <Check size={14} /> : <CalendarClock size={14} />}{scheduled ? "예약됨" : "예약"}</button>
         <button className="button" title="이미지와 생성 프롬프트를 분석하거나 질문" onClick={() => onOpen("analysis")}><Search size={14} />이미지 분석</button>
-        <button className="button" disabled={!item.has_llm_trace} title={item.has_llm_trace ? "생성 단계의 입력·출력 보기" : "저장된 LLM 흐름이 없습니다."} onClick={() => setShowFlow(true)}><GitBranch size={14} />LLM 흐름</button>
+        <button className="button" title="생성 단계의 입력·출력 보기" onClick={() => setShowFlow(true)}><GitBranch size={14} />LLM 흐름</button>
         <a className="button" href={illustrationMedia(item.image_url)} download><Download size={14} />다운로드</a>
         <button className="button danger" onClick={() => onOpen("delete")}><Trash2 size={14} />삭제</button>
       </div>

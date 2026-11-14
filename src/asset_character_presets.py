@@ -7,12 +7,13 @@ from pathlib import Path
 from asset_preset_scope import AssetPresetLock, write_scope_documents, without_local_reference_images
 from configuration import settings_lock
 from lora_paths import validate_lora_storage_name
+from preset_locations import PRESET_LOCATIONS
 
 
 class AssetCharacterPresets:
     def __init__(self, tags_file, builtin_file=None):
         self.path = Path(tags_file)
-        self.builtin_file = Path(builtin_file) if builtin_file else Path(__file__).parent / "presets/asset_character_presets.json"
+        self.builtin_file = Path(builtin_file) if builtin_file else PRESET_LOCATIONS["asset_character"].builtin_path()
         self.lock = AssetPresetLock()
 
     @staticmethod

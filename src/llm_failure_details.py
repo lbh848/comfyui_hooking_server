@@ -25,13 +25,24 @@ def format_llm_failure(error: str, metadata: Mapping | None = None) -> str:
     """Enrich failures only; repeated formatting leaves the message unchanged."""
     result = str(error or "")
     details = metadata or {}
+    diagnostics = []
     reason = str(details.get("finish_reason") or "").strip()
     if reason and reason.upper() not in _NORMAL_FINISH_REASONS:
         label = f"LLM 종료 사유: {reason}"
         if label not in result:
             explanation = _FINISH_EXPLANATIONS.get(reason.upper(), "")
-            result = "\n".join(filter(None, (result, f"{label} · {explanation}" if explanation else label)))
+            diagnostics.append(f"{label} · {explanation}" if explanation else label)
     message = str(details.get("finish_message") or "").strip()
     if message and message not in result:
-        result = "\n".join(filter(None, (result, f"공급자 상세: {message}")))
-    return result
+        diagnostics.append(f"공급자 상세: {message}")
+    stream_error = str(details.get("error") or "").strip()
+    if stream_error and stream_error not in result:
+        diagnostics.append(f"통신/스트림 오류: {stream_error}")
+    for diagnostic in details.get("response_diagnostics") or []:
+        diagnostic = str(diagnostic).strip()
+        if diagnostic and diagnostic not in result:
+            line = f"응답 처리 상세: {diagnostic}"
+            if line not in diagnostics:
+                diagnostics.append(line)
+    # Put causes ahead of retry policy so the history preview shows them too.
+    return "\n".join(filter(None, (*diagnostics, result)))

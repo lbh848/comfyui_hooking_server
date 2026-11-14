@@ -15,6 +15,7 @@ from aiohttp import web
 
 from app_paths import SOURCE_DIR, data_root
 from json_store import JsonFileCache, json_file_signature, write_json_atomic
+from preset_locations import PRESET_LOCATIONS
 
 
 # 워크숍 스코프별 배포 봇 저장소. 삽화와 감정 삽화는 봇 데이터를 공유하지 않는다.
@@ -30,8 +31,9 @@ class IllustrationBotDistribution:
         if store is None:
             raise ValueError("봇 배포 저장소 스코프를 확인하세요.")
         self.scope = scope
-        self.path = source / "defaults" / store["defaults"] / "bot.json"
-        self.runtime_path = data_root(source) / "asset_data" / store["data"]
+        location = PRESET_LOCATIONS[f"{store['defaults']}_bot"]
+        self.path = location.builtin_path(source)
+        self.runtime_path = location.local_path(source)
         self.bot_dir = data_root(source) / store["dir"]
         self.tokens: set[str] = set()
         self.lock = threading.RLock()

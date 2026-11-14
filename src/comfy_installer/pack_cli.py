@@ -72,7 +72,7 @@ def collect_workflow_bindings(
     return bindings
 
 
-def _workflow_string_values(value: object):
+def _workflow_string_values(value: object, *, include_runtime_fields: bool = False):
     if isinstance(value, str):
         yield value.replace("\\", "/").strip().casefold()
         # V2 workflows carry model names inside a JSON prompt string.
@@ -83,11 +83,11 @@ def _workflow_string_values(value: object):
                 pass
             else:
                 if isinstance(nested, (dict, list)):
-                    yield from _workflow_string_values(nested)
+                    yield from _workflow_string_values(nested, include_runtime_fields=include_runtime_fields)
     elif isinstance(value, dict):
         # These fields are selected by the application at generation time.
         # Defaults in an editable prompt are not fixed workflow dependencies.
-        if value.get("schema") == "soya.illustration.v2" and isinstance(value.get("fields"), dict):
+        if not include_runtime_fields and value.get("schema") == "soya.illustration.v2" and isinstance(value.get("fields"), dict):
             fields = value["fields"]
             runtime_fields = {
                 "ANIMA_DIFFUSION_MODEL", "ILXL_CHECKPOINT",
@@ -97,13 +97,13 @@ def _workflow_string_values(value: object):
                 key: nested for key, nested in fields.items() if key not in runtime_fields
             }}
         for nested in value.values():
-            yield from _workflow_string_values(nested)
+            yield from _workflow_string_values(nested, include_runtime_fields=include_runtime_fields)
     elif isinstance(value, list):
         for nested in value:
-            yield from _workflow_string_values(nested)
+            yield from _workflow_string_values(nested, include_runtime_fields=include_runtime_fields)
 
 
-def _workflow_model_ids(source: Path, manifest: InstallManifest) -> list[str]:
+def _workflow_model_ids(source: Path, manifest: InstallManifest, *, include_runtime_fields: bool = False) -> list[str]:
     try:
         workflow = json.loads(source.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -120,7 +120,7 @@ def _workflow_model_ids(source: Path, manifest: InstallManifest) -> list[str]:
             f"워크플로우 최상위 값이 객체가 아닙니다: {source}"
         )
 
-    values = set(_workflow_string_values(workflow))
+    values = set(_workflow_string_values(workflow, include_runtime_fields=include_runtime_fields))
     matched: list[str] = []
     for model in manifest.models:
         relative = str(model["relative_path"]).replace("\\", "/").casefold()

@@ -8,6 +8,7 @@ import threading
 from aiohttp import web
 
 from asset_preset_scope import AssetPresetLock, write_scope_documents
+from preset_locations import PRESET_LOCATIONS
 
 
 SCOPES = ("builtin", "local")
@@ -22,9 +23,9 @@ def validate_name(value) -> str:
 
 class EmotionBackgroundBots:
     def __init__(self, config_file, builtin_file=None):
-        self.local_file = Path(config_file).with_name("emotion_background_bots.json")
+        self.local_file = PRESET_LOCATIONS["emotion_background_bot"].local_path(config_file=config_file)
         self.builtin_file = Path(builtin_file) if builtin_file else (
-            Path(__file__).parent / "presets" / "emotion_background_bots.json"
+            PRESET_LOCATIONS["emotion_background_bot"].builtin_path()
         )
         self._lock = threading.RLock()
         self.scope_lock = AssetPresetLock()

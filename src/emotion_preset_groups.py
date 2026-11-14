@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from app_paths import data_root
+from preset_locations import PRESET_LOCATIONS
 
 KINDS = ("sfw", "nsfw")
 SCOPES = ("builtin", "local")
@@ -81,8 +82,8 @@ class EmotionPresetGroups:
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root)
         self.files = {
-            "builtin": self.project_root / "presets" / "emotion_preset_groups.json",
-            "local": data_root(self.project_root) / "asset_data" / "emotion_preset_groups.json",
+            "builtin": PRESET_LOCATIONS["emotion_groups"].builtin_path(self.project_root),
+            "local": PRESET_LOCATIONS["emotion_groups"].local_path(self.project_root),
         }
         self._unlock_tokens: set[str] = set()
 

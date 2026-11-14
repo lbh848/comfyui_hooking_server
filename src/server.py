@@ -712,6 +712,7 @@ DEFAULT_CONFIG = {
         "speak_emotion_enabled": False,
         "speak_emotions": "",
         "nsfw": True,
+        "manga_disable_bubbles": False,
         "nsfw_asset_generation_enabled": False,
         "emotion_representative": {},
         "profile_context_translate": True,
@@ -2974,6 +2975,7 @@ def build_prompt(positive: str, negative: str, workflow_api: dict = None,
             # instead of requiring a regional bbox.
             npc_representative=bool(raw_body.get("illustration_npc_representative")),
             dialogue_repair=raw_body.get("illustration_dialogue_repair"),
+            manga_disable_bubbles=bool(raw_body.get("illustration_manga_disable_bubbles")),
             **({"render_target": render_target} if render_target else {}),
         )
         from illustration_flow import record_reference_images
@@ -5760,8 +5762,10 @@ def _get_illustration_postprocess_settings(
     bot_name: str,
     *,
     force: bool = False,
+    output_mode: str | None = None,
+    manga_disable_bubbles: bool | None = None,
 ) -> dict | None:
-    """Return shared composition settings for the current presentation mode.
+    """Return shared composition settings for the generation's output type.
 
     force=True면 수동 그리기 1회성 테스트를 위해 전역/봇 활성 토글을
     저장하지 않고 우회한다.
@@ -5775,7 +5779,13 @@ def _get_illustration_postprocess_settings(
         )
         from modes.postprocess import get_postprocess_mode
 
-        postprocess_mode = get_postprocess_mode(app_config)
+        postprocess_mode = get_postprocess_mode(app_config, output_mode=output_mode)
+        if manga_disable_bubbles is None:
+            manga_disable_bubbles = (app_config.get("illustration_context_toggles") or {}).get(
+                "manga_disable_bubbles", False
+            )
+        if postprocess_mode == "manga_text" and manga_disable_bubbles:
+            return None
         if postprocess_mode == "bubble":
             bubble_settings = get_bubble_settings(
                 app_config,
@@ -5901,7 +5911,10 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
 
     try:
         bot_name = str(state.get("bot_name") or "")
-        postprocess_settings = _get_illustration_postprocess_settings(bot_name)
+        postprocess_settings = _get_illustration_postprocess_settings(
+            bot_name, output_mode=state.get("illustration_output_mode", "illustration"),
+            manga_disable_bubbles=state.get("manga_disable_bubbles"),
+        )
         _backup_name, final_image = await save_backup(
             raw_image,
             prompt_id,
@@ -6031,6 +6044,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
     try:
         runtime_snapshot = _take_prompt_runtime_snapshot(prompt_id)
+        runtime_toggles = runtime_snapshot.get("illustration_context_toggles") or {}
+        # Capture the effective switch once; later UI edits must not change an
+        # in-flight image or let its postprocess step restore discarded text.
+        raw_body["illustration_manga_disable_bubbles"] = (
+            runtime_toggles.get("illustration_output_mode") in ("manga", "manga_both")
+            and bool(runtime_toggles.get("manga_disable_bubbles"))
+        )
         word_rules_snapshot = copy.deepcopy(runtime_snapshot.get("word_rules") or [])
 
         # 프롬프트 추출
@@ -6840,6 +6860,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     backup_visual_states
                 ),
                 "manual_character_tags": copy.deepcopy(raw_body.get("illustration_manual_character_tags")),
+                "illustration_output_mode": (runtime_snapshot.get("illustration_context_toggles") or {}).get(
+                    "illustration_output_mode", "illustration"
+                ),
+                "manga_disable_bubbles": raw_body["illustration_manga_disable_bubbles"],
                 # 후처리는 별도 태스크에서 나중에 실행되므로, 생성 시점의 Comfy 실행처를
                 # 보존해 둔다. _finalize_deferred_illustration_prompt가 save_backup으로
                 # 전달하며, Modal 삽화가 M 딱지로 남기 위한 근거.
@@ -6852,13 +6876,17 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             return
 
         # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
-        # The shared presentation mode selects the composition builder.
+        # The captured output type selects the composition builder.
         _force_postprocess = bool(
             raw_body.get("illustration_force_postprocess", False)
         )
         _pp_settings = _get_illustration_postprocess_settings(
             _backup_bot_name,
             force=_force_postprocess,
+            output_mode=(runtime_snapshot.get("illustration_context_toggles") or {}).get(
+                "illustration_output_mode", "illustration"
+            ),
+            manga_disable_bubbles=raw_body["illustration_manga_disable_bubbles"],
         )
         if ((runtime_snapshot.get("illustration_context_toggles") or {}).get("illustration_output_mode")
                 in ("manga", "manga_both")
@@ -10356,15 +10384,16 @@ async def process_illustration_context_queue_item(item) -> dict:
             }
             raw_items = []
         else:
-            # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
-            # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
+            # 대사 지침도 이번 생성의 출력 유형에 맞는 후처리 방식을 따른다.
             try:
                 from modes.postprocess import get_postprocess_mode
-                _pp_mode = get_postprocess_mode(app_config)
+                _pp_mode = get_postprocess_mode(
+                    app_config, output_mode=illust_toggles["illustration_output_mode"]
+                )
             except Exception as e:
                 print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
                 traceback.print_exc()
-                _pp_mode = "vn"
+                _pp_mode = "subtitle"
             illust_toggles["call3_prompt_mode"] = {
                 "bubble": "manga",
                 "manga_text": "manga",
@@ -11869,7 +11898,9 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
         plan = await build_execution_plan(
             config=config, snapshot=snapshot, visual_profiles=profiles,
             translation_cache=visual_profile_translation_cache.load_cache(),
-            asset_count=len(index), postprocess_mode=get_postprocess_mode(config),
+            asset_count=len(index), postprocess_mode=get_postprocess_mode(
+                config, output_mode=toggles["illustration_output_mode"]
+            ),
             queue_policy=policy, scenario=body.get("scenario"), bot=bot,
         )
         plan["summary"] += f" · 봇 프리셋 {bot.get('system_prompt_preset') or '(직접 지정)'}"
@@ -15833,9 +15864,8 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         # 페이지네이션 적용
         files = files[offset:offset + limit]
 
-        # Current backups carry their trace ids. Only consult the full LLM log
-        # for older backups without them, once per page.
-        inspection_backups = None
+        # LLM history is resolved only by the selected backup's llm_trace endpoint.
+        # Even checking availability here delays every image on the page.
         backups = []
         for f in files:
             try:
@@ -15924,18 +15954,6 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             # 위에서 이미 읽은 info 로 판정해 info.json 재독기를 피한다.
             has_raw = backup_clean_source_from_info(bool(raw_extension), info)
 
-            has_llm_trace = bool(info.get("llm_trace"))
-            if not has_llm_trace:
-                if inspection_backups is None:
-                    inspection_backups = {
-                        str(image.get("backup_name") or "")
-                        for record in lighbd_service._load_lighbd_history()
-                        if record.get("task_key") == illustration_quality_inspection.TASK_KEY
-                        for image in (record.get("inspection_images") or [])
-                        if isinstance(image, dict)
-                    }
-                has_llm_trace = base in inspection_backups
-
             image_url = f"/api/backup_image/{base}{ext}?v=2-{file_mtime}-{file_size}"
             backups.append({
                 "name": base,
@@ -15963,7 +15981,6 @@ async def handle_api_backups(request: web.Request) -> web.Response:
                                      if key != "llm_final_result"} if gallery_view else info),
                 "mtime": file_mtime,
                 "is_scheduled": is_scheduled,
-                "has_llm_trace": has_llm_trace,
             })
         return web.json_response({
             "backups": backups,
@@ -16437,7 +16454,8 @@ async def handle_api_backup_llm_trace(
                 "name": name, **result,
                 "image_url": f"/api/backup_image/{os.path.basename(image_path)}",
             })
-        trace_ids, found, missing = _load_llm_trace_records(
+        trace_ids, found, missing = await asyncio.to_thread(
+            _load_llm_trace_records,
             info.get("llm_trace") or [],
             log_prefix="BACKUP:LLM_TRACE",
             context=f"name={name}",
@@ -18632,7 +18650,8 @@ async def handle_api_postprocess_settings(request: web.Request) -> web.Response:
             if "mode" in body:
                 if body["mode"] not in ("vn", "bubble", "subtitle", "manga_text"):
                     raise ValueError("합성 방식을 확인하세요.")
-                settings["mode"] = body["mode"]
+                # Older clients may submit a manual mode. The output type is
+                # authoritative; keep its automatically resolved mode.
             for mode in ("vn", "bubble", "subtitle", "manga_text"):
                 if mode in body:
                     if not isinstance(body[mode], dict):

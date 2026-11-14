@@ -6,6 +6,7 @@ from pathlib import Path
 
 from illustration_model_presets import IllustrationModelPresets
 from illustration_json import merge_shared_style_loras
+from preset_locations import PRESET_LOCATIONS
 
 ASSET_WORKFLOW_PATHS = {
     "anima_only": "anima_only_asset_workflow_source_path",
@@ -21,8 +22,8 @@ class AssetModelPresets(IllustrationModelPresets):
     local_profile = staticmethod(lambda profile: profile if profile in ASSET_WORKFLOW_PATHS else None)
 
     def __init__(self, config_file, builtin_file=None):
-        super().__init__(config_file, builtin_file or Path(__file__).parent / "presets/asset_model_presets.json")
-        self.path = Path(config_file).with_name("asset_model_presets.json")
+        super().__init__(config_file, builtin_file or PRESET_LOCATIONS["asset_model"].builtin_path())
+        self.path = PRESET_LOCATIONS["asset_model"].local_path(config_file=config_file)
         # Assets keep a single preset list; never split it into workshop files.
         self.separates_workshops = False
 

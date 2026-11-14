@@ -224,8 +224,9 @@ class NormalizeTest(unittest.TestCase):
 
 class PostprocessRegistrationTest(unittest.TestCase):
     def test_mode_is_registered(self):
-        self.assertEqual(get_postprocess_mode({"postprocess": {"mode": "manga_text"}}), "manga_text")
-        config = get_postprocess_config({"postprocess": {"mode": "manga_text"}})
+        settings = {"illustration_context_toggles": {"illustration_output_mode": "manga"}}
+        self.assertEqual(get_postprocess_mode(settings), "manga_text")
+        config = get_postprocess_config(settings)
         self.assertIn("manga_text", config)
         self.assertTrue(config["manga_text"]["enabled"])
         self.assertEqual(normalize_postprocess_settings("manga_text", {}), _default_manga_text())

@@ -18,6 +18,7 @@ const labels: Record<string, string> = {
   illustration_model_family: "그림 모델",
   illustration_output_mode: "출력 모드", original_asset_count: "원본 에셋 출력 장수",
   moss_dialogue_repair_enabled: "말풍선 한국어 교정",
+  manga_disable_bubbles: "말풍선 끄기",
   outfit_enabled: "OUTFIT 복장·헤어 추적", time_place_enabled: "TIME & PLACE 시간·장소·조명 추적", npc_generation_enabled: "미등록 인물 자동 생성", npc_generation_deferred: "NPC 생성은 나중에", npc_lifetime: "미사용 수명 (회)", call2_plan_enabled: "PLAN 시각 계획",
   call1_context_turns: "OUTFIT 참조 대화 수", call2_context_turns: "DETAIL 참조 대화 수", call3_context_turns: "POST PROCESS 참조 대화 수",
   single_char_mask_enabled: "1인도 마스크",
@@ -30,8 +31,8 @@ const labels: Record<string, string> = {
   postprocess_enabled: "POST PROCESS", prompt_format: "프롬프트 입력 형식",
   positive_note: "긍정 프롬프트 추가", negative_note: "부정 프롬프트 추가", compat_comfy: "ComfyUI 호환", compat_character_prompt: "캐릭터 프롬프트 구성",
 };
-for (const [prefix, label] of [["call2", "PLAN"], ["call2_detail", "DETAIL"]]) {
-  for (const [suffix, text] of Object.entries({ enabled: "병렬 처리", max_concurrency: "최대 동시 처리 수", slow_retry_enabled: "느린 요청 재시도", slow_retry_remaining: "재시도 잔여 작업 수", slow_retry_progress_enabled: "진행률 기준 사용", slow_retry_progress_threshold: "재시도 진행률 기준 (%)", slow_retry_tps_enabled: "생성 속도 기준 사용", slow_retry_tps_threshold: "재시도 생성 속도 기준", slow_retry_condition_operator: "재시도 조건 결합" })) labels[`${prefix}_parallel_${suffix}`] = `${label} ${text}`;
+for (const [suffix, text] of Object.entries({ enabled: "병렬 처리", max_concurrency: "최대 동시 처리 수", slow_retry_enabled: "느린 요청 재시도", slow_retry_remaining: "재시도 잔여 작업 수", slow_retry_progress_enabled: "진행률 기준 사용", slow_retry_progress_threshold: "재시도 진행률 기준 (%)", slow_retry_tps_enabled: "생성 속도 기준 사용", slow_retry_tps_threshold: "재시도 생성 속도 기준", slow_retry_condition_operator: "재시도 조건 결합" })) {
+  labels[`call2_parallel_${suffix}`] = `PLAN ${text}`;
 }
 const choices: Record<string, [string, string][]> = {
   illustration_output_mode: [["illustration", "일반 삽화"], ["original_asset", "원본 에셋"], ["both", "일반 삽화 + 원본 에셋"], ["manga", "만화 삽화"], ["manga_both", "만화 삽화 + 원본 에셋"]],
@@ -60,17 +61,17 @@ const emotionAssetHelp: Record<string, string> = {
   output_count_max: "생성할 감정 에셋 수의 상한입니다.",
 };
 type GenerationSection = { title: string; keys: string[]; dependent?: string[]; advanced?: string[]; advancedTitle?: string; paired?: boolean; mode?: "illustration" | "manga" };
-const parallelSections: GenerationSection[] = ["call2", "call2_detail"].map((prefix, index) => ({
+const planParallelSections: GenerationSection[] = [{
   title: "",
-  keys: [`${prefix}_parallel_enabled`, `${prefix}_parallel_max_concurrency`],
-  advancedTitle: `${["PLAN", "DETAIL"][index]} 느린 배치 재요청`,
-  advanced: ["enabled", "remaining", "progress_enabled", "progress_threshold", "tps_enabled", "tps_threshold", "condition_operator"].map(suffix => `${prefix}_parallel_slow_retry_${suffix}`),
-}));
+  keys: ["call2_parallel_enabled", "call2_parallel_max_concurrency"],
+  advancedTitle: "PLAN 느린 배치 재요청",
+  advanced: ["enabled", "remaining", "progress_enabled", "progress_threshold", "tps_enabled", "tps_threshold", "condition_operator"].map(suffix => `call2_parallel_slow_retry_${suffix}`),
+}];
 const generationGroups: { id: string; title: string; description: string; sections: GenerationSection[] }[] = [
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "manga_composition_hint_enabled", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
       { title: "", keys: ["key_visual", "postprocess_enabled"] },
     ],
@@ -87,8 +88,8 @@ const generationGroups: { id: string; title: string; description: string; sectio
     ],
   },
   {
-    id: "plan_detail", title: "PLAN·DETAIL", description: "PLAN과 DETAIL의 병렬 처리와 느린 요청 재시도를 각각 설정합니다.",
-    sections: parallelSections,
+    id: "plan_parallel", title: "PLAN 병렬처리", description: "PLAN의 병렬 처리와 느린 요청 재시도를 설정합니다.",
+    sections: planParallelSections,
   },
   {
     id: "postprocess", title: "POST PROCESS", description: "대사의 언어·감정과 자막·텍스트 교체 합성을 설정합니다.",
@@ -111,6 +112,7 @@ const emotionHiddenKeys = new Set([
   "illustration_model_family",
   "moss_dialogue_repair_enabled",
   "manga_composition_hint_enabled",
+  "manga_disable_bubbles",
   "outfit_enabled", "call2_plan_enabled", "key_visual", "keyvis_in_detail_enabled",
   "minimal_background_description",
   "single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent",
@@ -118,9 +120,9 @@ const emotionHiddenKeys = new Set([
   "postprocess_enabled",
 ]);
 const emotionHiddenSections = new Set(["KEYVIS", "MULTI-CHAR-MASK"]);
-// 장면 선택·PLAN/DETAIL·POST PROCESS·최종 프롬프트·원본 에셋은 감정 삽화
+// 장면 선택·PLAN 병렬처리·POST PROCESS·최종 프롬프트·원본 에셋은 감정 삽화
 // 설정에서 사용하지 않는다. 파이프라인 설정만 남긴다.
-const emotionHiddenGroups = new Set(["selection", "plan_detail", "postprocess", "output", "original_asset"]);
+const emotionHiddenGroups = new Set(["selection", "plan_parallel", "postprocess", "output", "original_asset"]);
 const emotionGenerationGroups = [
   ...generationGroups.filter(group => !emotionHiddenGroups.has(group.id)).map(group => ({
     ...group,
@@ -149,18 +151,15 @@ const dependencies: Record<string, string[]> = {
   single_char_mask_skip_area_percent: ["single_char_mask_enabled", "single_char_mask_skip_enabled"],
   speak_emotions: ["speak_emotion_enabled"],
   call1_context_turns: ["outfit_enabled"], npc_generation_deferred: ["npc_generation_enabled"],
+  call2_parallel_enabled: ["call2_plan_enabled"],
+  call2_parallel_max_concurrency: ["call2_plan_enabled", "call2_parallel_enabled"],
 };
-for (const [prefix, stage] of [["call2", "call2_plan_enabled"], ["call2_detail", ""]]) {
-  const parent = stage ? [stage] : [];
-  dependencies[`${prefix}_parallel_enabled`] = parent;
-  dependencies[`${prefix}_parallel_max_concurrency`] = [...parent, `${prefix}_parallel_enabled`];
-  for (const suffix of ["enabled", "remaining", "progress_enabled", "progress_threshold", "tps_enabled", "tps_threshold", "condition_operator"]) {
-    dependencies[`${prefix}_parallel_slow_retry_${suffix}`] = [...parent, `${prefix}_parallel_enabled`,
-      ...(suffix === "enabled" ? [] : [`${prefix}_parallel_slow_retry_enabled`]),
-      ...(suffix === "progress_threshold" ? [`${prefix}_parallel_slow_retry_progress_enabled`] : []),
-      ...(suffix === "tps_threshold" ? [`${prefix}_parallel_slow_retry_tps_enabled`] : []),
-    ];
-  }
+for (const suffix of ["enabled", "remaining", "progress_enabled", "progress_threshold", "tps_enabled", "tps_threshold", "condition_operator"]) {
+  dependencies[`call2_parallel_slow_retry_${suffix}`] = ["call2_plan_enabled", "call2_parallel_enabled",
+    ...(suffix === "enabled" ? [] : ["call2_parallel_slow_retry_enabled"]),
+    ...(suffix === "progress_threshold" ? ["call2_parallel_slow_retry_progress_enabled"] : []),
+    ...(suffix === "tps_threshold" ? ["call2_parallel_slow_retry_tps_enabled"] : []),
+  ];
 }
 const fieldHelp: Record<string, string> = {
   local_llm_load_after_generation: "삽화 작업이 끝나면, LLM 모델을 GPU에 올립니다.",
@@ -169,6 +168,7 @@ const fieldHelp: Record<string, string> = {
   moss_dialogue_repair_enabled: "항상 OFF로 고정됩니다. 말풍선 대사를 교정하지 않고 그대로 그립니다.",
   nsfw: "NSFW 및 물리 접촉 지침을 추가합니다. 호환성 지침은 항상 적용됩니다.",
   manga_composition_hint_enabled: "만화 프롬프트의 기존 컷 구성 지침 아래에 3~5컷 배치 목록을 추가합니다.",
+  manga_disable_bubbles: "만화 출력에서 말풍선·텍스트를 제외합니다.",
   nsfw_asset_generation_enabled: "캐릭터의 NSFW 복장·감정 에셋을 생성합니다.",
   profile_context_translate: "다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.",
   outfit_enabled: "복장·헤어를 미리 추적합니다. 끄면 후속 단계가 원문과 프로필에서 현재 상태를 판단합니다.",
@@ -200,15 +200,13 @@ const fieldHelp: Record<string, string> = {
   prompt_format: "선택한 삽화 워크플로우에 맞는 프롬프트 구조가 자동으로 적용됩니다.",
   positive_note: "모든 장면의 최종 긍정 프롬프트에 덧붙일 내용입니다.",
   negative_note: "모든 장면의 최종 부정 프롬프트에 덧붙일 내용입니다.",
+  call2_parallel_enabled: "선택 장면을 여러 PLAN 요청으로 나누어 처리합니다.",
+  call2_parallel_max_concurrency: "장면을 이 개수에 균등 분배합니다. 연결된 LLM의 동시 요청 상한도 적용합니다.",
+  call2_parallel_slow_retry_enabled: "일부 요청만 뒤처질 때 같은 작업을 한 번 더 요청해 먼저 검증된 결과를 사용합니다.",
+  call2_parallel_slow_retry_remaining: "실행 중인 작업이 이 개수 이하로 남았을 때 느린 요청을 검사합니다.",
+  call2_parallel_slow_retry_progress_threshold: "추정 진행률이 이 값보다 낮으면 재시도 조건을 만족합니다.",
+  call2_parallel_slow_retry_tps_threshold: "추정 초당 토큰 생성 속도가 이 값보다 낮으면 재시도 조건을 만족합니다.",
 };
-for (const [prefix, stage] of [["call2", "PLAN"], ["call2_detail", "DETAIL"]]) {
-  fieldHelp[`${prefix}_parallel_enabled`] = `선택 장면을 여러 ${stage} 요청으로 나누어 처리합니다.`;
-  fieldHelp[`${prefix}_parallel_max_concurrency`] = "장면을 이 개수에 균등 분배합니다. 연결된 LLM의 동시 요청 상한도 적용합니다.";
-  fieldHelp[`${prefix}_parallel_slow_retry_enabled`] = "일부 요청만 뒤처질 때 같은 작업을 한 번 더 요청해 먼저 검증된 결과를 사용합니다.";
-  fieldHelp[`${prefix}_parallel_slow_retry_remaining`] = "실행 중인 작업이 이 개수 이하로 남았을 때 느린 요청을 검사합니다.";
-  fieldHelp[`${prefix}_parallel_slow_retry_progress_threshold`] = "추정 진행률이 이 값보다 낮으면 재시도 조건을 만족합니다.";
-  fieldHelp[`${prefix}_parallel_slow_retry_tps_threshold`] = "추정 초당 토큰 생성 속도가 이 값보다 낮으면 재시도 조건을 만족합니다.";
-}
 type ToggleOption = [string, string, boolean?];
 function ToggleField({ name, value, numeric, disabled, onChange, options: optionOverride, help: helpOverride, label: labelOverride }: { name: string; value: any; numeric: boolean; disabled: boolean; onChange: (value: any, immediate?: boolean) => void; options?: ToggleOption[]; help?: string; label?: string }) {
   const label = labelOverride || labels[name] || name;
@@ -397,17 +395,20 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
     const maskKeys = ["single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"];
     const maskLocked = mossModel && maskKeys.includes(name);
     const mangaMode = ["manga", "manga_both"].includes(toggles!.illustration_output_mode);
+    if (["manga_composition_hint_enabled", "manga_disable_bubbles"].includes(name) && !mangaMode) return null;
+    const postprocessLocked = scope === "illustration" && mangaMode && !!toggles!.manga_disable_bubbles && name === "postprocess_enabled";
     const planLocked = mangaMode && (name === "call2_plan_enabled" || (dependencies[name] || []).includes("call2_plan_enabled"));
-    const disabled = planLocked || maskLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
+    const disabled = postprocessLocked || planLocked || maskLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
       || name === "original_asset_count" && !["original_asset", "both", "manga_both", "composite_both"].includes(toggles!.illustration_output_mode)
       || name === "moss_dialogue_repair_enabled";
-    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "npc_generation_deferred"].includes(name) ? toggles![name] ?? false : toggles![name];
-    const value = planLocked && name === "call2_plan_enabled" || name === "moss_dialogue_repair_enabled" || maskLocked && ["single_char_mask_enabled", "single_char_mask_skip_enabled"].includes(name) ? false
+    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "npc_generation_deferred", "manga_disable_bubbles"].includes(name) ? toggles![name] ?? false : toggles![name];
+    // Preserve the saved master switch so leaving manga releases this override.
+    const value = postprocessLocked || planLocked && name === "call2_plan_enabled" || name === "moss_dialogue_repair_enabled" || maskLocked && ["single_char_mask_enabled", "single_char_mask_skip_enabled"].includes(name) ? false
       : emotionOutputMode && rawValue === "composite_both" ? "composite" : rawValue;
     return <ToggleField key={name} name={name} value={value} numeric={typeof savedToggles?.[name] === "number"} disabled={disabled}
       label={emotionAssetCount ? emotionAssetLabels[name] : undefined}
       options={emotionOutputMode ? emotionOutputChoices : name === "illustration_output_mode" ? outputModeOptions : undefined}
-      help={planLocked && name === "call2_plan_enabled" ? "만화 삽화에서는 DETAIL-MANGA가 컷 구성과 대사를 직접 작성하므로 PLAN을 사용하지 않습니다." : maskLocked && name === "single_char_mask_enabled" ? "MOSS는 DETAIL-MOSS가 만든 bbox 객체 레이아웃을 그대로 사용하므로 영역 마스크를 쓰지 않습니다." : emotionOutputMode ? "감정 삽화 모드는 캐릭터의 복장과 감정 이미지를 생성합니다. 배경 합성 모드는 만들어진 캐릭터를 불러와 배경에 합성합니다." : emotionAssetCount ? emotionAssetHelp[name] : undefined}
+      help={postprocessLocked ? "말풍선 끄기가 켜진 만화 삽화에서는 POST PROCESS를 사용하지 않습니다. 일반 삽화로 전환하면 잠금이 해제됩니다." : planLocked && name === "call2_plan_enabled" ? "만화 삽화에서는 DETAIL-MANGA가 컷 구성과 대사를 직접 작성하므로 PLAN을 사용하지 않습니다." : maskLocked && name === "single_char_mask_enabled" ? "MOSS는 DETAIL-MOSS가 만든 bbox 객체 레이아웃을 그대로 사용하므로 영역 마스크를 쓰지 않습니다." : emotionOutputMode ? "감정 삽화 모드는 캐릭터의 복장과 감정 이미지를 생성합니다. 배경 합성 모드는 만들어진 캐릭터를 불러와 배경에 합성합니다." : emotionAssetCount ? emotionAssetHelp[name] : undefined}
       onChange={(value, immediate) => {
         setSaveDelay(immediate ? 0 : 600);
         if (name === "postprocess_enabled") setConfig(current => ({ ...current, postprocess_enabled: value }));
@@ -440,7 +441,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
           </div>)}
         </fieldset>
     </form>
-    <div className="illust-generation-postprocess" hidden={generationTab !== "postprocess"}>{postprocessVisited && <IllustPostprocess botName={botSelected} active={tab === "settings" && generationTab === "postprocess"} />}</div>
+    <div className="illust-generation-postprocess" hidden={generationTab !== "postprocess"}>{postprocessVisited && <IllustPostprocess botName={botSelected} outputMode={toggles.illustration_output_mode} active={tab === "settings" && generationTab === "postprocess"} />}</div>
       </div>
     </div>
     </Panel>

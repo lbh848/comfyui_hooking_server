@@ -234,6 +234,7 @@ DEFAULT_TOGGLES = {
     "speak_emotions": "",
     "nsfw": True,
     "manga_composition_hint_enabled": False,
+    "manga_disable_bubbles": False,
     # 감정 삽화 공방 전용: 캐릭터의 NSFW 복장·감정 에셋을 함께 생성한다.
     "nsfw_asset_generation_enabled": False,
     # 감정 삽화 공방 전용 표정 프리셋 연결. 각 항목은
@@ -543,7 +544,7 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "npc_generation_deferred", "call2_plan_enabled", "call2_parallel_enabled",
                 "call2_detail_parallel_enabled",
                 "single_char_mask_skip_enabled", "profile_context_translate",
-                "nsfw_asset_generation_enabled", "manga_composition_hint_enabled",
+                "nsfw_asset_generation_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles",
                 "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
     for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):
@@ -6155,6 +6156,7 @@ def _parse_call2_keyvis_output(
     if mask_inline or allow_scenes or composite or moss:
         documents = (re.findall(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
                      if allow_scenes else []) or [text]
+        unassigned_manga_pages = []
         for document in documents:
             candidate = _json_object_from_text(document)
             if isinstance(candidate, dict) and isinstance(candidate.get("keyvis"), dict):
@@ -6162,6 +6164,26 @@ def _parse_call2_keyvis_output(
                 if len(documents) > 1:
                     print(f"[ILLUST_CONTEXT:{source}] 분리된 응답 문서에서 KEYVIS 복구: documents={len(documents)}")
                 break
+            if moss and allow_scenes and isinstance(candidate, dict):
+                pages = candidate.get("scenes")
+                if not isinstance(pages, list):
+                    pages = [candidate]
+                keyvis_page = next((page for page in pages if isinstance(page, dict)
+                                    and page.get("slot") in (-1, "-1")), None)
+                if keyvis_page is not None:
+                    raw = {"keyvis": keyvis_page}
+                    break
+                # Split manga responses sometimes omit the representative
+                # page's slot as well as its old keyvis wrapper. Recover the
+                # single unassigned page without borrowing an ordinary slot.
+                if (toggles.get("illustration_output_mode") in ("manga", "manga_both")
+                        and "slot" not in candidate and "scenes" not in candidate
+                        and isinstance(candidate.get("page"), dict)
+                        and isinstance(candidate.get("panels"), list) and candidate["panels"]):
+                    unassigned_manga_pages.append(candidate)
+        if raw is None and len(unassigned_manga_pages) == 1:
+            raw = {"keyvis": unassigned_manga_pages[0]}
+            print(f"[ILLUST_CONTEXT:{source}] slot 없는 단일 대표 만화 페이지를 KEYVIS로 복구")
     if composite:
         from modes.illustration_composite import declared_backgrounds, parse_scene
         try:
@@ -7380,6 +7402,7 @@ async def _call_pipeline_llm(
         "last_raw_elapsed",
         "raw_bytes",
         "transport_raw_response",
+        "response_diagnostics",
         *llm_service.LLM_STREAM_TIMING_FIELDS,
     )
 

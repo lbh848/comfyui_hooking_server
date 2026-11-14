@@ -170,7 +170,7 @@ export default function App() {
   };
   const pageContent: Record<Page, ReactNode> = {
     install: <InstallPage apiKeys={apiKeys} setApiKeys={setApiKeys} isSaved={isSaved} saveState={saveState} revision={revision} />,
-    updates: <UpdatesPage {...props} />,
+    updates: <UpdatesPage />,
     "comfy-runtime": <ComfyRuntimePage />,
     models: <ModelsPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,
     loras: <LorasPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,

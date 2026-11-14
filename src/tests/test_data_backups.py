@@ -88,6 +88,9 @@ class DataBackupTests(unittest.TestCase):
             "src/presets/presets.json", "src/presets/asset_character_presets.json",
             "src/prompts/bot_system_prompt/presets.json", "src/defaults/illustration/bot.json",
             "config/illustration_generation_presets.json", "config/asset_model_presets.json",
+            "src/presets/emotion_model_presets.json", "src/presets/emotion_generation_presets.json",
+            "config/emotion_generation_presets.json", "config/emotion_background_bots.json",
+            "data/asset_data/emotion_bot.json", "data/asset_data/emotion_preset_groups.json",
             "data/asset_data/tags.json", "data/asset_data/hidden_tags.json", "data/asset_data/bot.json",
             "data/chain_presets/active.json", "data/chain_presets/hidden/hidden.json",
         )]

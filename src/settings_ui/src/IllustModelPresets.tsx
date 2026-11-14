@@ -17,7 +17,6 @@ export function IllustModelPresets() {
   useEffect(() => () => { if (builtinUnlockToken) void request(`${scope.prefix}/presets`, { action: "lock", builtin_unlock_token: builtinUnlockToken }).catch(() => {}); }, [builtinUnlockToken, request, scope]);
   if (!data) return <Panel title="그림 모델 프리셋"><IllustrationLoading error={resource.error} retry={resource.reload} /></Panel>;
   const active = data.presets.find((item: IllustrationData) => item.id === data.active_id);
-  const supportsDistribution = scope.workshop !== "emotion";
   const builtin = active?.scope === "builtin";
   const locked = builtin && !builtinUnlockToken;
   const change = (operation: string, values: IllustrationData = {}) => action.run(async () => {
@@ -48,11 +47,11 @@ export function IllustModelPresets() {
           <button className="button" disabled={disabled || !active} onClick={() => open("duplicate")}><Copy size={14} />프리셋 복제</button>
           <button className="button" disabled={disabled || locked || !active} onClick={() => open("rename")}><Pencil size={14} />이름 변경</button>
           <button className="button danger" disabled={disabled || locked || !active || (scope.workshop !== "emotion" && presets.length < 2)} onClick={() => open("delete")}><Trash2 size={14} />삭제</button>
-          {supportsDistribution && <button className="button" disabled={disabled} onClick={() => builtinUnlockToken ? void change("lock") : open("unlock")}>{builtinUnlockToken ? <LockKeyhole size={14} /> : <LockKeyholeOpen size={14} />}{builtinUnlockToken ? "배포 잠그기" : "배포 풀기"}</button>}
+          <button className="button" disabled={disabled} onClick={() => builtinUnlockToken ? void change("lock") : open("unlock")}>{builtinUnlockToken ? <LockKeyhole size={14} /> : <LockKeyholeOpen size={14} />}{builtinUnlockToken ? "배포 잠그기" : "배포 풀기"}</button>
         </div>
       </div>
       {active && <div className="illust-actions"><Badge>{builtin ? locked ? "배포 · 읽기 전용" : "배포 · 편집 가능" : "사용자 · 편집 가능"}</Badge></div>}
-      {supportsDistribution && builtinUnlockToken && active && <label className="field">프리셋 구분<select aria-label="프리셋 구분" value={active.scope} disabled={disabled} onChange={event => void change("scope", { scope: event.target.value })}><option value="local">사용자 프리셋</option><option value="builtin">배포 프리셋</option></select><span className="field-help">{builtin ? "업데이트 시 배포 파일 전체가 백업 없이 교체됩니다." : "사용자 프리셋은 업데이트 후에도 유지됩니다."}</span></label>}
+      {builtinUnlockToken && active && <label className="field">프리셋 구분<select aria-label="프리셋 구분" value={active.scope} disabled={disabled} onChange={event => void change("scope", { scope: event.target.value })}><option value="local">사용자 프리셋</option><option value="builtin">배포 프리셋</option></select><span className="field-help">{builtin ? "업데이트 시 배포 파일 전체가 백업 없이 교체됩니다." : "사용자 프리셋은 업데이트 후에도 유지됩니다."}</span></label>}
       {locked && <p className="field-help">배포 프리셋은 읽기 전용입니다. 복제하면 사용자 프리셋으로 편집할 수 있습니다.</p>}
       <p className="field-help">그림 모델·워크플로우·샘플링·공통 LoRA를 프리셋별로 저장합니다. {scope.description}</p>
       {pending && <p className="field-help">변경 사항을 자동 저장한 뒤 프리셋을 전환할 수 있습니다.</p>}
@@ -60,7 +59,7 @@ export function IllustModelPresets() {
     </div></Panel>
     {active
       ? <fieldset className="illust-form" disabled={action.busy || !resource.data}>
-      <IllustWorkflow key={`${data.active_id}:${generation}`} preset={data} readOnly={locked} builtinUnlockToken={builtinUnlockToken} onPresetChange={setData} onPendingChange={setPending} reloadPresets={resource.reload} />
+      <IllustWorkflow key={`${data.active_id}:${active.scope}:${generation}`} preset={data} readOnly={locked} builtinUnlockToken={builtinUnlockToken} onPresetChange={setData} onPendingChange={setPending} reloadPresets={resource.reload} />
     </fieldset> : <Empty title="그림 모델 프리셋을 만들어 주세요">프리셋 추가를 누른 뒤 사용할 그림 모델과 세부 설정을 지정하세요.</Empty>}
     {dialog && <Modal title={dialog === "unlock" ? "배포 풀기" : dialog === "duplicate" ? "그림 모델 프리셋 복제" : dialog === "create" ? "그림 모델 프리셋 추가" : dialog === "rename" ? "프리셋 이름 변경" : "그림 모델 프리셋 삭제"} onClose={() => setDialog(null)} closeDisabled={action.busy} backgroundable={false}>
       <form className="illust-form" onSubmit={event => { event.preventDefault(); void change(dialog, dialog === "unlock" ? { confirmed: true } : dialog === "delete" ? {} : { name: name.trim() }); }}>

@@ -11,6 +11,7 @@ import uuid
 from configuration import settings_lock
 from json_store import write_json_atomic
 from asset_preset_scope import AssetPresetLock, write_scope_documents
+from preset_locations import PRESET_LOCATIONS
 
 
 STYLE_TAG_KEYS = {"background_preset"} | {
@@ -66,8 +67,8 @@ def validate_style_settings(settings):
 
 class AssetStylePresets:
     def __init__(self, config_file: str | Path, builtin_file: str | Path | None = None):
-        self.path = Path(config_file).with_name("asset_style_presets.json")
-        self.builtin_file = Path(builtin_file) if builtin_file else Path(__file__).parent / "presets/asset_style_presets.json"
+        self.path = PRESET_LOCATIONS["asset_style"].local_path(config_file=config_file)
+        self.builtin_file = Path(builtin_file) if builtin_file else PRESET_LOCATIONS["asset_style"].builtin_path()
         self.lock = AssetPresetLock()
 
     def _read_file(self, path):

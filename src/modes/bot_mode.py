@@ -11,6 +11,7 @@ from app_paths import comfy_input_root
 from json_store import JsonFileCache, write_json_atomic
 from lora_paths import validate_lora_storage_name
 from manga_page_sizes import DEFAULT_MANGA_PAGE_SIZES
+from preset_locations import PRESET_LOCATIONS
 
 import asyncio
 import base64
@@ -112,8 +113,8 @@ ASSET_DIR = os.path.join(data_root(BASE_DIR), "asset")
 # Builtin presets are read-only until explicitly unlocked for this editor session.
 # local(asset_data/bot.json 의 system_prompt_presets): 이 PC 전용·편집가능. gitignore.
 # 잠금은 이름이 아니라 저장 위치로 판정한다.
-BUILTIN_PRESETS_DIR = os.path.join(BASE_DIR, "prompts", "bot_system_prompt")
-BUILTIN_PRESETS_FILE = os.path.join(BUILTIN_PRESETS_DIR, "presets.json")
+BUILTIN_PRESETS_FILE = str(PRESET_LOCATIONS["bot_system_prompt"].builtin_path(BASE_DIR))
+BUILTIN_PRESETS_DIR = os.path.dirname(BUILTIN_PRESETS_FILE)
 _builtin_presets_cache = None
 _builtin_presets_mtime = -1.0
 _system_prompt_unlock_tokens: set[str] = set()

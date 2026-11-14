@@ -13,12 +13,14 @@ import shutil
 import uuid
 
 from app_paths import install_root
+from preset_locations import PRESET_LOCATIONS
 
 MAX_BACKUPS = 100
 ASSET_PRESET_FILES = frozenset({
     "tags.json", "hidden_tags.json", "bot.json", "tag_filter_profiles.json",
     "lora_manage.json", "style_lora_manage.json", "bot_lora_manage.json",
-})
+} | {Path(location.local).name for location in PRESET_LOCATIONS.values()
+     if location.local.startswith("data/asset_data/") and not location.directory})
 _digest_cache: dict[Path, tuple[tuple, str]] = {}
 
 
@@ -166,6 +168,9 @@ def backup_presets(project_root: str | Path) -> dict:
     paths = set((root / "src/presets").glob("*.json"))
     paths.update((root / "src/presets/chain_presets").glob("*.json"))
     paths.update((root / "config").glob("*_presets.json"))
+    for location in PRESET_LOCATIONS.values():
+        if not location.directory:
+            paths.update((root / location.builtin, root / location.local))
     paths.update(root / "data/asset_data" / name for name in ASSET_PRESET_FILES)
     paths.update((root / "data/chain_presets").glob("*.json"))
     paths.update((root / "data/chain_presets/hidden").glob("*.json"))

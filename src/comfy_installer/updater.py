@@ -170,14 +170,22 @@ def _prepare_untracked_quarantine(
     root: Path,
     *,
     log: LogCallback | None,
+    backup_root: Path | None = None,
+    target_ref: str | None = None,
 ) -> _UntrackedQuarantine:
     entries = _list_untracked_files(root)
+    if target_ref is not None:
+        target_files = _run_git_capture(root, "ls-tree", "-r", "--name-only", "-z", target_ref).decode("utf-8").split("\0")
+        entries = tuple(entry for entry in entries if any(
+            entry.as_posix() == name or entry.as_posix().startswith(name + "/") or name.startswith(entry.as_posix() + "/")
+            for name in target_files if name
+        ))
     if not entries:
         _emit("격리할 미추적 파일 없음", log)
         return _UntrackedQuarantine(path=None, entries=())
 
     git_root = (root / ".git").resolve()
-    quarantine_base = git_root / _QUARANTINE_ROOT_NAME
+    quarantine_base = backup_root if backup_root is not None else git_root / _QUARANTINE_ROOT_NAME
     quarantine_path = quarantine_base / (
         datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
     )
@@ -314,15 +322,18 @@ def _restore_untracked_quarantine(
     quarantine: _UntrackedQuarantine,
     *,
     log: LogCallback | None,
+    keep_conflicts: bool = False,
 ) -> None:
     if quarantine.path is None:
         return
     files_root = quarantine.path / "files"
     conflicts: list[dict[str, str]] = []
+    restore_failed = False
     for relative in quarantine.entries:
         source = files_root / relative
         destination = root / relative
         if not os.path.lexists(source):
+            restore_failed = True
             message = f"격리본이 없습니다: {source}"
             print(f"[COMFY_INSTALL][UPDATE] 미추적 파일 복원 실패: {message}")
             conflicts.append({"path": relative.as_posix(), "reason": message})
@@ -347,6 +358,7 @@ def _restore_untracked_quarantine(
             os.replace(source, destination)
             _emit(f"미추적 파일 복원: {relative.as_posix()}", log)
         except Exception as exc:
+            restore_failed = True
             print(
                 "[COMFY_INSTALL][UPDATE] 미추적 파일 복원 이동 실패: "
                 f"source={source}, destination={destination}, error={exc}"
@@ -375,6 +387,8 @@ def _restore_untracked_quarantine(
             f"count={len(conflicts)}, path={quarantine.path}",
             log,
         )
+        if keep_conflicts and not restore_failed:
+            return
         raise HookingServerUpdateError(
             "업데이트 후 사용자 파일을 원위치에 복원하지 못했습니다. "
             f"덮어쓰지 않고 보존했습니다: {quarantine.path}"
@@ -768,6 +782,7 @@ def update_hooking_server_main(
     cancel_event: Event,
     log: LogCallback | None = None,
     config_backup: dict | None = None,
+    target_ref: str | None = None,
 ) -> dict:
     """버튼을 누른 경우에만 origin/main을 fast-forward 방식으로 가져온다."""
 
@@ -791,11 +806,11 @@ def update_hooking_server_main(
                 "후킹 서버 origin이 공식 배포 저장소와 다릅니다: "
                 f"actual={origin}"
             )
-        run_command(["git", "fetch", "origin", HOOKING_BRANCH], cwd=root,
-                    cancel_event=cancel_event, log=log, timeout=900)
-        remote = f"origin/{HOOKING_BRANCH}"
+        if target_ref is None:
+            run_command(["git", "fetch", "origin", HOOKING_BRANCH], cwd=root,
+                        cancel_event=cancel_event, log=log, timeout=900)
+        remote = target_ref or f"origin/{HOOKING_BRANCH}"
         validate_release_storage(root, remote)
-        replace_distribution_files(root, "HEAD", remote)
         changes = run_command(
             ["git", "status", "--porcelain", "--untracked-files=no"],
             cwd=root,
@@ -819,7 +834,10 @@ def update_hooking_server_main(
                 "[후킹 서버 업데이트] 사용자가 요청하여 origin/main 업데이트 시작: "
                 f"현재={before[:12]}"
             )
-        quarantine = _prepare_untracked_quarantine(root, log=log)
+        quarantine = _prepare_untracked_quarantine(
+            root, log=log,
+            backup_root=data_root(root) / _TRACKED_BACKUP_ROOT_NAME / "untracked",
+        )
         try:
             run_command(
                 ["git", "merge", "--ff-only", remote],
@@ -857,7 +875,7 @@ def update_hooking_server_main(
                     f"원인: {update_exc}"
                 ) from update_exc
             raise
-        _restore_untracked_quarantine(root, quarantine, log=log)
+        _restore_untracked_quarantine(root, quarantine, log=log, keep_conflicts=True)
         replace_distribution_files(root, remote, "HEAD")
         after = _git_value(root, "rev-parse", "HEAD").lower()
         if log:

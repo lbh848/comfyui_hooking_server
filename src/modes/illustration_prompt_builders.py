@@ -6,6 +6,7 @@ from copy import deepcopy
 from manga_page_sizes import MANGA_PAGE_SIZES, parse_manga_page_sizes
 from manga_page_vocabulary import vocabulary as manga_page_vocabulary
 from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_sub, variable
+from modes.moss_prompt_contract import moss_instruction_fields
 
 # DETAIL-MANGA draws a whole manga page as one MOSS multi_panel image. The
 # model first writes a layered page plan (page enums, a panel inventory, and
@@ -13,6 +14,54 @@ from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_s
 # resolution and composition are independent choices. MANGA_PAGE_SIZES is the
 # full default list; the bot's manga_page_sizes setting narrows the offered
 # options.
+
+
+def profile_context_for_prompt(value):
+    """Keep visual profile facts in model input; storage and render settings stay local."""
+    if isinstance(value, list):
+        return [profile_context_for_prompt(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if key == "profile" and isinstance(item, dict):
+            result[key] = {field: item[field] for field in (
+                "appearance", "default_outfit", "gender_tag", "face_tags", "eye_tags",
+                "eye_prompt", "absolute_tags", "character_negative", "lb_extra",
+            ) if field in item}
+        else:
+            result[key] = profile_context_for_prompt(item)
+    return result
+
+
+def tracked_state_timeline(tracking, anchors, label, *, names=None):
+    """Send field checkpoints while retaining the expanded state table for the UI."""
+    previous = {}
+    changes = {}
+    for slot, values in tracking.items():
+        changed_characters = {}
+        for name, state in values.items():
+            if names is not None and name not in names:
+                continue
+            prior = previous.get(name)
+            if isinstance(state, dict):
+                changed_fields = {
+                    field: value for field, value in state.items()
+                    if not isinstance(prior, dict) or field not in prior or prior[field] != value
+                }
+                if changed_fields or name not in previous:
+                    changed_characters[name] = changed_fields
+            elif name not in previous or state != prior:
+                changed_characters[name] = state
+            previous[name] = state
+        if changed_characters:
+            changes[anchors.get(slot, slot)] = changed_characters
+    return (variable(json.dumps(changes, ensure_ascii=False), label)
+            + "\n\nThis timeline lists initial values and changed fields only, in source order. "
+            "At each source anchor, carry forward each character's latest value for each field independently "
+            "until that field's next checkpoint. An omitted anchor, character or field means unchanged, "
+            "not unknown, empty or a reset to Profile defaults. Each supplied value replaces that whole field, "
+            "including an explicit empty string. Apply a checkpoint from its anchor onward, never backward.")
 
 
 def blank_state_table(names, slots):
@@ -146,7 +195,8 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
             + variable(json.dumps(prior_time_place, ensure_ascii=False), "이전 저장 시간·장소")
             if prior_time_place else "")
          + "\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
-         + variable(json.dumps([item for item in plan_profiles if item["character"] in batch_names], ensure_ascii=False), "해당 인물 프로필 타임라인")
+         + variable(json.dumps(profile_context_for_prompt(
+             [item for item in plan_profiles if item["character"] in batch_names]), ensure_ascii=False), "해당 인물 프로필 타임라인")
          + "\n\n# BOUNDED EARLIER CONTEXT (FACTS ONLY, NO NEW SCENE CANDIDATES)\n"
          + variable(past_text or "(none)", "과거 대화")
          + "\n\n# FULL CURRENT SOURCE SEGMENTS (REFERENCE ONLY; DO NOT RESELECT)\n"
@@ -302,18 +352,16 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
     messages = [
         {"role": "system", "content": detail_system},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
-         + variable(json.dumps({"scenes": prepared}, ensure_ascii=False), "이 호출의 장면·프로필·상태")
+         + variable(json.dumps(profile_context_for_prompt({"scenes": prepared}), ensure_ascii=False), "이 호출의 장면·프로필·상태")
          + ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
-            + variable(json.dumps([item for item in plan_profiles if item["character"] in batch_names],
+            + variable(json.dumps(profile_context_for_prompt([item for item in plan_profiles if item["character"] in batch_names]),
                                   ensure_ascii=False), "해당 인물 프로필 타임라인")
             if manga and plan_profiles is not None else "")
          + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
-            + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
-                                  for slot, values in tracking.items()}, ensure_ascii=False), "추적된 복장·머리 상태")
+            + tracked_state_timeline(tracking, anchors, "추적된 복장·머리 상태", names=batch_names)
             if manga and tracking is not None else "")
          + ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
-            + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
-                                  for slot, values in time_place.items()}, ensure_ascii=False), "추적된 시간·장소 상태")
+            + tracked_state_timeline(time_place, anchors, "추적된 시간·장소 상태", names=batch_names)
             if manga and time_place is not None else "")
          + ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
             + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장") if prior_status else "")
@@ -430,8 +478,15 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     """
     manga = (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
     composition_hints = manga and bool((toggles or {}).get("manga_composition_hint_enabled"))
+    if not manga:
+        detail_system = moss_instruction_fields(detail_system)
     if manga:
         from modes.illustration_context_pipeline import render_call2_prompt
+        detail_system = prompt_sub(
+            r"\{\{#when::lb-xnai\.kv\.off::tis::0\}\}[\s\S]*?\{\{/when\}\}",
+            lambda match: render_call2_prompt(
+                match.group(0), {**(toggles or {}), "key_visual": bool(keyvis_messages)},
+                include_server_limits=False), detail_system)
         detail_system = prompt_sub(
             r"\{\{#when::lb-xnai\.manga_composition_hint::tis::1\}\}[\s\S]*?\{\{/when\}\}",
             lambda match: render_call2_prompt(match.group(0), toggles or {}, include_server_limits=False),
@@ -447,6 +502,8 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
         keyvis_system = prompt_sub(
             r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "",
             keyvis_messages[0]["content"])
+        if not manga:
+            keyvis_system = moss_instruction_fields(keyvis_system)
         # DETAIL and KEYVIS share some long policy paragraphs. Keep one copy:
         # drop keyvis paragraphs already present verbatim in the scene system.
         detail_paragraphs = {paragraph.strip() for paragraph in detail_system.split("\n\n")
@@ -455,9 +512,9 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             paragraph for paragraph in keyvis_system.split("\n\n")
             if paragraph.strip() not in detail_paragraphs)
         detail_system = prompt_join("\n\n", (
-            "MANGA PAGE INSTRUCTIONS (apply to both scenes and keyvis)" if manga else
+            "MANGA PAGE INSTRUCTIONS (apply to every page)" if manga else
             "ORDINARY SCENE INSTRUCTIONS (apply only to scenes)", detail_system,
-            "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_system,
+            "KEYVIS (slot -1)" if manga else "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_system,
         ))
     reference_names = []
     if toggles and toggles.get("moss_reference"):
@@ -468,16 +525,19 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
         if not reference_names:
             reference_names = list(available.values())
         if reference_names:
+            reference_order = ("the actor items appear across each scene's panels and cross_panel_actors"
+                               if manga else "the character items appear in each image's items array")
+            reference_caption = "actor instruction" if manga else "character item's caption"
             detail_system = prompt_join("\n\n", (detail_system,
                 "REFERENCE PICTURE MODE\n"
                 "The image model receives reference pictures assigned Picture 1, 2, 3 in the order "
-                "the actor items appear across each scene's panels and cross_panel_actors. For every "
-                "actor whose name is supplied in the reference list, preserve the complete visible "
-                "identity and current wardrobe from its selected Profile and state in its actor instruction, "
+                + reference_order + ". For every "
+                "character whose name is supplied in the reference list, preserve the complete visible "
+                "identity and current wardrobe from its selected Profile and state in its " + reference_caption + ", "
                 "including appearance, face_tags, eye_tags, eye_prompt and absolute_tags. Reference pictures "
                 "supplement those settings; they never authorize a shorter appearance summary, omission of "
                 "distinctive tags or a different outfit. Do not write the character's identity name "
-                "in the actor instruction. Do not add Picture N markers yourself; the server adds them at "
+                "in the " + reference_caption + ". Do not add Picture N markers yourself; the server adds them at "
                 "encode time. Characters without a reference keep the ordinary instruction rules."))
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     prepared = []
@@ -524,27 +584,19 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     batch_names = {str(character.get("name") or "") for scene in prepared
                    for character in (scene.get("characters") or []) if isinstance(character, dict)}
     user = ("# ONLY THIS BATCH'S PREPARED SCENES\n"
-            + variable(json.dumps({"scenes": prepared}, ensure_ascii=False),
+            + variable(json.dumps(profile_context_for_prompt({"scenes": prepared}), ensure_ascii=False),
                        "이 호출의 장면·프로필·상태·이미지 크기(bbox 기준)"))
     if manga and plan_profiles is not None:
         user += ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
-                 + variable(json.dumps([item for item in plan_profiles
-                                        if item["character"] in batch_names], ensure_ascii=False),
+                 + variable(json.dumps(profile_context_for_prompt([item for item in plan_profiles
+                                        if item["character"] in batch_names]), ensure_ascii=False),
                             "해당 인물 프로필 타임라인"))
     if tracking is not None:
         user += ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
-                 + variable(json.dumps({
-                     anchors.get(slot, slot): {name: state for name, state in values.items()
-                                               if name in batch_names}
-                     for slot, values in tracking.items()}, ensure_ascii=False),
-                     "추적된 복장·머리 상태"))
+                 + tracked_state_timeline(tracking, anchors, "추적된 복장·머리 상태", names=batch_names))
     if time_place is not None:
         user += ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
-                 + variable(json.dumps({
-                     anchors.get(slot, slot): {name: state for name, state in values.items()
-                                               if name in batch_names}
-                     for slot, values in time_place.items()}, ensure_ascii=False),
-                     "추적된 시간·장소 상태"))
+                 + tracked_state_timeline(time_place, anchors, "추적된 시간·장소 상태", names=batch_names))
     if prior_status:
         user += ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
                  + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장"))
@@ -570,20 +622,17 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     if toggles and str(toggles.get("direction") or "").strip():
         user += "\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시")
     if keyvis_messages:
-        user += ("\n\n# KEY VISUAL OUTPUT (SAME ROOT)\n"
-                 "Add exactly one keyvis object to the same JSON root: "
-                 "{\"scenes\":[...],\"keyvis\":{...}}. keyvis has no slot. ")
+        user += "\n\n# KEY VISUAL OUTPUT (SAME ROOT)\n"
         if manga:
-            user += ("It is one representative MANGA PAGE using the same layered schema and rules as scenes: "
-                     "image_size, page, panels and optional cross_panel_actors. Select a coherent source-supported "
-                     "sequence independently of the assigned ordinary pages. Apply the active panel-count, "
-                     "dialogue and composition rules to keyvis too. When composition hints are enabled, "
-                     "include its composition ID in summary and use a different composition across scenes and keyvis. "
+            user += ("Include slot -1 in the scenes array: one representative MANGA PAGE summarizing the entire CURRENT section. "
+                     "It uses the same layered page schema as every other scene; do not add a separate keyvis field. "
+                     "Follow the KEY VISUAL-specific section coverage and preferred panel count. "
                      "Choose image_size from these page_size_options (already scaled):\n"
                      + variable(json.dumps({"page_size_options": manga_page_size_options(canvas_sizes)},
                                            ensure_ascii=False), "KEYVIS 만화 페이지 크기"))
         else:
-            user += ("It uses the ordinary "
+            user += ("Add exactly one keyvis object to the same JSON root: "
+                     "{\"scenes\":[...],\"keyvis\":{...}}. keyvis has no slot. It uses the ordinary "
                      "single-image MOSS layout fields: image_size, summary {caption}, items "
                      "(label, name, caption, bbox), bbox_coord_space \"abs_centralized\", bbox_format \"yxyx\". "
                      "Choose keyvis image_size from the supplied key visual canvases: use the group canvas "
@@ -595,11 +644,11 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  + variable(json.dumps(manga_page_vocabulary(), ensure_ascii=False),
                             "페이지·패널·크로스패널·말풍선 enum"))
         user += ("\n\nReturn one JSON object inside <lb-xnai> with a scenes array for exactly these page anchors: "
-                 + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
+                 + variable(json.dumps([scene["slot"] for scene in prepared] + ([-1] if keyvis_messages else [])), "출력할 원문 앵커 목록")
                  + ". Follow the layered schema in the DETAIL-MANGA system prompt: page, panels and "
                  "cross_panel_actors, not flat items. "
-                 + ("Use 3-5 primary panels dividing the page; choose any count to fit the source and readability. "
-                    "Panel counts may repeat freely, including three panels on every page, provided each page "
+                 + ("For each ordinary scene, use 3-5 primary shots in divided or layered panels; choose any count to fit the source and readability. "
+                    "Panel counts may repeat freely, including three panels on every ordinary page, provided each page "
                     "uses a different allowed composition. The catalog's five-to-three order is presentation "
                     "only; do not require more panels or panel-count variety. "
                     "Do not reduce a page to two panels. Each 3-5-panel scene MUST include summary as "
@@ -608,8 +657,10 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                     "in this request; assign unused IDs before writing and replace any duplicates before returning. "
                     "IDs 4 and 18 are forbidden, including via transposition. "
                     if composition_hints else
-                    "Use 2-5 primary panels dividing the page; consider three, four and five "
+                    "For each ordinary scene, use 2-5 primary shots in divided or layered panels; consider three, four and five "
                     "source-supported shots before compressing to two. ")
+                 + ("The ordinary-scene count-selection guidance above does not override the KEY VISUAL-specific "
+                    "section-summary and preferred panel-count instructions. " if keyvis_messages else "")
                  + "Preserve distinct action changes, causal details and responses without inventing filler. "
                  "Apply PAGE COMPOSITION KNOWLEDGE before writing actors: compose the whole page through "
                  "nested horizontal and vertical groups, relative panel areas and proportions, emphasis and "
@@ -617,18 +668,34 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  "Never arrange the whole page as one horizontal row of three or four side-by-side panels. "
                  "Express the chosen spatial relationships in the actual panel regions; shot angles and "
                  "frame contours alone do not change the layout. "
-                 "Do not use a full-page main image with tiny inset shots. "
+                 "For both ordinary panels and inset shots, choose readable rectangular, slanted or asymmetric "
+                 "manga contours; describe the sloping edges in the panel instruction. A bbox encloses a frame, "
+                 "not a requirement for a rectangular outline. These are varied comic frames, not regular polygon tiles. "
+                 "Also consider one full-canvas borderless main scene with readable framed inset shots over its continuous setting. "
+                 "For that choice, first compose one complete illustration filling the entire canvas, then superimpose "
+                 "the smaller framed scenes on top; state this order explicitly in page.instruction and retain the full-canvas "
+                 "main bbox. Do not reduce that underlying scene to a bottom strip or partition its background into rows. "
+                 "Count that main scene once and each inset once; use shape borderless for the main panel, shape inset for "
+                 "the smaller shots, boundaries overlapping and flow layered. Keep attachedTo empty between these layers. "
+                 "An inset shape does not require a rectangle; its instruction specifies the contour. "
+                 "Optionally place one main body in front of selected inset edges using cross_panel_actors with "
+                 "relation page_foreground_overlay: continuous background behind, inset scenes in the middle, "
+                 "main body in front. List its home panel first in spansPanels and preserve separate actors "
+                 "inside the crossed inset shots. Keep other actors and dialogue in their own panels; "
+                 "do not duplicate frames as objects or draw layout labels. "
                  "A single full-page panel is allowed only for an explicitly requested splash. "
                  "Choose image_size from page_size_options first, then author absolute centered yxyx integer bboxes. "
-                 "Default to touching shared dividers with reciprocal attachedTo panelId links. "
+                 "For ordinary divisions, default to touching shared dividers with reciprocal attachedTo panelId links. "
                  "Choose source beats and panel emphasis first. If a frame break serves that event, apply "
                  "this geometry rule: Plan the page's foreground body first, then its crossing boxes; keep "
                  "one viewpoint and scale across spansPanels, with a tight body bbox. "
+                 "Use name for each actor and cross_panel_actors entry, copying the character's supplied "
+                 "name verbatim; visibleNames lists those same character names. "
                  "Keep character tags in actors; apply the system's dialogue length rule to speech. "
                  "Write all summaries, captions and instructions in English, even when the source is Korean. "
                  "Only dialogue[].text uses the dialogue output language: "
                  + variable((toggles or {}).get("speak_language") or "한국어", "만화 대사 언어") + ". "
-                 + ("Also include the single keyvis object described above. " if keyvis_messages else "")
+                 + ("Slot -1 is the whole-section KEYVIS page in that same scenes array. " if keyvis_messages else "")
                  + "No prose outside the JSON.")
     else:
         user += ("\n\nReturn one JSON object inside <lb-xnai> with a scenes array for exactly these C anchors: "
@@ -636,7 +703,8 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  + ". Each scene has slot, image_size, summary {caption}, items "
                  "(label, name, caption, bbox), bbox_coord_space \"abs_centralized\", bbox_format \"yxyx\". "
                  "Use the scene's image_size to express every bbox as absolute centered yxyx pixel offsets. "
-                 "Include every registered character as a character item and every distinct visible object "
+                 "Include every assigned registered character and each independently depicted source-supported NPC "
+                 "as a character item, and every distinct visible object "
                  "whose position matters as an object item. "
                  + ("Also include the single keyvis object described above. " if keyvis_messages else "")
                  + "No prose outside the JSON.")
@@ -1244,11 +1312,11 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
             and not (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False))):
         keyvis_messages.append({"role": "user", "content": lb_extra_system_prompt_block(lb_extra_system_prompt)})
     keyvis_messages.append({"role": "user", "content": "# AUTHORITATIVE FIXED APPEARANCE BY STORY INSTANT\n"
-        + variable(json.dumps(keyvis_profiles, ensure_ascii=False), "시점별 확정 프로필")
+        + variable(json.dumps(profile_context_for_prompt(keyvis_profiles), ensure_ascii=False), "시점별 확정 프로필")
         + ("\n\n# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT\n"
-        + variable(json.dumps({anchors.get(key, key): value for key, value in tracking.items()}, ensure_ascii=False), "복장·머리 상태 타임라인")
+        + tracked_state_timeline(tracking, anchors, "복장·머리 상태 타임라인")
            if tracking is not None else "")
-        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When a server-filled C outfit/hair timeline is supplied, it owns the current state: "
+        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When an outfit/hair checkpoint timeline is supplied, its carried-forward values own the current state: "
         + ("choose each panel's supported instant compatible with its own C anchor state, " if manga else
            "choose one supported instant compatible with its own C anchor state, ")
         + "preserving established items, colors and arrangement. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
@@ -1260,10 +1328,10 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
             + variable(json.dumps(prior_time_place, ensure_ascii=False), "이전 저장 시간·장소")})
     if time_place is not None:
         keyvis_messages.append({"role": "user", "content": "# CHRONOLOGICAL TIME AND PLACE BY STORY INSTANT\n"
-            + variable(json.dumps({anchors.get(key, key): value for key, value in time_place.items()}, ensure_ascii=False), "시간·장소 상태 타임라인")
+            + tracked_state_timeline(time_place, anchors, "시간·장소 상태 타임라인")
             + ("\n\nFor each panel, use its selected instant's own C anchor time/place/lighting " if manga else
                "\n\nUse the selected instant's own C anchor time/place/lighting ")
-            + "together with that anchor's outfit/hair. Preserve the tracked light source and its relation to the space in this composition. A missing or unknown aspect provides no setting fact; use the source context without inventing one. Never merge different places or times into a shared scene."})
+            + "together with that anchor's outfit/hair. Preserve the tracked light source and its relation to the space in this composition. An aspect still missing or unknown after carrying forward its checkpoints provides no setting fact; use the source context without inventing one. Never merge different places or times into a shared scene."})
     if past_text:
         keyvis_messages.append({"role": "user", "content": "# PAST CONTEXT\n" + variable(past_text, "과거 대화")})
     keyvis_messages.append({"role": "user", "content": "[Last log entry]\n" + variable(slotted, "슬롯이 삽입된 현재 원문")

@@ -17,6 +17,7 @@ from modes.chain_preset_mode import ChainPresetMode
 from modes import preset_importer
 from settings_store import SettingsConflict
 from preset_catalog import load_builtin_presets, merge_expression_presets, normalize_preset_name, preset_catalog_only
+from preset_locations import PRESET_LOCATIONS
 from configuration import settings_lock
 
 
@@ -27,14 +28,14 @@ class SettingsPresets(AssetMode):
         super().__init__()
         self.project_root = Path(project_root)
         self.storage_dir = data_root(project_root) / "asset_data"
-        self.builtin_file = self.project_root / "presets" / "presets.json"
+        self.builtin_file = PRESET_LOCATIONS["tags"].builtin_path(self.project_root)
         self.hidden = {}
         self.builtin_hidden = {}
         self._builtin_unlock_tokens: set[str] = set()
         self.chains = ChainPresetMode(
             str(data_root(project_root) / "chain_presets"),
             str(data_root(project_root) / "backups"),
-            str(self.project_root / "presets" / "chain_presets"),
+            str(PRESET_LOCATIONS["chains"].builtin_path(self.project_root)),
         )
 
     @staticmethod

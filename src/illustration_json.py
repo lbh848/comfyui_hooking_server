@@ -1196,11 +1196,19 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
     return MossPromptBuilder.dumps(rebuilt)
 
 
+def _without_moss_text_items(layout):
+    """Drop entire balloon objects without changing the model's other output."""
+    if not isinstance(layout, dict) or not isinstance(layout.get("items"), list):
+        return layout
+    return {**layout, "items": [item for item in layout["items"]
+        if not isinstance(item, dict) or str(item.get("label") or "").strip().lower() != "text"]}
+
+
 def build_illustration_json(positive: str, negative: str, *, input_dir,
                             mask_location="region_mask", seed=None, workflow_defaults=None, bot_dir=None,
                             include_face_embeddings=True, render_target=None,
                             moss_layout=None, npc_representative=False,
-                            dialogue_repair=None) -> str:
+                            dialogue_repair=None, manga_disable_bubbles=False) -> str:
     saved_moss = None
     if isinstance(positive, str) and positive.lstrip().startswith("{"):
         try:
@@ -1210,6 +1218,8 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
         if is_moss_document(candidate):
             saved_moss = candidate
     if saved_moss is not None:
+        if manga_disable_bubbles:
+            saved_moss["moss"] = _without_moss_text_items(saved_moss["moss"])
         # Regeneration/replay keeps the saved layout, models and sampling. The
         # current preset only fills values the saved document does not carry.
         return _moss_regeneration(saved_moss, negative, workflow_defaults or {}, seed,
@@ -1250,6 +1260,8 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
         # enabled, reference pictures and control data travel under
         # workflow.reference plus the shared base64 assets; the moss layout
         # itself stays a pure generation prompt.
+        if manga_disable_bubbles:
+            moss_layout = _without_moss_text_items(moss_layout)
         return _moss_document(fields, negative, moss_layout,
                               workflow_defaults=workflow_defaults or {}, seed=seed,
                               single_subject=bool(npc_representative),

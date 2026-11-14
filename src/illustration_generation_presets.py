@@ -14,6 +14,8 @@ from aiohttp import web
 from asset_preset_scope import AssetPresetLock, write_scope_documents
 from json_store import write_json_atomic
 from manga_page_sizes import parse_manga_page_sizes
+from configuration import settings_lock
+from preset_locations import PRESET_LOCATIONS
 
 
 MODES = ("illustration", "character_auto", "background")
@@ -90,11 +92,23 @@ def _empty_document():
 
 
 class IllustrationGenerationPresets:
-    def __init__(self, config_file: str | Path, builtin_file: str | Path | None = None):
-        self.path = Path(config_file).with_name("illustration_generation_presets.json")
-        self.builtin_file = Path(builtin_file) if builtin_file else Path(__file__).parent / "presets/illustration_generation_presets.json"
+    def __init__(self, config_file: str | Path, builtin_file: str | Path | None = None, *, workshop: str = "illustration"):
+        if workshop not in {"illustration", "emotion"}:
+            raise ValueError("그리기 설정 공방을 확인하세요.")
+        self.workshop = workshop
+        location = PRESET_LOCATIONS[f"{workshop}_generation"]
+        self.path = location.local_path(config_file=config_file)
+        self.builtin_file = Path(builtin_file) if builtin_file else location.builtin_path()
         self.guard = threading.RLock()
         self.scope_lock = AssetPresetLock()
+        if workshop == "emotion":
+            # Both workshops previously used the illustration file. Preserve
+            # those user presets once, then keep all future edits independent.
+            # An empty file also marks a new installation as already split.
+            legacy = PRESET_LOCATIONS["illustration_generation"].local_path(config_file=config_file)
+            with settings_lock(legacy), settings_lock(self.path):
+                if not self.path.exists():
+                    write_json_atomic(self.path, self._read_file(legacy, "그리기 설정 프리셋"))
 
     @staticmethod
     def _validate_name(value):
@@ -141,8 +155,8 @@ class IllustrationGenerationPresets:
     def _snapshot(self, document, mode, builtin=None):
         builtin = self._builtin() if builtin is None else builtin
         presets = [*self._entries(builtin, mode, "builtin"), *self._entries(document, mode, "local")]
-        revision = hashlib.sha256(json.dumps(presets, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
-        return {"generation_mode": mode, "revision": revision, "presets": presets}
+        revision = hashlib.sha256(json.dumps([self.workshop, presets], ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        return {"workshop": self.workshop, "generation_mode": mode, "revision": revision, "presets": presets}
 
     def snapshot(self, mode):
         validate_mode(mode)
@@ -207,12 +221,17 @@ class IllustrationGenerationPresets:
             return self._snapshot(documents["local"], mode, documents["builtin"])
 
 
-def register_generation_presets(app: web.Application, config_file: str | Path):
-    store = IllustrationGenerationPresets(config_file)
+def register_generation_presets(app: web.Application, config_file: str | Path, *, builtin_files: dict[str, Path] | None = None):
+    stores = {workshop: IllustrationGenerationPresets(config_file, (builtin_files or {}).get(workshop), workshop=workshop)
+              for workshop in ("illustration", "emotion")}
 
     async def handle(request):
         headers = {"Cache-Control": "no-store"}
         try:
+            scope = request.query.get("scope", "illust")
+            if scope not in {"illust", "illustration", "emotion"}:
+                raise ValueError("그리기 설정 공방을 확인하세요.")
+            store = stores["emotion" if scope == "emotion" else "illustration"]
             if request.method == "GET":
                 result = await asyncio.to_thread(store.snapshot, request.query.get("generation_mode"))
             else:

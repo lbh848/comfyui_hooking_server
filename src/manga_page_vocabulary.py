@@ -35,7 +35,7 @@ SHAPE_PHRASES = {
     "regular": "rectangular",
     "wide": "wide rectangular",
     "tall": "tall vertical rectangular",
-    "inset": "inset rectangular frame",
+    "inset": "superimposed inset frame",
     "irregular": "irregular quadrilateral",
     "diagonal": "trapezoid with a slanted edge",
     "borderless": "borderless",
@@ -137,9 +137,8 @@ def vocabulary() -> dict:
             "boundaries": list(PAGE_BOUNDARIES),
         },
         "panel": {
-            # New plans count primary page divisions. Insets remain supported
-            # by the parser for saved plans, but are not offered as main shots.
-            "shape": [shape for shape in PANEL_SHAPE if shape != "inset"],
+            # A framed inset is a complete shot on a layered borderless page.
+            "shape": list(PANEL_SHAPE),
             "camera_distance": list(PANEL_CAMERA_DISTANCE),
             "camera_angle": list(PANEL_CAMERA_ANGLE),
             "focus": list(PANEL_FOCUS),

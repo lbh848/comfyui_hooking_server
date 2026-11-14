@@ -41,7 +41,8 @@ class PresetFixture:
         self.source.write_bytes(self.original)
         self.config = {"illustration_workflow_type": "v3_anima", "illustration_workflow_source_paths": {"v3_anima": str(self.source), "v3": ""}, "chansub_workflow_type": "anima", "bot_selected": "A"}
         (self.root / "config.json").write_text(json.dumps(self.config), encoding="utf-8")
-        self.builtin_file = self.root / "shipped.json"
+        self.builtin_file = self.root / "presets" / "illustration_model_presets.json"
+        self.builtin_file.parent.mkdir()
         self.builtin_file.write_text('{"version":1,"presets":[]}', encoding="utf-8")
         self.store = IllustrationModelPresets(self.root / "config.json", self.builtin_file)
         # Existing user settings from the previous version remain untouched.
@@ -369,11 +370,11 @@ class WorkshopPresetTests(PresetFixture, unittest.TestCase):
         created = self.change_at("emotion", "create", name="감정용 복사본")
         self.assertEqual(created["config"]["illustration_workflow_source_paths"]["v3_anima"], str(dual_source))
 
-    def test_emotion_presets_are_user_only_and_can_be_deleted_last(self):
+    def test_emotion_presets_can_be_deleted_last(self):
         dual = self.make_emotion_preset()
         view = self.store.view(self.store.read(self.config, "emotion"), "emotion")
         with self.assertRaises(ValueError):
-            self.store.change(self.config, {"action": "unlock", "confirmed": True,
+            self.store.change(self.config, {"action": "unlock", "confirmed": False,
                                             "preset_id": view["active_id"], "revision": view["revision"]}, "emotion")
         with self.assertRaises(ValueError):
             self.store.change(self.config, {"action": "scope", "scope": "builtin",
@@ -387,6 +388,38 @@ class WorkshopPresetTests(PresetFixture, unittest.TestCase):
         self.assertEqual(self.store.read(self.config, "illustration")["active_id"], self.view["active_id"])
         self.assertEqual(dual["config"]["illustration_workflow_source_paths"]["v3_anima"],
                          str(self.root / "배포_공방_삽화_DUAL_VAE_V1.json"))
+
+    def test_emotion_distribution_unlock_edit_relock_and_return_to_user(self):
+        self.make_emotion_preset()
+        illustration_before = self.store.path.read_bytes(), self.builtin_file.read_bytes()
+        token = self.change_at("emotion", "unlock", confirmed=True)["builtin_unlock_token"]
+        view = self.change_at("emotion", "scope", scope="builtin", builtin_unlock_token=token)
+        self.assertEqual(view["presets"][0]["scope"], "builtin")
+        self.assertEqual(json.loads(self.store.emotion_path.read_bytes())["presets"], [])
+        self.assertEqual(len(json.loads(self.store.emotion_builtin_file.read_bytes())["presets"]), 1)
+        fields = self.store.workflow(self.config, "v3_anima", view["active_id"], workshop="emotion")
+        fields["fields"]["ANIMA_FIRST_SAMPLER"]["steps"] = 31
+        fields["builtin_unlock_token"] = token
+        self.store.workflow(self.config, "v3_anima", view["active_id"], fields, "emotion")
+        restarted = IllustrationModelPresets(self.root / "config.json", self.builtin_file)
+        self.assertEqual(restarted.snapshot(workshop="emotion")["workflows"]["v3_anima"]["fields"]["ANIMA_FIRST_SAMPLER"]["steps"], 31)
+        self.change_at("emotion", "lock", builtin_unlock_token=token)
+        before = self.store.emotion_builtin_file.read_bytes()
+        for action, values in (("rename", {"name": "Blocked"}), ("delete", {}), ("scope", {"scope": "local"})):
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                self.change_at("emotion", action, builtin_unlock_token=token, **values)
+        with self.assertRaises(ValueError):
+            self.store.workflow(self.config, "v3_anima", view["active_id"], fields, "emotion")
+        self.assertEqual(self.store.emotion_builtin_file.read_bytes(), before)
+        # Unlocking the other workshop cannot edit this distribution catalog.
+        other_token = self.change_at("illustration", "unlock", confirmed=True)["builtin_unlock_token"]
+        with self.assertRaises(ValueError):
+            self.change_at("emotion", "rename", name="Blocked", builtin_unlock_token=other_token)
+        token = self.change_at("emotion", "unlock", confirmed=True)["builtin_unlock_token"]
+        local = self.change_at("emotion", "scope", scope="local", builtin_unlock_token=token)
+        self.assertEqual(local["presets"][0]["scope"], "local")
+        self.assertEqual(json.loads(self.store.emotion_builtin_file.read_bytes())["presets"], [])
+        self.assertEqual((self.store.path.read_bytes(), self.builtin_file.read_bytes()), illustration_before)
 
     def test_workflow_switch_carries_tuned_values_and_keeps_new_fields(self):
         edited = self.fields()

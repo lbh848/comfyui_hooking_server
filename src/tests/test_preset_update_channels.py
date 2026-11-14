@@ -31,7 +31,8 @@ class PresetUpdateChannelTests(unittest.TestCase):
         self.catalogs = ["src/presets/presets.json", "src/presets/asset_style_presets.json",
                          "src/presets/asset_character_presets.json", "src/presets/illustration_model_presets.json",
                          "src/presets/asset_model_presets.json", "src/defaults/illustration/bot.json",
-                         "src/prompts/bot_system_prompt/presets.json"]
+                         "src/prompts/bot_system_prompt/presets.json",
+                         "src/presets/emotion_model_presets.json", "src/presets/emotion_generation_presets.json"]
         for name in self.catalogs:
             self.put(self.release / name, {"release": 1})
         self.git(self.release, "add", "--all")
@@ -40,6 +41,7 @@ class PresetUpdateChannelTests(unittest.TestCase):
         self.git(self.root, "clone", str(self.release), str(self.client))
         self.user_paths = [self.client / name for name in (
             "config/settings.json", "config/asset_style_presets.json",
+            "config/emotion_model_presets.json", "config/emotion_generation_presets.json",
             "data/asset_data/tags.json", "data/asset_data/hidden_tags.json", "data/asset_data/bot.json",
             "data/chain_presets/active.json", "data/chain_presets/hidden/hidden.json",
             "data/comfy/models/keep.json",

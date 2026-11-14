@@ -172,6 +172,70 @@
   },
   "models": [
     {
+      "auth": "civitai",
+      "id": "anima-turbo-v4",
+      "relative_path": "models/loras/Turbo-ANIMA-v4.safetensors",
+      "sha256": "aa198376f2f31159ba3f60dce19924b27411cdd93e7252543e5c45249ca89048",
+      "size": 280194468,
+      "url": "https://civitai.com/api/download/models/3334160?fileId=3220708"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-turbo-v4-29b",
+      "relative_path": "models/loras/Turbo-ANIMA-v4-29B.safetensors",
+      "sha256": "2d60e8d0d224be8c7ac2a9a4a20f516630795da051dfeedb2d4a6a23fa89efdd",
+      "size": 280194812,
+      "url": "https://civitai.com/api/download/models/3410939?fileId=3303059"
+    },
+    {
+      "auth": "civitai",
+      "id": "moss-ixy-v1",
+      "relative_path": "models/loras/IXY-MOSS-V1 (1).safetensors",
+      "sha256": "9ef92c735241ed414bc0986d514a132b69a410f9e1105cb45e62164358db8fdb",
+      "size": 129017232,
+      "url": "https://civitai.com/api/download/models/3427663?fileId=3322899"
+    },
+    {
+      "auth": "civitai",
+      "id": "moss-km-flat-half",
+      "relative_path": "models/loras/km_flat_half.safetensors",
+      "sha256": "c24db869316646471bb64f64bc6ea8a7158bcd01ea2b9fba98bbbac4541598a1",
+      "size": 148732696,
+      "url": "https://civitai.com/api/download/models/3428174?fileId=3323521"
+    },
+    {
+      "auth": "civitai",
+      "id": "moss-hentai-style",
+      "relative_path": "models/loras/hentai_style_moss.safetensors",
+      "sha256": "9b353c4a64744632c8c63d85e7cf6a1569633548bd60699ddb8b512ed1b4eb07",
+      "size": 74379496,
+      "url": "https://civitai.com/api/download/models/3413102?fileId=3305610"
+    },
+    {
+      "auth": "civitai",
+      "id": "moss-anireal-v1",
+      "relative_path": "models/loras/anireal_moss_lora_v1.safetensors",
+      "sha256": "827b1f76485d0cb63c6f84fa0ad5a2e4045667ad41b000f00c0a6f10d6e94f36",
+      "size": 129015928,
+      "url": "https://civitai.com/api/download/models/3411644?fileId=3303851"
+    },
+    {
+      "auth": "civitai",
+      "id": "wai-anima-v1-mxfp8",
+      "relative_path": "models/diffusion_models/waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+      "sha256": "7c2136906835efde8bf499631425cf88d2563b214e6dbfd1a9340a8918bd51ff",
+      "size": 2305261600,
+      "url": "https://civitai.com/api/download/models/3108187?fileId=2988160"
+    },
+    {
+      "auth": "civitai",
+      "id": "featherfall-v50f-fp16",
+      "relative_path": "models/checkpoints/featherFall_v50f.fp16.safetensors",
+      "sha256": "aa4215c2f11c7ff24c70fda7cf3afd2049654d006283e2cf025fdc3b26ca490a",
+      "size": 6938041608,
+      "url": "https://civitai.com/api/download/models/3450251?fileId=3350151"
+    },
+    {
       "id": "manga-ocr-rec-korean",
       "relative_path": "models/ocr/korean_PP-OCRv5_rec_mobile.onnx",
       "sha256": "cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b",

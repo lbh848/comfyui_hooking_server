@@ -895,7 +895,9 @@ class DetailMangaMossTests(unittest.TestCase):
         for panel in panels[:2]:
             self.assertIn("REGION:", panel["caption"])
             self.assertNotIn("thin black border", panel["caption"])
-        self.assertIn("FRAME: inset rectangular frame, thin black border", panels[2]["caption"])
+        self.assertIn("FRAME:", panels[2]["caption"])
+        self.assertIn("thin black border", panels[2]["caption"])
+        self.assertNotIn("REGION:", panels[2]["caption"])
         self.assertEqual(panels[2]["bbox"], [300, 200, 600, 450])
 
     def test_layered_page_accepts_single_panel(self):

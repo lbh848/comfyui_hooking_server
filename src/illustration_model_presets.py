@@ -13,6 +13,7 @@ import uuid
 from illustration_json import enabled_lora_fields, workflow_json_defaults, update_workflow_json_settings
 from json_store import write_json_atomic
 from configuration import read_config
+from preset_locations import PRESET_LOCATIONS
 import workflow_profiles
 
 CONFIG_KEYS = (
@@ -77,13 +78,19 @@ class IllustrationModelPresets:
 
     def __init__(self, config_file: str | Path, builtin_file: str | Path | None = None):
         self.config_file = Path(config_file)
-        self.path = Path(config_file).with_name("illustration_model_presets.json")
-        self.emotion_path = self.path.with_name("emotion_model_presets.json")
-        self.builtin_file = Path(builtin_file) if builtin_file else Path(__file__).parent / "presets" / "illustration_model_presets.json"
-        self._builtin_unlock_tokens: set[str] = set()
+        self.path = PRESET_LOCATIONS["illustration_model"].local_path(config_file=config_file)
+        self.emotion_path = PRESET_LOCATIONS["emotion_model"].local_path(config_file=config_file)
+        self.builtin_file = Path(builtin_file) if builtin_file else PRESET_LOCATIONS["illustration_model"].builtin_path()
+        self.emotion_builtin_file = (Path(builtin_file).with_name("emotion_model_presets.json") if builtin_file
+                                     else PRESET_LOCATIONS["emotion_model"].builtin_path())
+        self._builtin_unlock_tokens: dict[str, str] = {}
 
-    def _builtin(self) -> dict:
-        document = json.loads(self.builtin_file.read_text(encoding="utf-8-sig"))
+    def _builtin_path(self, workshop: str | None = None) -> Path:
+        return self.emotion_builtin_file if self.separates_workshops and workshop == "emotion" else self.builtin_file
+
+    def _builtin(self, workshop: str | None = None) -> dict:
+        path = self._builtin_path(workshop)
+        document = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {"version": 1, "presets": []}
         if not isinstance(document, dict) or document.get("version") != 1 or not isinstance(document.get("presets"), list):
             raise ValueError("배포 그림 모델 프리셋 파일을 확인하세요.")
         return document
@@ -162,10 +169,7 @@ class IllustrationModelPresets:
         # Bind shipped workflow references to this installation's configured
         # files, never to the preceding preset's temporary runtime overlay.
         base = read_config(self.config_file) if self.config_file.exists() else config or {}
-        # Shipped presets belong to the illustration workshop; the emotion
-        # workshop keeps only the presets created for it.
-        builtin = ([self._resolve_builtin(item, base) for item in self._builtin()["presets"]]
-                   if workshop != "emotion" else [])
+        builtin = [self._resolve_builtin(item, base) for item in self._builtin(workshop)["presets"]]
         local = [{**item, "scope": "local"} for item in document["presets"]]
         document["presets"] = [*builtin, *local]
         if not any(item["id"] == document["active_id"] for item in document["presets"]):
@@ -180,8 +184,8 @@ class IllustrationModelPresets:
         write_json_atomic(self._workshop_path(workshop),
                           {"version": 1, "active_id": document["active_id"], "presets": local})
 
-    def _save_builtin(self, preset: dict | None, identity: str) -> None:
-        document = self._builtin()
+    def _save_builtin(self, preset: dict | None, identity: str, workshop: str | None = None) -> None:
+        document = self._builtin(workshop)
         original = next((item for item in document["presets"] if item["id"] == identity), None)
         if preset is None:
             if original:
@@ -205,10 +209,11 @@ class IllustrationModelPresets:
                 document["presets"][document["presets"].index(original)] = saved
             else:
                 document["presets"].append(saved)
-        write_json_atomic(self.builtin_file, document)
+        write_json_atomic(self._builtin_path(workshop), document)
 
-    def _require_editable(self, preset: dict, body: dict) -> None:
-        if preset.get("scope") == "builtin" and body.get("builtin_unlock_token") not in self._builtin_unlock_tokens:
+    def _require_editable(self, preset: dict, body: dict, workshop: str | None = None) -> None:
+        if (preset.get("scope") == "builtin"
+                and self._builtin_unlock_tokens.get(body.get("builtin_unlock_token")) != ("emotion" if workshop == "emotion" else "illustration")):
             raise ValueError("배포 프리셋은 읽기 전용입니다. 복제하거나 배포 풀기로 잠금을 해제하세요.")
 
     @staticmethod
@@ -230,7 +235,7 @@ class IllustrationModelPresets:
         # with another profile or the model-selection form.
         if not preset:
             return None
-        path = self.builtin_file if preset.get("scope") == "builtin" else self._workshop_path(workshop)
+        path = self._builtin_path(workshop) if preset.get("scope") == "builtin" else self._workshop_path(workshop)
         try:
             return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
         except FileNotFoundError:
@@ -269,24 +274,22 @@ class IllustrationModelPresets:
         if body.get("action") == "lock":
             token = body.get("builtin_unlock_token")
             if isinstance(token, str):
-                self._builtin_unlock_tokens.discard(token)
+                self._builtin_unlock_tokens.pop(token, None)
             return self.view(document, workshop)
         if body.get("revision") != self.view(document, workshop)["revision"] or body.get("preset_id") != document["active_id"]:
             raise PresetConflict("프리셋이 변경되었습니다. 목록을 다시 불러오세요.")
         active = self.active(document)
         action = body.get("action")
         if action == "unlock":
-            if workshop == "emotion":
-                raise ValueError("감정 삽화 프리셋은 배포 프리셋을 지원하지 않습니다.")
             if body.get("confirmed") is not True:
                 raise ValueError("배포 풀기 경고를 먼저 확인하세요.")
             token = secrets.token_urlsafe(32)
-            self._builtin_unlock_tokens.add(token)
+            self._builtin_unlock_tokens[token] = "emotion" if workshop == "emotion" else "illustration"
             return {**self.view(document, workshop), "builtin_unlock_token": token}
         if not active and action != "create":
             raise ValueError("그림 모델 프리셋을 먼저 만드세요.")
         if action in {"rename", "delete", "config"}:
-            self._require_editable(active, body)
+            self._require_editable(active, body, workshop)
         if action in {"create", "duplicate", "rename"}:
             name = body.get("name")
             if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
@@ -314,17 +317,15 @@ class IllustrationModelPresets:
                 raise ValueError("이 프리셋은 감정 삽화 워크숍에서 선택하세요.")
             document["active_id"] = target["id"]
         elif action == "scope":
-            if workshop == "emotion":
-                raise ValueError("감정 삽화 프리셋은 사용자 프리셋으로만 관리합니다.")
-            self._require_editable({"scope": "builtin"}, body)
+            self._require_editable({"scope": "builtin"}, body, workshop)
             scope = body.get("scope")
             if scope not in {"local", "builtin"}:
                 raise ValueError("배포 또는 사용자 프리셋을 선택하세요.")
             if scope != active.get("scope"):
                 if scope == "builtin":
-                    self._save_builtin(active, active["id"])
+                    self._save_builtin(active, active["id"], workshop)
                 else:
-                    self._save_builtin(None, active["id"])
+                    self._save_builtin(None, active["id"], workshop)
                     # An update can restore the old shipped ID. Give the user
                     # copy its own identity so it cannot be shadowed then.
                     active["id"] = uuid.uuid4().hex
@@ -352,7 +353,7 @@ class IllustrationModelPresets:
         else:
             raise ValueError("지원하지 않는 프리셋 작업입니다.")
         if active.get("scope") == "builtin" and action in {"rename", "delete", "config"}:
-            self._save_builtin(None if action == "delete" else active, active["id"])
+            self._save_builtin(None if action == "delete" else active, active["id"], workshop)
         self.save(document, workshop)
         return self.view(document, workshop)
 
@@ -365,7 +366,7 @@ class IllustrationModelPresets:
             raise PresetConflict("선택한 프리셋이 변경되었습니다. 프리셋을 다시 불러오세요.")
         preset = self.active(document)
         if body is not None:
-            self._require_editable(preset, body)
+            self._require_editable(preset, body, workshop)
         source = preset["config"][self.paths_key].get(profile, "")
         workflow, source_revision = read_workflow(source)
         entry = preset["workflows"].get(profile)
@@ -390,7 +391,7 @@ class IllustrationModelPresets:
             preset["workflows"][profile] = saved
             if preset.get("scope") == "builtin":
                 if body is not None:
-                    self._save_builtin(preset, preset["id"])
+                    self._save_builtin(preset, preset["id"], workshop)
             else:
                 self.save(document, workshop)
         return {"preset_id": preset_id, "profile": profile, "path": source, "fields": fields,
