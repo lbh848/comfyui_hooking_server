@@ -29,11 +29,11 @@ async def auto_link_character_lore(body):
         raise ValueError("로어북 항목이 중복되었습니다. 파일 목록을 다시 확인하세요.")
 
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "character_lore_auto_link.txt").read_text(encoding="utf-8")
-    # Send only identity metadata; lore content and source filenames never enter the prompt.
+    # Send only titles; activation keys, lore content and source filenames never enter the prompt.
     batches = [[]]
     batch_size = 0
     for index, entry in enumerate(entries, start=1):
-        item = {"entry": index, **{key: entry[key] for key in ("title", "keys", "secondary_keys", "use_regex")}}
+        item = {"entry": index, "title": entry["title"]}
         size = len(json.dumps(item, ensure_ascii=False))
         if batches[-1] and batch_size + size > 24000:
             batches.append([])

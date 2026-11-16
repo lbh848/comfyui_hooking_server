@@ -11,7 +11,7 @@ function loreKeys(value: unknown): string[] {
 
 export function readCharacterLore(value: unknown, source: string): CharacterLoreEntry[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((entry, index) => {
+  const entries = value.flatMap((entry, index) => {
     if (!entry || typeof entry !== "object" || entry.mode === "folder") return [];
     const title = String(entry.name || entry.comment || "");
     const keys = loreKeys(entry.keys ?? entry.key);
@@ -23,6 +23,19 @@ export function readCharacterLore(value: unknown, source: string): CharacterLore
       enabled: entry.enabled !== false, constant: entry.constant === true || entry.alwaysActive === true || entry.mode === "constant",
       selective: entry.selective === true, use_regex: entry.use_regex === true || entry.useRegex === true }];
   });
+  const reservedIds = new Set(entries.map(entry => entry.entry_id));
+  const seenIds = new Set<string>();
+  for (const entry of entries) {
+    const entryId = entry.entry_id;
+    if (seenIds.has(entryId)) {
+      // Same-title entries can have different contents; preserve every occurrence.
+      let occurrence = 1;
+      do { entry.entry_id = JSON.stringify([entryId, occurrence++]); } while (reservedIds.has(entry.entry_id));
+      reservedIds.add(entry.entry_id);
+    }
+    seenIds.add(entry.entry_id);
+  }
+  return entries;
 }
 
 export const characterLoreId = (entry: Pick<CharacterLoreEntry, "source" | "entry_id">): string => JSON.stringify([entry.source, entry.entry_id]);

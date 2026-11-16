@@ -124,7 +124,7 @@ export function CharacterLoreImport({ entries, characterNames, existingCharacter
     <div className="illust-actions"><button type="button" className="button secondary"
       disabled={disabled || autoLinkBusy || !entries.length || !characterNames.length && !existingCharacterNames.length}
       onClick={() => setAutoLinkScopeOpen(true)}>{autoLinkBusy ? "로어북 자동 연결 중…" : "로어북 자동 연결 LLM"}</button>
-      {autoLinkBusy && <span className="field-help" role="status">로어북의 제목·활성화키·보조 활성화키를 확인하고 있습니다.</span>}</div>
+      {autoLinkBusy && <span className="field-help" role="status">로어북 제목을 확인하고 있습니다.</span>}</div>
     <IllustrationFeedback error={autoLinkError} message={autoLinkMessage} />
     {autoLinks && <details className="illust-lore-entry"><summary>LLM 연결 판단 {autoLinks.length}명</summary>
       <div className="illust-form illust-lore-content">{autoLinks.map(link => <div key={link.character}>
