@@ -419,11 +419,6 @@ def get_bot_visual_utility_paths(bot_name: str, char_name: str = "", *, data: di
         )
         filepath = os.path.join(artifact_dir, "_face_image.webp")
         if not os.path.isfile(filepath):
-            print(
-                f"[BOT_VISUAL_TARGET] FACE 이미지 없는 카드 스킵: "
-                f"bot={bot_name!r}, character={target['character']!r}, "
-                f"card={target['visual_card_id']!r}, path={filepath!r}"
-            )
             continue
         results.append({
             **target,

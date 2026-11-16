@@ -17,6 +17,8 @@ import os
 import secrets
 
 from aiohttp import web
+from json_store import json_file_signature
+from illustration_model_presets import IllustrationModelPresets
 
 from settings_internal_lora import allowed_path
 from settings_illustration import allowed_illustration_path, register_illustration_config
@@ -43,8 +45,18 @@ def main() -> None:
 
     import server
 
+    model_presets = IllustrationModelPresets(server.CONFIG_FILE)
+    config_paths = (server.CONFIG_FILE, model_presets.path, model_presets.builtin_file,
+                    model_presets.emotion_path, model_presets.emotion_builtin_file)
+    config_signature = None
+
     def refresh_config():
-        # Other settings pages write the same configuration while this worker lives.
+        nonlocal config_signature
+        # Polling and image-list requests must not rebuild every generation setting.
+        # Other pages and processes still take effect on the next changed-file read.
+        signature = tuple(json_file_signature(path) for path in config_paths)
+        if signature == config_signature:
+            return
         value = server.load_config()
         if value != server.app_config:
             server.app_config = value
@@ -54,6 +66,9 @@ def main() -> None:
             server.asset_tool.fallback_workflow_source_path = value["asset_tag_analysis_workflow_source_path"]
             server.llm_service.update_config({key: value.get(key, default)
                 for key, default in server.llm_service.get_config().items() if key in server.DEFAULT_CONFIG})
+        # A migration or another process may replace a file during the load.
+        if signature == tuple(json_file_signature(path) for path in config_paths):
+            config_signature = signature
 
     @web.middleware
     async def internal_only(request, handler):

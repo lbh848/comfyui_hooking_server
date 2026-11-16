@@ -173,19 +173,21 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   function refresh() {
     resource.reload(); distribution.reload(); refreshFolders();
   }
-  const refreshCharacterStatus = useCallback(() => {
+  const refreshCharacterStatus = useCallback((requery = true) => {
+    if (!requery) return;
     resource.reload(); characterResource.reload(); profileResource.reload();
     outfitResource.reload(); emotionResource.reload(); patchStatus.reload();
     setCardRevision(value => value + 1); onCatalogChange();
   }, [resource.reload, characterResource.reload, profileResource.reload, outfitResource.reload, emotionResource.reload, patchStatus.reload, onCatalogChange]);
   const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
+    const refresh = () => refreshCharacterStatus();
     // 프로필 복장 이미지 생성처럼 백업으로 저장되는 작업이 끝나면 폴더/카드 목록을 갱신한다.
-    window.addEventListener("emotion-store-changed", refreshCharacterStatus);
-    window.addEventListener("focus", refreshCharacterStatus);
+    window.addEventListener("emotion-store-changed", refresh);
+    window.addEventListener("focus", refresh);
     return () => {
-      window.removeEventListener("emotion-store-changed", refreshCharacterStatus);
-      window.removeEventListener("focus", refreshCharacterStatus);
+      window.removeEventListener("emotion-store-changed", refresh);
+      window.removeEventListener("focus", refresh);
     };
   }, [refreshCharacterStatus]);
   useEffect(() => {
@@ -356,7 +358,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
           <div className="illust-character-list-heading">
             <div className="illust-character-view-controls">
               <h2>캐릭터 <span>{characterRows.length}명</span></h2>
-              <button type="button" className="button secondary small" disabled={action.busy || distributionAction.busy} onClick={refreshCharacterStatus}><RefreshCw size={13} />상태 새로고침</button>
+              <button type="button" className="button secondary small" disabled={action.busy || distributionAction.busy} onClick={() => refreshCharacterStatus()}><RefreshCw size={13} />상태 새로고침</button>
             </div>
             <label className="field">캐릭터 검색<input type="search" value={characterSearch} onChange={event => setCharacterSearch(event.target.value)} placeholder="캐릭터 이름" /></label>
           </div>

@@ -88,13 +88,15 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const bots: IllustrationData[] = resource.data?.bots || [];
   const bot = bots.find(item => item.name === botName);
   const patchStatus = useIllustrationResource(viewMode === "compact" && bot ? api.path(`bot_mode/check_patch_files?${query({ bot_name: bot.name })}`) : null);
-  const refreshCharacterStatus = useCallback(() => {
+  const refreshCharacterStatus = useCallback((requery = true) => {
+    if (!requery) return;
     resource.reload(); patchStatus.reload(); setCardRevision(value => value + 1);
   }, [resource.reload, patchStatus.reload]);
   const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
-    window.addEventListener("focus", refreshCharacterStatus);
-    return () => window.removeEventListener("focus", refreshCharacterStatus);
+    const refresh = () => refreshCharacterStatus();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [refreshCharacterStatus]);
   const isBuiltin = (name: string) => distribution.data?.bots.some((item: IllustrationData) => item.name === name && item.scope === "builtin");
   const isLocked = (name: string) => !distribution.data || (isBuiltin(name) && !builtinUnlockToken);
@@ -195,7 +197,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
         {bot && !gallery && <div className="illust-character-list-heading">
           <div className="illust-character-view-controls"><h2>캐릭터 <span>{bot.characters.length}명</span></h2>
             <label className="illust-character-view-select"><span className="sr-only">캐릭터 보기 모드</span><select value={viewMode} onChange={event => setViewMode(event.target.value as "detailed" | "compact")}><option value="detailed">상세 보기</option><option value="compact">간략 보기</option></select></label>
-            {viewMode === "compact" && <button type="button" className="button secondary small" onClick={refreshCharacterStatus}><RefreshCw size={13} />상태 새로고침</button>}
+            {viewMode === "compact" && <button type="button" className="button secondary small" onClick={() => refreshCharacterStatus()}><RefreshCw size={13} />상태 새로고침</button>}
           </div>
           <label className="field">캐릭터 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="캐릭터 이름" /></label>
         </div>}

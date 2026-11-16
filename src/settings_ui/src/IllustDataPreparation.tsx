@@ -6,6 +6,7 @@ import { TagTextarea } from "./TagTextarea";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { query, useIllustrationAction, type IllustrationData } from "./illustration";
 import { useBotApi } from "./BotApiScope";
+import { isFinishedQueueItem } from "./workQueue";
 import { IllustPreparationFaceCrop } from "./IllustPreparationFaceCrop";
 import "./illust-data-preparation.css";
 
@@ -13,15 +14,35 @@ export const dataPreparationTitle = (botName: string, label = "삽화 데이터 
 const steps = ["캐릭터 선택", "기능 선택", "세부 설정", "최종 확인"];
 const statusLabels: Record<string, string> = { pending: "대기", running: "진행 중", paused: "확인 대기", completed: "완료", skipped: "건너뜀", cancelled: "중단됨", warning: "확인 필요", failed: "실패" };
 
-export function useDataPreparationRefresh(onChanged: () => void) {
+export function useDataPreparationRefresh(onChanged: (requery?: boolean) => void) {
   const runningBots = useRef(new Set<string>());
   useEffect(() => {
-    // The queue keeps publishing every completion. While preparation is running,
-    // this screen gets saved results from its stage updates instead of reloading
-    // all character galleries for each queue notification.
-    const refresh = () => { if (!runningBots.current.size) onChanged(); };
+    let preparationRunning = false;
+    let refreshPending = false;
+    let timer: number | undefined;
+    // Completion is published before queue status. Defer the screen refresh until
+    // that status is received, including runs opened in another page or tab.
+    const refresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const requery = !preparationRunning && !runningBots.current.size;
+        // An open preparation dialog already refreshes at its stage boundary.
+        refreshPending = !requery && !runningBots.current.size;
+        onChanged(requery);
+      }, 0);
+    };
+    const receiveStatus = (event: Event) => {
+      const items: IllustrationData[] = (event as CustomEvent<IllustrationData>).detail.items || [];
+      preparationRunning = items.some(item => item.params?.one_click_run_id && !isFinishedQueueItem(item));
+      if (refreshPending && !preparationRunning && !runningBots.current.size) refresh();
+    };
     window.addEventListener("illustration-completed", refresh);
-    return () => window.removeEventListener("illustration-completed", refresh);
+    window.addEventListener("illustration-queue-status", receiveStatus);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("illustration-completed", refresh);
+      window.removeEventListener("illustration-queue-status", receiveStatus);
+    };
   }, [onChanged]);
   return useCallback((botName: string, running: boolean) => {
     if (running) runningBots.current.add(botName);
