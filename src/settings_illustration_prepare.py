@@ -54,7 +54,7 @@ async def _call(handler, body=None, query=None):
     return result
 
 
-def register_data_preparation(server):
+def register_data_preparation(server, *, memory_cleanup=None):
     from modes.bot_mode import (
         _load_patch_settings, _load_tag_filter_profiles, bot_scope, bot_visual_artifact_dir,
         get_bot_visual_targets, handle_llm_batch_enqueue,
@@ -404,6 +404,18 @@ def register_data_preparation(server):
             run["status"] = "warning"
             run["error"] = f"배포 봇 변경 반영 실패: {exc}"
 
+    async def cleanup_stage_memory(run, stage):
+        if memory_cleanup is None:
+            return
+        stage["detail"] = "VRAM/RAM 정리 요청 중…"
+        try:
+            await memory_cleanup(stage["key"])
+        except Exception as exc:
+            record_issue(run, stage, f"VRAM/RAM 정리 요청 실패: {exc}")
+            print(f"[ILLUSTRATION_PREPARATION] {run['id']} {stage['key']} memory cleanup: {exc}")
+        finally:
+            stage["detail"] = "준비 중…"
+
     async def execute_retries(run, selected):
         async def retry_one(stage, failure):
             saved = run["_retries"][failure["id"]]
@@ -464,6 +476,10 @@ def register_data_preparation(server):
                     continue
                 stage.update(status="running", detail="준비 중…")
                 try:
+                    await cleanup_stage_memory(run, stage)
+                    if run["stop_requested"]:
+                        stage.update(status="cancelled", detail="안전 중단으로 실행하지 않음")
+                        continue
                     await execute_stage(run, stage)
                     if stage["status"] != "skipped":
                         stage["status"] = "cancelled" if run["stop_requested"] else "warning" if stage["issues"] else "completed"

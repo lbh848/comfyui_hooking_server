@@ -907,10 +907,11 @@ async def request_comfy_memory_cleanup(
     instance_id: int,
     port: int,
 ) -> dict[str, Any]:
-    """ComfyUI의 공식 /free API에 모델 언로드와 캐시 정리를 요청한다."""
+    """Request native cleanup and report WD14 cache release from the same API."""
 
     url = f"http://127.0.0.1:{port}/free"
     request_body = {"unload_models": True, "free_memory": True}
+    released_tag_models = None
     print(
         f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 요청: "
         f"url={url}, body={request_body}"
@@ -919,6 +920,9 @@ async def request_comfy_memory_cleanup(
         async with ClientSession(timeout=ClientTimeout(total=5)) as session:
             async with session.post(url, json=request_body) as response:
                 response_text = await response.text()
+                released = response.headers.get("X-Soya-WD14-Released-Models")
+                if released is not None:
+                    released_tag_models = int(released)
                 if not 200 <= response.status < 300:
                     print(
                         f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 응답 실패: "
@@ -945,12 +949,16 @@ async def request_comfy_memory_cleanup(
         f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 요청 접수: "
         f"url={url}"
     )
+    if released_tag_models is not None:
+        print(f"[COMFY_RUNTIME] Comfy #{instance_id} 태그 분석 모델 해제 확인: {released_tag_models}개")
     return {
         "ok": True,
         "instance_id": instance_id,
         "port": port,
         "requested": True,
+        "released_tag_models": released_tag_models,
         "message": (
+            (f"태그 분석 모델 {released_tag_models}개를 해제했습니다. " if released_tag_models else "") +
             f"Comfy #{instance_id}에 VRAM/RAM 정리를 요청했습니다. "
             "실행 중인 작업이 있으면 완료 후 적용됩니다."
         ),

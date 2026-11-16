@@ -230,9 +230,9 @@ export function ComfyRuntimePage() {
       if (action === "reload") await refresh(undefined, id);
       else {
         const revision = action === "start" ? await options.save(id) : draft.revision;
-        await runtimeRequest(`/${id}/${action}`, {}, revision);
+        const result = await runtimeRequest<{ message?: string }>(`/${id}/${action}`, {}, revision);
         if (mounted.current) setMessages((current) => ({ ...current, [id]: {
-          start: "Comfy 실행을 요청했습니다. 준비 상태는 실행 로그에서 확인하세요.", stop: "Comfy를 종료했습니다.", "free-memory": "VRAM/RAM 정리를 요청했습니다. 실행 중인 작업이 있으면 완료 후 적용됩니다.",
+          start: "Comfy 실행을 요청했습니다. 준비 상태는 실행 로그에서 확인하세요.", stop: "Comfy를 종료했습니다.", "free-memory": result.message || "VRAM/RAM 정리를 요청했습니다. 실행 중인 작업이 있으면 완료 후 적용됩니다.",
         }[action] }));
         await refresh();
       }

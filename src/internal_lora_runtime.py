@@ -24,6 +24,7 @@ from settings_internal_lora import allowed_path
 from settings_illustration import allowed_illustration_path, register_illustration_config
 from settings_assets import allowed_asset_path, register_asset_runtime
 from settings_illustration_prepare import register_data_preparation
+from comfy_runtime import request_comfy_memory_cleanup
 from external_connection import allowed_external_path, allowed_external_control, register_external_connection_control
 
 
@@ -132,6 +133,21 @@ def main() -> None:
         server._load_llm_keys_into_config()
         server._load_chansub_key()
 
+    async def cleanup_preparation_memory(stage_key):
+        task_key = {
+            "tag_analysis": "tag_analysis",
+            "face_tag_analysis": "tag_analysis",
+            "data_patch": "utility_debug",
+        }.get(stage_key)
+        if task_key:
+            if server.effective_execution_target(task_key) in server.REMOTE_COMFY_TARGETS:
+                return
+            instance_id, port = server.resolve_comfy_instance(task_key)
+        else:
+            # Local LLM workflows use Comfy #1; reuse the button's cleanup call.
+            instance_id, port = 1, server.REAL_COMFY_PORT
+        await request_comfy_memory_cleanup(instance_id=instance_id, port=port)
+
     async def preview(request):
         from modes import lora_mode, bot_lora_mode
         category = request.query.get("category")
@@ -177,7 +193,7 @@ def main() -> None:
     server.app.on_startup.append(startup)
     register_illustration_config(server)
     register_asset_runtime(server)
-    register_data_preparation(server)
+    register_data_preparation(server, memory_cleanup=cleanup_preparation_memory)
     from settings_illustration_regeneration import (
         register_character_image_regeneration,
         register_emotion_bulk_generation,
