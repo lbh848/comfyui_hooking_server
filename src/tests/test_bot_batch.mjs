@@ -41,3 +41,43 @@ test('stop prevents remaining cards from starting', async () => {
 test('an already stopped batch sends no requests', async () => {
     await ComfyBotBatch.runConcurrent([0, 1], async () => assert.fail('unexpected call'), {signal: AbortSignal.abort()});
 });
+
+test('image import uploads independent files in parallel and preserves replacement order and progress', {timeout: 3000}, async () => {
+    let releaseFirst, twoStarted;
+    const firstHeld = new Promise(resolve => { releaseFirst = resolve; });
+    const parallelStarted = new Promise(resolve => { twoStarted = resolve; });
+    const started = [], finished = [], progress = [];
+    let charactersAdded = false;
+    const entry = (name, content, index, action = 'added') => ({
+        name: 'Alice', file: new File([content], name, {type: 'image/png'}), action,
+        existingFilename: name, preflightIndex: index,
+    });
+    const work = ComfyBotBatch.importCharacters({
+        botName: 'Bot', names: ['Alice'], preflightId: 'preflight',
+        entries: [entry('same.png', 'first', 0), entry('same.png', 'second', 1, 'replaced'),
+            entry('other.png', 'other', 2), entry('skip.png', 'unchanged', 3, 'unchanged')],
+        onProgress: (_message, value) => progress.push(value),
+        request: async (path, body) => {
+            if (path === 'bot_mode/action') { charactersAdded = true; return {added: ['Alice']}; }
+            assert.equal(path, 'bot_mode/upload');
+            assert.equal(charactersAdded, true);
+            assert.equal(body.get('preflight_id'), 'preflight');
+            const content = await body.get('file').text();
+            started.push(content);
+            if (started.length === 2) twoStarted();
+            if (content === 'first') await firstHeld;
+            if (content === 'second') assert.ok(finished.includes('first'));
+            finished.push(content);
+            return {action: content === 'second' ? 'replaced' : 'added'};
+        },
+    });
+    try {
+        await parallelStarted;
+        assert.deepEqual(started, ['first', 'other']);
+    } finally { releaseFirst(); }
+    const result = await work;
+    assert.deepEqual(started, ['first', 'other', 'second']);
+    assert.deepEqual(result, {added: 1, uploaded: 2, replaced: 1, skipped: 1, errors: []});
+    assert.deepEqual(progress.at(-1), {completed: 4, total: 4});
+    assert.ok(progress.every((value, index) => !index || value.completed >= progress[index - 1].completed));
+});

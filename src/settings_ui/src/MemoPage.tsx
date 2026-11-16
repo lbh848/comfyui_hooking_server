@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, SettingsTabs } from "./components";
 import { loadMemo, MEMO_MAX_LENGTH, saveMemo } from "./memo";
 import { MemoTagSearch } from "./MemoTagSearch";
+import { MemoDanbooruSearch } from "./MemoDanbooruSearch";
 import "./memo.css";
 
 type MemoState = "loading" | "pending" | "saving" | "saved" | "error";
-type MemoTab = "note" | "tags";
+type MemoTab = "note" | "tags" | "danbooru";
 
 const memoTabs: Record<MemoTab, string> = {
   note: "메모",
   tags: "태그 검색기",
+  danbooru: "단부르 검색",
 };
 
 const statusLabels: Record<MemoState, string> = {
@@ -161,9 +163,13 @@ export function MemoPage() {
           </Panel>
           <p className="field-help">입력한 내용은 자동으로 저장됩니다.</p>
         </div>
-      ) : (
+      ) : tab === "tags" ? (
         <div role="tabpanel" id="memo-workspace-panel-tags" aria-labelledby="memo-workspace-tab-tags">
           <MemoTagSearch />
+        </div>
+      ) : (
+        <div role="tabpanel" id="memo-workspace-panel-danbooru" aria-labelledby="memo-workspace-tab-danbooru">
+          <MemoDanbooruSearch />
         </div>
       )}
     </div>

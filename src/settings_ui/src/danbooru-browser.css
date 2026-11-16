@@ -1,0 +1,10 @@
+.danbooru-browser { padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.danbooru-browser-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.danbooru-browser p { margin: 0; }
+.danbooru-browser-viewport { position: relative; min-height: 140px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.danbooru-browser-viewport.is-open { background: #fff; touch-action: none; user-select: none; }
+.danbooru-browser-viewport:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.danbooru-browser-viewport img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.danbooru-browser-viewport img[hidden] { display: none; }
+.danbooru-browser-keyboard { position: absolute; left: 0; top: 0; width: 1px; height: 1px; min-height: 0; opacity: 0; padding: 0; border: 0; pointer-events: none; }
+@media (max-width: 600px) { .danbooru-browser { padding: 10px; } .danbooru-browser-toolbar { gap: 6px; } .danbooru-browser-toolbar .button { font-size: 12px; padding: 7px 9px; } }

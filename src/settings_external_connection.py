@@ -7,6 +7,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+from configuration import config_path, read_config, settings_lock, write_config
 from external_connection import CONTROL_PREFIX, EXTERNAL_PORT, EXTERNAL_ROUTES, allowed_external_path
 
 
@@ -14,6 +15,47 @@ def register_external_connection(app, runtime, schema):
     state = {"port": EXTERNAL_PORT, "status": "stopped", "error": ""}
     sockets = set()
     connection_lock = asyncio.Lock()
+    path = config_path(runtime.root)
+    auto_start_task: asyncio.Task | None = None
+    auto_start_error = ""
+
+    def auto_start_settings():
+        return {"tailscale_auto_start": read_config(path).get("tailscale_auto_start") is True}
+
+    def save_auto_start(enabled):
+        with settings_lock(path):
+            config = read_config(path)
+            config["tailscale_auto_start"] = enabled
+            write_config(path, config)
+        return {"tailscale_auto_start": enabled}
+
+    async def connection_request(method, connection_path):
+        await runtime.start()
+        async with runtime.session.request(
+            method, runtime.url + CONTROL_PREFIX + "/" + connection_path,
+            headers={"X-Internal-Lora": runtime.token}, timeout=aiohttp.ClientTimeout(total=180),
+        ) as response:
+            result = await response.json()
+            if not isinstance(result, dict):
+                raise ValueError("외부 연결 응답 형식이 올바르지 않습니다.")
+            return result, response.status
+
+    async def auto_start():
+        nonlocal auto_start_error
+        try:
+            settings = await asyncio.to_thread(auto_start_settings)
+            if not settings["tailscale_auto_start"]:
+                return
+            async with connection_lock:
+                if state["status"] != "running":
+                    return
+                result, status = await connection_request("POST", "tailscale/start")
+                if status >= 400 or result.get("error"):
+                    raise RuntimeError(result.get("error") or "고정 주소를 발급하지 못했습니다.")
+            print("[EXTERNAL] 시작 시 고정 주소 자동 발급 완료")
+        except (RuntimeError, OSError, ValueError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            auto_start_error = f"시작 시 고정 주소 자동 발급 실패: {exc}"
+            print(f"[EXTERNAL] {auto_start_error}")
 
     @web.middleware
     async def external_requests(request, handler):
@@ -75,31 +117,46 @@ def register_external_connection(app, runtime, schema):
         return socket
 
     async def controls(request):
+        nonlocal auto_start_error
         if request.headers.get("X-Comfy-Settings") != "1":
             raise web.HTTPForbidden()
         if request.headers.get("X-Comfy-Settings-Schema") != schema:
             return web.json_response({"error": "삽화 화면을 새로고침해 주세요."}, status=409)
-        path = CONTROL_PREFIX + "/" + request.match_info["path"]
-        if request.method == "POST" and not path.endswith("/stop") and state["status"] != "running":
+        connection_path = request.match_info["path"]
+        if connection_path == "tailscale/auto-start":
+            try:
+                body = await request.json()
+                if not isinstance(body, dict) or type(body.get("tailscale_auto_start")) is not bool:
+                    raise ValueError("시작 시 자동 발급 설정은 켜기 또는 끄기로 지정하세요.")
+            except (ValueError, UnicodeDecodeError) as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            try:
+                result = await asyncio.to_thread(save_auto_start, body["tailscale_auto_start"])
+                return web.json_response(result, headers={"Cache-Control": "no-store"})
+            except (OSError, ValueError):
+                return web.json_response({"error": "자동 발급 설정을 저장할 수 없습니다. 다시 시도하세요."}, status=500)
+        if request.method == "POST" and not connection_path.endswith("/stop") and state["status"] != "running":
             return web.json_response({"error": state["error"] or "외부 연결 서버를 시작할 수 없습니다."}, status=503)
         try:
             async with connection_lock:
-                await runtime.start()
-                async with runtime.session.request(
-                    request.method, runtime.url + path, headers={"X-Internal-Lora": runtime.token},
-                    timeout=aiohttp.ClientTimeout(total=180),
-                ) as response:
-                    result = await response.json()
-                    if not isinstance(result, dict):
-                        raise ValueError("외부 연결 응답 형식이 올바르지 않습니다.")
-                    if request.method == "GET":
-                        result["gateway"] = dict(state)
-                    return web.json_response(result, status=response.status, headers={"Cache-Control": "no-store"})
+                result, status = await connection_request(request.method, connection_path)
+                if request.method == "GET":
+                    result["gateway"] = dict(state)
+                    result.update(await asyncio.to_thread(auto_start_settings))
+                    tailscale = result.get("tailscale", {})
+                    if auto_start_error and tailscale.get("status") != "running" and not tailscale.get("error"):
+                        tailscale["error"] = auto_start_error
+                elif connection_path.startswith("tailscale/") and status < 400:
+                    auto_start_error = ""
+                return web.json_response(result, status=status, headers={"Cache-Control": "no-store"})
         except (RuntimeError, OSError, ValueError, aiohttp.ClientError, asyncio.TimeoutError):
             return web.json_response({"error": "외부 연결 상태를 확인할 수 없습니다. 다시 시도하세요."}, status=503)
 
     async def stop_connections():
         state["status"] = "stopped"
+        if auto_start_task is not None and not auto_start_task.done():
+            auto_start_task.cancel()
+            await asyncio.gather(auto_start_task, return_exceptions=True)
         async with connection_lock:
             # Never launch a worker just to stop it.
             if runtime.session and not runtime.session.closed and runtime.process and runtime.process.poll() is None:
@@ -114,6 +171,7 @@ def register_external_connection(app, runtime, schema):
                         pass
 
     async def lifecycle(_app):
+        nonlocal auto_start_task
         public = web.Application(middlewares=[external_requests], client_max_size=200 * 1024 * 1024)
         public.on_response_prepare.append(external_headers)
         for method, path in EXTERNAL_ROUTES:
@@ -129,6 +187,8 @@ def register_external_connection(app, runtime, schema):
             state.update(status="running", error="")
         except OSError:
             state.update(status="error", error=f"외부 연결 포트 {EXTERNAL_PORT}을 사용할 수 없습니다. 이 포트를 사용하는 프로그램을 종료하고 공방을 다시 시작하세요.")
+        if state["status"] == "running":
+            auto_start_task = asyncio.create_task(auto_start())
         try:
             yield
         finally:
@@ -145,6 +205,7 @@ def register_external_connection(app, runtime, schema):
 
     prefix = "/api/illust/external-connection/"
     app.router.add_get(prefix + "{path:status}", controls)
+    app.router.add_post(prefix + "{path:tailscale/auto-start}", controls)
     app.router.add_post(prefix + "{path:(?:tunnel|tailscale)/(?:start|stop|restart)}", controls)
     app.router.add_get("/api/illust/connection-guide/{name:img[12]\\.jpg}", guide_image)
     app.cleanup_ctx.append(lifecycle)

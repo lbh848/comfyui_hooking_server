@@ -1,33 +1,35 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useUnsavedChanges } from "./unsavedChanges";
-import { ArrowLeft, ChevronRight, Copy, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Crop, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { IllustCharacterTags } from "./IllustCharacterTags";
+import { IllustSecondaryBotBatch } from "./IllustSecondaryBotBatch";
 import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
-import { CustomSystemInstruction } from "./IllustSystemInstruction";
+import { CustomSystemInstruction, customSystemInstructionTitle } from "./IllustSystemInstruction";
 import { IllustMatchingRules } from "./IllustMatchingRules";
 import { IllustExtra } from "./IllustExtra";
 import { IllustLoras } from "./IllustLoras";
 import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
-import { IllustAutoBatch } from "./IllustAutoBatch";
 import { IllustLoraBatch } from "./IllustLoraBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
+import { CharacterImportedLore } from "./IllustCharacterLore";
 import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
 import { useCharacterImageRegeneration } from "./useCharacterImageRegeneration";
 import { useEmotionBulkGeneration, type EmotionBulkMode } from "./useEmotionBulkGeneration";
 import { useEmotionImageRegeneration } from "./useEmotionImageRegeneration";
 import { useEmotionOutfitRegeneration } from "./useEmotionOutfitRegeneration";
 import { IllustDataPreparation, dataPreparationTitle } from "./IllustDataPreparation";
-import { IllustAssetProfileOutputInstruction, assetProfileOutputInstructionTitle } from "./IllustAssetProfileOutputInstruction";
+import { IllustPreparationFaceCrop } from "./IllustPreparationFaceCrop";
+import { IllustAssetProfileAliasSettings, assetProfileAliasSettingsTitle } from "./IllustAssetProfileAliasSettings";
 import { useModalWorkspace } from "./ModalWorkspace";
-import { assetInstructionSession, dataPreparationSession, clearWorkSession, useWorkSession } from "./illustrationWorkSession";
+import { assetProfileAliasSettingsSession, dataPreparationSession, clearWorkSession, useWorkSession } from "./illustrationWorkSession";
 import { useResources, type Resources } from "./useResources";
 import { enc, query, setBotDistributionToken, useIllustrationAction, useIllustrationResource, type IllustrationData } from "./illustration";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { useBotApi } from "./BotApiScope";
 
-const botToolLabels = { customSystemInstruction: "커스텀 시스템 지침", generation: "그리기 설정", rules: "매칭 기반 규칙", extra: "캐릭터 태그 일괄 관리" };
+const botToolLabels = { generation: "그리기 설정", rules: "매칭 기반 규칙", extra: "캐릭터 태그 일괄 관리" };
 const OUTFIT_SLIDE_MS = 420; // matches the carousel transition in illust.css
 const OUTFIT_SETTLE_MS = 220; // matches the carousel height transition in illust.css
 const genderTags = ["1girl", "1boy", "1male", "animal", "1girl, furry", "1boy, furry", "futanari", "monster", "monster girl"];
@@ -60,17 +62,18 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [copyName, setCopyName] = useState("");
   const [botName, setBotName] = useState("");
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
-  const [representativeBatchOpen, setRepresentativeBatchOpen] = useState(false);
-  const [autoBatchOpen, setAutoBatchOpen] = useState(false);
+  const [representativeBatches, setRepresentativeBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [loraBatchOpen, setLoraBatchOpen] = useState(false);
+  const [secondaryBotBatches, setSecondaryBotBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [gallery, setGallery] = useState<{ botName: string; name: string } | null>(null);
   const listScroll = useRef(0);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"detailed" | "compact">("compact");
   const [botTool, setBotTool] = useState<keyof typeof botToolLabels | null>(null);
-  const [assetInstructionBots, setAssetInstructionBots] = useWorkSession<string[]>(assetInstructionSession, []);
+  const [systemInstructionBots, setSystemInstructionBots] = useState<string[]>([]);
+  const [assetProfileAliasSettingsBots, setAssetProfileAliasSettingsBots] = useWorkSession<string[]>(assetProfileAliasSettingsSession, []);
   const [dataPreparationBots, setDataPreparationBots] = useWorkSession<string[]>(dataPreparationSession, []);
-  const restoredBots = useRef(new Set([...assetInstructionBots.map(name => `instruction:${name}`), ...dataPreparationBots.map(name => `preparation:${name}`)]));
+  const restoredBots = useRef(new Set([...assetProfileAliasSettingsBots.map(name => `instruction:${name}`), ...dataPreparationBots.map(name => `preparation:${name}`)]));
   const { entries: openModals } = useModalWorkspace();
   const [cardRevision, setCardRevision] = useState(0);
   const [botToolDirty, setBotToolDirty] = useState(false);
@@ -118,10 +121,10 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   useLayoutEffect(() => { window.scrollTo({ top: gallery ? 0 : listScroll.current }); }, [gallery]);
   function openBot(name: string) { void action.run(async () => { await onBotSelected(name); listScroll.current = 0; setBotName(name); setGallery(null); setSearch(""); setCharacterAddOpen(false); window.scrollTo({ top: 0 }); }, ""); }
   function charactersAdded() { setSearch(""); setGallery(null); setCardRevision(value => value + 1); resource.reload(); }
-  function openAssetInstruction(name: string) {
-    const existing = openModals.find(entry => entry.title === assetProfileOutputInstructionTitle(name));
+  function openAssetProfileAliasSettings(name: string) {
+    const existing = openModals.find(entry => entry.title === assetProfileAliasSettingsTitle(name));
     if (existing) existing.restore();
-    else setAssetInstructionBots(current => current.includes(name) ? current : [...current, name]);
+    else setAssetProfileAliasSettingsBots(current => current.includes(name) ? current : [...current, name]);
   }
 
   return <div className="illust-stack illust-bot-library">
@@ -155,9 +158,17 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     </Panel>
     {bot && <Panel title="툴박스"><div className="illust-body illust-bot-toolbox" aria-label={`${bot.name} 봇 도구`}>
       <button className="button" disabled={toolsReadOnly} onClick={() => setCharacterAddOpen(true)}><Plus size={14} />캐릭터 추가</button>
-      <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setRepresentativeBatchOpen(true)}><Images size={14} />대표 이미지 일괄 설정</button>
-      {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setAutoBatchOpen(true)}><Images size={14} />자동 일괄 설정</button>}
-      <button className="button" disabled={toolsReadOnly} onClick={() => openAssetInstruction(bot.name)}>에셋·프로필 출력 지침</button>
+      <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
+        const existing = openModals.find(entry => entry.title === `${bot.name} · 대표 이미지 일괄 설정`);
+        if (existing) existing.restore();
+        else setRepresentativeBatches(current => current.some(item => item.name === bot.name) ? current : [...current, { name: bot.name, characters: bot.characters }]);
+      }}><Images size={14} />대표 이미지 일괄 설정</button>
+      <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
+        const existing = openModals.find(entry => entry.title === `${bot.name} · 2차봇 자동 설정`);
+        if (existing) existing.restore();
+        else setSecondaryBotBatches(current => current.some(item => item.name === bot.name) ? current : [...current, { name: bot.name, characters: bot.characters }]);
+      }}>2차봇 자동 설정</button>
+      <button className="button" disabled={toolsReadOnly} onClick={() => openAssetProfileAliasSettings(bot.name)}>에셋·프로필·별칭 설정</button>
       <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
         const existing = openModals.find(entry => entry.title === dataPreparationTitle(bot.name));
         if (existing) existing.restore();
@@ -166,7 +177,11 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("generation")}>{botToolLabels.generation}</button>
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("rules")}>{botToolLabels.rules}</button>
       <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("extra")}>캐릭터 태그 일괄 관리</button>
-      <button className="button" disabled={toolsReadOnly} onClick={() => setBotTool("customSystemInstruction")}>커스텀 시스템 지침</button>
+      <button className="button" disabled={toolsReadOnly} onClick={() => {
+        const existing = openModals.find(entry => entry.workshop === api.scope && entry.title === customSystemInstructionTitle(bot.name));
+        if (existing) existing.restore();
+        else setSystemInstructionBots(current => current.includes(bot.name) ? current : [...current, bot.name]);
+      }}>커스텀 시스템 지침</button>
       {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setLoraBatchOpen(true)}>로라 일괄 적용</button>}
     </div></Panel>}
     {bot && gallery && <nav className="illust-breadcrumb" aria-label="봇 설정 위치">
@@ -206,17 +221,18 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
       </div>
     </div>
     {characterAddOpen && bot && <AddIllustrationCharacter key={bot.name} botName={bot.name} characters={bot.characters} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
-    {representativeBatchOpen && bot && <IllustRepresentativeBatch key={bot.name} botName={bot.name} characters={bot.characters} readOnly={locked || distributionAction.busy} onClose={() => setRepresentativeBatchOpen(false)} onChanged={() => { setCardRevision(value => value + 1); resource.reload(); }} />}
-    {autoBatchOpen && bot && <IllustAutoBatch key={bot.name} botName={bot.name} characters={bot.characters} readOnly={locked || distributionAction.busy} onClose={() => setAutoBatchOpen(false)} onChanged={() => { setCardRevision(value => value + 1); resource.reload(); }} />}
+    {secondaryBotBatches.map(item => <IllustSecondaryBotBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionBusy || !bots.some(bot => bot.name === item.name)} onClose={() => setSecondaryBotBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
+    {representativeBatches.map(item => <IllustRepresentativeBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionAction.busy} onClose={() => setRepresentativeBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {loraBatchOpen && bot && <IllustLoraBatch key={bot.name} botName={bot.name} inventory={inventory} readOnly={toolsReadOnly} onClose={() => setLoraBatchOpen(false)} onChanged={refreshCharacterStatus} />}
     {dataPreparationBots.map(name => <IllustDataPreparation key={name} botName={name} characters={bots.find(item => item.name === name)?.characters || []}
       initialBackgrounded={restoredBots.current.has(`preparation:${name}`)}
       readOnly={isLocked(name) || distributionBusy} onClose={() => { restoredBots.current.delete(`preparation:${name}`); setDataPreparationBots(current => current.filter(value => value !== name)); }} onChanged={refreshCharacterStatus} />)}
-    {assetInstructionBots.map(name => <IllustAssetProfileOutputInstruction key={name} botName={name} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)}
+    {assetProfileAliasSettingsBots.map(name => <IllustAssetProfileAliasSettings key={name} botName={name} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)}
       initialBackgrounded={restoredBots.current.has(`instruction:${name}`)}
-      onClose={() => { restoredBots.current.delete(`instruction:${name}`); clearWorkSession(`${api.scope}:instruction:${name}`); clearWorkSession(`${api.scope}:visual-guide:${name}`); setAssetInstructionBots(current => current.filter(value => value !== name)); }} onApplied={refreshCharacterStatus} />)}
-    {botTool === "customSystemInstruction" && bot && <CustomSystemInstruction key={bot.name} botName={bot.name} readOnly={toolsReadOnly} onClose={() => { setBotTool(null); setCardRevision(value => value + 1); }} />}
-    {botTool && botTool !== "customSystemInstruction" && bot && <Modal title={`${bot.name} · ${botToolLabels[botTool]}`} onClose={() => { if (botToolDirty) setDiscardBotTool(true); else { setBotTool(null); setCardRevision(value => value + 1); } }} closeDisabled={botToolBusy} className={botTool === "rules" ? "illust-matching-rules-modal" : botTool === "extra" ? "illust-extra-modal" : "illust-character-modal"} backgroundable={false}>
+      onClose={() => { restoredBots.current.delete(`instruction:${name}`); clearWorkSession(`${api.scope}:instruction:${name}`); clearWorkSession(`${api.scope}:visual-guide:${name}`); setAssetProfileAliasSettingsBots(current => current.filter(value => value !== name)); }} onApplied={refreshCharacterStatus} />)}
+    {systemInstructionBots.map(name => <CustomSystemInstruction key={name} botName={name} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)}
+      onClose={() => { setSystemInstructionBots(current => current.filter(value => value !== name)); setCardRevision(value => value + 1); }} />)}
+    {botTool && bot && <Modal title={`${bot.name} · ${botToolLabels[botTool]}`} onClose={() => { if (botToolDirty) setDiscardBotTool(true); else { setBotTool(null); setCardRevision(value => value + 1); } }} closeDisabled={botToolBusy} className={botTool === "rules" ? "illust-matching-rules-modal" : botTool === "extra" ? "illust-extra-modal" : "illust-character-modal"} backgroundable={false}>
       {botTool === "extra" ? <IllustExtra botSelected={bot.name} readOnly={toolsReadOnly} inventory={inventory} onChanged={refreshCharacterStatus} onBusyChange={setBotToolBusy} /> : botTool === "generation" ? <IllustBotGenerationSettings botName={bot.name} readOnly={toolsReadOnly} onDirtyChange={setBotToolDirty} onBusyChange={setBotToolBusy} /> : <IllustMatchingRules botName={bot.name} characterNames={(bot.characters || []).map((entry: IllustrationData) => String(entry.name || "").trim()).filter(Boolean)} readOnly={toolsReadOnly} onDirtyChange={setBotToolDirty} onBusyChange={setBotToolBusy} />}
     </Modal>}
     {discardBotTool && <Modal title="설정 닫기" backgroundable={false} onClose={() => setDiscardBotTool(false)}><p>저장하지 않은 변경을 버리고 닫을까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDiscardBotTool(false)}>계속 편집</button><button type="button" className="button danger" onClick={() => { setDiscardBotTool(false); setBotToolDirty(false); setBotTool(null); setCardRevision(value => value + 1); }}>변경 버리기</button></div></Modal>}
@@ -257,6 +273,8 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const [deleteCard, setDeleteCard] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [preview, setPreview] = useState<IllustrationData | null>(null);
+  const [faceCropTarget, setFaceCropTarget] = useState<IllustrationData | null>(null);
+  const [faceCropBusy, setFaceCropBusy] = useState(false);
   const [imageSearch, setImageSearch] = useState("");
   const [localGallery, setLocalGallery] = useState(false);
   const [summaryDetailsOpen, setSummaryDetailsOpen] = useState(false);
@@ -295,7 +313,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const regeneration = useCharacterImageRegeneration(botName, characterName, !!images.data?.images.some((item: IllustrationData) => item.generated), () => {
     images.reload(); onReload?.();
   });
-  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || renewNpcLifetimeAction.busy;
+  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || renewNpcLifetimeAction.busy || faceCropBusy;
   const renewNpcLifetime = () => {
     if (readOnly || busy || !draft?.npc_generated) return;
     void renewNpcLifetimeAction.run(async () => {
@@ -569,6 +587,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       setDraft(result.character); setBase(result.character);
     }} />;
   const editor = !draft || !card ? <div className="illust-body"><IllustrationLoading error={data?.error || resource.error} retry={onReload || resource.reload} /></div> : <form className="illust-character-editor" onSubmit={event => { event.preventDefault(); if (readOnly || busy) return; void action.run(saveCharacter); }}>
+      <CharacterImportedLore entries={draft.imported_lore || []} />
       <div className="illust-card-slots" aria-label={`${characterName} 외형 카드`}>
         <strong>캐릭터 카드</strong>
         {draft.profiles.map((item: IllustrationData, i: number) => <button type="button" key={item.id} className={`button ${index === i ? "primary" : ""}`} aria-pressed={index === i} aria-label={`${characterName} 카드 ${i + 1} · ${item.label}`} disabled={busy} onClick={() => { setIndex(i); setDetail(null); }}>{i + 1}{item.id === draft.default_visual_profile_id ? " · 기본" : ""}</button>)}
@@ -599,7 +618,11 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         </fieldset>
         <section className="illust-character-section"><div className="illust-actions"><h3>캐릭터 데이터</h3><button type="button" className="button" onClick={openImages}>대표 이미지 선택</button></div>
           {!images.data ? <IllustrationLoading error={images.error} retry={images.reload} /> : <div className="illust-character-data">
-            <div className="illust-face-data"><h4>얼굴</h4>{face ? <><button type="button" className="illust-reference-preview" onClick={() => setPreview(face)}><img src={api.media(face.url)} alt={`${characterName} ${card.label} 얼굴`} loading="lazy" /></button><p className="illust-image-prompt">{face.prompt || "프롬프트 없음"}</p></> : <div className="illust-face-empty">얼굴 이미지 없음</div>}</div>
+            <div className="illust-face-data"><h4>얼굴</h4>{face ? <><button type="button" className="illust-reference-preview" onClick={() => setPreview(face)}><img src={api.media(face.url)} alt={`${characterName} ${card.label} 얼굴`} loading="lazy" /></button><p className="illust-image-prompt">{face.prompt || "프롬프트 없음"}</p></> : <div className="illust-face-empty">얼굴 이미지 없음</div>}
+              <button type="button" className="button secondary small illust-face-crop-button" disabled={readOnly || busy || dirty || !savedCard || !referenceNames.length}
+                onClick={() => setFaceCropTarget({ character: characterName, visual_card_id: card.id, visual_card_index: index + 1, visual_card_label: card.label })}><Crop size={14} />수동 자르기</button>
+              <p className="field-help">{dirty || !savedCard ? "카드 변경 사항을 먼저 저장하세요." : !referenceNames.length ? "대표 이미지를 먼저 선택하고 저장하세요." : "메인 대표 이미지에서 얼굴 영역을 직접 선택해 저장합니다."}</p>
+            </div>
             <div className="illust-representative-data">{references.length ? references.map((item, i) => <article key={item.filename}>
               <h4>{i === 0 ? "메인 대표" : `대표 ${i + 1}`}</h4><button type="button" className="illust-reference-preview" onClick={() => setPreview(item)}><img src={api.media(item.url)} alt={`${characterName} ${card.label} 대표 ${i + 1}`} loading="lazy" /></button>
               <p className="illust-image-prompt">{item.prompt || "프롬프트 없음"}</p>
@@ -662,6 +685,15 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       onShowDetails={() => setSummaryDetailsOpen(true)} onEnter={onEnter} onDelete={onDelete} onRegenerate={regenerateImage} /> : editor}
     {summaryMode && <IllustrationFeedback {...regeneration} />}
     {summaryMode && summaryDetailsOpen && <Modal title={`${characterName} · ${card?.label || "캐릭터"} · 상세 보기`} onClose={() => { setSummaryDetailsOpen(false); setLocalGallery(false); }} closeDisabled={busy} backgroundable={false} className="illust-character-modal">{editor}</Modal>}
+    {faceCropTarget && <IllustPreparationFaceCrop botName={botName} issue={faceCropTarget} title={`${characterName} · ${faceCropTarget.visual_card_label} · 얼굴 수동 자르기`} readOnly={readOnly}
+      onClose={() => setFaceCropTarget(null)} onApply={async image => {
+        if (readOnly) throw new Error("읽기 전용 상태에서는 얼굴 이미지를 저장할 수 없습니다.");
+        setFaceCropBusy(true);
+        try {
+          await api.request("bot_mode/data_preparation", { action: "card_face_crop", bot_name: botName, character: faceCropTarget.character, visual_card_id: faceCropTarget.visual_card_id, image });
+          images.reload(); onReload?.();
+        } finally { setFaceCropBusy(false); }
+      }} />}
     {preview && <Modal title={preview.filename} onClose={() => setPreview(null)} className="illust-character-modal" backgroundable={false}><img className="illust-asset-preview" src={api.media(preview.url)} alt={preview.filename} /><div className="illust-actions">{regenerateButton(preview)}</div><IllustrationFeedback {...regeneration} /><details className="illust-section"><summary>이미지 프롬프트</summary><p className="illust-text">{preview.prompt || "프롬프트 없음"}</p>{preview.negative && <p className="illust-text">{preview.negative}</p>}</details></Modal>}
     {renameOpen && <Modal title="캐릭터 이름 변경" backgroundable={false} closeDisabled={renameAction.busy} onClose={() => setRenameOpen(false)}>
       <form className="illust-form" onSubmit={event => { event.preventDefault(); submitRename(); }}>

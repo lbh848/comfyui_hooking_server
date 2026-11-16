@@ -1,4 +1,4 @@
-"""Emotion-indexed profile candidates and routed vision representative selection."""
+"""Filename-indexed candidates and routed vision representative selection."""
 from __future__ import annotations
 
 import hashlib
@@ -17,28 +17,31 @@ IMAGE_EXTENSIONS = {".png", ".webp", ".jpg", ".jpeg", ".gif", ".bmp", ".avif"}
 
 def normalize_indices(value) -> list[str]:
     if not isinstance(value, (str, list)):
-        raise ValueError("감정 색인을 입력하세요.")
+        raise ValueError("검색 색인을 입력하세요.")
     values = re.split(r"[|,;\n]", value) if isinstance(value, str) else value
     indices = list(dict.fromkeys(str(word).strip().casefold() for word in values if str(word).strip()))
-    if not indices or len(indices) > 8 or any(len(word) > 80 for word in indices):
-        raise ValueError("감정 색인은 1~8개, 각 80자 이내로 입력하세요.")
+    if len(indices) > 8 or any(len(word) > 80 for word in indices):
+        raise ValueError("검색 색인은 최대 8개, 각 80자 이내로 입력하세요.")
     return indices
 
 
 def image_stem(filename: str) -> str:
     while Path(filename).suffix.lower() in IMAGE_EXTENSIONS:
-        filename = str(Path(filename).with_suffix(""))
+        filename = str(Path(filename).with_suffix("")).rstrip(".")
     return filename
 
 
 def candidate_identity(filename: str, indices: list[str]) -> tuple[str, str] | None:
     stem = image_stem(filename)
-    # Underscores delimit filename tokens, but letters within a word do not.
+    if not indices:
+        return re.sub(r"[_\s-]+", "_", stem.strip(" _-.")).casefold(), ""
+    # Indices are user-defined literal strings, not inferred filename fields.
+    # Prefer the most specific match when supplied indices overlap.
     for word in sorted(indices, key=len, reverse=True):
-        match = re.search(r"(?<![^\W_])" + re.escape(word) + r"(?![^\W_])", stem, re.IGNORECASE)
+        match = re.search(re.escape(word), stem, re.IGNORECASE)
         if match:
-            key = (stem[:match.start()] + stem[match.end():]).strip(" _-.")
-            key = re.sub(r"[_\s-]+", "_", key).casefold()
+            remainder = (stem[:match.start()] + stem[match.end():]).strip(" _-.")
+            key = re.sub(r"[_\s-]+", "_", remainder).casefold()
             return key, word
     return None
 
@@ -46,35 +49,40 @@ def candidate_identity(filename: str, indices: list[str]) -> tuple[str, str] | N
 def character_candidates(bot_name: str, character: dict, directory: Path, indices: list[str]) -> dict:
     groups = {}
     stats = []
+    all_candidates = []
+    all_stats = []
     directory = directory.resolve()
     for path in sorted(directory.iterdir() if directory.is_dir() else [], key=lambda path: path.name.casefold()):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS or path.name.startswith("_"):
             continue
         if path.resolve().parent != directory:
             continue
+        stat = path.stat()
+        file_stat = (path.name, stat.st_size, stat.st_mtime_ns)
+        candidate = {
+            "filename": path.name, "emotion": "",
+            "url": "/api/bot_mode/image/" + "/".join(quote(value, safe="") for value in (bot_name, character["name"], path.name)) + f"?v={stat.st_mtime_ns}",
+        }
+        all_candidates.append(candidate)
+        all_stats.append(file_stat)
         identity = candidate_identity(path.name, indices)
         if identity is None:
             continue
         key, emotion = identity
-        stat = path.stat()
-        stats.append((path.name, stat.st_size, stat.st_mtime_ns))
+        stats.append(file_stat)
         group = groups.setdefault(key, {"key": key, "label": key.replace("_", " "), "candidates": []})
-        group["candidates"].append({
-            "filename": path.name, "emotion": emotion,
-            "url": "/api/bot_mode/image/" + "/".join(quote(value, safe="") for value in (bot_name, character["name"], path.name)) + f"?v={stat.st_mtime_ns}",
-        })
+        group["candidates"].append({**candidate, "emotion": emotion})
     cards, _ = effective_character_cards(character, None)
     grouped = list(groups.values())
     used = set()
-    # Match saved cards by their appearance/outfit identity before reusing empty slots.
-    # A saved representative may use an emotion outside the requested candidate set.
+    # Match saved cards using the same explicit search criteria before reusing slots.
     for group in grouped:
         for card in cards:
             if card["id"] in used:
                 continue
             rep = next(iter(card.get("rep_images") or []), "")
             identity = candidate_identity(rep, indices)
-            rep_key = identity[0] if identity else re.sub(r"[_\s-]+", "_", image_stem(rep).rsplit("_", 1)[0]).casefold()
+            rep_key = identity[0] if identity else re.sub(r"[_\s-]+", "_", image_stem(rep).strip(" _-.")).casefold()
             if rep and rep_key == group["key"]:
                 group["visual_card_id"] = card["id"]
                 used.add(card["id"])
@@ -86,14 +94,21 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
     # The primary card cannot be removed. Reuse it if all candidates matched later cards.
     if grouped and cards and cards[0]["id"] not in {group["visual_card_id"] for group in grouped}:
         grouped[0]["visual_card_id"] = cards[0]["id"]
+    fallback_first = not grouped and bool(all_candidates)
+    if fallback_first:
+        # With no matching profile, update only the primary representative.
+        # Keep all images available for a manual choice and fingerprint checks.
+        grouped = [{"key": "__fallback__", "label": "전체 이미지", "visual_card_id": cards[0]["id"],
+                    "candidates": all_candidates, "fallback_first": True}]
+        stats = all_stats
     assigned = {group["visual_card_id"] for group in grouped}
-    removed = [card["id"] for card in cards if card["id"] not in assigned] if grouped else []
+    removed = [card["id"] for card in cards if card["id"] not in assigned] if grouped and not fallback_first else []
     fingerprint = hashlib.sha256(json.dumps([character, indices, stats], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return {
         "character": character["name"], "groups": grouped, "fingerprint": fingerprint,
         "current_count": len(cards), "removed_card_ids": removed,
         "new_count": sum(not group["visual_card_id"] for group in grouped),
-        "error": f"검색된 프로필 {len(grouped)}개가 최대 {MAX_VISUAL_CARDS}개를 초과합니다. 감정 색인을 좁혀 주세요." if len(grouped) > MAX_VISUAL_CARDS else "",
+        "error": f"검색된 프로필 {len(grouped)}개가 최대 {MAX_VISUAL_CARDS}개를 초과합니다. 검색 색인을 좁혀 주세요." if len(grouped) > MAX_VISUAL_CARDS else "",
     }
 
 
@@ -123,23 +138,25 @@ def checked_row(data, directory, body):
     if row["error"]:
         raise ValueError(row["error"])
     if not row["groups"]:
-        raise ValueError("감정 색인에 일치하는 후보가 없습니다.")
+        raise ValueError("대표로 설정할 이미지가 없습니다.")
     if row["fingerprint"] != body.get("fingerprint"):
         raise ValueError("검색 후 카드 또는 이미지가 변경되었습니다. 후보를 다시 검색하세요.")
     return row
 
 
 async def select_candidate(group: dict, directory: Path, *, prompt: str = "", metadata: dict | None = None, metadata_sink: dict | None = None) -> dict:
-    from modes.llm_service import callLLMVisionTask, create_llm_execution_context
-    from modes.llm_prompt_edit import parse_llm_json
-
     candidates = group["candidates"]
     if not candidates:
         raise ValueError("대표 이미지 후보가 없습니다.")
+    if group.get("fallback_first"):
+        return {"filename": candidates[0]["filename"], "reason": "검색 색인에 맞는 후보가 없어 첫 번째 이미지를 선택했습니다.", "automatic_first": True}
     if len(candidates) > 16:
-        raise ValueError("한 프로필의 후보는 최대 16장입니다. 감정 색인을 좁혀 주세요.")
+        raise ValueError("한 프로필의 후보는 최대 16장입니다. 검색 색인을 좁혀 주세요.")
     if len(candidates) == 1:
         return {"filename": candidates[0]["filename"], "reason": "후보가 한 장이므로 해당 이미지를 선택했습니다.", "automatic_single": True}
+    from modes.llm_service import callLLMVisionTask, create_llm_execution_context
+    from modes.llm_prompt_edit import parse_llm_json
+
     # The local Gemma workflow accepts one image. A labelled comparison sheet
     # keeps every candidate visible in the same inference, including on fallback.
     from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -180,7 +197,7 @@ async def select_candidate(group: dict, directory: Path, *, prompt: str = "", me
 
     messages = [{"role": "system", "content": prompt.strip() or PROMPT_PATH.read_text(encoding="utf-8")},
                 {"role": "user", "content": f"The comparison sheet contains {len(candidates)} separate candidate images of the same character appearance and outfit. Compare the numbered panels, then select exactly one representative. Candidate numbers refer to the labels above the panels. Return only the requested JSON."}]
-    context = create_llm_execution_context(TASK_KEY, call_name="자동 일괄 설정", json_mode=True,
+    context = create_llm_execution_context(TASK_KEY, call_name="자동 대표 설정", json_mode=True,
                                           metadata={**(metadata or {}), "profile_key": group["key"], "candidate_count": len(candidates), "vision_image_count": 1})
     raw = await callLLMVisionTask(TASK_KEY, messages, image_bytes=encoded.getvalue(), json_mode=True, result_validator=validate, execution_context=context, metadata_sink=metadata_sink)
     valid, error = validate(raw)

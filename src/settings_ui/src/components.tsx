@@ -144,6 +144,7 @@ export function Modal({
   initialBackgrounded = false,
   closeOnBackdrop = false,
   showHeader = true,
+  headerActions,
   className = "",
 }: {
   title: string;
@@ -155,6 +156,7 @@ export function Modal({
   initialBackgrounded?: boolean;
   closeOnBackdrop?: boolean;
   showHeader?: boolean;
+  headerActions?: ReactNode;
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -224,8 +226,9 @@ export function Modal({
       }}
     >
       <div className="modal-content">
-        {showHeader && <header>
+        {showHeader && <header className={headerActions ? "modal-header-with-actions" : undefined}>
           <h2 id={`${id}-title`}>{title}</h2>
+          {headerActions && <div className="modal-header-actions">{headerActions}</div>}
           <div className="modal-window-actions">
             {backgroundable && <button type="button" className="button secondary modal-background-button" onClick={() => setBackgrounded(true)} title="백그라운드로 보내기" aria-label="백그라운드로 보내기"><Minus size={16} /><span>백그라운드</span></button>}
             <button type="button" className="icon-button" onClick={onClose} disabled={closeDisabled} aria-label="닫기" title="닫기">

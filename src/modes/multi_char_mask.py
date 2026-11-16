@@ -65,6 +65,8 @@ def validate_multi_char_layout(
     require_character_prompt: bool | None = None,
 ) -> dict:
     """LLM 레이아웃과 선택적 2-pass 프롬프트를 검증해 왼쪽→오른쪽으로 정규화한다."""
+    from illustration_reference_assets import REFERENCE_REFS
+
     if require_character_prompt is None:
         require_character_prompt = require_prompt_separation
     names = [str(name or "").strip() for name in expected_names]
@@ -185,6 +187,8 @@ def validate_multi_char_layout(
             "height": height,
             "_source_index": source_index,
         }
+        if raw.get("ref") in REFERENCE_REFS:
+            normalized_region["ref"] = raw["ref"]
         if boxes:
             normalized_region["boxes"] = boxes
         if "positive" in raw or positive:
@@ -418,7 +422,7 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
         illustration_flow.llm_metadata(validation_warnings=[{
             "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(context)}])
 
-    # 재생성 스냅샷에는 고정 마스크에 필요한 기하 정보만 저장한다. 캐릭터별/배경
+    # 재생성 스냅샷에는 고정 마스크의 기하와 캐릭터별 ref를 저장한다. 캐릭터별/배경
     # 프롬프트는 [MULTI_CHAR] 제어 블록이 수정 재생성마다 갱신하므로 중복 저장하지 않는다.
     mask_layout = {
         "mask_width": int(normalized_layout.get("mask_width") or DEFAULT_MASK_SIZE),
@@ -433,6 +437,7 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
                 "width": float(region.get("width")),
                 "height": float(region.get("height")),
                 "channel": str(region.get("channel") or ""),
+                **({"ref": region["ref"]} if "ref" in region else {}),
                 **({"boxes": deepcopy(region["boxes"])} if region.get("boxes") else {}),
             }
             for region in normalized_layout["regions"]

@@ -99,7 +99,9 @@ def time_place_messages(prompts, names, prior_state, past_text, segmented,
     return [
         {"role": "system", "content": role_context(
             prompts["time_place"], "", genre=(toggles or {}).get("genre", ""),
-            genre_prompt=prompts.get("genre", ""))},
+            genre_prompt=prompts.get("genre", ""),
+            genre_work_title=(toggles or {}).get("genre_work_title", ""),
+            genre_secondary_prompt=prompts.get("genre_secondary", ""))},
         {"role": "user", "content": "# CURRENT CANONICAL CHARACTERS\n"
          + variable(json.dumps(names, ensure_ascii=False), "현재 대화의 등록 인물")
          + "\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY NARRATIVE TRANSITIONS)\n"
@@ -340,7 +342,7 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             "independent of the assigned scene anchors and cast; choose its own supported story instant "
             "and canonical participants using the full Key Visual context. Never copy its state into an ordinary scene. "
             + ("Use one JSON object. Both keyvis and each scene use background_prompt, composition_prompt, "
-               "regions (name, character_prompt, x, y, width, height). Only scenes have slot. "
+               "regions (name, character_prompt, ref, x, y, width, height). Only scenes have slot. "
                if mask_inline else
                "Use TOON inside <lb-xnai>. The keyvis object uses camera, characters "
                "(name, positive, position, outfit_state), scene, supplement. "
@@ -389,10 +391,10 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             + ("anchor_segment (its source instant), x/y/width/height (page-local placement), "
                "dialogue [{speaker,text,x,y,width}] (panel-local placement), " if manga_script else "")
             + "and regions aligned with the slot's characters array (character_prompt: pose/expression/placement, "
-            "x, y, width, height in panel-local coordinates). Do not repeat names or shared appearance in regions. "
+            "ref, x, y, width, height in panel-local coordinates). Do not repeat names or shared appearance in regions. "
             "Use null for an absent character, keeping the other indices unchanged; [] means no depicted characters. " if manga else
             ". Each scene has slot, background_prompt, composition_prompt, regions "
-            "(name, character_prompt, x, y, width, height). " if mask_inline else
+            "(name, character_prompt, ref, x, y, width, height). " if mask_inline else
             ". Each scene has slot, camera, characters (name, positive, position), scene, supplement. ")
          + ("Each scene belongs to ONE 3- or 4-panel page. "
             + ("PLAN OFF: the prepared scenes have selection intent only. Create the page layout, "
@@ -738,12 +740,21 @@ def lb_extra_system_prompt_block(system_prompt):
     return "# TRUSTED ACTIVE BOT IMAGE POLICY\n" + variable(system_prompt, "lb-xnai.lb.extra 시스템 프롬프트")
 
 
-def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""):
+def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt="",
+                 genre_work_title="", genre_secondary_prompt=""):
     genre = str(genre or "").strip()
     genre_context = (
         "# GENRE AND WORLD SETTING\nDepiction genre: " + variable(genre, "묘사 장르")
         + "\n\n" + genre_prompt
     ) if genre else ""
+    if genre == "secondary_bot":
+        title = str(genre_work_title or "").strip()
+        if not title:
+            raise ValueError("2차봇의 작품명을 입력하세요.")
+        genre_context = prompt_join("\n\n", (part for part in (
+            "# GENRE AND WORLD SETTING\nSetting mode: existing fictional work\nSource work: "
+            + variable(title, "2차봇 작품명"), genre_prompt, genre_secondary_prompt,
+        ) if part))
     return prompt_join("\n\n", (part for part in (protected,
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
         genre_context) if part))
@@ -1026,7 +1037,9 @@ def npc_generation_messages(prompts, candidates, past_text, segmented, toggles):
     return [
         {"role": "system", "content": prompt_join("\n\n", [
             instructions,
-            role_context("", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", "")),
+            role_context("", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""),
+                         genre_work_title=toggles.get("genre_work_title", ""),
+                         genre_secondary_prompt=prompts.get("genre_secondary", "")),
         ])},
         {"role": "user", "content": prompt_join("\n\n", [
             "# NPC CANDIDATES\n" + variable(json.dumps(candidates, ensure_ascii=False), "미등록 등장인물"),
@@ -1215,10 +1228,10 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
             mask = mask.replace("empty-space information.", "empty-space information, plus the explicitly required scene classification.")
         shape = ('{"keyvis":{"background_prompt":"...","composition_prompt":"...",'
                  '"regions":[{"name":"canonical name or NPC role label","character_prompt":"final image tags",'
-                 '"x":number,"y":number,"width":number,"height":number}]}}'
+                 '"ref":"body","x":number,"y":number,"width":number,"height":number}]}}'
                  if keyvis else '{"scenes":[{"slot":"Cxxx","background_prompt":"...",'
                  '"composition_prompt":"...","regions":[{"name":"canonical name or NPC role label",'
-                 '"character_prompt":"final image tags",'
+                 '"character_prompt":"final image tags","ref":"body",'
                  '"x":number,"y":number,"width":number,"height":number}]}]}')
         if manga:
             mask = (
@@ -1247,7 +1260,7 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
                      + '"canvas":[1504,496],'
                      '"background_prompt":"this panel camera, setting and lighting",'
                      '"composition_prompt":"visible action and placement of people",'
-                     '"regions":[{"character_prompt":"pose, expression and placement",'
+                     '"regions":[{"character_prompt":"pose, expression and placement","ref":"body",'
                      '"x":number,"y":number,"width":number,"height":number}]}]}]}')
         system_prompt = prompt_join("\n\n", (part for part in (
             generation.strip(),
@@ -1272,6 +1285,16 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
              if manga else
              "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its subject's visible identity, current wardrobe or coverage and main pose/action, whether registered or NPC. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own.")
             + ("" if keyvis else " For a source-supported image with no independently depicted person, return an empty regions array and describe its composition without inventing a person."),
+            "REFERENCE CHOICE\nEvery region includes exactly one `ref` string: `body` or `face`. "
+            "Compare that region's depicted outfit with the supplied selected Profile's `default_outfit`, "
+            "or the supplied reference outfit in `lb_extra` when there is no Profile. "
+            "Use `body` when it is still essentially the supplied outfit with only minor changes. "
+            "Use `face` when it is a different outfit or the supplied outfit has changed substantially, "
+            "including major garment replacement or removal. Judge each character and each image independently. "
+            "Current tracked outfit and story state determine what is depicted; they do not replace the "
+            "reference outfit used for this comparison. If no reference outfit is supplied, use `body`. "
+            "Do not change the depicted outfit to match the reference. This field selects a reference image, "
+            "not prompt text; do not put `ref`, `body` or `face` control values into image descriptions.",
             ("CANVAS\n" + variable(json.dumps({key: value for key, value in canvas_sizes.items()
                                                if key in ("solo", "group")}, ensure_ascii=False),
                                    "인물 수별 실제 캔버스 크기")
@@ -1291,13 +1314,15 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
 def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profiles, tracking, past_text, slotted,
                             *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None,
                             mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note="", toggles=None,
-                            genre_prompt="", moss=False):
+                            genre_prompt="", genre_secondary_prompt="", moss=False):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     manga = moss and (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
     # Combined generation already receives this shared context from DETAIL.
     if not (toggles or {}).get("keyvis_in_detail_enabled"):
         keyvis_system = role_context(
-            keyvis_system, "", genre=(toggles or {}).get("genre", ""), genre_prompt=genre_prompt)
+            keyvis_system, "", genre=(toggles or {}).get("genre", ""), genre_prompt=genre_prompt,
+            genre_work_title=(toggles or {}).get("genre_work_title", ""),
+            genre_secondary_prompt=genre_secondary_prompt)
     # MOSS has no V3 mask; its combined call already carries the bot policy
     # from DETAIL, so KEYVIS adds neither mask instructions nor a second copy.
     if not moss and (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False)):

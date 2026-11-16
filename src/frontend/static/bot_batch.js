@@ -98,11 +98,19 @@ globalThis.ComfyBotBatch = (() => {
         const uploads = entries.filter(entry => entry.action !== 'unchanged');
         const total = names.length + uploads.length;
         let completed = 0;
-        const progress = () => onProgress?.(`처리 ${completed}/${total} · 동일 이미지 ${result.skipped}장 건너뜀`);
+        let lastProgress = -Infinity;
+        const progress = (message) => {
+            const now = Date.now();
+            // Thousands of small images must not redraw the whole import form
+            // for every response. Always report stage changes and completion.
+            if (!message && completed !== total && now - lastProgress < 100) return;
+            lastProgress = now;
+            onProgress?.(message || `처리 ${completed}/${total} · 동일 이미지 ${result.skipped}장 건너뜀`, {completed, total});
+        };
         const failedNames = new Set();
         progress();
         if (names.length) {
-            onProgress?.(`캐릭터 ${names.length}개 일괄 추가 중…`);
+            progress(`캐릭터 ${names.length}개 일괄 추가 중…`);
             try {
                 const data = await request('bot_mode/action', {action: 'add_character', bot_name: botName, char_names: names});
                 result.added = (data.added || []).length;
@@ -115,6 +123,7 @@ globalThis.ComfyBotBatch = (() => {
                 errors.push(error.message || String(error));
             }
             completed += names.length;
+            progress();
         }
 
         const groups = new Map();

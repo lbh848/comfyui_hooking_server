@@ -128,6 +128,7 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .modal.illust-rep-batch-modal { width: min(1600px, calc(100vw - 32px)); max-width: none; height: calc(100dvh - 48px); }
 .illust-rep-batch-modal > .modal-content { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
 .illust-rep-batch-modal > .modal-content > header { flex-shrink: 0; margin-bottom: 16px; }
+.button.illust-auto-representative-button { min-width: 168px; min-height: 44px; padding: 10px 18px; font-size: 14px; font-weight: 700; }
 .illust-rep-batch-modal > .modal-content > .illust-form { flex: 1; min-height: 0; gap: 12px; }
 .illust-rep-batch-modal > .modal-content > .illust-form > * { flex-shrink: 0; }
 .illust-rep-batch-modal > .modal-content > .illust-form > :is(.illust-rep-batch-rows, .illust-rep-batch-gallery) { flex: 1; min-height: 0; overflow-y: auto; }
@@ -167,10 +168,6 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-rep-batch-table thead th { position: sticky; top: 0; background: var(--panel); }
 .illust-rep-batch-table-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .illust-rep-batch-table-heading strong { font-size: 14px; overflow-wrap: anywhere; }
-.illust-auto-batch-characters { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 12px 0; }
-.illust-auto-batch-modal > .modal-content > .illust-form { overflow-y: auto; overscroll-behavior: contain; }
-.illust-auto-batch-modal .illust-rep-batch-table th:first-child { width: 140px; overflow-wrap: anywhere; }
-.illust-auto-batch-modal .illust-rep-batch-table caption { text-align: left; padding: 8px 0; }
 .illust-rep-batch-table-heading .button { margin-left: auto; }
 .illust-rep-batch-table .illust-rep-batch-image > span[title] { min-height: 3em; line-height: 1.5; }
 .illust-rep-batch-image { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
@@ -194,8 +191,8 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
   .illust-rep-batch-modal > .modal-content { height: auto; min-height: 100%; overflow: visible; }
   .illust-rep-batch-modal > .modal-content > .illust-form { flex: none; }
   .illust-rep-batch-modal > .modal-content > .illust-form > :is(.illust-rep-batch-rows, .illust-rep-batch-gallery) { flex: none; overflow-y: visible; }
-  .illust-rep-batch-main-modal > .modal-content { height: 100%; min-height: 0; overflow: hidden; }
-  .illust-rep-batch-main-modal > .modal-content > .illust-form { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+  :is(.illust-rep-batch-main-modal, .illust-rep-batch-gallery-modal) > .modal-content { height: 100%; min-height: 0; overflow: hidden; }
+  :is(.illust-rep-batch-main-modal, .illust-rep-batch-gallery-modal) > .modal-content > .illust-form { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 }
 .illust-character-list-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; scroll-margin-top: 80px; }
 .illust-character-list-heading h2 { font-size: 15px; margin: 0; }
@@ -411,6 +408,32 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-batch-dropzone { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 28px 16px; border: 1px dashed var(--control-border); border-radius: 8px; background: var(--lavender); color: var(--muted); font: inherit; cursor: pointer; }
 .illust-batch-dropzone.dragging, .illust-batch-dropzone:hover { border-color: var(--rose); color: var(--ink); }
 .illust-batch-dropzone:disabled { opacity: .5; cursor: default; }
+.illust-archive-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.illust-archive-input { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.illust-archive-input > strong { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+.illust-archive-input .illust-batch-dropzone { flex: 1; min-height: 110px; }
+.illust-archive-files { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.illust-archive-files li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.illust-archive-files li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.illust-archive-files .button { flex-shrink: 0; }
+.illust-imported-lore { display: grid; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.illust-imported-lore h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0; font-size: 14px; }
+.illust-lore-list { display: grid; gap: 8px; max-height: 460px; overflow-y: auto; }
+.illust-lore-entry { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
+.illust-lore-entry summary { cursor: pointer; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.illust-lore-entry summary .field-help { display: block; margin-top: 5px; font-weight: 400; }
+.illust-lore-content { margin-top: 12px; min-width: 0; font-size: 12px; }
+.illust-lore-content dl { display: grid; gap: 8px; margin: 0; }
+.illust-lore-content dl > div { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 8px; }
+.illust-lore-content dt { color: var(--muted); }
+.illust-lore-content dd { margin: 0; overflow-wrap: anywhere; }
+.illust-lore-text { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.illust-lore-targets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.illust-lore-targets .field { flex: 1 1 200px; min-width: 0; }
+.illust-cbs-preview { min-height: 120px; max-height: 260px; overflow: auto; padding: 10px 12px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 400; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.illust-cbs-preview:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.illust-cbs-preview del { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; text-decoration-thickness: 1px; border-radius: 2px; }
+@media (max-width: 600px) { .illust-archive-inputs { grid-template-columns: minmax(0, 1fr); } }
 .illust-batch-rule { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .illust-batch-rule .field { flex: 1 1 120px; min-width: 0; }
 .illust-batch-rule .illust-batch-pattern { flex: 2 1 240px; }
@@ -419,7 +442,9 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-batch-preview table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 .illust-batch-preview th, .illust-batch-preview td { padding: 10px 12px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; border-bottom: 1px solid var(--line); }
 .illust-batch-preview th { background: var(--lavender); }
-.illust-batch-preview th:last-child { width: 42%; }
+.illust-batch-preview th:nth-child(3) { width: 42%; }
+.illust-batch-preview th:last-child { width: 44px; padding: 10px 4px; text-align: center; }
+.illust-batch-preview td:last-child { padding: 8px 4px; text-align: center; }
 .illust-character-row { overflow: hidden; scroll-margin-top: 80px; }
 .illust-character-editor { min-width: 0; }
 .illust-card-slots { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 20px; background: var(--lavender); border-bottom: 1px solid var(--line); }
@@ -442,6 +467,7 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-reference-preview { display: block; width: 100%; border: 1px solid var(--line); background: var(--lavender); border-radius: 7px; padding: 0; cursor: zoom-in; overflow: hidden; }
 .illust-reference-preview img { display: block; width: 100%; height: 240px; object-fit: contain; }
 .illust-face-data .illust-reference-preview img { height: 160px; }
+.illust-face-crop-button { width: 100%; margin-top: 10px; }
 .illust-face-empty, .illust-reference-empty { padding: 28px 12px; border: 1px dashed var(--line); border-radius: 7px; color: var(--muted); font-size: 11px; text-align: center; }
 .illust-reference-empty { align-self: start; flex: 1; }
 .illust-image-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 110px; overflow: auto; font-size: 11px; line-height: 1.65; color: var(--muted); }

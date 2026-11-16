@@ -2650,6 +2650,7 @@ def _capture_illustration_runtime_snapshot(
         reset_bot_scope(bot_scope_token)
     raw_toggles = _illustration_raw_toggles_for_workshop(config_snapshot, workshop=workshop)
     raw_toggles["genre"] = str(bot.get("genre") or "").strip()
+    raw_toggles["genre_work_title"] = str(bot.get("genre_work_title") or "").strip()
     raw_toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
         illustration_workflow_type
     )
@@ -6368,9 +6369,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 # rules before handing the layout to that builder.
                 moss_layout = raw_body.get("illustration_moss_layout")
                 if isinstance(moss_layout, dict):
-                    raw_body["illustration_moss_layout"], applied_moss_rules = (
+                    from modes.moss_prompt_builder import apply_character_image_name_tags
+                    moss_layout, applied_moss_rules = (
                         _apply_moss_prompt_word_rules(moss_layout, scene_word_rules)
                     )
+                    raw_body["illustration_moss_layout"] = apply_character_image_name_tags(
+                        moss_layout, characters_for_parse, character_aliases)
                     if applied_moss_rules:
                         print(
                             f"[WORD_RULE] MOSS 레이아웃 태그 규칙 적용: "
@@ -6662,6 +6666,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         detected, _bot_for_build, tags, settings, bot_name,
                         multi_char_context=multi_char_prompt_context,
                         insert_rules=scene_word_rules,
+                        reference_regions=(queued_multi_char.get("layout") or {}).get("regions")
+                            or raw_body.get("illustration_reference_regions"),
                     )
                     negative = builder.build_negative_prompt(
                         tags,
@@ -9015,6 +9021,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_defer_postprocess": "composite_layer" in descriptor or npc_render_bot is not None or bool(defer_postprocess)
                 and illust_toggles["illustration_output_mode"] not in ("manga", "manga_both"),
             "illustration_visual_states": _descriptor_visual_states(descriptor),
+            "illustration_reference_regions": [
+                {"name": character["name"], "ref": character["ref"]}
+                for character in descriptor.get("characters") or []
+                if character.get("ref") in ("body", "face")
+            ],
             "illustration_anonymous_partner_fragment": bool(
                 descriptor.get("anonymous_partner_fragment", False)
             ),
@@ -11967,6 +11978,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             toggles = illustration_context_pipeline.merged_toggles(raw_toggles)
             toggles.pop("original_asset_instruction", None)
             toggles.pop("genre", None)
+            toggles.pop("genre_work_title", None)
             toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
                 app_config.get("illustration_workflow_type")
             )
@@ -11980,6 +11992,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             return web.json_response({"error": "toggles must be object"}, status=400)
         raw = copy.deepcopy(raw)
         raw.pop("genre", None)
+        raw.pop("genre_work_title", None)
         if raw.pop("original_asset_instruction", None) is not None:
             print(
                 "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction 저장 요청을 "
@@ -11988,6 +12001,7 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
         toggles = illustration_context_pipeline.merged_toggles(raw)
         toggles.pop("original_asset_instruction", None)
         toggles.pop("genre", None)
+        toggles.pop("genre_work_title", None)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")
@@ -13559,6 +13573,11 @@ async def _enqueue_illustration_session_slot(
         "illustration_regenerate_session_id": session_id,
         "illustration_regenerate_slot": slot,
         "illustration_visual_states": _descriptor_visual_states(descriptor),
+        "illustration_reference_regions": [
+            {"name": character["name"], "ref": character["ref"]}
+            for character in descriptor.get("characters") or []
+            if character.get("ref") in ("body", "face")
+        ],
         "illustration_anonymous_partner_fragment": bool(
             descriptor.get("anonymous_partner_fragment", False)
         ),
@@ -32265,6 +32284,8 @@ app.router.add_get("/api/bot_mode/auto_face_tag_prompt", handle_get_auto_face_ta
 app.router.add_post("/api/bot_mode/auto_face_tag_prompt", handle_set_auto_face_tag_prompt)
 app.router.add_get("/api/bot_mode/auto_face_tag_test_image", handle_get_auto_face_tag_test_image)
 app.router.add_post("/api/bot_mode/auto_classify_face_tags", handle_auto_classify_face_tags)
+from modes.bot_name_tags import handle_suggest_name_tag
+app.router.add_post("/api/bot_mode/suggest_name_tag", handle_suggest_name_tag)
 app.router.add_post("/api/bot_mode/llm_batch_enqueue", handle_llm_batch_enqueue)
 app.router.add_get("/api/bot_mode/lb_extra_refine_prompt", handle_get_lb_extra_refine_prompt)
 app.router.add_post("/api/bot_mode/lb_extra_refine_prompt", handle_set_lb_extra_refine_prompt)

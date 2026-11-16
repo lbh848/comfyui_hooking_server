@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 import workflow_profiles
 
+from illustration_reference_assets import REFERENCE_REFS, reference_stage_delivery
 from modes.prompt_path_normalizer import _CONTROL_BLOCK_HEADER_RE, _normalize_payload_paths
 
 SCHEMA = "soya.illustration.v2"
@@ -1368,16 +1369,19 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
                     print(f"[SnapRef] {entry['CHAR']}: 대표 이미지가 없어 얼굴 이미지 사용")
                 if images:
                     reference = {"CHAR": entry["CHAR"], "asset": embed(images[0])}
+                    if entry.get("ref") in REFERENCE_REFS:
+                        reference["ref"] = entry["ref"]
                     if face:
                         reference["face_asset"] = embed(face)
                     snapref["references"].append(reference)
-                    secondary = snapref.get("secondary_reference", "none")
-                    second = None
-                    if secondary == "representative":
-                        second = images[1] if len(images) > 1 else None
-                    elif secondary == "face":
-                        second = face if face != images[0] else None
-                    if secondary in {"face", "representative"}:
+                    modes = {reference_stage_delivery(snapref, stage) for stage in ("first", "face")}
+                    for secondary in ("face", "representative"):
+                        if secondary not in modes:
+                            continue
+                        if secondary == "representative":
+                            second = images[1] if len(images) > 1 else None
+                        else:
+                            second = face if face != images[0] else None
                         if second is None:
                             label = "얼굴 이미지" if secondary == "face" else "두 번째 대표 이미지"
                             print(f"[SnapRef] {entry['CHAR']}: {label}가 없어 대표 이미지 1장 사용")

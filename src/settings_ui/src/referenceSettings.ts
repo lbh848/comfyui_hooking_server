@@ -8,6 +8,15 @@ export const referenceDeliveryOptions = [
   ["none", "대표 이미지만"], ["face_only", "얼굴 이미지만"], ["face", "대표 + 얼굴 이미지"],
   ["representative", "대표 + 두 번째 대표 이미지"], ["stage", "1st·HD·HF에는 대표 / FD·ED에는 얼굴 이미지"],
 ] as const;
+export const referenceStageDeliveryOptions = [
+  ...referenceDeliveryOptions.filter(([value]) => value !== "stage"),
+  ["llm", "LLM이 결정"],
+] as const;
+
+export function referenceStageDelivery(settings: AssetRecord, stage: "primary" | "detailer"): string {
+  const legacy = settings.snapref_secondary_reference || "none";
+  return settings[`snapref_${stage}_reference`] || (legacy === "stage" ? stage === "detailer" ? "face_only" : "none" : legacy);
+}
 
 export function assetReferenceSettings(slot: AssetRecord): AssetRecord {
   // Match the illustration migration from the old logarithmic strength slider.

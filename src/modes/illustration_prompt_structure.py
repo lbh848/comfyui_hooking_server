@@ -97,12 +97,20 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
     with symbolic_prompts():
         protected = pipeline.render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
         genre_context = builders.role_context(
-            "", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""))
+            "", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""),
+            genre_work_title=toggles.get("genre_work_title", ""))
         genre_part = prompt_part(
             "genre", "장르·세계관 공통 지침", "공유 프롬프트",
-            rendered=genre_context, condition="생성 설정의 장르가 입력됐을 때 포함")
+            rendered=genre_context, condition="커스텀 시스템 지침의 장르가 입력됐을 때 포함")
+        genre_parts = [genre_part]
+        if toggles.get("genre") == "secondary_bot":
+            genre_parts.append(prompt_part(
+                "genre_secondary", "2차봇 작품 배경 지침", "공유 프롬프트",
+                rendered=prompts.get("genre_secondary", ""), condition="장르가 2차봇일 때 포함"))
         role_context = builders.role_context(
-            protected, "_input_", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""))
+            protected, "_input_", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""),
+            genre_work_title=toggles.get("genre_work_title", ""),
+            genre_secondary_prompt=prompts.get("genre_secondary", ""))
         compatibility_part = prompt_part(
             "call2_jailbreak", "외부 LLM 호환성 지침", "공유 프롬프트",
             rendered=protected, condition="지침 내용이 있으면 포함 · 내부 조건 매크로를 렌더링")
@@ -110,7 +118,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             "{lb-xnai.lb.extra 시스템 프롬프트}", builders.lb_extra_system_prompt_block("_input_"),
             "활성 봇 > 선택된 시스템 프롬프트 (lb-xnai.lb.extra)",
             condition="선택된 시스템 프롬프트가 있으면 포함 · 장면 수 규칙은 서버에서 제거")
-        shared_parts = [compatibility_part, lb_extra_part, genre_part]
+        shared_parts = [compatibility_part, lb_extra_part, *genre_parts]
         explicit = ""
         if toggles.get("nsfw"):
             explicit = pipeline.render_call2_prompt(prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
@@ -181,7 +189,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                   notes="OFF이면 후속 LLM이 원문·이전 문맥에서 상태를 판단합니다. TIME & PLACE와 병렬입니다. 저장 이력이 없어도 과거 원문으로 상태를 복원하고, 저장 이력은 생략된 색상·형태 등을 보완합니다. 이후 원문의 변화가 우선하며 각 SLOT까지 적용합니다. 복장·헤어는 각각 새 태그가 나올 때까지 이어받고, 새 값은 해당 항목 전체를 교체합니다. OUTFIT 노드 상세에서 채워진 표를 봅니다.")
         stage("time_place", "TIME & PLACE · 시간·장소·조명 추적", "캐릭터별 시간대·장소·조명을 복장·헤어와 독립적으로 추적합니다.",
               ["SLOT별 초기·변경 time/place/lighting", "서버가 채운 시간·장소·조명 시간표"],
-              [prompt_part("time_place", "시간·장소·조명 추적 지침", "TIME & PLACE"), genre_part],
+              [prompt_part("time_place", "시간·장소·조명 추적 지침", "TIME & PLACE"), *genre_parts],
               builders.time_place_messages(prompts, names, {}, "_input_", "_input_", slots=[0, 1], slotted="_input_", segment_slots={"C001": 0}, toggles=toggles),
               condition="TIME & PLACE 설정 ON",
               notes="OFF이면 후속 LLM이 원문·이전 문맥에서 시간·장소·조명을 판단합니다. OUTFIT과 병렬입니다. time은 넓은 시간대, place는 구체적인 공간, lighting은 그 공간에 도달하는 광원과 조명 상태를 설명합니다. 각 항목은 변경된 SLOT에서만 출력하고 서버가 이전 값을 이어받습니다. 후속 단계는 이 조명 조건 안에서 구도를 정합니다. 근거가 없으면 unknown이며 복장·헤어를 출력하지 않습니다. TIME & PLACE 노드 상세에서 채워진 표를 봅니다.")
@@ -189,7 +197,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
               ["성별 드롭다운 선택값·외모·복장·얼굴·눈 태그", "대표 이미지·등록된 캐릭터 카드"],
               [prompt_part("npc_generation_moss" if moss else "npc_generation",
                            "MOSS NPC 캐릭터 카드 생성 지침" if moss else "NPC 캐릭터 카드 생성 지침",
-                           "NPC 생성 노드"), genre_part],
+                           "NPC 생성 노드"), *genre_parts],
               builders.npc_generation_messages(prompts, [{"name": "_input_", "aliases": ["_input_"], "description": "_input_", "anchors": ["C001"]}], "_input_", "_input_", toggles),
               condition="NPC 생성 노드 ON · 미등록 등장인물이 있을 때",
               notes=f"대화에 등장한 미등록 인물의 외모와 복장을 정합니다. 이 작업은 STEP 2에서 OUTFIT·TIME & PLACE와 함께 진행합니다. 그리기 설정 > 캐릭터 자동 생성 및 복장 이미지 생성 모드로 대표 이미지를 만들고 삽화용 봇 설정 > 캐릭터에 등록합니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다. 같은 봇에서 삽화를 {toggles['npc_lifetime']}회 연속 생성하는 동안 등장하지 않으면 삭제하고, 다시 등장하면 수명이 초기화됩니다. 수명은 생성 설정 > 파이프라인 > NPC 생성에서 변경할 수 있습니다.")
@@ -257,7 +265,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
             ]), toggles, include_scene_count_limit=False, include_server_limits=False)
             keyvis_messages = builders.keyvis_context_messages(keyvis_system, "_input_", [], tracking, "_input_", "_input_", time_place=time_place,
                                                              prior_status=prior_status, prior_time_place=prior_time_place, toggles=toggles,
-                                                             genre_prompt=prompts.get("genre", ""), moss=moss)
+                                                             genre_prompt=prompts.get("genre", ""),
+                                                             genre_secondary_prompt=prompts.get("genre_secondary", ""), moss=moss)
             if not moss:
                 keyvis_messages.append(builders.keyvis_task_message(3, "_input_", names))
             stage("keyvis", "KEYVIS · 대표 만화" if moss_manga else "KEYVIS · 대표 이미지", "전체 문맥에서 대표 이미지의 순간과 구도를 독립적으로 선택합니다.",
@@ -270,7 +279,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                       explicit_part,
                       prompt_part("call2_keyvis", "대표 이미지 지침", "KEYVIS",
                                   rendered=pipeline.render_call2_prompt(prompts["call2_keyvis"], toggles, include_server_limits=False)),
-                      *([] if keyvis_inline else [genre_part])],
+                      *([] if keyvis_inline else genre_parts)],
                   keyvis_messages, condition="대표 이미지 설정 ON · 일반 PLAN·DETAIL과 독립적으로 병렬",
                   notes="SYSTEM의 공용·전용 지침을 순서대로 연결합니다. lb-xnai.lb.extra 시스템 프롬프트는 이 호출에서는 USER에 들어가며, 시점별 프로필·상태·과거 문맥·현재 원문·작업 요청과 순서대로 연결합니다.",
                   user_parts=[lb_extra_part])
@@ -287,7 +296,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                     keyvis_system, "_input_", [], tracking, "_input_", "_input_",
                     time_place=time_place, prior_status=prior_status, prior_time_place=prior_time_place,
                     toggles={**toggles, "keyvis_in_detail_enabled": True},
-                    genre_prompt=prompts.get("genre", ""), moss=moss)
+                    genre_prompt=prompts.get("genre", ""),
+                    genre_secondary_prompt=prompts.get("genre_secondary", ""), moss=moss)
                 if not moss:
                     combined_context.append(builders.keyvis_task_message(
                         3, "_input_", names, mask_inline=variant_mask_inline))
@@ -319,7 +329,8 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                 time_place=time_place, prior_status=prior_status, prior_time_place=prior_time_place,
                 mask_inline=True, mask_prompt=prompts["multi_char_mask"],
                 canvas_sizes={"solo": (756, 756), "group": (1152, 768)}, positive_note="_input_", toggles=toggles,
-                genre_prompt=prompts.get("genre", ""), moss=moss)
+                genre_prompt=prompts.get("genre", ""),
+                genre_secondary_prompt=prompts.get("genre_secondary", ""), moss=moss)
             inline_keyvis.append(builders.keyvis_task_message(3, "_input_", names, mask_inline=True))
             keyvis_stage["variants"] = [{"key": "separate", "label": "별도 LLM으로 예측",
                 **{key: keyvis_stage[key] for key in ("messages", "input_variables", "system_parts", "outputs", "notes")}},

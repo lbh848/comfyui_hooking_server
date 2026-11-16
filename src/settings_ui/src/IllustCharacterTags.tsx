@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bot, History, RefreshCw, Save, Settings2, Sparkles } from "lucide-react";
 import { Badge, Modal } from "./components";
-import { TagTextarea } from "./TagTextarea";
+import { IllustSecondaryBot } from "./IllustSecondaryBot";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { SourceTags, TagEditor, TagImagePreview, TagLlmPrompt, TagViewControls, syncCharacterAppearance, tagEntries, usePromptGroups, useTagFields, withoutGender, type TagEntry, type TagGroups } from "./IllustTagEditing";
 import { query, useIllustrationAction, type IllustrationData } from "./illustration";
@@ -161,13 +161,9 @@ export function IllustCharacterTags({ botName, characterName, card, render, inde
             <label className="illust-check"><input type="checkbox" checked={skipRefine} disabled={disabled} onChange={event => setSkipRefine(event.target.checked)} />얼굴·눈 분류 및 외모·복장 정제 일괄 작업에서 제외</label>
           </div>
     </Modal>}
-    {tool === "secondary-bot" && <Modal title="2차봇 설정" onClose={() => setTool(null)} backgroundable={false} className="illust-character-modal">
-          <div className="illust-form">
-            <label className="illust-check"><input type="checkbox" checked={useNameTag} disabled={disabled} onChange={event => setUseNameTag(event.target.checked)} />이미지 이름 태그 사용</label>
-            <TagTextarea label="이미지 이름 태그" ariaLabel="이미지 이름 태그" value={nameTag} onChange={setNameTag} rows={1} disabled={disabled || !useNameTag} />
-            <p className="field-help">켜면 이미지의 CHAR에서만 카드 이름을 위 태그로 대체합니다. NAME·SPEAK에는 적용하지 않습니다.</p>
-          </div>
-    </Modal>}
+    {tool === "secondary-bot" && <IllustSecondaryBot botName={botName} characterName={characterName} cardLabel={card.label}
+      appearance={state.fields.appearance} nameTag={nameTag} enabled={useNameTag} readOnly={disabled}
+      onApply={(tag, enabled) => { setNameTag(tag); setUseNameTag(enabled); }} onClose={() => setTool(null)} />}
     {promptOpen && <TagLlmPrompt kind={promptOpen} groups={source.groups} readOnly={readOnly} onClose={() => setPromptOpen(null)} />}
     {historyPreview && <Modal title="그리기 내역 이미지" onClose={() => setHistoryPreview(null)} backgroundable={false} className="illust-character-modal"><img className="illust-asset-preview" src={api.media(historyPreview.image_url)} alt="그리기 내역" /></Modal>}
   </Modal>;

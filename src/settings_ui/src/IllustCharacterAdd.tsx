@@ -1,12 +1,17 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import "../../frontend/static/bot_batch.js";
-import type { BotBatchEntry, BotBatchFile, BotBatchResult, BotBatchRule } from "../../frontend/static/bot_batch.js";
-import { Modal, SettingsTabs } from "./components";
+import type { BotBatchEntry, BotBatchFile, BotBatchProgress, BotBatchResult, BotBatchRule } from "../../frontend/static/bot_batch.js";
+import { Modal, SettingsTabs, Toggle } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
 import { useIllustrationAction, type IllustrationData } from "./illustration";
-import { useBotApi } from "./BotApiScope";
+import { useBotApi, useBotResource } from "./BotApiScope";
 import { WorkshopCharacterImport } from "./IllustWorkshopImport";
+import { readCharacterArchives } from "./characterArchiveReader";
+import { characterLoreId, matchCharacterLore, type CharacterLoreEntry } from "./characterLore";
+import { CharacterLoreImport } from "./IllustCharacterLore";
+import type { ImportedGlobalNote } from "./charxImages";
+import { analyzeCbsSyntax } from "./cbsSyntax";
 
 type CharacterAddFormProps = { botName: string; onClose: () => void; onAdded: () => void; busy: boolean; onBusyChange: (busy: boolean) => void };
 
@@ -49,17 +54,73 @@ function SingleAddIllustrationCharacter({ botName, onClose, onAdded, busy, onBus
 }
 
 type PreviewEntry = BotBatchFile & { name: string; isExisting: boolean; error: string; action?: BotBatchEntry["action"]; existingFilename?: string; preflightIndex?: number };
+type CharacterImportResult = BotBatchResult & { loreImported?: number; globalNoteImported?: boolean };
+
+function CharacterArchiveInput({ kind, files, disabled, onChange }: {
+  kind: "bot" | "module"; files: File[]; disabled: boolean; onChange: (files: File[]) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState("");
+  const title = kind === "bot" ? "봇 파일" : "모듈 파일";
+  const extensions = kind === "bot" ? ".charx" : ".risum, .charx";
+  function addFiles(source: FileList | null) {
+    if (!source || disabled) return;
+    const incoming = Array.from(source);
+    const invalid = incoming.find(file => !(kind === "bot" ? /\.charx$/i : /\.(risum|charx)$/i).test(file.name));
+    if (invalid) { setError(`${invalid.name}: ${extensions} 파일을 선택하세요.`); return; }
+    setError("");
+    const next = [...files];
+    for (const file of incoming) {
+      if (!next.some(current => current.name === file.name && current.size === file.size && current.lastModified === file.lastModified)) next.push(file);
+    }
+    if (next.length !== files.length) onChange(next);
+  }
+  return <section className="illust-archive-input" aria-label={title}>
+    <strong>{title}<span className="field-help">{extensions}{kind === "module" ? " · 선택 사항" : ""}</span></strong>
+    <button type="button" className={`illust-batch-dropzone${dragging ? " dragging" : ""}`} disabled={disabled}
+      onClick={() => input.current?.click()} onDragOver={event => { event.preventDefault(); if (!disabled) setDragging(true); }}
+      onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer.files); }}>
+      <Upload size={22} /><span>{title}을 드래그하거나 클릭하여 선택</span>
+    </button>
+    <input ref={input} type="file" multiple accept={extensions} hidden disabled={disabled} aria-label={title}
+      onChange={event => { addFiles(event.target.files); event.target.value = ""; }} />
+    {files.length > 0 && <ul className="illust-archive-files">{files.map((file, index) => <li key={`${file.name}-${index}`}>
+      <span>{file.name}</span><button type="button" className="button danger" disabled={disabled} aria-label={`${title} ${file.name} 제거`}
+        onClick={() => { setError(""); onChange(files.filter((_, i) => i !== index)); }}><Trash2 size={14} /></button>
+    </li>)}</ul>}
+    <IllustrationFeedback error={error} />
+  </section>;
+}
 
 function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded, busy, onBusyChange }: CharacterAddFormProps & { characters: IllustrationData[] }) {
   const api = useBotApi();
   const [files, setFiles] = useState<BotBatchFile[]>([]);
-  const [rules, setRules] = useState<BotBatchRule[]>([{ action: "strip_suffix", pattern: "\\.(webp|png|jpg|jpeg|gif|bmp)$" }]);
+  const [excludedCount, setExcludedCount] = useState(0);
+  const [sourceMode, setSourceMode] = useState("image");
+  const [botFiles, setBotFiles] = useState<File[]>([]);
+  const [moduleFiles, setModuleFiles] = useState<File[]>([]);
+  const [loreEntries, setLoreEntries] = useState<CharacterLoreEntry[]>([]);
+  const [loreOverrides, setLoreOverrides] = useState<Record<string, string[]>>({});
+  const [globalNotes, setGlobalNotes] = useState<ImportedGlobalNote[]>([]);
+  const [globalNoteIndex, setGlobalNoteIndex] = useState(-1);
+  const [removeCbs, setRemoveCbs] = useState(false);
+  const globalNoteLabel = useId();
+  const globalNote = globalNotes[globalNoteIndex];
+  const cbs = useMemo(() => analyzeCbsSyntax(globalNote?.content || ""), [globalNote?.content]);
+  const assetOutputInstruction = removeCbs ? cbs.content : globalNote?.content || "";
+  const instructionLength = useMemo(() => [...assetOutputInstruction].length, [assetOutputInstruction]);
+  const instructionResource = useBotResource(globalNotes.length ? `bot_mode/asset_output_instruction?bot_name=${encodeURIComponent(botName)}` : null);
+  const instructionError = globalNote && instructionResource.data && instructionLength > instructionResource.data.max_length
+    ? `글로벌 노트 덮어쓰기가 ${instructionResource.data.max_length.toLocaleString()}자를 넘습니다. 가져오지 않음을 선택하고 에셋·프로필·별칭 설정의 출력 지침에서 내용을 줄여 저장하세요.` : "";
+  const [rules, setRules] = useState<BotBatchRule[]>([{ action: "strip_suffix", pattern: "\\.(webp|png|jpg|jpeg|gif|bmp|avif)$" }]);
   const [entries, setEntries] = useState<PreviewEntry[]>([]);
   const [preflightId, setPreflightId] = useState("");
   const [comparing, setComparing] = useState(false);
   const [progress, setProgress] = useState("");
+  const [importProgress, setImportProgress] = useState<BotBatchProgress>({ completed: 0, total: 0 });
   const [error, setError] = useState("");
-  const [result, setResult] = useState<BotBatchResult | null>(null);
+  const [result, setResult] = useState<CharacterImportResult | null>(null);
   const [revision, setRevision] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [collecting, setCollecting] = useState(false);
@@ -71,12 +132,13 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
   const hashes = useRef(new WeakMap<File, Promise<string>>());
   const existingNames = useMemo(() => new Set(characters.map(character => character.name)), [characters]);
   useEffect(() => () => selection.current?.abort(), []);
+  useEffect(() => setPage(0), [rules, botName, collecting]);
 
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
     let failed = false;
-    setPreflightId(""); setError(""); setComparing(false); setProgress(""); setPage(0);
+    setPreflightId(""); setError(""); setComparing(false); setProgress("");
     if (collecting) return;
     const details: PreviewEntry[] = files.map(selected => {
       const { file } = selected;
@@ -137,41 +199,96 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
   function updateRule(index: number, values: Partial<BotBatchRule>) {
     setResult(null); setPreflightId(""); setRules(current => current.map((rule, i) => i === index ? { ...rule, ...values } : rule));
   }
-  async function chooseFiles(source: FileList | DataTransfer | null) {
-    if (!source || busy || selection.current) return;
+  function clearSelection() {
+    setFiles([]); setEntries([]); setSelectionError(""); setSelectionStatus(""); setError(""); setResult(null); setPreflightId("");
+    setExcludedCount(0);
+    setLoreEntries([]); setLoreOverrides({});
+    setGlobalNotes([]); setGlobalNoteIndex(-1);
+  }
+  async function chooseFiles(source: FileList | DataTransfer | null = null) {
+    if ((sourceMode === "image" && !source) || busy || selection.current) return;
     const controller = new AbortController();
     selection.current = controller;
-    setCollecting(true); setSelectionError(""); setSelectionStatus("이미지 파일을 읽는 중…");
+    setCollecting(true); setFiles([]); setEntries([]); setSelectionError(""); setSelectionStatus(sourceMode === "charx" ? "봇·모듈 파일에서 이미지를 읽는 중…" : "이미지 파일을 읽는 중…");
+    setExcludedCount(0);
+    setLoreEntries([]); setLoreOverrides({});
+    setGlobalNotes([]); setGlobalNoteIndex(-1);
     setResult(null); setPreflightId("");
     try {
-      const selected = await ComfyBotBatch.collectImageFiles(source, controller.signal, count => {
+      const selected = sourceMode === "charx" ? await readCharacterArchives(botFiles, moduleFiles, controller.signal, setSelectionStatus)
+        : await ComfyBotBatch.collectImageFiles(source!, controller.signal, count => {
         if (!controller.signal.aborted) setSelectionStatus(`이미지 파일을 읽는 중… ${count.toLocaleString()}장`);
       });
       if (controller.signal.aborted) return;
       setFiles(selected.files);
-      setSelectionStatus(selected.skipped ? `이미지가 아닌 파일 ${selected.skipped.toLocaleString()}개 제외` : "");
-      if (!selected.files.length) setSelectionError("선택한 파일이나 폴더에 이미지가 없습니다.");
+      const selectedLore = "loreEntries" in selected ? selected.loreEntries as CharacterLoreEntry[] : [];
+      setLoreEntries(selectedLore);
+      const selectedNotes = "globalNotes" in selected ? selected.globalNotes as ImportedGlobalNote[] : [];
+      setGlobalNotes(selectedNotes); setGlobalNoteIndex(selectedNotes.length === 1 ? 0 : -1);
+      setSelectionStatus(sourceMode === "charx" ? `이미지 ${selected.files.length.toLocaleString()}장 · 로어북 ${selectedLore.length.toLocaleString()}개${selectedNotes.length ? ` · 글로벌 노트 ${selectedNotes.length}개` : ""} 읽음${selected.skipped ? ` · 아이콘·비이미지 항목 ${selected.skipped.toLocaleString()}개 제외` : ""}`
+        : selected.skipped ? `이미지가 아닌 파일 ${selected.skipped.toLocaleString()}개 제외` : "");
+      if (!selected.files.length && !selectedLore.length && !selectedNotes.length) setSelectionError(sourceMode === "charx" ? "선택한 봇·모듈 파일에 가져올 이미지·로어북·글로벌 노트가 없습니다." : "선택한 파일이나 폴더에 이미지가 없습니다.");
     } catch (error) { if (!controller.signal.aborted) { setSelectionStatus(""); setSelectionError(`파일을 읽지 못했습니다: ${error instanceof Error ? error.message : String(error)}`); } }
     finally { if (!controller.signal.aborted) { selection.current = null; setCollecting(false); } }
   }
   const invalid = useMemo(() => entries.filter(entry => entry.error), [entries]);
   const validationError = invalid.length ? `${invalid.length.toLocaleString()}개 파일의 캐릭터명을 확인하세요. 추출 규칙을 수정하면 일괄추가할 수 있습니다. 첫 오류: ${invalid[0].path} — ${invalid[0].error}` : "";
   const orderedEntries = useMemo(() => [...entries.filter(entry => entry.error), ...entries.filter(entry => !entry.error)], [entries]);
+  const excludeFile = useCallback((entry: BotBatchFile) => {
+    if (busy || collecting) return;
+    const keep = (selected: BotBatchFile) => selected.file !== entry.file || selected.path !== entry.path;
+    setResult(null); setPreflightId(""); setError("");
+    setFiles(current => current.filter(keep));
+    setEntries(current => current.filter(keep));
+    setExcludedCount(current => current + 1);
+  }, [busy, collecting]);
   const pageCount = Math.max(1, Math.ceil(entries.length / 100));
   const currentPage = Math.min(page, pageCount - 1);
   const previewRows = useMemo(() => orderedEntries.slice(currentPage * 100, (currentPage + 1) * 100).map((entry, index) => <tr key={index}>
-    <td>{entry.path}</td><td>{entry.name || "(빈 이름)"}</td><td className={entry.error ? "field-error" : ""}>{entry.error || (entry.action === "unchanged" ? "동일 이미지 · 건너뜀" : entry.action === "replaced" ? "기존 이미지 교체" : entry.action === "added" ? entry.isExisting ? "이미지 추가" : "새 캐릭터 생성 · 이미지 추가" : comparing ? "내용 비교 중…" : error ? "비교 실패 · 다시 비교해 주세요" : "다시 비교 필요")}</td>
-  </tr>), [orderedEntries, currentPage, comparing, error]);
+    <td>{entry.file.name}</td><td>{entry.name || "(빈 이름)"}</td><td className={entry.error ? "field-error" : ""}>{entry.error || (entry.action === "unchanged" ? "동일 이미지 · 건너뜀" : entry.action === "replaced" ? "기존 이미지 교체" : entry.action === "added" ? entry.isExisting ? "이미지 추가" : "새 캐릭터 생성 · 이미지 추가" : comparing ? "내용 비교 중…" : error ? "비교 실패 · 다시 비교해 주세요" : "다시 비교 필요")}</td>
+    <td><button type="button" className="icon-button" disabled={busy || collecting} aria-label={`${entry.file.name} 가져오기 제외`} title="가져오기 제외"
+      onClick={() => excludeFile(entry)}><X size={16} aria-hidden="true" /></button></td>
+  </tr>), [orderedEntries, currentPage, comparing, error, busy, collecting, excludeFile]);
   const newNames = [...new Set(entries.filter(entry => !entry.isExisting && !entry.error).map(entry => entry.name))];
+  const loreCharacterNames = useMemo(() => [...new Set([...existingNames, ...entries.filter(entry => !entry.error).map(entry => entry.name)])], [existingNames, entries]);
+  const loreAssignments = useMemo(() => Object.fromEntries(loreEntries.map(entry => {
+    const id = characterLoreId(entry);
+    return [id, (loreOverrides[id] ?? matchCharacterLore(entry, loreCharacterNames)).filter(name => loreCharacterNames.includes(name))];
+  })), [loreEntries, loreOverrides, loreCharacterNames]);
+  const loreImports = useMemo(() => loreCharacterNames.map(character => ({ character,
+    entries: loreEntries.filter(entry => loreAssignments[characterLoreId(entry)]?.includes(character)),
+  })).filter(item => item.entries.length), [loreCharacterNames, loreEntries, loreAssignments]);
   const count = (action: BotBatchEntry["action"]) => entries.filter(entry => entry.action === action).length;
-  const ready = !!preflightId && !comparing && !collecting && !busy && !error && !invalid.length && entries.length > 0;
+  const ready = !comparing && !collecting && !busy && !error && !selectionError && !invalid.length &&
+    (!globalNote || !!instructionResource.data && !instructionResource.error && !instructionError) &&
+    (entries.length > 0 ? !!preflightId : loreImports.length > 0 || !!globalNote);
   async function importCharacters() {
     if (!ready) return;
+    const metadataTotal = Number(loreImports.length > 0) + Number(!!globalNote);
     onBusyChange(true); setResult(null); setError("");
     try {
-      const result = await ComfyBotBatch.importCharacters({ botName, names: newNames, preflightId,
+      const result: CharacterImportResult = await ComfyBotBatch.importCharacters({ botName, names: newNames, preflightId,
         entries: entries.map(entry => ({ file: entry.file, name: entry.name, action: entry.action!, existingFilename: entry.existingFilename, preflightIndex: entry.preflightIndex! })),
-        request: api.request, onProgress: setProgress });
+        request: api.request, onProgress: (message, progress) => {
+          setProgress(message);
+          setImportProgress({ completed: progress.completed, total: progress.total + metadataTotal });
+        } });
+      if (loreImports.length && !result.errors.length) {
+        setProgress("캐릭터별 로어북을 저장하는 중…");
+        try {
+          const saved = await api.request("bot_mode/action", { action: "import_character_lore", bot_name: botName, characters: loreImports });
+          result.loreImported = saved.imported_entries;
+          setImportProgress(current => ({ ...current, completed: current.completed + 1 }));
+        } catch (error) { result.errors.push(`로어북 저장 실패: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (loreImports.length) result.errors.push("이미지 가져오기를 완료하지 못해 로어북을 저장하지 않았습니다. 오류를 확인한 뒤 다시 가져오세요.");
+      if (globalNote && !result.errors.length) {
+        setProgress("에셋·프로필 출력 지침을 저장하는 중…");
+        try {
+          await api.request("bot_mode/asset_output_instruction", { bot_name: botName, instruction: assetOutputInstruction });
+          result.globalNoteImported = true;
+          setImportProgress(current => ({ ...current, completed: current.completed + 1 }));
+        } catch (error) { result.errors.push(`에셋·프로필 출력 지침 저장 실패: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (globalNote) result.errors.push("이미지·로어북 가져오기를 완료하지 못해 에셋·프로필 출력 지침을 저장하지 않았습니다.");
       setResult(result); setPreflightId(""); onAdded();
       if (!result.errors.length) onClose();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); setPreflightId(""); onAdded(); }
@@ -180,13 +297,25 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
 
   return <div className="illust-form">
       <fieldset className="illust-form" disabled={busy || collecting}>
-        <label className="field">이미지 파일 선택</label>
+        <SettingsTabs label="파일 선택 방식" values={{ image: "이미지 파일 선택", charx: "CHARX 파일 선택" }} value={sourceMode} onChange={value => { if (!busy && !collecting) { clearSelection(); setSourceMode(value); } }} />
+        {sourceMode === "charx" ? <>
+          <div className="illust-archive-inputs">
+            <CharacterArchiveInput kind="bot" files={botFiles} disabled={busy || collecting} onChange={next => { setBotFiles(next); clearSelection(); }} />
+            <CharacterArchiveInput kind="module" files={moduleFiles} disabled={busy || collecting} onChange={next => { setModuleFiles(next); clearSelection(); }} />
+          </div>
+          <p className="field-help">봇과 모듈의 이미지·로어북을 합쳐 가져옵니다. CHARX의 글로벌 노트 덮어쓰기는 에셋·프로필 출력 지침으로 가져올 수 있습니다. 아래 추출 규칙과 가져올 내용을 확인한 뒤 저장하세요. 아이콘·오디오·스크립트는 제외합니다.</p>
+          <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || collecting || !botFiles.length && !moduleFiles.length} onClick={() => void chooseFiles()}>
+            <RefreshCw size={14} />{collecting ? "분석 중…" : "합쳐서 분석"}
+          </button><span className="field-help">봇 {botFiles.length}개 · 모듈 {moduleFiles.length}개</span></div>
+        </> : <>
         <button type="button" className={`illust-batch-dropzone${dragging ? " dragging" : ""}`} onClick={() => fileInput.current?.click()}
           onDragOver={event => { event.preventDefault(); if (!busy && !collecting) setDragging(true); }} onDragLeave={() => setDragging(false)}
           onDrop={event => { event.preventDefault(); setDragging(false); void chooseFiles(event.dataTransfer); }}>
-          <Upload size={22} /><span>{collecting ? "이미지 파일을 읽는 중…" : files.length ? `${files.length.toLocaleString()}개 이미지 선택됨 · 다시 선택` : "이미지를 드래그하거나 클릭하여 선택"}</span>
+          <Upload size={22} /><span>{collecting ? "이미지 파일을 읽는 중…" : "이미지를 드래그하거나 클릭하여 선택"}</span>
         </button>
         <input ref={fileInput} type="file" multiple accept="image/*" hidden aria-label="일괄추가 이미지 파일" onChange={event => { void chooseFiles(event.target.files); event.target.value = ""; }} />
+        </>}
+        {(files.length > 0 || excludedCount > 0) && <p className="field-help">이미지 {files.length.toLocaleString()}장 선택됨{excludedCount > 0 ? ` · ${excludedCount.toLocaleString()}장 제외` : ""}</p>}
         {!!selectionStatus && <p className="field-help" role="status">{selectionStatus}</p>}
         <IllustrationFeedback error={selectionError} />
         <div className="illust-form">
@@ -204,22 +333,49 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
           <div className="illust-actions"><button type="button" className="button secondary" onClick={() => { setResult(null); setPreflightId(""); setRules(current => [...current, { action: "split_by", separator: "_", take: 0 }]); }}><Plus size={14} />규칙 추가</button></div>
         </div>
       </fieldset>
+      {globalNotes.length > 0 && <section className="illust-form" aria-label="글로벌 노트 덮어쓰기">
+        <strong>글로벌 노트 덮어쓰기</strong>
+        {globalNotes.length === 1 ? <label className="illust-check"><input type="checkbox" checked={!!globalNote} disabled={busy || collecting}
+          onChange={event => { setResult(null); setGlobalNoteIndex(event.target.checked ? 0 : -1); }} />에셋·프로필 출력 지침으로 가져오기</label>
+          : <label className="field">가져올 글로벌 노트<select value={globalNoteIndex} disabled={busy || collecting}
+            onChange={event => { setResult(null); setGlobalNoteIndex(Number(event.target.value)); }}>
+            <option value={-1}>가져오지 않음</option>{globalNotes.map((note, index) => <option key={index} value={index}>{note.source}</option>)}
+          </select></label>}
+        {globalNote && <>
+          <p className="field-help">일괄추가 시 {botName}의 에셋·프로필 출력 지침을 아래 내용으로 저장합니다. 기존 지침이 있으면 바뀝니다.</p>
+          <div className="field">
+            <div className="illust-actions"><span id={globalNoteLabel}>가져올 에셋·프로필 출력 지침</span>
+              <span>CBS 지우기</span><Toggle label="CBS 지우기" checked={removeCbs} disabled={busy || collecting}
+                onChange={value => { setResult(null); setRemoveCbs(value); }} /></div>
+            {removeCbs ? <div className="illust-cbs-preview" role="textbox" aria-readonly="true" aria-multiline="true" aria-labelledby={globalNoteLabel} tabIndex={0}>
+              {cbs.parts.map((part, index) => part.syntax ? <del key={index}>{part.text}</del> : <span key={index}>{part.text}</span>)}
+            </div> : <textarea aria-labelledby={globalNoteLabel} readOnly rows={6} value={assetOutputInstruction} />}
+          </div>
+          {removeCbs && <p className="field-help">빨간 배경과 취소선으로 표시한 CBS 문법만 저장할 때 제외합니다. 조건 안의 본문은 모두 유지합니다.</p>}
+          <p className="field-help">{instructionLength.toLocaleString()}자{!instructionResource.data && !instructionResource.error ? " · 저장 설정 확인 중…" : ""}</p>
+          <IllustrationFeedback error={instructionResource.error || instructionError} />
+        </>}
+      </section>}
       <section className="illust-form" aria-label="추출 결과 미리보기">
         <strong className="field">추출 결과 미리보기</strong>
         <IllustrationFeedback error={validationError} />
         {!!progress && <p className="field-help" role="status">{progress}</p>}
         <IllustrationFeedback error={error} />
         {!entries.length ? <p className="field-help">파일을 선택하면 추출된 캐릭터명과 이미지 처리 방법이 표시됩니다.</p> : <>
-          <div className="illust-batch-preview"><table><thead><tr><th>파일명</th><th>캐릭터</th><th>처리</th></tr></thead><tbody>{previewRows}</tbody></table></div>
+          <div className="illust-batch-preview"><table><thead><tr><th>파일명</th><th>캐릭터</th><th>처리</th><th>제외</th></tr></thead><tbody>{previewRows}</tbody></table></div>
           {pageCount > 1 && <div className="illust-actions"><button type="button" className="button secondary" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>이전</button><span className="field-help">총 {entries.length.toLocaleString()}개 · {currentPage + 1}/{pageCount}페이지</span><button type="button" className="button secondary" disabled={currentPage === pageCount - 1} onClick={() => setPage(currentPage + 1)}>다음</button></div>}
           {!!preflightId && !result && <p className="field-help">비교 완료 · 새 캐릭터 {newNames.length.toLocaleString()}개 · 이미지 추가 {count("added").toLocaleString()}장 · 교체 {count("replaced").toLocaleString()}장 · 건너뜀 {count("unchanged").toLocaleString()}장</p>}
         </>}
       </section>
+      {sourceMode === "charx" && loreEntries.length > 0 && <CharacterLoreImport entries={loreEntries} characterNames={loreCharacterNames}
+        assignments={loreAssignments} disabled={busy || collecting} onChange={(id, names) => { setResult(null); setLoreOverrides(current => ({ ...current, [id]: names })); }} />}
       {result && <div className="illust-form" role="status"><p>캐릭터 {result.added}개 추가 · 이미지 {result.uploaded}장 추가 · {result.replaced}장 교체 · 동일 이미지 {result.skipped}장 건너뜀</p>
+        {result.loreImported !== undefined && <p>로어북 {result.loreImported}개 저장됨</p>}
+        {result.globalNoteImported && <p>에셋·프로필 출력 지침 저장됨</p>}
         {!!result.errors.length && <div className="field-error"><strong>완료하지 못한 항목</strong><ul>{result.errors.map((message, index) => <li key={index}>{message}</li>)}</ul></div>}
       </div>}
       <div className="illust-actions">
-        {!result && <button type="button" className="button primary" disabled={!ready} onClick={() => void importCharacters()}><Plus size={14} />{busy ? "일괄추가 중…" : "일괄추가"}</button>}
+        {!result && <button type="button" className="button primary" disabled={!ready} onClick={() => void importCharacters()}><Plus size={14} />{busy ? `처리 ${importProgress.completed.toLocaleString()}/${importProgress.total.toLocaleString()}` : "일괄추가"}</button>}
         {!!files.length && !comparing && <button type="button" className="button secondary" disabled={busy || collecting} onClick={() => { setResult(null); setPreflightId(""); setRevision(value => value + 1); }}><RefreshCw size={14} />다시 비교</button>}
         <button type="button" className="button" disabled={busy} onClick={onClose}>{result ? "닫기" : "취소"}</button>
       </div>

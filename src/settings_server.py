@@ -800,6 +800,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     internal_lora = register_internal_lora(app, project_root, SETTINGS_UI_SCHEMA)
     from settings_external_connection import register_external_connection
     stop_external_connections = register_external_connection(app, internal_lora, SETTINGS_UI_SCHEMA)
+    from danbooru_browser import register_danbooru_browser
+    register_danbooru_browser(app, project_root, SETTINGS_UI_SCHEMA)
     register_program_logs(app, project_root, SETTINGS_UI_SCHEMA, runtime, illustration_runtime=internal_lora)
     from settings_illustration import register_illustration
     register_illustration(app, internal_lora, SETTINGS_UI_SCHEMA)

@@ -832,6 +832,7 @@ class IllustPromptBuilder:
         bot_name: str,
         multi_char_context: dict | None = None,
         insert_rules: list[dict] | None = None,
+        reference_regions: list[dict] | None = None,
     ) -> str:
         """최종 긍정 프롬프트 빌드.
 
@@ -1136,6 +1137,16 @@ class IllustPromptBuilder:
             settings,
             characters,
         )
+        from illustration_reference_assets import REFERENCE_REFS
+        reference_by_name = {
+            str(region.get("name") or "").strip().casefold(): region["ref"]
+            for region in (reference_regions or [])
+            if isinstance(region, dict) and region.get("ref") in REFERENCE_REFS
+        }
+        for entry in face_id_data["list"]:
+            ref = reference_by_name.get(entry["CHAR"].casefold())
+            if ref:
+                entry["ref"] = ref
         positive += "\n[FACE_ID_DIR]"
         positive += "\n" + json.dumps(face_id_data, ensure_ascii=False)
 
@@ -1314,6 +1325,8 @@ class IllustPromptBuilder:
             "strength_scale": "linear",
             "fidelity": settings.get("snapref_fidelity", 1.0),
             "secondary_reference": settings.get("snapref_secondary_reference", "none"),
+            "primary_reference": settings.get("snapref_primary_reference", ""),
+            "detailer_reference": settings.get("snapref_detailer_reference", ""),
             "model": "snapref_v2a_pre2.safetensors",
             "mode": settings.get("snapref_mode", "char"),
             "megapixels": settings.get("snapref_megapixels", 1.0),

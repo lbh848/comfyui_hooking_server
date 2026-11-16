@@ -6,8 +6,8 @@ import { useBotApi } from "./BotApiScope";
 
 type CropRect = { x: number; y: number; width: number; height: number };
 
-export function IllustPreparationFaceCrop({ botName, issue, onApply, onClose }: {
-  botName: string; issue: IllustrationData; onApply: (dataUrl: string) => Promise<void>; onClose: () => void;
+export function IllustPreparationFaceCrop({ botName, issue, title = "실패한 항목 얼굴 직접 자르기", readOnly = false, onApply, onClose }: {
+  botName: string; issue: IllustrationData; title?: string; readOnly?: boolean; onApply: (dataUrl: string) => Promise<void>; onClose: () => void;
 }) {
   const api = useBotApi();
   const [busy, setBusy] = useState(false);
@@ -16,7 +16,7 @@ export function IllustPreparationFaceCrop({ botName, issue, onApply, onClose }: 
   const [crop, setCrop] = useState<CropRect | null>(null);
   const cropStart = useRef<EditPoint | null>(null);
   const surface = useEditCanvas("crop", 1, busy);
-  const disabled = busy || !loaded;
+  const disabled = busy || !loaded || readOnly;
   const target = [issue.character, issue.visual_card_index && `${issue.visual_card_index}번 프로필`, issue.visual_card_label].filter(Boolean).join(" · ");
 
   useEffect(() => {
@@ -41,6 +41,7 @@ export function IllustPreparationFaceCrop({ botName, issue, onApply, onClose }: 
     return { x: Math.max(0, Math.min(surface.dimensions.width, point.x)), y: Math.max(0, Math.min(surface.dimensions.height, point.y)) };
   }
   async function apply() {
+    if (disabled) return;
     if (!crop || crop.width < 1 || crop.height < 1) { setError("얼굴 영역을 드래그해 선택하세요."); return; }
     const source = surface.canvas.current;
     if (!source || !loaded) { setError("대표 이미지를 불러오지 못했습니다."); return; }
@@ -74,7 +75,7 @@ export function IllustPreparationFaceCrop({ botName, issue, onApply, onClose }: 
     }
   }
 
-  return <Modal title="실패한 항목 얼굴 직접 자르기" className="asset-edit-modal asset-reference-crop-modal" backgroundable={false} closeDisabled={busy} onClose={onClose}>
+  return <Modal title={title} className="asset-edit-modal asset-reference-crop-modal" backgroundable={false} closeDisabled={busy} onClose={onClose}>
     <div className="asset-reference-crop-layout">
       {target && <p className="field-help">{target}</p>}
       <div className="asset-edit-mask">

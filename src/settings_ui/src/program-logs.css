@@ -10,6 +10,7 @@
 .program-log-scroll-area { position: relative; }
 .program-log-lines { position: absolute; left: 0; margin: 0; padding: 0; font: inherit; line-height: 20px; white-space: pre; }
 .program-log-error-link { display: inline-block; margin-left: 10px; color: inherit; text-decoration: underline; font-size: 12px; }
+.program-log-error-refresh { margin-left: 8px; vertical-align: middle; }
 @media (max-width: 640px) {
   .program-logs-toolbar { padding: 12px; }
   .program-logs-toolbar .field { flex: 1 1 100%; min-width: 0; }

@@ -1,0 +1,103 @@
+.llm-tabs.illust-rep-batch-tabs { flex-shrink: 0; margin-bottom: 18px; }
+.illust-rep-batch-tab-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.illust-rep-batch-tab-panel[hidden] { display: none; }
+.illust-rep-batch-tab-panel > .illust-form { flex: 1; min-height: 0; gap: 12px; overflow-y: auto; overscroll-behavior: contain; }
+.illust-rep-batch-tab-panel > .illust-form > * { flex-shrink: 0; }
+.illust-rep-batch-tab-panel > .illust-form > .illust-rep-batch-rows { flex: 1; min-height: 0; overflow-y: auto; }
+.illust-auto-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; flex-shrink: 0; list-style: none; padding: 0 0 16px; margin: 0; }
+.illust-auto-steps > li { display: flex; align-items: center; gap: 10px; padding: 12px 16px; color: var(--muted); border-bottom: 3px solid var(--line); }
+.illust-auto-steps > li > span { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 50%; font-size: 13px; font-weight: 700; }
+.illust-auto-steps strong { font-size: 14px; }
+.illust-auto-steps > li[aria-current="step"] { color: var(--rose-dark); border-color: var(--rose); background: var(--rose-soft); border-radius: 8px 8px 0 0; }
+.illust-auto-steps > li[aria-current="step"] > span { color: #fff; background: var(--rose); border-color: var(--rose); }
+.illust-auto-steps > li.complete > span { background: #e5f3ea; color: #32684a; border-color: #b7d9c3; }
+.illust-auto-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 4px 20px; }
+.illust-auto-heading { margin-bottom: 20px; }
+.illust-auto-heading h3 { margin: 0 0 8px; font-size: 21px; font-weight: 700; }
+.illust-auto-heading p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.illust-auto-index-settings { width: min(100%, 960px); margin: 12px auto; }
+.illust-auto-index-input { margin-bottom: 12px; }
+.illust-auto-index-input textarea { min-height: 110px; font-size: 15px; }
+.illust-auto-index-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; padding: 12px 16px; background: var(--rose-soft); border: 1px solid var(--line); border-radius: 10px; margin: 16px 0; }
+.illust-auto-index-summary > strong { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.illust-auto-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 34px; }
+.illust-auto-chips > button { display: inline-flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--rose); background: var(--panel); color: var(--rose-dark); font-size: 13px; font-weight: 600; }
+.illust-auto-index-example { margin: 20px 0 16px; min-width: 0; }
+.illust-auto-index-example > header { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
+.illust-auto-index-example h4 { margin: 0 0 6px; font-size: 15px; }
+.illust-auto-index-example .field-help { line-height: 1.6; }
+.illust-auto-index-example > header p { margin: 0; }
+.illust-auto-index-example > header > .field { width: min(100%, 260px); }
+.illust-auto-example-status { min-height: 20px; margin: 12px 0 8px; }
+.illust-auto-example-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 16px; list-style: none; padding: 0; margin: 0; }
+.illust-auto-example-grid > li { min-width: 0; }
+.illust-auto-example-card { display: flex; flex-direction: column; width: 100%; height: 100%; padding: 0; text-align: left; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.illust-auto-example-card:hover { border-color: var(--rose); }
+.illust-auto-example-card > img { display: block; width: 100%; height: 340px; object-fit: contain; background: var(--lavender); }
+.illust-auto-example-card > span { display: block; padding: 12px 14px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.illust-auto-example-empty { display: grid; place-items: center; min-height: 160px; margin: 0; padding: 24px; text-align: center; font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.illust-auto-review-toolbar, .illust-auto-review-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.illust-auto-review-toolbar > .field { width: min(100%, 300px); }
+.illust-auto-review-summary { font-size: 12px; color: var(--muted); }
+.illust-auto-instructions { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; }
+.illust-auto-instructions > summary { font-size: 13px; font-weight: 600; cursor: pointer; }
+.illust-auto-instructions > .field { margin: 12px 0 8px; }
+.illust-auto-apply-note { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0 0 18px; }
+.illust-auto-character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); align-items: start; gap: 18px; }
+.illust-auto-character-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; border: 1px solid var(--control-border); border-radius: 12px; background: var(--panel); }
+.illust-auto-character-card.selected { border-color: var(--rose); box-shadow: 0 2px 8px #79334f0c; }
+.illust-auto-character-card > header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.illust-auto-character-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.illust-auto-character-actions > .button { min-height: 26px; padding: 4px 7px; gap: 4px; font-size: 11px; }
+.illust-auto-character-card > header > label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.illust-auto-character-card > header input { width: 18px; height: 18px; flex-shrink: 0; }
+.illust-auto-character-card > header strong { font-size: 15px; overflow-wrap: anywhere; }
+.illust-auto-character-card > header .badge { flex-shrink: 0; }
+.illust-auto-thumbnails { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.illust-auto-thumbnail { display: flex; flex-direction: column; width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--lavender); }
+.illust-auto-thumbnail:hover { border-color: var(--rose); }
+.illust-auto-thumbnail.chosen { border: 2px solid #41916e; }
+.illust-auto-thumbnail > img { display: block; width: 100%; height: 145px; object-fit: contain; }
+.illust-auto-thumbnail > span { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 8px; background: var(--panel); font-size: 11px; overflow-wrap: anywhere; }
+.illust-auto-character-card > .button { width: 100%; min-height: 38px; }
+.illust-auto-character-card .field-help { line-height: 1.6; overflow-wrap: anywhere; }
+.illust-auto-no-candidates { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 150px; padding: 16px; color: var(--muted); background: var(--lavender); border-radius: 8px; font-size: 12px; }
+.illust-auto-progress { padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--rose-soft); margin-bottom: 22px; }
+.illust-auto-progress > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.illust-auto-progress h3 { font-size: 18px; margin: 0; }
+.illust-auto-progress strong { font-size: 13px; }
+.illust-auto-progress progress { display: block; width: 100%; height: 10px; margin: 16px 0 12px; accent-color: var(--rose); }
+.illust-auto-progress p { font-size: 12px; line-height: 1.6; color: var(--muted); }
+.illust-auto-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; flex-shrink: 0; border-top: 1px solid var(--line); margin-top: 12px; padding-top: 14px; }
+.illust-auto-footer .button { min-height: 44px; font-size: 13px; }
+.illust-auto-footer > .illust-actions { margin-left: auto; }
+.modal.illust-auto-candidates-modal { width: min(1200px, calc(100vw - 32px)); max-width: none; }
+.illust-auto-candidate-table { overflow: auto; max-height: calc(100dvh - 180px); }
+.illust-auto-candidate-table table { width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; white-space: normal; }
+.illust-auto-candidate-table :is(th, td) { min-width: 180px; padding: 12px; vertical-align: top; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+.illust-auto-candidate-table th:first-child { min-width: 140px; max-width: 200px; overflow-wrap: anywhere; }
+.illust-auto-candidate-table th p { font-size: 11px; font-weight: 400; margin-top: 8px; }
+.illust-auto-candidate-table thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.illust-auto-candidate-table .illust-auto-thumbnail { margin-bottom: 8px; }
+.illust-auto-candidate-table .illust-auto-thumbnail img { height: 230px; }
+.illust-auto-manual-candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 16px; list-style: none; margin: 16px 0 0; padding: 0; }
+.illust-auto-manual-candidates > li { display: flex; flex-direction: column; min-width: 0; }
+.illust-auto-manual-candidates > li > .button { width: 100%; margin-top: auto; }
+@media (max-width: 640px) {
+  .llm-tabs.illust-rep-batch-tabs { margin-bottom: 12px; }
+  .illust-auto-steps { gap: 5px; padding-bottom: 10px; }
+  .illust-auto-steps > li { flex-direction: column; gap: 7px; padding: 8px 3px; text-align: center; }
+  .illust-auto-steps strong { font-size: 11px; }
+  .illust-auto-heading h3 { font-size: 18px; }
+  .illust-auto-index-settings { margin: 6px auto; }
+  .illust-auto-index-example > header > .field { width: 100%; }
+  .illust-auto-character-grid { grid-template-columns: minmax(0, 1fr); }
+  .illust-auto-footer { gap: 8px; padding-top: 10px; }
+  .illust-auto-footer > .illust-actions { width: 100%; justify-content: flex-end; }
+  .illust-auto-footer .button { white-space: normal; font-size: 12px; padding: 8px 10px; }
+  .illust-auto-progress { padding: 14px; }
+  .illust-auto-progress h3 { font-size: 15px; }
+}
+@media (max-width: 640px), (max-height: 640px) {
+  .illust-rep-batch-tab-panel > .illust-form > .illust-rep-batch-rows { flex: none; overflow-y: visible; }
+}

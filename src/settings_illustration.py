@@ -40,6 +40,7 @@ READ_PATHS = {
     "llm_edit_prompt_template",
 }
 WRITE_PATHS = {
+    "bot_mode/suggest_name_tag",
     "bot_mode/auto_batch",
     "bot_mode/regenerate_image", "bot_mode/regenerate_emotion_outfit", "bot_mode/regenerate_emotion_image",
     "bot_mode/generate_emotion_images", "bot_mode/generate_profile_outfits",

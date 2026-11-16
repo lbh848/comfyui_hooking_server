@@ -68,6 +68,53 @@ class CharacterBatchLockTests(unittest.IsolatedAsyncioTestCase):
             "batch_refine": batch, "visual_card_id": "card_1",
         }))
 
+    async def test_imported_lore_persists_per_character_and_survives_stale_card_save(self):
+        base = self.profiles()
+        entry = {"entry_id": "entry-1", "source": "bot.charx", "title": "Alice lore", "content": "Original text",
+                 "keys": ["Alice", "앨리스"], "secondary_keys": ["garden"], "enabled": True,
+                 "constant": False, "selective": True, "use_regex": False}
+        body = {"action": "import_character_lore", "bot_name": "TestBot", "characters": [{"character": "alice", "entries": [entry]}]}
+        response = await self.manager.handle_bot_action(self.request(body))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.root()["imported_lore"], [entry])
+        self.assertNotIn("imported_lore", self.read()["bots"][0]["characters"][1])
+        self.assertEqual(self.profiles()["imported_lore"], [entry])
+        entry["content"] = "Updated source text"
+        await self.manager.handle_bot_action(self.request(body))
+        self.assertEqual(self.root()["imported_lore"], [entry])
+        edited = deepcopy(base)
+        edited["profiles"][1]["label"] = "Changed card"
+        response = await self.save(base, edited)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.body)["character"]["imported_lore"], [entry])
+        self.assertEqual(self.root()["imported_lore"], [entry])
+        self.assertTrue(all("imported_lore" not in card for card in self.root()["visual_cards"]))
+
+    async def test_invalid_lore_target_does_not_partially_save(self):
+        entry = {"entry_id": "entry-1", "source": "module.risum", "title": "Shared", "content": "Text", "keys": ["Alice"]}
+        response = await self.manager.handle_bot_action(self.request({"action": "import_character_lore", "bot_name": "TestBot",
+            "characters": [{"character": "Alice", "entries": [entry]}, {"character": "Missing", "entries": [entry]}]}))
+        self.assertGreaterEqual(response.status, 400)
+        self.assertEqual(self.read(), self.initial)
+
+    async def test_imported_global_note_replaces_only_selected_bots_asset_instruction(self):
+        initial = deepcopy(self.initial)
+        initial["bots"][0]["asset_output_instruction"] = "Previous instruction"
+        initial["bots"].append({"name": "OtherBot", "characters": [], "asset_output_instruction": "Keep this"})
+        self.path.write_text(json.dumps(initial), encoding="utf-8")
+        note = "  ## Asset output\r\nUse {{char}}_happy.webp.\nKeep <img> tags unchanged.  "
+        response = await self.manager.handle_save_asset_output_instruction(self.request({
+            "bot_name": "TestBot", "instruction": note,
+        }))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.body)["instruction"], note)
+        saved = self.read()
+        self.assertEqual(saved["bots"][0]["asset_output_instruction"], note)
+        self.assertEqual(saved["bots"][0]["characters"], initial["bots"][0]["characters"])
+        self.assertEqual(saved["bots"][1], initial["bots"][1])
+        response = await self.manager.handle_get_asset_output_instruction(SimpleNamespace(query={"bot_name": "TestBot"}))
+        self.assertEqual(json.loads(response.body)["instruction"], note)
+
     async def test_lock_persists_and_unlock_keeps_card_exclusions(self):
         self.assertFalse(self.profiles()["lb_extra_batch_locked"])
         response = await self.lock(char_name="alice")

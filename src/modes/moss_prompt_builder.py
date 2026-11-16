@@ -523,6 +523,44 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
     }
 
 
+def apply_character_image_name_tags(moss: dict, characters: list,
+                                    character_aliases: dict[str, str] | None = None) -> dict:
+    """Apply enabled card name tags to MOSS character captions, keeping identity keys."""
+    from modes.illust_prompt_builder import IllustPromptBuilder
+
+    # DETAIL owns appearance and clothing. Reuse ANIMA's name replacement and
+    # deduplication without injecting the card's absolute appearance tags.
+    cards = [
+        {**character, "name": _text(character.get("name")), "absolute_tags": ""}
+        for character in characters or []
+        if isinstance(character, dict)
+        and _text(character.get("name"))
+        and character.get("use_image_name_tag") is True
+        and _text(character.get("image_name_tag"))
+    ]
+    if not cards:
+        return moss
+
+    rendered = copy.deepcopy(moss)
+    card_names = [card["name"] for card in cards]
+    for item in rendered.get("items") or []:
+        if not isinstance(item, dict) or _text(item.get("label")).lower() != "character":
+            continue
+        name = _text(item.get("name")).strip('\"“”').strip()
+        matched = IllustPromptBuilder.detect_characters_from_name(
+            name, card_names, character_aliases)
+        if len(matched) != 1:
+            continue
+        caption = _text(item.get("caption"))
+        # Panel ownership must stay at the start until the final builder turns
+        # it into spatial prose. A character can occur in several panel items.
+        marker = re.match(r"\s*PANEL\s+\d+\.\s*", caption, re.IGNORECASE)
+        prefix = caption[:marker.end()] if marker else ""
+        item["caption"] = prefix + IllustPromptBuilder._apply_assigned_character_identity_tags(
+            [caption[len(prefix):]], {0: name}, {name: matched[0]}, cards)[0]
+    return rendered
+
+
 def _moss_render_panel_captions(moss: dict) -> dict:
     """Translate internal panel references into spatial prose at the image-model boundary."""
     prefix = re.compile(r"^\s*PANEL\s+(\d+)\.\s*", re.IGNORECASE)

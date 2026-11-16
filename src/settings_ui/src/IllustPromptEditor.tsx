@@ -73,6 +73,7 @@ const promptGroups: PromptGroup[] = [
   ] },
   { id: "shared", title: "공유 프롬프트", description: "여러 단계에서 함께 사용하는 지침입니다. 장르 지침은 장르 입력 시, NSFW 및 물리 접촉 지침은 NSFW를 켰을 때 포함됩니다.", fields: [
     { key: "genre", label: "장르·세계관 공통 지침" },
+    { key: "genre_secondary", label: "2차봇 작품 배경 지침", help: "장르가 2차봇일 때 작품명과 함께 전달됩니다. LLM의 기존 작품 지식을 배경·시대 해석에 사용합니다." },
     { key: "call2_jailbreak", label: "외부 LLM 호환성 지침" },
     { key: "call2_explicit", label: "NSFW 및 물리 접촉 지침" },
   ] },

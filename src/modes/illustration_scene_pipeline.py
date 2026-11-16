@@ -1145,6 +1145,9 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             regions = [{field: pipeline.multi_char_mask._prompt_text(
                 region.get(field), f"regions[0].{field}", required=field == "name")
                 for field in ("name", "character_prompt")}]
+            from illustration_reference_assets import REFERENCE_REFS
+            if region.get("ref") in REFERENCE_REFS:
+                regions[0]["ref"] = region["ref"]
             layout = None
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 1인도 마스크 OFF, 인라인 프롬프트만 사용: slot={item['slot']}")
         elif item["regions"]:
@@ -1161,7 +1164,8 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             "camera": item["background_prompt"], "scene": item["composition_prompt"],
             "supplement": "", "speak": "", "characters": [
                 {"name": region["name"], "positive": region["character_prompt"],
-                 "negative": region.get("negative", ""), "position": ""}
+                 "negative": region.get("negative", ""), "position": "",
+                 **({"ref": region["ref"]} if "ref" in region else {})}
                 for region in regions
             ],
         }
@@ -1910,7 +1914,9 @@ async def build_from_context(
                                           include_server_limits=False)
         role_context = prompt_builders.role_context(
             protected, lb_extra_system_prompt, genre=toggles.get("genre", ""),
-            genre_prompt=prompts.get("genre", ""))
+            genre_prompt=prompts.get("genre", ""),
+            genre_work_title=toggles.get("genre_work_title", ""),
+            genre_secondary_prompt=prompts.get("genre_secondary", ""))
         explicit_policy = ""
         if toggles.get("nsfw"):
             explicit_policy = p.render_call2_prompt(
@@ -2097,7 +2103,8 @@ async def build_from_context(
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
                 canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""),
-                toggles=toggles, genre_prompt=prompts.get("genre", ""), moss=moss)
+                toggles=toggles, genre_prompt=prompts.get("genre", ""),
+                genre_secondary_prompt=prompts.get("genre_secondary", ""), moss=moss)
             if keyvis_in_detail:
                 if not moss:
                     # DETAIL-MOSS writes its own combined keyvis contract.

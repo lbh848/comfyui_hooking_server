@@ -1,7 +1,7 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 const prefix = "comfy-illustration-work:";
-export const assetInstructionSession = "asset-instruction-bots";
+export const assetProfileAliasSettingsSession = "asset-instruction-bots";
 export const dataPreparationSession = "data-preparation-bots";
 export const manualDrawSession = "manual-draw-bot";
 
@@ -26,7 +26,7 @@ export function useWorkSession<T>(key: string, fallback: T): [T, Dispatch<SetSta
 }
 
 export function hasIllustrationWorkSession() {
-  return !!readWorkSession(manualDrawSession, "") || [assetInstructionSession, dataPreparationSession].some(key => {
+  return !!readWorkSession(manualDrawSession, "") || [assetProfileAliasSettingsSession, dataPreparationSession].some(key => {
     const names = readWorkSession<unknown>(key, []);
     return Array.isArray(names) && names.length > 0;
   });

@@ -1,15 +1,21 @@
 """Preparation ordering, progress, card persistence and safe cancellation."""
 import asyncio
+import base64
 from copy import deepcopy
+import hashlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import sys
+import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from PIL import Image
 
 from settings_illustration_prepare import register_data_preparation
 
@@ -453,6 +459,78 @@ class PreparationProgressTests(unittest.IsolatedAsyncioTestCase):
         self.complete(self.qm.items[-1])
         run = await self.until(lambda run: run["status"] != "running")
         self.assertEqual(run["status"], "completed")
+
+    def face_storage(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        storage = patch.object(self.bot_module, "BOT_DIR", directory.name)
+        storage.start()
+        self.addCleanup(storage.stop)
+        for target in self.current_images:
+            target["is_primary"] = target["visual_card_id"] == "card_1"
+        self.bot_module.get_bot_visual_targets.side_effect = lambda bot, character="", **kwargs: [
+            item for item in self.current_images
+            if bot == "TestBot" and (not character or item["character"] == character)]
+        return Path(directory.name) / "TestBot" / "Alice"
+
+    async def crop_card_face(self, *, size=(12, 16), **overrides):
+        buffer = io.BytesIO()
+        Image.new("RGB", size, "blue").save(buffer, "PNG")
+        return await self.client.post("/api/bot_mode/data_preparation", json={
+            "action": "card_face_crop", "bot_name": "TestBot", "character": "Alice", "visual_card_id": "card_2",
+            "image": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(), **overrides,
+        })
+
+    async def test_card_face_can_be_created_and_replaced_without_preparation_run(self):
+        character_dir = self.face_storage()
+        character_dir.mkdir(parents=True)
+        primary = character_dir / "_face_image.webp"
+        primary.write_bytes(b"keep primary face")
+        card_dir = Path(self.bot_module.bot_visual_artifact_dir("TestBot", "Alice", "card_2"))
+        card_dir.mkdir(parents=True)
+        for size in [(12, 16), (20, 24)]:
+            (card_dir / "_face_image_prompt.json").write_text('{"prompt":"old automatic crop"}')
+            response = await self.crop_card_face(size=size)
+            self.assertEqual(response.status, 200, await response.text())
+            with Image.open(card_dir / "_face_image.webp") as saved:
+                self.assertEqual(saved.size, size)
+                self.assertEqual(saved.format, "WEBP")
+            source = json.loads((card_dir / "_face_image_source.json").read_text(encoding="utf-8"))
+            self.assertEqual(source["source"], "manual_crop")
+            self.assertEqual(source["face_sha256"], hashlib.sha256((card_dir / "_face_image.webp").read_bytes()).hexdigest())
+            self.assertFalse((card_dir / "_face_image_prompt.json").exists())
+        self.assertEqual(primary.read_bytes(), b"keep primary face")
+        self.assertIsNone(await self.run_state())
+        self.assertEqual(self.qm.items, [])
+
+    async def test_invalid_card_face_does_not_replace_existing_image(self):
+        self.face_storage()
+        response = await self.crop_card_face()
+        self.assertEqual(response.status, 200)
+        card_dir = Path(self.bot_module.bot_visual_artifact_dir("TestBot", "Alice", "card_2"))
+        before = {path.name: path.read_bytes() for path in card_dir.iterdir()}
+        for image in [None, "", "not an image", "data:image/png;base64,broken!", "data:image/png;base64,aGVsbG8="]:
+            with self.subTest(image=image):
+                response = await self.crop_card_face(image=image)
+                self.assertEqual(response.status, 400, await response.text())
+                self.assertEqual({path.name: path.read_bytes() for path in card_dir.iterdir()}, before)
+
+    async def test_card_face_requires_exact_saved_character_and_card(self):
+        character_dir = self.face_storage()
+        for target in [{"visual_card_id": ""}, {"visual_card_id": "deleted-card"}, {"character": "Bob", "visual_card_id": "card_2"}, {"character": "../escape"}, {"bot_name": "missing"}]:
+            with self.subTest(target=target):
+                response = await self.crop_card_face(**target)
+                self.assertEqual(response.status, 400, await response.text())
+        self.assertFalse(character_dir.exists())
+
+    async def test_card_face_cannot_replace_image_during_preparation(self):
+        await self.start()
+        response = await self.crop_card_face()
+        self.assertEqual(response.status, 409, await response.text())
+        self.assertEqual(len(self.qm.items), 3)
+        for item in self.qm.items:
+            self.complete(item)
+        await self.until(lambda run: run["status"] != "running")
 
 
 if __name__ == "__main__":

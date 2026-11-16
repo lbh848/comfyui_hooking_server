@@ -4,7 +4,7 @@
     "Lune": {
       "appearance": "공방-Lune",
       "outfit": "공방-Lune",
-      "expression": "SD-80_acting coy_v4",
+      "expression": "SD-80_excited_v1",
       "settings": {
         "defaults": {
           "natural_language": "",
@@ -73,17 +73,20 @@
             "one hand cuff with broken chain",
             "black leader choker"
           ],
-          "expression": "SD-80_acting coy_v4",
+          "expression": "SD-80_excited_v1",
           "raw_expression_tags": [
-            "blush",
-            "light smile",
-            "arm behind back",
-            "hand on own mouth",
-            "finger to mouth",
-            "finger in own mouth",
-            "index finger raised",
+            "sparkling eyes",
+            "happy",
+            "smile",
+            "open mouth",
+            "excited",
+            "v-shaped eyebrows",
+            "hands up",
+            "wide-eyed",
+            "+_+",
+            "clenched hands",
             "cowboy shot",
-            "looking away"
+            "looking at viewer"
           ],
           "raw_character_negative_tags": [],
           "snapref_enabled": false,
@@ -102,7 +105,7 @@
             {
               "source": "external",
               "lora_path": "SOYA_CHAR_LORA/SOYA_ASSET_LORA/__projects__/Lora/Lune/20261107-062539/9c3e2d02-step00000150.safetensors",
-              "strength": 0.3,
+              "strength": 0.8,
               "BASE": "anima",
               "trigger": "@Lune",
               "name": "Lune · 20261107-062539 · 9c3e2d02-step00000150.safetensors",

@@ -192,6 +192,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
   return <>
     <div className="illust-form illust-visual-guide-content">
       <p className="field-help">{!canGenerate ? "출력 지침 탭에서 지침을 입력한 뒤 자동 작성을 실행하세요." : instructionDirty ? `현재 입력한 지침 ${instructionLength.toLocaleString()}자를 저장한 뒤 자동 작성을 실행합니다.` : `현재 봇에 저장된 에셋·프로필 출력 지침 ${instructionLength.toLocaleString()}자를 사용합니다.`}</p>
+      <p className="field-help">캐릭터별로 가져온 로어북의 활성화 키를 작중 별칭의 근거로, 본문을 프로필 구분과 선택 조건의 근거로 함께 참고합니다.</p>
       {!resource.data ? <IllustrationLoading error={resource.error} retry={resource.reload} /> : !targets.length ? <Empty title="자동 작성할 캐릭터 카드가 없습니다">봇에 캐릭터를 추가한 뒤 자동 작성을 실행하세요.</Empty> : <>
         <div className="illust-inline-form illust-visual-guide-toolbar">
           <label className="field">캐릭터·카드·파일명 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Check, ChevronDown, Feather, Images, LoaderCircle, Power, Settings, Sparkles, Layers, Blend, WandSparkles } from "lucide-react";
+import { Check, ChevronDown, Images, LoaderCircle, Power, Settings, Sparkles, Layers, Blend, WandSparkles } from "lucide-react";
 import { Modal } from "./components";
 import { useWorkshopNavigation, type Workshop } from "./WorkshopNavigation";
 import { collectUnsavedChanges, type UnsavedChange } from "./unsavedChanges";
@@ -19,6 +19,7 @@ export function WorkshopSwitcher({ current, onOpen }: { current: Workshop; onOpe
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
   const active = workspaces.find(workspace => workspace.id === current)!;
+  const ActiveIcon = active.icon;
 
   return <div className="workshop-switcher" onKeyDown={event => {
     if (event.key === "Escape" && open) {
@@ -28,7 +29,7 @@ export function WorkshopSwitcher({ current, onOpen }: { current: Workshop; onOpe
   }}>
     <button ref={trigger} type="button" className="brand workshop-trigger" aria-expanded={open} aria-controls={id}
       aria-label={`Comfy 공방 ${active.label} · 작업 공간 전환`} onClick={() => { if (!open) onOpen(); setOpen(value => !value); }}>
-      <span className="brand-mark"><Feather size={20} /></span>
+      <span className="brand-mark"><ActiveIcon size={20} /></span>
       <span className="workshop-brand-text">
         <strong>Comfy<span>공방</span><Sparkles size={12} /></strong>
         <small>{active.label}</small>

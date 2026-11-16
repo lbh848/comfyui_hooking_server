@@ -1,6 +1,7 @@
 // Keep this file ASCII-only. Localized UI strings use C# Unicode escapes.
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -18,6 +19,7 @@ internal sealed class StartupWindow : Form
     public StartupWindow()
     {
         Text = "Comfy\uacf5\ubc29 \u00b7 \uc2dc\uc791";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         ClientSize = new Size(620, 474);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -28,8 +30,10 @@ internal sealed class StartupWindow : Form
         Font = new Font("Malgun Gothic", 10);
         DoubleBuffered = true;
         ShowInTaskbar = true;
-        var mark = AddLabel("\u2726", 28, 26, 52, 54, 28, FontStyle.Regular);
-        mark.BackColor = Rose; mark.ForeColor = Color.White; mark.TextAlign = ContentAlignment.MiddleCenter;
+        var mark = new StartupMark { Location = new Point(28, 26), Size = new Size(52, 54),
+            BackColor = Rose, ForeColor = Color.White, TabStop = false };
+        mark.MouseDown += DragWindow;
+        Controls.Add(mark);
         AddLabel("Comfy\uacf5\ubc29", 94, 24, 350, 40, 23, FontStyle.Bold);
         var subtitle = AddLabel("V6  \u00b7  CREATIVE WORKSPACE", 96, 67, 360, 20, 8, FontStyle.Regular);
         subtitle.ForeColor = Color.FromArgb(117, 97, 111);
@@ -66,11 +70,14 @@ internal sealed class StartupWindow : Form
     {
         var label = new Label { Text = text, Location = new Point(x, y), Size = new Size(width, height),
             Font = new Font("Malgun Gothic", size, style), BackColor = Color.Transparent };
-        label.MouseDown += delegate(object sender, MouseEventArgs e) {
-            if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); }
-        };
+        label.MouseDown += DragWindow;
         Controls.Add(label);
         return label;
+    }
+
+    private void DragWindow(object sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); }
     }
 
     // Localize only in the GUI; the startup protocol and console stay English.
@@ -138,6 +145,36 @@ internal sealed class StartupWindow : Form
     protected override CreateParams CreateParams { get { var value = base.CreateParams; value.ClassStyle |= 0x20000; return value; } }
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+}
+
+internal sealed class StartupMark : Control
+{
+    public StartupMark()
+    {
+        DoubleBuffered = true;
+        ResizeRedraw = true;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        // Center the shape itself, independent of font bearings and baselines.
+        float x = ClientSize.Width / 2f, y = ClientSize.Height / 2f;
+        float radius = Math.Min(ClientSize.Width, ClientSize.Height) * 0.27f;
+        float shoulder = radius * 0.22f;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        using (var star = new GraphicsPath())
+        using (var brush = new SolidBrush(ForeColor))
+        {
+            star.AddBezier(x, y - radius, x + shoulder, y - shoulder, x + shoulder, y - shoulder, x + radius, y);
+            star.AddBezier(x + radius, y, x + shoulder, y + shoulder, x + shoulder, y + shoulder, x, y + radius);
+            star.AddBezier(x, y + radius, x - shoulder, y + shoulder, x - shoulder, y + shoulder, x - radius, y);
+            star.AddBezier(x - radius, y, x - shoulder, y - shoulder, x - shoulder, y - shoulder, x, y - radius);
+            star.CloseFigure();
+            e.Graphics.FillPath(brush, star);
+        }
+    }
 }
 
 internal sealed class LoadingBar : Control

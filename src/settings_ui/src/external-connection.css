@@ -2,7 +2,8 @@
 .external-connection-body { display: grid; gap: 16px; padding: 22px; }
 .external-connection-body p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .external-connection-body .external-connection-error { color: var(--danger); }
-.external-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.external-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.external-connection-auto-start { display: inline-flex; align-items: center; gap: 8px; padding: 8px 4px; font-size: 12px; cursor: pointer; }
 .external-connection-url { font-family: ui-monospace, monospace; min-width: 0; }
 .external-connection-status { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 10px; font-weight: 550; white-space: nowrap; color: var(--muted); }
 .external-connection-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

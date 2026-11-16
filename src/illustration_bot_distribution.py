@@ -307,15 +307,9 @@ async def handle_bot_distribution(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
 
-@web.middleware
-async def bot_distribution_middleware(request: web.Request, handler):
-    """Enforce the same lock on both the legacy UI and the settings gateway."""
-    if request.method not in {"POST", "DELETE"} or not request.path.startswith("/api/bot_mode/") or request.path == "/api/bot_mode/distribution" or request.path.startswith("/api/bot_mode/postprocess_"):
-        return await handler(request)
+async def _handle_bot_distribution_write(request: web.Request, body, handler):
+    """Authorize and publish a bot mutation under the distribution lock."""
     try:
-        body = await request.post() if request.content_type.startswith("multipart/") else await request.json()
-        if not hasattr(body, "get"):
-            raise ValueError("봇 요청을 확인하세요.")
         distribution = _distribution_for(request)
         async with distribution.request_lock:
             distribution.sync()
@@ -337,7 +331,7 @@ async def bot_distribution_middleware(request: web.Request, handler):
                     distribution.require_unlocked(request.headers.get("X-Bot-Distribution-Token", ""))
             # Suggestions do not write bot data. Release the write lock while the
             # LLM runs so its cancellation request can reach the queue immediately.
-            if request.path not in {"/api/bot_mode/auto_batch", "/api/bot_mode/character_cards/suggest_metadata", "/api/bot_mode/character_cards/suggest_metadata/cancel"}:
+            if request.path not in {"/api/bot_mode/suggest_name_tag", "/api/bot_mode/auto_batch", "/api/bot_mode/character_cards/suggest_metadata", "/api/bot_mode/character_cards/suggest_metadata/cancel"}:
                 response = await handler(request)
                 result = json.loads(response.body) if isinstance(response, web.Response) and response.content_type == "application/json" else {}
                 if response.status < 400 and not result.get("error") and result.get("success") is not False:
@@ -345,5 +339,25 @@ async def bot_distribution_middleware(request: web.Request, handler):
                         distribution.publish(name)
                 return response
         return await handler(request)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+@web.middleware
+async def bot_distribution_middleware(request: web.Request, handler):
+    """Enforce the same lock on both the legacy UI and the settings gateway."""
+    if request.method not in {"POST", "DELETE"} or not request.path.startswith("/api/bot_mode/") or request.path == "/api/bot_mode/distribution" or request.path.startswith("/api/bot_mode/postprocess_"):
+        return await handler(request)
+    try:
+        body = await request.post() if request.content_type.startswith("multipart/") else await request.json()
+        if not hasattr(body, "get"):
+            raise ValueError("봇 요청을 확인하세요.")
+        if request.path == "/api/bot_mode/upload":
+            # Copy/hash independent uploads concurrently. The upload handler calls
+            # this guard before classification and publication, so permission and
+            # distribution changes remain serialized with the final file replace.
+            request["bot_upload_publish"] = lambda publish: _handle_bot_distribution_write(request, body, publish)
+            return await handler(request)
+        return await _handle_bot_distribution_write(request, body, handler)
     except (ValueError, KeyError, TypeError, OSError) as exc:
         return web.json_response({"error": str(exc)}, status=400)

@@ -114,6 +114,15 @@
   font-weight: 600;
 }
 
+.memo-danbooru-form { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.memo-danbooru-form .search-field { flex: 1; min-width: 0; }
+.memo-danbooru-form select { width: auto; min-width: 100px; }
+.memo-danbooru-form .button { flex-shrink: 0; }
+.memo-danbooru-help { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+.memo-danbooru-help .field-help { flex: 1; min-width: 180px; margin: 0; }
+.memo-danbooru-error { color: var(--danger); font-size: 12px; line-height: 1.7; }
+.memo-danbooru-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; font-size: 12px; }
+
 @media (max-width: 760px) {
   .memo-editor {
     padding: 12px;
@@ -126,4 +135,8 @@
   .memo-tag-search {
     padding: 12px;
   }
+
+  .memo-danbooru-form { flex-wrap: wrap; }
+  .memo-danbooru-form .search-field { flex-basis: 100%; }
+  .memo-danbooru-form select { flex: 1; }
 }

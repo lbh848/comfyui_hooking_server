@@ -1,4 +1,4 @@
-import { referenceDeliveryOptions, referencePreprocessOptions } from "./referenceSettings";
+import { referenceStageDelivery, referenceStageDeliveryOptions, referencePreprocessOptions } from "./referenceSettings";
 import { useEffect, useId, useRef, useState } from "react";
 import { Copy, Dice5, RotateCcw } from "lucide-react";
 import { Badge, Modal, SettingsTabs } from "./components";
@@ -113,7 +113,7 @@ export function IllustBotGenerationSettings({ botName, readOnly, onDirtyChange, 
       onApply={settings => {
         if (readOnly) return;
         setDraft(current => current && ({ ...current, [mode]: {
-          solo: { ...current[mode].solo, ...settings.solo },
+          solo: { ...current[mode].solo, snapref_primary_reference: "", snapref_detailer_reference: "", ...settings.solo },
           group: mode === "character_auto" || groupLocked(mode) ? current[mode].group : { ...current[mode].group, ...settings.group },
         } }));
       }} />
@@ -181,12 +181,14 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, update, o
         {!capabilities.moss_reference && <label className="field">레퍼런스 전처리<select value={value.snapref_preprocess || "none"} onChange={event => update("snapref_preprocess", event.target.value)}>{referencePreprocessOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
         {range("snapref_strength", "Strength · 레퍼런스 강도", 0, 2, .05)}
         {!capabilities.moss_reference && range("snapref_fidelity", "Fidelity · 디테일 유지", 0, 1, .05)}
-        {!capabilities.moss_reference && <p className="field-help">1은 레퍼런스 디테일을 유지하고, 낮출수록 프롬프트를 더 자유롭게 따릅니다.</p>}
-        <label className="field">레퍼런스 전달<select value={value.snapref_secondary_reference} onChange={event => update("snapref_secondary_reference", event.target.value)}>{referenceDeliveryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        {capabilities.moss_reference ? <p className="field-help">MOSS는 CharRef v2로 캐릭터별 참조 이미지를 최대 3장까지 사용합니다. 모델·스텝·CFG·샘플러는 프리셋 값을 그대로 사용하며, 참조 모드가 이 값을 바꾸지 않습니다. 다중 참조는 실험적이며, 모델 카드는 Picture 1만 안정적이라고 경고합니다.</p> : <><p className="field-help">ANIMA 단계에 적용합니다. 얼굴 이미지만은 1st·HF·모든 디테일러에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. 대표+얼굴 또는 대표+두 번째 대표는 모든 단계에 함께 전달하며, 추가 이미지가 없으면 대표만 사용합니다. 단계별 전달은 FD·ED에 얼굴만 전달하며, 얼굴이 없으면 대표로 대체합니다. HF의 마스크별 캐릭터 LoRA는 레퍼런스 사용 여부와 별개로 적용됩니다.</p>
-        <p className="field-help">대표·얼굴·두 번째 대표 이미지는 모두 선택된 캐릭터 카드에서 가져옵니다.</p>
-        <div className="illust-bot-generation-columns"><label className="field">참조 방식<select value={value.snapref_mode} onChange={event => update("snapref_mode", event.target.value)}><option value="char">캐릭터 외형</option><option value="cs">외형 + 화풍</option></select></label>
-          {range("snapref_megapixels", "레퍼런스 해상도", .25, 2, .25, " MP")}</div></>}
+        <div className="illust-bot-generation-columns">
+          {([["primary", "1st sampler/디테일러/HD"], ["detailer", "FD/ED"]] as const).map(([stage, label]) =>
+            <label key={stage} className="field">레퍼런스 전달 · {label}<select value={referenceStageDelivery(value, stage)} onChange={event => update(`snapref_${stage}_reference`, event.target.value)}>
+              {referenceStageDeliveryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select></label>)}
+        </div>
+        {!capabilities.moss_reference && <div className="illust-bot-generation-columns"><label className="field">참조 방식<select value={value.snapref_mode} onChange={event => update("snapref_mode", event.target.value)}><option value="char">캐릭터 외형</option><option value="cs">외형 + 화풍</option></select></label>
+          {range("snapref_megapixels", "레퍼런스 해상도", .25, 2, .25, " MP")}</div>}
       </div>}
     </fieldset>
     <fieldset className="illust-bot-generation-section illust-form" data-group="enhancement" disabled={capabilities.moss || !capabilities.local_advanced}><legend>고해상도·디테일러 보정{capabilities.moss && <span>MOSS 미사용</span>}</legend>

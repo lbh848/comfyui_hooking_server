@@ -117,6 +117,7 @@ PROMPT_FILES = {
     # 이미지가 bbox 없이 하나의 요약 캡션으로 그려지는 계약만 추가한다.
     "npc_generation_moss": "npc_generation_moss.txt",
     "genre": "genre.txt",
+    "genre_secondary": "genre_secondary.txt",
     "character_resolve": "character.txt",
     "profile_resolve": "profile.txt",
     "emotion_resolve": "emotion_resolve.txt",
@@ -189,6 +190,7 @@ DEFAULT_TOGGLES = {
     "image_model_load_at_detail": False,
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "genre": "",
+    "genre_work_title": "",
     "original_asset_count": 1,
     "original_asset_instruction": "",
     "outfit_enabled": False,
@@ -707,6 +709,7 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         ]
     out["original_asset_instruction"] = instruction
     out["genre"] = str(out.get("genre") or "").strip()
+    out["genre_work_title"] = str(out.get("genre_work_title") or "").strip()
     if for_generation and output_mode in ("composite", "composite_both"):
         # Correction edits a single generated scene. Layered scenes keep their
         # own DETAIL geometry and always assemble before any image postprocess.
@@ -10580,7 +10583,9 @@ async def resolve_profiles_before_generation(
         selection = prompt_builders.selection_messages(
             prompts, prompt_builders.role_context(
                 protected, extra_instruction, genre=toggles.get("genre", ""),
-                genre_prompt=prompts.get("genre", "")),
+                genre_prompt=prompts.get("genre", ""),
+                genre_work_title=toggles.get("genre_work_title", ""),
+                genre_secondary_prompt=prompts.get("genre_secondary", "")),
             render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
             scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "",
             emotion=emotion)

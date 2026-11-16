@@ -524,6 +524,8 @@ _DRAWING_MODE_SNAPREF_FIELDS = {
     "snapref_strength_scale": "strength_scale",
     "snapref_fidelity": "fidelity",
     "snapref_secondary_reference": "secondary_reference",
+    "snapref_primary_reference": "primary_reference",
+    "snapref_detailer_reference": "detailer_reference",
     "snapref_mode": "mode",
     "snapref_megapixels": "megapixels",
 }

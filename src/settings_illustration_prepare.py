@@ -514,11 +514,27 @@ def register_data_preparation(server):
                     run["stop_requested"] = True
                     await qm.cancel_one_click_run(run["id"])
                 return web.json_response({"run": public(run)})
-            if body.get("action") not in {"start", "retry", "continue", "face_crop"}:
+            if body.get("action") not in {"start", "retry", "continue", "face_crop", "card_face_crop"}:
                 raise ValueError("지원하지 않는 데이터 준비 요청입니다.")
             if key in runs and (runs[key]["status"] == "running" or key in tasks and not tasks[key].done()):
                 label = "감정 삽화 데이터 준비" if bot_scope() == "emotion" else "삽화 데이터 준비"
                 return web.json_response({"error": f"이 봇의 {label}가 진행 중입니다.", "run": public(runs[key])}, status=409)
+            if body["action"] == "card_face_crop":
+                character = body.get("character")
+                card_id = body.get("visual_card_id")
+                image = body.get("image")
+                if not isinstance(character, str) or not character.strip() or not isinstance(card_id, str) or not card_id.strip():
+                    raise ValueError("얼굴을 저장할 캐릭터 카드를 선택하세요.")
+                if not isinstance(image, str) or not image:
+                    raise ValueError("자른 얼굴 이미지를 확인하세요.")
+                target = next((item for item in get_bot_visual_targets(name, character)
+                               if item["character"] == character and item["visual_card_id"] == card_id), None)
+                if target is None:
+                    raise ValueError("얼굴을 저장할 캐릭터 카드를 찾을 수 없습니다. 카드를 먼저 저장하세요.")
+                # Card editing can replace a missing or unwanted FACE without
+                # starting a preparation run or changing another card's image.
+                save_manual_face({"bot_name": name}, target, image)
+                return web.json_response({"success": True, "character": character, "visual_card_id": card_id})
             if body["action"] == "continue":
                 run = runs.get(key)
                 if not run or run["id"] != body.get("run_id"):
@@ -624,7 +640,7 @@ def register_data_preparation(server):
             runs[key] = run
             tasks[key] = asyncio.create_task(execute(run))
             return web.json_response({"run": public(run)}, status=202)
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError, OSError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
     async def cleanup(_app):

@@ -65,9 +65,12 @@ def main() -> None:
         control = allowed_external_control(request.path, request.method)
         if not allowed_path(request.path) and not illustration and not asset and not external and not control:
             raise web.HTTPNotFound()
-        if request.method == "POST" or illustration or asset or external:
+        # Image storage uses only the scoped bot directory and preflight data.
+        # Avoid reloading generation settings and API keys for every image.
+        image_storage = request.path in {"/api/bot_mode/upload", "/api/bot_mode/upload_preflight"}
+        if not image_storage and (request.method == "POST" or illustration or asset or external):
             refresh_config()
-        if request.method == "POST":
+        if request.method == "POST" and not image_storage:
             server._load_llm_keys_into_config()
             if illustration or external:
                 server._load_chansub_key()

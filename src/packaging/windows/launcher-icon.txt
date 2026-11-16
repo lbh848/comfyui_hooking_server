@@ -1,0 +1,11 @@
+Comfy Workshop launcher icon
+
+Source artwork: 1794778361_c96c50.png (user-provided image).
+Bundled original: launcher-icon.png, 337 x 337 px, RGBA.
+The PNG is an unchanged copy of the source, including its transparency.
+No image generation, cropping, redrawing, background removal, or retouching.
+Windows icon: launcher.ico, containing 16, 24, 32, 48, 64, 128 and 256 px sizes.
+Format conversion: Pillow ICO export from RGBA, retaining transparency.
+The build consumes launcher.ico directly; rebuilding the EXE does not need
+Pillow or access to the original Downloads folder. Both image files live
+alongside this file in src/packaging/windows/.

@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { CircleHelp, Images, Plus, Save, Trash2 } from "lucide-react";
+import { CircleHelp, Images, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import "../../frontend/static/bot_rep_batch.js";
 import type { RepBatchImage, RepBatchPlan, RepBatchProfile, RepBatchRow } from "../../frontend/static/bot_rep_batch.js";
-import { Badge, Empty, Modal, Toggle } from "./components";
+import { Badge, Empty, Modal, SettingsTabs, Toggle } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
 import { query, type IllustrationData } from "./illustration";
 import { useBotApi } from "./BotApiScope";
@@ -32,6 +32,15 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   const [priorityHelpDismissed, setPriorityHelpDismissed] = useState(false);
   const [preview, setPreview] = useState<RepBatchImage | null>(null);
   const [autoBatch, setAutoBatch] = useState<{ characters: IllustrationData[]; indices: string } | null>(null);
+  const [view, setView] = useState("manual");
+  const [autoBusy, setAutoBusy] = useState(false);
+  const tabsId = useId();
+
+  function openAutoBatch(targets = initialCharacters.current, indices = commonSearch) {
+    setAutoBatch({ characters: targets, indices });
+    setView("auto");
+    setGallery(null);
+  }
 
   async function loadRow(row: RepBatchRow, signal?: AbortSignal): Promise<RepBatchRow> {
     try {
@@ -158,9 +167,11 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   }
 
   return <>
-    <Modal title={`${botName} · 대표 이미지 일괄 설정`} onClose={onClose} closeDisabled={busy} backgroundable={false} className="illust-rep-batch-modal illust-rep-batch-main-modal">
+    <Modal title={`${botName} · 대표 이미지 일괄 설정`} onClose={onClose} closeDisabled={busy || autoBusy} working={busy || autoBusy} className="illust-rep-batch-modal illust-rep-batch-main-modal">
+      {api.scope === "illust" && <SettingsTabs id={tabsId} className="illust-rep-batch-tabs" label="대표 설정 방식" values={{ manual: "수동 대표 설정", auto: "자동 대표 설정" }} value={view} disabled={busy || autoBusy ? ["manual", "auto"] : []}
+        onChange={value => { if (value === "auto" && !autoBatch) openAutoBatch(); else setView(value); }} />}
+      <div className="illust-rep-batch-tab-panel" role={api.scope === "illust" ? "tabpanel" : undefined} id={`${tabsId}-panel-manual`} aria-labelledby={api.scope === "illust" ? `${tabsId}-tab-manual` : undefined} hidden={view !== "manual"}>
       <div className="illust-form">
-        {api.scope === "illust" && <div className="illust-actions"><button className="button" disabled={busy || readOnly} onClick={() => setAutoBatch({ characters, indices: commonSearch })}>자동 일괄 설정</button></div>}
         <div className="illust-rep-batch-controls">
           <label className="field">공통 파일명 검색<input type="search" value={commonSearch} disabled={busy || readOnly} onChange={event => setCommonSearch(event.target.value)} placeholder="공통 파일명 검색 (선택)" /></label>
           <label className="field">기존 대표 처리<select value={mode} disabled={busy || readOnly} onChange={event => setMode(event.target.value as Mode)}><option value="protect">보호: 자동은 빈 프로필만</option><option value="push">대체: 기존 대표도 교체</option></select></label>
@@ -214,8 +225,25 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
         </div>
       </div>
       <div className="illust-actions illust-dialog-actions illust-rep-batch-footer"><button type="button" className="button primary" disabled={busy || loading || readOnly || !plan.items.length} onClick={requestApply}><Save size={14} />{busy ? "적용 중…" : "일괄 설정 적용"}</button></div>
+      </div>
+      {autoBatch && <div className="illust-rep-batch-tab-panel" role="tabpanel" id={`${tabsId}-panel-auto`} aria-labelledby={`${tabsId}-tab-auto`} hidden={view !== "auto"}>
+        <IllustAutoBatch key={autoBatch.characters.map(character => character.name).join("|") + ":" + autoBatch.indices} botName={botName} characters={autoBatch.characters} initialIndices={autoBatch.indices} readOnly={readOnly} onClose={onClose} onBusyChange={setAutoBusy} onChanged={deletedCharacter => {
+          onChanged();
+          if (deletedCharacter) {
+            initialCharacters.current = initialCharacters.current.filter(character => character.name !== deletedCharacter);
+            setRows(current => current.filter(row => row.charName !== deletedCharacter));
+            return;
+          }
+          const names = new Set(autoBatch.characters.map(character => character.name));
+          void ComfyRepBatch.runLimited(rows.filter(row => names.has(row.charName)).map(row => async () => {
+            const loaded = await loadRow(row);
+            setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
+          }), 10);
+        }} />
+      </div>}
     </Modal>
-    {galleryRow && galleryProfile && <Modal title={`전체 이미지 · ${galleryRow.charName} / ${galleryProfile.profileLabel}`} onClose={() => setGallery(null)} backgroundable={false} className="illust-rep-batch-modal">
+    {galleryRow && galleryProfile && <Modal title={`전체 이미지 · ${galleryRow.charName} / ${galleryProfile.profileLabel}`} onClose={() => setGallery(null)} backgroundable={false} className="illust-rep-batch-modal illust-rep-batch-gallery-modal"
+      headerActions={api.scope === "illust" && <button type="button" className="button primary illust-auto-representative-button" disabled={busy || readOnly} onClick={() => openAutoBatch(characters.filter(character => character.name === galleryRow.charName), prioritySearch)}><Sparkles size={18} aria-hidden="true" />자동 대표 설정</button>}>
       <div className="illust-form">
         <div className="illust-actions" role="group" aria-label="대표 이미지를 지정할 카드">
           <button type="button" className="button secondary" disabled={busy || readOnly || !canAdd(galleryRow)} onClick={() => addProfile(galleryRow)}><Plus size={14} />카드 추가</button>
@@ -244,7 +272,6 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
           <input id={prioritySearchId} type="search" value={prioritySearch} placeholder="예: 교복|미소" onChange={event => setPrioritySearch(event.target.value)} />
         </div>
         <p className="field-help" role="status">{priorityWords.length ? `일치 ${galleryRow.baseOrder.filter(priorityMatch).length}장 / ` : ""}전체 {galleryRow.baseOrder.length}장</p>
-        {api.scope === "illust" && <div className="illust-actions"><button className="button" disabled={busy || readOnly} onClick={() => setAutoBatch({ characters: characters.filter(character => character.name === galleryRow.charName), indices: prioritySearch })}>자동 일괄 설정</button></div>}
         {renderImages(galleryRow, galleryProfile, true)}
         <div className="illust-actions illust-dialog-actions"><span className="field-help">선택한 내용은 ‘일괄 설정 적용’으로 저장합니다.</span><button className="button primary" onClick={() => setGallery(null)}>선택 완료</button></div>
       </div>
@@ -252,13 +279,5 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
     {preview && <Modal title={preview.filename} onClose={() => setPreview(null)} backgroundable={false} closeOnBackdrop showHeader={false} className="illust-lightbox-modal"><figure><figcaption title={preview.filename}>{preview.filename}</figcaption><img className="illust-asset-preview" src={api.media(preview.url)} alt={preview.filename} /></figure></Modal>}
     {confirmation && <Modal title="대표 이미지 중복 확인" onClose={() => setConfirmation(null)} backgroundable={false}><div className="illust-form"><p>같은 대표 이미지가 여러 카드에 중복 설정됩니다.</p>{confirmation.plan.duplicateGroups.map(group => <p className="illust-text" key={group}>{group}</p>)}<div className="illust-actions"><button className="button" onClick={() => setConfirmation(null)}>취소</button><button className="button primary" onClick={() => void apply(confirmation.plan, confirmation.mode)}>이대로 적용</button></div></div></Modal>}
     {deleteTarget && <Modal title="캐릭터 삭제" onClose={() => setDeleteTarget("")} closeDisabled={busy} backgroundable={false}><div className="illust-form"><p>{deleteTarget}의 캐릭터 정보와 모든 이미지를 삭제합니다.</p><IllustrationFeedback error={error} /><div className="illust-actions"><button className="button" disabled={busy} onClick={() => setDeleteTarget("")}>취소</button><button className="button danger" disabled={busy || readOnly} onClick={() => { setBusy(true); setError(""); void api.request("bot_mode/action", { action: "remove_character", bot_name: botName, char_name: deleteTarget }).then(() => { setRows(current => current.filter(row => row.charName !== deleteTarget)); setDeleteTarget(""); onChanged(); }).catch(error => setError(error.message)).finally(() => setBusy(false)); }}>삭제 확인</button></div></div></Modal>}
-    {autoBatch && <IllustAutoBatch botName={botName} characters={autoBatch.characters} initialIndices={autoBatch.indices} readOnly={readOnly} onClose={() => setAutoBatch(null)} onChanged={() => {
-      onChanged();
-      const names = new Set(autoBatch.characters.map(character => character.name));
-      void ComfyRepBatch.runLimited(rows.filter(row => names.has(row.charName)).map(row => async () => {
-        const loaded = await loadRow(row);
-        setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
-      }), 10);
-    }} />}
   </>;
 }

@@ -1,0 +1,65 @@
+.illust-secondary-candidates { display: grid; gap: 8px; max-height: 280px; overflow: auto; }
+.illust-secondary-candidates .button { display: grid; gap: 4px; justify-items: start; text-align: left; white-space: normal; }
+.illust-secondary-candidates strong { overflow-wrap: anywhere; }
+.illust-secondary-candidates span { font-size: 12px; line-height: 1.5; font-weight: 400; }
+.modal.illust-secondary-batch-modal { width: min(1180px, calc(100vw - 32px)); max-width: none; height: min(900px, calc(100dvh - 32px)); max-height: calc(100dvh - 32px); overflow: hidden; }
+.illust-secondary-batch-modal > .modal-content { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0; }
+.illust-secondary-batch-modal > .modal-content > header { flex-shrink: 0; margin: 0; padding: 20px 24px; border-bottom: 1px solid var(--line); }
+.illust-secondary-batch-body { flex: 1; min-height: 0; padding: 20px 24px; overflow: auto; }
+.illust-secondary-intro { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.illust-secondary-batch-workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 24px; }
+.illust-secondary-composition { padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--lavender); }
+.illust-secondary-section-heading { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+.illust-secondary-section-heading > span:first-child { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: 7px; background: var(--rose-soft); color: var(--rose-dark); font-size: 12px; font-weight: 700; }
+.illust-secondary-section-heading > div { flex: 1; min-width: 0; }
+.illust-secondary-section-heading h3 { margin: 0; font-size: 14px; }
+.illust-secondary-section-heading p { margin: 5px 0 0; font-size: 11px; line-height: 1.7; color: var(--muted); }
+.illust-secondary-format-fields { display: grid; gap: 10px; }
+.illust-secondary-format-field { min-width: 0; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.illust-secondary-format-field.enabled { border-color: var(--rose); }
+.illust-secondary-format-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 7px; }
+.illust-secondary-format-label > label:first-child { font-size: 12px; font-weight: 600; }
+.illust-secondary-format-label small { margin-left: 4px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.illust-secondary-format-label .illust-check { min-height: 24px; gap: 5px; font-size: 11px; }
+.illust-secondary-format-field > input { width: 100%; min-width: 0; }
+.illust-secondary-format-order { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 16px; color: var(--muted); font-size: 10px; }
+.illust-secondary-format-order strong { padding: 4px 7px; border-radius: 5px; background: var(--panel); color: var(--rose-dark); }
+.illust-secondary-format-examples, .illust-secondary-search-reason { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.illust-secondary-format-examples summary, .illust-secondary-search-reason summary { cursor: pointer; }
+.illust-secondary-format-examples code { padding: 2px 5px; background: var(--panel); white-space: pre; }
+.illust-secondary-results { min-width: 0; }
+.illust-secondary-batch-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+.illust-secondary-batch-toolbar > .illust-actions { gap: 5px; }
+.illust-secondary-batch-list { display: grid; gap: 14px; }
+.illust-secondary-batch-row { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.illust-secondary-row-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--lavender) 55%, var(--panel)); border-radius: 10px 10px 0 0; }
+.illust-secondary-row-heading .illust-check { min-width: 0; }
+.illust-secondary-row-heading .illust-check > span { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.illust-secondary-row-heading strong { font-size: 13px; }
+.illust-secondary-row-heading small { color: var(--muted); font-size: 10px; }
+.illust-secondary-row-heading > .badge { margin-left: auto; }
+.illust-secondary-row-fields { display: grid; gap: 12px; padding: 16px; }
+.illust-secondary-row-fields input, .illust-secondary-row-fields select, .illust-secondary-row-fields textarea { width: 100%; min-width: 0; }
+.illust-secondary-final-tag { padding: 12px; border-radius: 8px; background: var(--rose-soft); }
+.illust-secondary-final-tag > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--rose-dark); font-weight: 600; }
+.illust-secondary-final-tag small { font-size: 10px; font-weight: 400; }
+.illust-secondary-final-tag textarea { min-height: 58px; resize: vertical; background: var(--panel); color: var(--ink); line-height: 1.7; }
+.illust-secondary-stored-tag { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.illust-secondary-stored-tag > span:first-child { flex-shrink: 0; }
+.illust-secondary-stored-tag > span:last-child { min-width: 0; }
+.illust-secondary-batch-footer { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--panel); }
+.illust-secondary-batch-footer strong { font-size: 12px; }
+.illust-secondary-batch-footer p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.illust-secondary-batch-footer > .illust-actions { flex-shrink: 0; }
+@media (max-width: 880px) {
+  .illust-secondary-batch-workspace { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .illust-secondary-batch-footer { flex-wrap: wrap; }
+  .illust-secondary-batch-footer > .illust-actions { margin-left: auto; }
+}
+@media (max-width: 520px) {
+  .illust-secondary-batch-modal > .modal-content > header { padding: 14px; }
+  .illust-secondary-batch-body { padding: 14px; }
+  .illust-secondary-composition { padding: 14px; }
+  .illust-secondary-row-heading, .illust-secondary-row-fields { padding: 12px; }
+  .illust-secondary-batch-footer { padding: 12px 14px; }
+}

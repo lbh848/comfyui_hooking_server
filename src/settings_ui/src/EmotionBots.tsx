@@ -12,7 +12,7 @@ import { EmotionFolderImages, EmotionFolderImagesModal } from "./EmotionFolderIm
 import { EmotionProfileBatch } from "./EmotionProfileBatch";
 import { EmotionProfileOutfitGeneration } from "./EmotionProfileOutfitGeneration";
 import { IllustDataPreparation } from "./IllustDataPreparation";
-import { IllustAssetProfileOutputInstruction } from "./IllustAssetProfileOutputInstruction";
+import { IllustAssetProfileAliasSettings } from "./IllustAssetProfileAliasSettings";
 import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
 import { IllustMatchingRules } from "./IllustMatchingRules";
 import { clearWorkSession } from "./illustrationWorkSession";
@@ -55,7 +55,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   const [profileBatchOpen, setProfileBatchOpen] = useState(false);
   const [profileOutfitOpen, setProfileOutfitOpen] = useState(false);
   const [dataPreparationOpen, setDataPreparationOpen] = useState(false);
-  const [assetInstructionOpen, setAssetInstructionOpen] = useState(false);
+  const [assetProfileAliasSettingsOpen, setAssetProfileAliasSettingsOpen] = useState(false);
   const [generationOpen, setGenerationOpen] = useState(false);
   const [generationDirty, setGenerationDirty] = useState(false);
   const [generationBusy, setGenerationBusy] = useState(false);
@@ -161,7 +161,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
       resource.reload(); distribution.reload();
     }, "");
   }, [addedBot, onBotSelected, resource.reload, distribution.reload]);
-  useEffect(() => { resetPath(); setCharacterAddOpen(false); setProfileBatchOpen(false); setDataPreparationOpen(false); setAssetInstructionOpen(false); setGalleryCharacter(null); }, [botName]);
+  useEffect(() => { resetPath(); setCharacterAddOpen(false); setProfileBatchOpen(false); setDataPreparationOpen(false); setAssetProfileAliasSettingsOpen(false); setGalleryCharacter(null); }, [botName]);
   useEffect(() => { setProfile(""); setOutfit(""); setEmotion(""); setStartPreview(null); }, [character]);
   useEffect(() => { setOutfit(""); setEmotion(""); }, [profile]);
   useEffect(() => { setEmotion(""); }, [outfit]);
@@ -330,7 +330,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     {botName && <Panel title="툴박스"><div className="illust-body illust-bot-toolbox" aria-label={`${botName} 봇 도구`}>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setCharacterAddOpen(true)}><Plus size={14} />캐릭터 추가</button>
       <button className="button" disabled={toolsReadOnly || !currentBot?.characters?.length} onClick={() => setProfileBatchOpen(true)}><Images size={14} />프로필 이미지 일괄 설정</button>
-      <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setAssetInstructionOpen(true)}>에셋·프로필 출력 지침</button>
+      <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setAssetProfileAliasSettingsOpen(true)}>에셋·프로필·별칭 설정</button>
       <button className="button" disabled={toolsReadOnly || !currentBot?.characters?.length} onClick={() => setDataPreparationOpen(true)}>감정 삽화 데이터 준비</button>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setGenerationOpen(true)}>그리기 설정</button>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setRulesOpen(true)}>매칭 기반 규칙</button>
@@ -521,11 +521,11 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
       characters={currentBot.characters || []} readOnly={toolsReadOnly} onClose={() => setProfileBatchOpen(false)} onChanged={charactersAdded} />}
     {profileOutfitOpen && botName && currentBot && <EmotionProfileOutfitGeneration key={botName} botName={botName}
       readOnly={toolsReadOnly} onClose={() => setProfileOutfitOpen(false)} onChanged={charactersAdded} />}
-    {assetInstructionOpen && botName && currentBot && <IllustAssetProfileOutputInstruction key={botName} botName={botName}
+    {assetProfileAliasSettingsOpen && botName && currentBot && <IllustAssetProfileAliasSettings key={botName} botName={botName}
       readOnly={toolsReadOnly} onClose={() => {
         clearWorkSession(`${api.scope}:instruction:${botName}`);
         clearWorkSession(`${api.scope}:visual-guide:${botName}`);
-        setAssetInstructionOpen(false);
+        setAssetProfileAliasSettingsOpen(false);
       }} onApplied={charactersAdded} />}
     {characterAddOpen && botName && currentBot && <AddIllustrationCharacter key={botName} botName={botName}
       characters={currentBot.characters || []} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}

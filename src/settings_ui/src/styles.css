@@ -1662,6 +1662,22 @@ td .badge {
   flex-shrink: 0;
   gap: 6px;
 }
+.modal-content > .modal-header-with-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+}
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .modal-content > .modal-header-with-actions { grid-template-columns: minmax(0, 1fr) auto; }
+  .modal-header-with-actions > h2 { grid-column: 1; grid-row: 1; }
+  .modal-header-with-actions > .modal-window-actions { grid-column: 2; grid-row: 1; }
+  .modal-header-with-actions > .modal-header-actions { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
+}
 .modal-background-button {
   min-height: 32px;
   padding: 6px 9px;

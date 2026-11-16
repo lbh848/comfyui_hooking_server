@@ -47,6 +47,8 @@ def normalize_settings(value, mode):
     enums = {
         "snapref_preprocess": {"none", "lineart", "lineart_color", "grayscale"},
         "snapref_secondary_reference": {"none", "face_only", "face", "representative", "stage"},
+        "snapref_primary_reference": {"", "none", "face_only", "face", "representative", "llm"},
+        "snapref_detailer_reference": {"", "none", "face_only", "face", "representative", "llm"},
         "snapref_mode": {"char", "cs"},
         "snapref_strength_scale": {"linear"},
     }

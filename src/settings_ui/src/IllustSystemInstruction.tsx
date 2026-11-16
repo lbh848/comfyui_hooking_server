@@ -6,8 +6,9 @@ import { enc, useIllustrationAction, type IllustrationData } from "./illustratio
 import { useBotApi, useBotResource } from "./BotApiScope";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 
-const genres = ["", "Medieval fantasy", "Modern", "Modern fantasy", "Cyberpunk", "Steampunk", "Sci-fi / Space", "Wuxia", "Eastern fantasy", "Historical", "Post-apocalyptic"];
-const instructionValue = (value: IllustrationData | null) => JSON.stringify(value && [value.scope, value.preset, value.text, value.genre || ""]);
+const genres = ["", "secondary_bot", "Medieval fantasy", "Modern", "Modern fantasy", "Cyberpunk", "Steampunk", "Sci-fi / Space", "Wuxia", "Eastern fantasy", "Historical", "Post-apocalyptic"];
+const instructionValue = (value: IllustrationData | null) => JSON.stringify(value && [value.scope, value.preset, value.text, value.genre || "", value.genre_work_title || ""]);
+export const customSystemInstructionTitle = (botName: string) => `${botName} · 커스텀 시스템 지침`;
 
 export function CustomSystemInstruction({ botName, readOnly, onClose }: {
   botName: string; readOnly: boolean; onClose: () => void;
@@ -36,13 +37,14 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
   const builtin = draft?.scope === "builtin" || distributed(draft?.preset);
   const locked = builtin && !builtinUnlockToken;
   const dirty = !!draft && !!base && instructionValue(draft) !== instructionValue(base);
-  const autosave = useWorkflowAutosave({ label: `${botName} · 커스텀 시스템 지침`, modalTitle: `${botName} · 커스텀 시스템 지침`, value: instructionValue(draft), dirty, form, delay: 1000, paused: composing || action.busy,
-    validation: readOnly ? "읽기 전용 상태에서는 변경 내용을 저장할 수 없습니다." : "",
+  const autosave = useWorkflowAutosave({ label: customSystemInstructionTitle(botName), modalTitle: customSystemInstructionTitle(botName), value: instructionValue(draft), dirty, form, delay: 1000, paused: composing || action.busy,
+    validation: readOnly ? "읽기 전용 상태에서는 변경 내용을 저장할 수 없습니다."
+      : draft?.genre === "secondary_bot" && !String(draft.genre_work_title || "").trim() ? "2차봇의 작품명을 입력하세요." : "",
     save: async () => {
       if (!draft) return;
       const sent = { ...draft };
       await api.request("bot_mode/system_prompt", { bot_name: botName, preset_name: sent.preset, scope: sent.scope, text: sent.text,
-        genre: sent.genre || "", edit_builtin: builtin && !locked, bind_only: locked, builtin_unlock_token: builtinUnlockToken });
+        genre: sent.genre || "", genre_work_title: sent.genre_work_title || "", edit_builtin: builtin && !locked, bind_only: locked, builtin_unlock_token: builtinUnlockToken });
       setBase(sent);
       // Refresh the picker cache without replacing text typed during the request.
       const presets = sent.scope === "builtin" ? "builtin_presets" : "local_presets";
@@ -58,7 +60,7 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
     finally { setTransitioning(false); }
   }
 
-  if (!draft) return <Modal title={`${botName} · 커스텀 시스템 지침`} onClose={onClose} className="illust-character-modal" backgroundable={false}><IllustrationLoading error={resource.error} retry={resource.reload} /></Modal>;
+  if (!draft) return <Modal title={customSystemInstructionTitle(botName)} onClose={onClose} className="illust-character-modal"><IllustrationLoading error={resource.error} retry={resource.reload} /></Modal>;
   const names = [...Object.keys(draft.builtin_presets || {}), ...Object.keys(draft.local_presets || {})];
   const nameExists = names.some(value => value.toLocaleLowerCase() === name.trim().toLocaleLowerCase());
   const alternatives = ["builtin", "local"].flatMap(scope => Object.keys(draft[`${scope}_presets`] || {})
@@ -92,7 +94,7 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
     }, undefined, "DELETE") : await api.request("bot_mode/system_prompt", operation === "unlock" || operation === "lock"
       ? { action: operation, confirmed: operation === "unlock", builtin_unlock_token: builtinUnlockToken }
       : { action: operation, bot_name: botName, preset_name: name.trim(), scope: "local", text: operation === "create" ? "" : draft.text,
-          genre: draft.genre || "", builtin_unlock_token: builtinUnlockToken });
+          genre: draft.genre || "", genre_work_title: draft.genre_work_title || "", builtin_unlock_token: builtinUnlockToken });
     if (operation === "unlock") {
       if (!result.builtin_unlock_token) throw new Error("배포 잠금 해제를 지원하려면 프로그램을 다시 시작하세요.");
       setBuiltinUnlockToken(result.builtin_unlock_token);
@@ -104,7 +106,7 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
     setDialog(null);
   }, operation === "unlock" ? "배포 잠금을 해제했습니다." : operation === "lock" ? "배포 잠금을 설정했습니다." : operation === "delete" ? "시스템 지침 프리셋을 삭제했습니다." : operation === "duplicate" ? "사용자 프리셋으로 복제하고 적용했습니다." : "사용자 프리셋을 추가했습니다."));
 
-  return <Modal title={`${botName} · 커스텀 시스템 지침`} onClose={() => void finishEditing(onClose)} closeDisabled={action.busy || autosave.busy || transitioning} className="illust-character-modal" backgroundable={false}>
+  return <Modal title={customSystemInstructionTitle(botName)} onClose={() => void finishEditing(onClose)} closeDisabled={action.busy || autosave.busy || transitioning} className="illust-character-modal">
     <Panel title="커스텀 시스템 지침" aside={<span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span>}><div className="illust-body illust-form">
       <div className="illust-preset-picker">
         <label className="field">현재 시스템 지침 프리셋<select value={`${draft.scope}:${draft.preset}`} disabled={controlsDisabled} onChange={event => {
@@ -151,9 +153,13 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
           </div>
           <textarea id={instructionId} rows={12} spellCheck={false} readOnly={locked} value={draft.text} onChange={event => setDraft({ ...draft, text: event.target.value })} />
         </div>
-        <label className="field">장르<select value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); }}>
-          {genres.map(genre => <option key={genre} value={genre}>{genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
+        <label className="field">장르<select value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); else if (draft.genre === "secondary_bot") setDraft({ ...draft, genre: "" }); }}>
+          {genres.map(genre => <option key={genre} value={genre}>{genre === "secondary_bot" ? "2차봇" : genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
         </select></label>
+        {draft.genre === "secondary_bot" && <>
+          <label className="field">작품명<input required value={draft.genre_work_title || ""} placeholder="원작명 · 필요하면 시리즈나 편까지 입력" onChange={event => setDraft({ ...draft, genre_work_title: event.target.value })} /></label>
+          <p className="field-help">LLM이 알고 있는 작품의 세계관·시대·건축·기술 수준을 배경 묘사에 참고합니다. 현재 장면의 장소·낮과 밤·날씨는 원문을 따릅니다. 특정 시기나 평행세계 설정은 위 커스텀 시스템 지침에 적어 주세요.</p>
+        </>}
         {(customGenre || !genres.includes(draft.genre || "")) && <label className="field">사용자 지정 장르<input value={draft.genre || ""} onChange={event => setDraft({ ...draft, genre: event.target.value })} /></label>}
         <IllustrationFeedback {...action} />
         <IllustrationFeedback error={autosave.error || (dirty ? autosave.inputError : "")} />

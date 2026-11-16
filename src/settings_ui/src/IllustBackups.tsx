@@ -15,7 +15,11 @@ import { enc, illustrationMedia, illustrationRequest, query, useIllustrationActi
 
 export function IllustrationFeedback({ error, message }: { error?: string; message?: string }) {
   useProgramError(error);
-  return <>{error && <p className="field-error" role="alert">{error}<a className="program-log-error-link" href={`${location.pathname}?log=settings#program-logs`} target="_blank" rel="noreferrer">프로그램 로그</a></p>}{message && <p className="illust-success" role="status">{message}</p>}</>;
+  return <>{error && <p className="field-error" role="alert">
+    {error}
+    <a className="program-log-error-link" href={`${location.pathname}?log=settings#program-logs`} target="_blank" rel="noreferrer">프로그램 로그</a>
+    <button type="button" className="button secondary small program-log-error-refresh" onClick={() => window.location.reload()}><RefreshCw size={13} aria-hidden="true" />새로고침</button>
+  </p>}{message && <p className="illust-success" role="status">{message}</p>}</>;
 }
 
 export function IllustrationLoading({ error, retry }: { error: string; retry: () => void }) {
