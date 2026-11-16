@@ -76,8 +76,9 @@ tagger_data/
 # Runtime-downloaded model bundle
 models/
 
-# Runtime-downloaded / user-uploaded fonts (Noto Sans KR 자동 다운로드 + 업로드)
+# Runtime-installed / user-uploaded fonts; bundled originals are distributed.
 fonts/
+!/src/defaults/fonts/
 
 # 임시 작업/검증 산출물 (스크립트 추출물, 스크린샷 등)
 .work/

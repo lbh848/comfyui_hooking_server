@@ -1,0 +1,16 @@
+GriunXHangeul Gowoon Regular (GriunXHangeul_Gowoon-Rg.ttf)
+
+Copyright notice preserved from the original font metadata:
+Copyright © TypeE. Corp. & KIM GOWOON, All rights reserved. Modification of this file requires prior written permission from © TypeE. Corp.
+
+Official font page: https://www.griun.co.kr/fonts/hangeul-gowoon
+Original font: https://d26ciffk7xlrlz.cloudfront.net/free-fonts/hangeul-gowoon/GriunXHangeul_Gowoon-Rg.ttf
+
+Usage terms published on the official font page (retrieved 2026-11-16):
+
+폰트 사용범위
+모든 사용 범위에서 자유롭게 사용이 가능합니다.
+다만, 폰트파일 개작⋅수정⋅판매는 금지됩니다.
+
+The original font file is distributed without modification. These terms
+remain applicable to the font independently of the application's license.

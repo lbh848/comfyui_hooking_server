@@ -19046,13 +19046,13 @@ async def handle_api_postprocess_fonts(request: web.Request) -> web.Response:
 
     말풍선 모드 폰트 드롭박스용 폰트 목록.
     항목: {id, name, source(system|builtin|upload), installed}
-    번들 폰트 미설치 여부도 installed=false 로 알려주며, 선택 시 자동 다운로드한다.
+    번들 폰트 미설치 여부도 installed=false 로 알려주며, 배포 원본에서 설치한다.
     """
     try:
         from modes.font_assets import list_fonts, ensure_font, BUILTIN_FONTS
 
         fonts = list_fonts()
-        # 번들 폰트가 아직 미설치면 미리 다운로드를 한 번 시도해 드롭박스가 바로 쓸 수 있게 한다.
+        # 번들 폰트가 아직 미설치면 설치해 드롭박스에서 바로 쓸 수 있게 한다.
         for item in fonts:
             if item.get("source") == "builtin" and not item.get("installed"):
                 try:
@@ -19060,7 +19060,7 @@ async def handle_api_postprocess_fonts(request: web.Request) -> web.Response:
                     if path:
                         item["installed"] = True
                 except Exception as e:
-                    print(f"[POSTPROCESS_FONTS] 번들 폰트 자동 다운로드 실패({item['id']}): {e}")
+                    print(f"[POSTPROCESS_FONTS] 번들 폰트 설치 실패({item['id']}): {e}")
         return web.json_response({"fonts": fonts})
     except Exception as e:
         print(f"[ERROR] postprocess_fonts 실패: {e}\n{traceback.format_exc()}")

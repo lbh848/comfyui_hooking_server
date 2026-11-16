@@ -39939,7 +39939,7 @@
                 const opt = document.createElement('option');
                 opt.value = f.id;
                 let label = f.name;
-                if (f.source === 'builtin' && f.installed === false) label += ' (다운로드 필요)';
+                if (f.source === 'builtin' && f.installed === false) label += ' (설치 필요)';
                 if (f.source === 'upload') label += ' (업로드)';
                 opt.textContent = label;
                 opt.dataset.source = f.source || '';
@@ -39952,7 +39952,7 @@
         }
 
         function onPpFontChange(selectId = 'pp-bubble-font') {
-            // 번들 폰트를 처음 선택하면 서버가 자동 다운로드 → 목록 새로고침 후 미리보기.
+            // 번들 폰트를 처음 선택하면 서버가 설치 → 목록 새로고침 후 미리보기.
             const sel = document.getElementById(selectId);
             const opt = sel && sel.selectedOptions[0];
             if (opt && opt.dataset.source === 'builtin') {

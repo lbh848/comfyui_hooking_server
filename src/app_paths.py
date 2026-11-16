@@ -142,6 +142,7 @@ def initialize_layout(project_root: str | Path = SOURCE_DIR) -> None:
         ("prompts", "prompts"),
         ("auto_complete", "auto_complete"),
         ("defaults/illustration", "asset_data"),
+        ("defaults/fonts", "fonts"),
     ):
         bundled = source / bundled_name
         if not bundled.is_dir():

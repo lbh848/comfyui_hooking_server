@@ -1,8 +1,8 @@
-"""font_assets - 말풍선 모드 폰트 관리(자동 다운로드/업로드/목록/로드).
+"""font_assets - 말풍선 모드 폰트 관리(번들 설치/업로드/목록/로드).
 
-- fonts/ 폴더(프로젝트 루트, git 배포 제외)에 폰트 파일 보관.
-- 기본 폰트: Noto Sans KR Medium(Korean subset 변수폰트, 최초 1회 자동 다운로드).
-- 사용자 업로드 폰트(.ttf/.otf/.ttc)도 fonts/ 에 저장해 드롭박스에서 선택.
+- 기본 폰트 원본과 라이선스를 src/defaults/fonts/에 포함해 오프라인 배포.
+- 기본 폰트: Noto Sans KR Medium, GriunXHangeul_Gowoon-Rg.
+- 기본 폰트와 사용자 업로드 폰트(.ttf/.otf/.ttc)를 data/fonts/에서 사용.
 - 변수폰트는 variation(wght=500)으로 Medium 을 적용해 로드한다.
 
 모든 실패 경로 print + traceback (CLAUDE.md 에러 로깅).
@@ -22,18 +22,23 @@ from PIL import ImageFont
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FONT_DIR = data_root(PROJECT_ROOT) / "fonts"
+BUNDLED_FONT_DIR = PROJECT_ROOT / "defaults" / "fonts"
 
-# 기본 제공 폰트. 최초 사용 시 자동 다운로드.
+# 기본 제공 폰트. 배포 원본에서 설치하며 기존 파일은 보존한다.
 # Noto Sans KR Korean subset 변수폰트(SIL Open Font License 1.1).
 # 변수폰트라 wght 축 variation 으로 Medium(500)을 지정해 로드한다.
 BUILTIN_FONTS = {
     "noto-sans-kr-medium": {
         "name": "Noto Sans KR Medium",
         "filename": "NotoSansKR-VF.ttf",
-        "url": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/Variable/TTF/Subset/NotoSansKR-VF.ttf",
         "license_filename": "LICENSE-OFL.txt",
-        "license_url": "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/LICENSE",
         "variation": [("wght", 500.0)],
+    },
+    # Preserve the uploaded-file ID already used by saved font selections.
+    "GriunXHangeul_Gowoon-Rg.ttf": {
+        "name": "GriunXHangeul_Gowoon-Rg",
+        "filename": "GriunXHangeul_Gowoon-Rg.ttf",
+        "license_filename": "LICENSE-GriunXHangeul_Gowoon.txt",
     },
 }
 
@@ -67,36 +72,30 @@ def _ensure_font_dir() -> None:
 
 
 def ensure_font(font_id: str) -> Optional[str]:
-    """번들 폰트가 fonts/ 에 없으면 다운로드한다. 로컬 경로 반환(실패 시 None)."""
+    """번들 폰트와 라이선스를 data/fonts/에 설치한다. 실패 시 None을 반환한다."""
     meta = BUILTIN_FONTS.get(font_id)
     if not meta:
         return None
     _ensure_font_dir()
     target = FONT_DIR / meta["filename"]
-    if target.is_file() and target.stat().st_size > 0:
-        return str(target)
     tmp_part = FONT_DIR / f".{meta['filename']}.part"
     try:
-        import urllib.request
-
-        print(f"[FONT_ASSETS] 폰트 다운로드 시작: {meta['name']} <- {meta['url']}")
-        urllib.request.urlretrieve(meta["url"], tmp_part)
+        license_target = FONT_DIR / meta["license_filename"]
+        if not license_target.is_file():
+            shutil.copy2(BUNDLED_FONT_DIR / meta["license_filename"], license_target)
+        if target.is_file() and target.stat().st_size > 0:
+            return str(target)
+        print(f"[FONT_ASSETS] 번들 폰트 설치 시작: {meta['name']}")
+        shutil.copyfile(BUNDLED_FONT_DIR / meta["filename"], tmp_part)
         if not tmp_part.is_file() or tmp_part.stat().st_size == 0:
-            raise RuntimeError("다운로드된 파일이 비어있음")
+            raise RuntimeError("번들 폰트 파일이 비어있음")
         os.replace(tmp_part, target)
-        # 라이센스 전문 저장(OFL 고지 의무). 실패해도 폰트 사용엔 영향 없음.
-        try:
-            urllib.request.urlretrieve(
-                meta["license_url"], FONT_DIR / meta["license_filename"]
-            )
-        except Exception as le:
-            print(f"[FONT_ASSETS] 라이센스 파일 다운로드 실패(무시 가능): {le}")
         print(
             f"[FONT_ASSETS] 폰트 설치 완료: {target} ({target.stat().st_size} bytes)"
         )
         return str(target)
     except Exception as e:
-        print(f"[FONT_ASSETS] 폰트 다운로드 실패({meta['name']}): {e}")
+        print(f"[FONT_ASSETS] 번들 폰트 설치 실패({meta['name']}): {e}")
         traceback.print_exc()
         if tmp_part.exists():
             try:
@@ -156,7 +155,7 @@ def resolve_font(
 ) -> tuple:
     """font_id → (경로, variation). 시스템 폰트는 (None, None).
 
-    번들 미설치 시 자동 다운로드 시도. 알 수 없는 id 면 legacy_path/시스템 폴백.
+    번들 미설치 시 배포 원본에서 설치. 알 수 없는 id 면 legacy_path/시스템 폴백.
     variation 은 [("wght", 500.0)] 형태(변수폰트) 또는 None.
     """
     font_id = (font_id or "").strip()

@@ -89,7 +89,7 @@ _SYSTEM_FONT_CANDIDATES = [
 def _load_font(font_path, font_size, font_id=None):
     """폰트 로드. font_size 가 항상 반영되도록 비트맵 기본 폰트는 최후의 수단.
 
-    font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 다운로드,
+    font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 설치,
     변수폰트 variation). 빈 값이면 시스템 TTF 후보를 순회해 한글 지정 폰트를 쓴다.
     (ImageFont.load_default() 는 font_size 를 무시하는 고정 크기 비트맵이라 사용 지양.)
     """

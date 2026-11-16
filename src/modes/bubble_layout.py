@@ -168,7 +168,7 @@ def load_font(
     *,
     font_id: str | None = None,
 ) -> ImageFont.ImageFont:
-    # font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 다운로드,
+    # font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 설치,
     # 변수폰트 variation 적용). 렌더(bubble_render)와 동일 로더를 써야 측정과
     # 그리기가 일치한다(CLAUDE.md: 미리보기=실제 동일 빌더).
     if font_id and font_id != "system":
