@@ -51,15 +51,18 @@ class SoyaAttentionCompatibilityTests(unittest.TestCase):
     def wrapped(self):
         return [self.hooks["AttentionTensorContainer"](value) for value in (self.q, self.k, self.v)]
 
-    def test_reference_record_keeps_tensors_and_forwards_backend(self):
-        record = [None]
+    def test_reference_record_fills_preallocated_buffers_and_forwards_backend(self):
+        buffers = (torch.empty_like(self.k), torch.empty_like(self.v))
+        record = [buffers]
         wrapped = self.wrapped()
         actual = self.hooks["_reference_attention"](
             self.attention, record, 0, *wrapped,
             transformer_options=self.options, preferred_attention=self.preferred,
         )
-        self.assertIs(record[0][0], self.k)
-        self.assertIs(record[0][1], self.v)
+        self.assertIs(record[0][0], buffers[0])
+        self.assertIs(record[0][1], buffers[1])
+        torch.testing.assert_close(record[0][0], self.k, rtol=0, atol=0)
+        torch.testing.assert_close(record[0][1], self.v, rtol=0, atol=0)
         self.assertTrue(all(value.tensor is None for value in wrapped))
         torch.testing.assert_close(actual, self.attention(self.q, self.k, self.v,
                                   transformer_options=self.options, preferred_attention=self.preferred))
