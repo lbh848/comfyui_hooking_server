@@ -95,7 +95,7 @@ function FlowNodePreview({ node, flow, masks, sizes, onSize, onOpen }: { node: F
   // MOSS has no generated mask to toggle; show its layout boxes immediately.
   const [showOverlay, setShowOverlay] = useState(() => !!node.moss_layout?.regions?.length);
   if (node.kind === "reference") return <div className="illust-flow-preview"><strong>전처리 결과</strong>
-    {node.image_url ? <IllustrationPreviewImage path={node.image_url} alt={`${node.label} 전처리 결과`} onOpen={() => onOpen(node.id)} /> : <span className="field-help">{node.error || "레퍼런스 전처리 중…"}</span>}
+    {node.image_url ? <IllustrationPreviewImage thumbnail path={node.image_url} alt={`${node.label} 전처리 결과`} onOpen={() => onOpen(node.id)} /> : <span className="field-help">{node.error || "레퍼런스 전처리 중…"}</span>}
   </div>;
   const kind = nodePreviewKind(node);
   if (kind === "mask") {
@@ -123,7 +123,7 @@ function FlowNodePreview({ node, flow, masks, sizes, onSize, onOpen }: { node: F
   const toggle = !!(node.mask_url || (!recordedMask && maskNode) || mossLayout || node.face_positions?.length);
   return <div className="illust-flow-preview"><strong>{node.task_key === "illustration_visual_selection" ? "선택된 이미지" : "생성 이미지"}</strong>
     {node.image_url ? <>{toggle && <div className="illust-mask-controls"><label title={result?.error || "인물 영역 마스크와 얼굴 위치·캐릭터 이름을 겹쳐 표시합니다."}><input type="checkbox" checked={showOverlay} disabled={!available || !sizes[node.image_url]} onChange={event => setShowOverlay(event.target.checked)} aria-label={`${node.label} MASK & 얼굴 보이기`} />MASK & 얼굴 보이기</label></div>}
-      <IllustrationPreviewImage path={node.image_url} alt={`${node.label} 생성 결과`} maskPath={node.mask_url} layout={layout} faces={node.face_positions} showMask={showOverlay} showFaces={showOverlay} onOpen={() => onOpen(node.id)} onSize={(width, height) => onSize(node.image_url, width, height)} />
+      <IllustrationPreviewImage thumbnail path={node.image_url} alt={`${node.label} 생성 결과`} maskPath={node.mask_url} layout={layout} faces={node.face_positions} showMask={showOverlay} showFaces={showOverlay} onOpen={() => onOpen(node.id)} onSize={(width, height) => onSize(node.image_url, width, height)} />
     </> : <span className="field-help">{node.error || "이미지 생성 대기"}</span>}
   </div>;
 }

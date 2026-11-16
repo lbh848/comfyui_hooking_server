@@ -11205,6 +11205,16 @@ async def handle_illustration_flow(request: web.Request) -> web.Response:
             return web.Response(body=mask_bytes, content_type="image/png",
                                 headers={"Cache-Control": "no-store"})
         if request.query.get("image") == "1":
+            if request.query.get("thumbnail") == "1":
+                image_bytes = await illustration_flow.preview_thumbnail(
+                    request.query.get("run", ""), node_id,
+                    source=request.query.get("source") == "1")
+                if not image_bytes:
+                    return web.Response(status=404, text="생성 이미지가 없습니다")
+                return web.Response(body=image_bytes, content_type="image/webp", headers={
+                    "Cache-Control": "private, max-age=31536000, immutable"
+                    if request.query.get("v") else "no-store",
+                })
             image_bytes = illustration_flow.preview_image(request.query.get("run", ""), node_id,
                                                          source=request.query.get("source") == "1")
             if not image_bytes:

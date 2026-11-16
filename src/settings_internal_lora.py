@@ -159,6 +159,8 @@ class InternalLoraRuntime:
                 cacheable_media = (illustration and request.method == "GET" and (
                     path.startswith("/api/backup_poster/") and request.query.get("thumbnail") == "1"
                     or path.startswith("/api/backup_image/") and bool(request.query.get("v"))
+                    or path == "/api/illustration_flow" and request.query.get("image") == "1"
+                    and request.query.get("thumbnail") == "1" and bool(request.query.get("v"))
                 ))
                 response = web.StreamResponse(status=upstream.status, headers={
                     "Content-Type": upstream.headers.get("Content-Type", "application/json"),

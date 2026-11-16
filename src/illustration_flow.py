@@ -294,7 +294,7 @@ def snapshot(run=None, *, kind="illustration", workshop="illustration"):
         if moss_layout is not None:
             preview["moss_layout"] = moss_layout
         nodes.append(preview)
-    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
+    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier", "_preview_thumbnails"}} | {
         "nodes": nodes,
     }
 
@@ -327,6 +327,43 @@ def preview_image(run_id, node_id, *, source=False):
             return image
     print(f"[ILLUST_FLOW] 생성 이미지 없음: run={run_id}, node={node_id}")
     return None
+
+
+async def preview_thumbnail(run_id, node_id, *, source=False):
+    """Share a small, metadata-free image between viewers of the same node."""
+    image_bytes = preview_image(run_id, node_id, source=source)
+    if not image_bytes:
+        return None
+    run = find_run(run_id)
+    # Keep derived images with their retained run, outside persisted history.
+    # Replacing a node's image also replaces its thumbnail on the next read.
+    cache = run.setdefault("_preview_thumbnails", {})
+    key = (node_id, source)
+    cached = cache.get(key)
+    if cached is None or cached[0] is not image_bytes:
+        def build():
+            from io import BytesIO
+            from PIL import Image, ImageOps
+
+            with Image.open(BytesIO(image_bytes)) as opened:
+                thumbnail = ImageOps.exif_transpose(opened)
+                thumbnail.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                thumbnail = thumbnail.convert("RGBA" if "A" in thumbnail.getbands()
+                                              or "transparency" in thumbnail.info else "RGB")
+                thumbnail.info.clear()
+                output = BytesIO()
+                thumbnail.save(output, format="WEBP", quality=80, method=2)
+                return output.getvalue()
+
+        cached = (image_bytes, asyncio.create_task(asyncio.to_thread(build)))
+        cache[key] = cached
+    try:
+        # A viewer closing must not cancel a conversion another viewer needs.
+        return await asyncio.shield(cached[1])
+    except Exception:
+        if cache.get(key) is cached:
+            cache.pop(key)
+        raise
 
 
 _SLOT_MARKER_IN_TEXT_RE = re.compile(r"\[Slot\s+(\d+)\]")

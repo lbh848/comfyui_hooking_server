@@ -6,7 +6,7 @@ const regionColors = ["#ef4444", "#22c55e", "#3b82f6"];
 const maskChannels = ["R", "G", "B"];
 export const maskRegionColor = (region: IllustrationData, index: number) => regionColors[Math.max(0, "RGB".indexOf(region.channel || "RGB"[index % 3]))];
 
-// The graph and its open detail share the same image, including in-flight reads.
+// Viewers of the same source and size share bytes, including in-flight reads.
 // Release bytes when the last viewer closes so changing runs cannot retain them.
 const previewImages = new Map<string, {
   users: number; controller: AbortController; url: string; error: string;
@@ -24,7 +24,7 @@ function usePreviewImage(path = "") {
     if (!entry) {
       const controller = new AbortController();
       const created = { users: 0, controller, url: "", error: "", ready: Promise.resolve() };
-      created.ready = fetch(source, { signal: controller.signal, cache: "no-cache", headers: { "X-Comfy-Settings": "1", "X-Comfy-Settings-Schema": "2" } })
+      created.ready = fetch(source, { signal: controller.signal, cache: "default", headers: { "X-Comfy-Settings": "1", "X-Comfy-Settings-Schema": "2" } })
         .then(async response => {
           if (!response.ok) throw new Error("미리보기를 불러올 수 없습니다.");
           const blob = await response.blob();
@@ -79,11 +79,12 @@ export function IllustrationMaskOverlay({ layout, maskUrl, faces = [], width = 1
   </svg>;
 }
 
-export function IllustrationPreviewImage({ path, alt, layout, maskPath = "", faces = [], showMask = false, showFaces = false, maskOpacity, maskOutline = false, onOpen, onSize }: {
+export function IllustrationPreviewImage({ path, alt, layout, maskPath = "", faces = [], showMask = false, showFaces = false, maskOpacity, maskOutline = false, thumbnail = false, onOpen, onSize }: {
   path: string; alt: string; layout?: IllustrationData | null; maskPath?: string; faces?: IllustrationData[];
-  showMask?: boolean; showFaces?: boolean; maskOpacity?: number; maskOutline?: boolean; onOpen?: () => void; onSize?: (width: number, height: number) => void;
+  showMask?: boolean; showFaces?: boolean; maskOpacity?: number; maskOutline?: boolean; thumbnail?: boolean; onOpen?: () => void; onSize?: (width: number, height: number) => void;
 }) {
-  const source = usePreviewImage(path), mask = usePreviewImage(maskPath);
+  const imagePath = thumbnail && path.startsWith("/api/illustration_flow?") ? `${path}&thumbnail=1` : path;
+  const source = usePreviewImage(imagePath), mask = usePreviewImage(showMask ? maskPath : "");
   const [size, setSize] = useState({ path: "", width: 100, height: 100 });
   const [failed, setFailed] = useState("");
   const loaded = size.path === path && failed !== source.url;
