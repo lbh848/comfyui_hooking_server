@@ -13297,7 +13297,8 @@ async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
 async def handle_api_llm_streams(request: web.Request) -> web.Response:
     """활성 실제 LLM 스트림 스냅샷. 프론트 WS 재연결 시 유령 상태를 제거한다."""
     try:
-        return web.json_response({"streams": llm_service.get_active_streams()})
+        return web.json_response({"streams": llm_service.get_active_streams(
+            monitor=request.query.get("monitor") == "1")})
     except Exception as e:
         print(f"[LLM_STREAM_API] 활성 스트림 조회 실패: {type(e).__name__}: {e}")
         traceback.print_exc()

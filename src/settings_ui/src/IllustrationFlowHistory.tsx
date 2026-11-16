@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Flame } from "lucide-react";
 import { illustrationNodeName, illustrationRequest, type IllustrationData } from "./illustration";
 
@@ -17,16 +17,18 @@ export interface IllustrationFlowHistoryEntry {
 }
 
 // Fetch sequentially; keep the last result on reconnect, but never across resources.
-export function useFlowPoll(path: string) {
-  const [loaded, setLoaded] = useState<{ path: string; data: IllustrationData } | null>(null);
+export function useFlowPoll(path: string, { poll = true, refreshKey = "", enabled = true } = {}) {
+  const [loaded, setLoaded] = useState<{ path: string; data: IllustrationData; signature: string } | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision(value => value + 1), []);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     let timer: number;
     setError("");
-    async function poll() {
+    async function load() {
+      let failed = false;
       try {
         const data = await illustrationRequest(path, undefined, controller.signal);
         // Preserve routing identifiers while displaying the current name in active and saved runs.
@@ -34,17 +36,23 @@ export function useFlowPoll(path: string) {
           ? { ...node, label: illustrationNodeName(node.label) } : node;
         if (Array.isArray(data.flow?.nodes)) data.flow = { ...data.flow, nodes: data.flow.nodes.map(displayNode) };
         if (data.node) data.node = displayNode(data.node);
-        if (!controller.signal.aborted) { setLoaded({ path, data }); setError(""); }
+        if (!controller.signal.aborted) {
+          const signature = JSON.stringify(data);
+          setLoaded(current => current?.path === path && current.signature === signature ? current : { path, data, signature });
+          setError("");
+        }
       } catch (cause) {
+        failed = true;
         if (!controller.signal.aborted) setError((cause as Error).message);
       } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(poll, 2000);
+        if (!controller.signal.aborted && (poll || failed)) timer = window.setTimeout(load, 2000);
       }
     }
-    void poll();
+    void load();
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [path, revision]);
-  return { data: loaded?.path === path ? loaded.data : null, error, reload };
+  }, [path, revision, poll, refreshKey, enabled]);
+  const data = loaded?.path === path ? loaded.data : null;
+  return useMemo(() => ({ data, error, reload }), [data, error, reload]);
 }
 
 const HistoryContext = createContext<ReturnType<typeof useFlowPoll> | null>(null);

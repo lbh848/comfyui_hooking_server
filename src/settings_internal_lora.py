@@ -182,7 +182,7 @@ class InternalLoraRuntime:
         except PermissionError:
             pass  # A log viewer must not prevent server shutdown.
 
-    async def llm_streams(self, stream_id: str = "", action: str = "") -> dict:
+    async def llm_streams(self, stream_id: str = "", action: str = "", *, monitor: bool = False) -> dict:
         # Monitoring must not start a worker or restart one with stale stream IDs.
         if self.process is None or self.process.poll() is not None:
             if stream_id:
@@ -194,6 +194,8 @@ class InternalLoraRuntime:
         path = "/api/llm/streams"
         if stream_id:
             path += f"/{quote(stream_id, safe='')}/control"
+        elif monitor:
+            path += "?monitor=1"
         async with self.session.request(
             "POST" if stream_id else "GET", self.url + path,
             headers={"X-Internal-Lora": self.token},

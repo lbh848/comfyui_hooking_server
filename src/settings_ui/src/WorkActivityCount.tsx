@@ -22,7 +22,7 @@ export function WorkActivityCount({ page }: { page: "work-queue" | "llm-logs" })
           // 작업 큐 페이지와 같은 기준(종료 전 항목 = 실행 중 + 대기)으로 센다.
           nextCount = items.filter(item => !isFinishedQueueItem(item)).length;
         } else {
-          const live = await llmLogsRequest<{ streams: LlmStream[]; errors: string[] }>("streams", controller.signal);
+          const live = await llmLogsRequest<{ streams: LlmStream[]; errors: string[] }>("streams?monitor=1", controller.signal);
           if (live.errors.length) throw new Error(live.errors.join(" "));
           nextCount = activeLlmStreams(live.streams).length;
         }

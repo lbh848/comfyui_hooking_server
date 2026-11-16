@@ -4489,10 +4489,11 @@ def _public_stream_state(record: dict) -> dict:
     return state
 
 
-def get_active_streams() -> list[dict]:
-    """프론트 재연결 동기화용 활성 스트림 스냅샷."""
+def get_active_streams(*, monitor: bool = False) -> list[dict]:
+    """Return stream snapshots, or only activity flags for sidebar monitors."""
     return [
-        _public_stream_state(record)
+        {"stream_id": record["stream_id"], "active": bool(record.get("active"))}
+        if monitor else _public_stream_state(record)
         for record in sorted(
             _active_streams.values(),
             key=lambda item: float(item.get("started_at", 0.0)),

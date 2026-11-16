@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Maximize, Minus, Plus, RefreshCw, Square } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
@@ -18,6 +18,28 @@ const executor = (node: FlowNode) => node.executor || (node.kind === "llm" ? "ll
 const modelLabel = (node: FlowNode) => node.alias || node.model || "";
 const elapsed = (node: FlowNode) => node.started_at ? `${Math.max(0, (node.ended_at || Date.now() / 1000) - node.started_at).toFixed(1)}초` : "실행 전";
 const stringify = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value ?? "", null, 2);
+
+function useFlowClock(running: boolean) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => tick(value => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+}
+
+const FlowElapsed = memo(function FlowElapsed({ node }: { node: FlowNode }) {
+  useFlowClock(live(node.status) && !!node.started_at && !node.ended_at);
+  return <>{elapsed(node)}</>;
+});
+
+const FlowDetailSection = memo(function FlowDetailSection({ label, value, defaultOpen = false }: { label: string; value: unknown; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const text = useMemo(() => open ? stringify(value) : "", [open, value]);
+  return <details className="illust-flow-detail-section" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{label}</summary>{open && <pre>{text}</pre>}
+  </details>;
+});
 
 type MaskResult = { layout?: IllustrationData; error?: string };
 type PreviewSizes = Record<string, { width: number; height: number }>;
@@ -109,6 +131,7 @@ function FlowNodePreview({ node, flow, masks, sizes, onSize, onOpen }: { node: F
 function FlowTimeline({ flow }: { flow: IllustrationFlow }) {
   const origin = flow.created_at;
   const running = live(flow.status) || flow.nodes.some(node => live(node.status) && node.started_at && !node.ended_at);
+  useFlowClock(running);
   const end = Math.max(origin, flow.updated_at, ...flow.nodes.map(node => node.ended_at || origin), running ? Date.now() / 1000 : origin);
   const duration = Math.max(0, end - origin);
   const span = Math.max(60, Math.ceil(duration / 30) * 30);
@@ -134,8 +157,10 @@ function FlowTimeline({ flow }: { flow: IllustrationFlow }) {
   </div>;
 }
 
-function FlowNodeDetails({ runId, nodeId, initialNode, onClose }: { runId: string; nodeId: string; initialNode: FlowNode; onClose: () => void }) {
-  const resource = useFlowPoll(`illustration_flow?${query({ run: runId, node: nodeId })}`);
+const FlowNodeDetails = memo(function FlowNodeDetails({ runId, nodeId, initialNode, onClose }: { runId: string; nodeId: string; initialNode: FlowNode; onClose: () => void }) {
+  const resource = useFlowPoll(`illustration_flow?${query({ run: runId, node: nodeId })}`, {
+    poll: live(initialNode.status), refreshKey: JSON.stringify(initialNode),
+  });
   const node = (resource.data?.node || initialNode) as FlowNode;
   const fields = [
     ["입력", node?.submitted_prompt ? Object.fromEntries(Object.entries(node.input || {}).filter(([key]) => key !== "positive" && key !== "negative")) : node?.input], ["입력 변수", node?.input_variables], ["출력", node?.output],
@@ -146,7 +171,7 @@ function FlowNodeDetails({ runId, nodeId, initialNode, onClose }: { runId: strin
     {!resource.data && !resource.error && <p role="status">노드 상세 정보를 불러오는 중…</p>}
     {resource.error && <button className="button" onClick={resource.reload}>다시 시도</button>}
     {node && <div className="illust-stack">
-      <div className="illust-actions"><Badge>{labels[node.status] || node.status}</Badge><span>{executors[executor(node)] || executor(node)}{node.kind !== "reference" && ` · ${elapsed(node)}`}</span><span>{modelLabel(node) || node.service || ""}</span></div>
+      <div className="illust-actions"><Badge>{labels[node.status] || node.status}</Badge><span>{executors[executor(node)] || executor(node)}{node.kind !== "reference" && <> · <FlowElapsed node={node} /></>}</span><span>{modelLabel(node) || node.service || ""}</span></div>
       <IllustrationFlowResults node={node} />
       {node.final_result?.blocks?.length ? <FinalResultPreview result={node.final_result} /> : null}
       {(node.image_url || node.mask_url) && <div className="illust-flow-detail-images">
@@ -155,52 +180,23 @@ function FlowNodeDetails({ runId, nodeId, initialNode, onClose }: { runId: strin
         {node.mask_url && <IllustrationPreviewImage path={node.mask_url} alt="생성 마스크" />}
       </div>}
       {node.submitted_prompt && <IllustrationPrompt value={node.submitted_prompt} />}
-      {fields.filter(([, value]) => value != null && value !== "" && (!Array.isArray(value) || value.length > 0)).map(([label, value]) => <details className="illust-flow-detail-section" key={label} open={["입력", "출력", "오류"].includes(label)}><summary>{label}</summary><pre>{stringify(value)}</pre></details>)}
-      <details className="illust-flow-detail-section"><summary>전체 노드 기록</summary><pre>{stringify(node)}</pre></details>
+      {fields.filter(([, value]) => value != null && value !== "" && (!Array.isArray(value) || value.length > 0)).map(([label, value]) => <FlowDetailSection key={label} label={label} value={value} defaultOpen={["입력", "출력", "오류"].includes(label)} />)}
+      <FlowDetailSection label="전체 노드 기록" value={node} />
     </div>}
   </Modal>;
-}
+});
 
-export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" }) {
-  const history = useIllustrationFlowHistory();
-  const [runId, setRunId] = useState("");
-  const resource = useFlowPoll(runId ? `illustration_flow?${query({ run: runId })}` : `illustration_flow?${query({ scope })}`);
-  useEffect(() => {
-    if (runId && history.data && !history.history.some(run => run.id === runId)) setRunId("");
-  }, [runId, history.data]);
-  const flow = resource.data?.flow as IllustrationFlow | null | undefined;
+const FlowGraph = memo(function FlowGraph({ flow, onOpen }: { flow: IllustrationFlow; onOpen: (id: string) => void }) {
   const masks = useFlowMaskResults(flow);
   const [sizes, setSizes] = useState<PreviewSizes>({});
   const [scale, setScale] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
-  const action = useIllustrationAction();
-  const layout = useMemo(() => layoutNodes(flow?.nodes || [], "illustration"), [flow?.nodes]);
-  useEffect(() => { setSelected(null); setSizes({}); viewport.current?.scrollTo(0, 0); }, [flow?.id]);
-  const onSize = (path: string, width: number, height: number) => setSizes(current => current[path]?.width === width && current[path]?.height === height ? current : { ...current, [path]: { width, height } });
-  const selectedNode = flow?.nodes.find(node => node.id === selected);
+  const layout = useMemo(() => layoutNodes(flow.nodes, "illustration"), [flow.nodes]);
+  useEffect(() => { setSizes({}); viewport.current?.scrollTo(0, 0); }, [flow.id]);
+  const onSize = useCallback((path: string, width: number, height: number) => setSizes(current => current[path]?.width === width && current[path]?.height === height ? current : { ...current, [path]: { width, height } }), []);
   const columns = [...new Set([0, 1, 2, 3, 4, 5, 6, ...[...layout.positions.values()].map(position => position.depth)])].sort((a, b) => a - b);
   const zoom = (amount: number) => setScale(current => Math.max(.2, Math.min(1.75, current + amount)));
-  return <Panel title={<>삽화 흐름 {flow && <Badge tone={flow.status === "failed" ? "rose" : flow.status === "completed" ? "green" : undefined}>{labels[flow.status] || flow.status}</Badge>}</>} className="illust-flow-panel" aside={<div className="illust-actions">
-    <button className="button" onClick={() => { resource.reload(); history.reload(); }}><RefreshCw size={14} />새로고침</button>
-    <button className="button danger" disabled={!flow || !live(flow.status) || flow.status === "cancelling" || action.busy || !!resource.error} onClick={() => {
-      if (!flow || !window.confirm("현재 삽화 처리 흐름을 중단하시겠습니까?")) return;
-      void action.run(async () => { await illustrationRequest("illustration_flow/cancel", { run: flow.id }); resource.reload(); }, "삽화 작업 중단을 요청했습니다.");
-    }}><Square size={13} />작업 중단</button>
-  </div>}>
-    <div className="illust-flow-info"><p className="field-help">최근 {history.data?.limit || 8}개 흐름을 보관합니다. 노드를 누르면 입력·출력과 상세 기록을 확인할 수 있습니다.</p>
-      <label className="field illust-flow-history">삽화 흐름 기록 ({history.history.length}/{history.data?.limit || 8})
-        <select value={runId} onChange={event => setRunId(event.target.value)}>
-          <option value="">최신 흐름 자동 보기</option>
-          {history.history.map(run => <option key={run.id} value={run.id}>{run.group_label} · {new Date(run.created_at * 1000).toLocaleString("ko-KR")} · {labels[run.status] || run.status} · {run.label}</option>)}
-        </select>
-      </label>
-      <IllustrationFeedback error={resource.error || history.error || action.error} message={action.message} />
-      {resource.error && flow && <p className="field-help">연결을 다시 확인하는 중입니다. 마지막으로 받은 흐름을 표시합니다.</p>}
-    </div>
-    {!resource.data && !resource.error && <p className="illust-body" role="status">삽화 흐름을 불러오는 중…</p>}
-    {resource.data && !flow && <Empty title="아직 삽화 처리 기록이 없습니다">삽화를 생성하면 요청부터 이미지 생성까지의 흐름이 여기에 나타납니다.</Empty>}
-    {flow && <>
+  return <>
       <div className="illust-flow-toolbar"><div><strong>{flow.label || "삽화 생성"}</strong><span className="field-help">{new Date(flow.created_at * 1000).toLocaleString("ko-KR")} · {flow.nodes.length}개 노드</span></div>
         <div className="illust-actions" role="group" aria-label="흐름 확대 및 축소"><button className="button" aria-label="흐름 축소" disabled={scale <= .2} onClick={() => zoom(-.1)}><Minus size={14} /></button><button className="button" onClick={() => setScale(1)} title="원래 크기">{Math.round(scale * 100)}%</button><button className="button" aria-label="흐름 확대" disabled={scale >= 1.75} onClick={() => zoom(.1)}><Plus size={14} /></button><button className="button" onClick={() => { setScale(Math.max(.2, Math.min(1, ((viewport.current?.clientWidth || 900) - 24) / layout.width))); viewport.current?.scrollTo(0, 0); }}><Maximize size={14} />전체 보기</button></div>
       </div>
@@ -223,17 +219,57 @@ export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" 
             const position = layout.positions.get(node.id)!;
             const preview = nodePreviewKind(node);
             return <div className="illust-flow-node" key={`${flow.id}:${node.id}`} data-status={node.status} data-executor={executor(node)} style={{ left: position.x, top: position.y, height: preview ? 360 : 98, "--flow-state": colors[node.status] || colors.waiting } as CSSProperties}>
-              <button className="illust-flow-node-heading" onClick={() => setSelected(node.id)} aria-label={`${node.label} · ${labels[node.status] || node.status} · 상세 보기`}>
-              <strong title={node.label}>{node.label}</strong><span className="illust-flow-node-status">{labels[node.status] || node.status}{node.kind !== "reference" && ` · ${elapsed(node)}`}{node.attempt_count > 0 ? ` · ${node.attempt_count}회` : ""}</span>
+              <button className="illust-flow-node-heading" onClick={() => onOpen(node.id)} aria-label={`${node.label} · ${labels[node.status] || node.status} · 상세 보기`}>
+              <strong title={node.label}>{node.label}</strong><span className="illust-flow-node-status">{labels[node.status] || node.status}{node.kind !== "reference" && <> · <FlowElapsed node={node} /></>}{node.attempt_count > 0 ? ` · ${node.attempt_count}회` : ""}</span>
               <span className="illust-flow-node-model" title={modelLabel(node)}>{executors[executor(node)] || executor(node)}{modelLabel(node) ? ` · ${modelLabel(node)}` : ""}</span>
               </button>
-              {preview && <FlowNodePreview node={node} flow={flow} masks={masks} sizes={sizes} onSize={onSize} onOpen={setSelected} />}
+              {preview && <FlowNodePreview node={node} flow={flow} masks={masks} sizes={sizes} onSize={onSize} onOpen={onOpen} />}
               <i className="illust-flow-port" aria-hidden="true" />
             </div>;
           })}
         </div></div>
       </div>
-    </>}
-    {flow && selectedNode && <FlowNodeDetails key={`${flow.id}:${selectedNode.id}`} runId={flow.id} nodeId={selectedNode.id} initialNode={selectedNode} onClose={() => setSelected(null)} />}
+  </>;
+});
+
+export function IllustFlow({ scope = "illust" }: { scope?: "illust" | "emotion" }) {
+  const history = useIllustrationFlowHistory();
+  const [runId, setRunId] = useState("");
+  const currentRun = runId ? history.history.find(run => run.id === runId) : history.history[0];
+  // The small history response already carries the revision of every run.
+  // Fetch the graph only when that run changes, including continuations of a completed run.
+  const resource = useFlowPoll(runId ? `illustration_flow?${query({ run: runId })}` : `illustration_flow?${query({ scope })}`, {
+    poll: false, enabled: !!history.data, refreshKey: currentRun ? `${currentRun.id}:${currentRun.revision}` : "",
+  });
+  useEffect(() => {
+    if (runId && history.data && !history.history.some(run => run.id === runId)) setRunId("");
+  }, [runId, history.data]);
+  const flow = resource.data?.flow as IllustrationFlow | null | undefined;
+  const [selected, setSelected] = useState<string | null>(null);
+  const closeDetails = useCallback(() => setSelected(null), []);
+  const action = useIllustrationAction();
+  useEffect(() => setSelected(null), [flow?.id]);
+  const selectedNode = flow?.nodes.find(node => node.id === selected);
+  return <Panel title={<>삽화 흐름 {flow && <Badge tone={flow.status === "failed" ? "rose" : flow.status === "completed" ? "green" : undefined}>{labels[flow.status] || flow.status}</Badge>}</>} className="illust-flow-panel" aside={<div className="illust-actions">
+    <button className="button" onClick={() => { resource.reload(); history.reload(); }}><RefreshCw size={14} />새로고침</button>
+    <button className="button danger" disabled={!flow || !live(flow.status) || flow.status === "cancelling" || action.busy || !!resource.error} onClick={() => {
+      if (!flow || !window.confirm("현재 삽화 처리 흐름을 중단하시겠습니까?")) return;
+      void action.run(async () => { await illustrationRequest("illustration_flow/cancel", { run: flow.id }); resource.reload(); }, "삽화 작업 중단을 요청했습니다.");
+    }}><Square size={13} />작업 중단</button>
+  </div>}>
+    <div className="illust-flow-info"><p className="field-help">최근 {history.data?.limit || 8}개 흐름을 보관합니다. 노드를 누르면 입력·출력과 상세 기록을 확인할 수 있습니다.</p>
+      <label className="field illust-flow-history">삽화 흐름 기록 ({history.history.length}/{history.data?.limit || 8})
+        <select value={runId} onChange={event => setRunId(event.target.value)}>
+          <option value="">최신 흐름 자동 보기</option>
+          {history.history.map(run => <option key={run.id} value={run.id}>{run.group_label} · {new Date(run.created_at * 1000).toLocaleString("ko-KR")} · {labels[run.status] || run.status} · {run.label}</option>)}
+        </select>
+      </label>
+      <IllustrationFeedback error={resource.error || history.error || action.error} message={action.message} />
+      {resource.error && flow && <p className="field-help">연결을 다시 확인하는 중입니다. 마지막으로 받은 흐름을 표시합니다.</p>}
+    </div>
+    {!resource.data && !resource.error && <p className="illust-body" role="status">삽화 흐름을 불러오는 중…</p>}
+    {resource.data && !flow && <Empty title="아직 삽화 처리 기록이 없습니다">삽화를 생성하면 요청부터 이미지 생성까지의 흐름이 여기에 나타납니다.</Empty>}
+    {flow && <FlowGraph flow={flow} onOpen={setSelected} />}
+    {flow && selectedNode && <FlowNodeDetails key={`${flow.id}:${selectedNode.id}`} runId={flow.id} nodeId={selectedNode.id} initialNode={selectedNode} onClose={closeDetails} />}
   </Panel>;
 }

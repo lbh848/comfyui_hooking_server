@@ -136,14 +136,15 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
 
     async def streams(request):
         guard(request)
+        monitor = request.query.get("monitor") == "1"
         engine = sys.modules.get("modes.llm_service")
-        local = engine.get_active_streams() if engine else []
-        config = read_llm_config()
+        local = engine.get_active_streams(monitor=monitor) if engine else []
+        config = {} if monitor else read_llm_config()
         result = [{**stream, "source": "settings", "llm_alias": model_alias(stream, config)}
                   for stream in local]
         errors = []
         try:
-            worker = await runtime.llm_streams()
+            worker = await runtime.llm_streams(monitor=monitor)
             result.extend({**stream, "source": "internal-lora", "llm_alias": model_alias(stream, config)}
                           for stream in worker["streams"])
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError):
