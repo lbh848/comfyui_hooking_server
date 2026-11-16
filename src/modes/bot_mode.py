@@ -2471,12 +2471,15 @@ class BotMode:
         })
 
     async def handle_auto_batch(self, request):
-        from modes.bot_auto_batch import preview, checked_row, select_candidate
+        from modes.bot_auto_batch import TASK_KEY, preview, checked_row, select_candidate
         try:
             body = await request.json()
             data = _load_bot_data()
             if body.get("operation", "preview") == "preview":
-                return _json_ok(preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters")))
+                from modes.llm_service import routing_primary_max_concurrency
+                result = preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters"))
+                result["max_concurrency"] = routing_primary_max_concurrency(TASK_KEY)
+                return _json_ok(result)
             if body.get("operation") != "select":
                 raise ValueError("자동 대표 설정 작업을 확인하세요.")
             row = checked_row(data, Path(BOT_DIR), body)

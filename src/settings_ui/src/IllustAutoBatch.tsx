@@ -5,6 +5,7 @@ import { IllustrationFeedback } from "./IllustBackups";
 import { useBotApi } from "./BotApiScope";
 import { useUnsavedChanges } from "./unsavedChanges";
 import type { IllustrationData } from "./illustration";
+import "../../frontend/static/bot_rep_batch.js";
 import "./illust-auto-batch.css";
 
 type Candidate = { filename: string; emotion: string; url: string };
@@ -76,6 +77,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
   const [characterSearch, setCharacterSearch] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [searchedIndices, setSearchedIndices] = useState<string[]>([]);
+  const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [prompt, setPrompt] = useState("");
   const [results, setResults] = useState<Record<string, Record<string, Selection>>>({});
   const [manualSelections, setManualSelections] = useState<Record<string, string>>({});
@@ -114,6 +116,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
     try {
       const response = await api.request("bot_mode/auto_batch", { bot_name: botName, indices, characters: remainingCharacters.map(char => String(char.name)) });
       setRows(response.rows); setSearchedIndices(response.indices); setCharacterSearch(""); setRunNames([]);
+      setMaxConcurrency(response.max_concurrency || 1);
       if (!prompt) setPrompt(response.prompt);
       setStep(2);
     } catch (error) { setError((error as Error).message); }
@@ -127,37 +130,48 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
     setProgress({ done: 0, total: targets.length });
     setBusy(true); setRunning(true); setError(""); setMessage(""); setStopping(false); stop.current = false;
     let completed = 0, failed = 0;
+    const states = targets.map(row => ({ row, selections: [] as Selection[], failed: false, applied: false }));
+    setResults(current => ({ ...current, ...Object.fromEntries(targets.map(row => [row.character, {}])) }));
+    setStatuses(current => ({ ...current, ...Object.fromEntries(targets.map(row => [row.character, "대기 중"])) }));
     try {
-      for (const row of targets) {
-        if (stop.current) break;
-        const selections: Selection[] = [];
+      // Share one worker pool across characters and profiles; routed calls also
+      // share the provider gate with other LLM work and fallback requests.
+      await ComfyRepBatch.runLimited(states.flatMap(state => state.row.groups.map(group => async () => {
+        if (stop.current || state.failed) return;
+        const { row, selections } = state;
         const body = { bot_name: botName, character: row.character, indices: searchedIndices, fingerprint: row.fingerprint };
-        setResults(current => ({ ...current, [row.character]: {} }));
         try {
-          for (const [index, group] of row.groups.entries()) {
-            if (stop.current) break;
-            setStatuses(current => ({ ...current, [row.character]: `대표 선택 중 ${index + 1}/${row.groups.length}` }));
-            const manual = group.fallback_first && group.candidates.find(candidate => candidate.filename === manualSelections[row.character]);
-            const selection: Selection = manual
-              ? { key: group.key, filename: manual.filename, reason: "전체 이미지에서 직접 선택했습니다." }
-              : await api.request("bot_mode/auto_batch", { ...body, operation: "select", key: group.key, prompt }) as Selection;
-            selections.push(selection);
-            setResults(current => ({ ...current, [row.character]: { ...current[row.character], [group.key]: selection } }));
+          setStatuses(current => ({ ...current, [row.character]: `대표 선택 중 · ${selections.length}/${row.groups.length} 완료` }));
+          const manual = group.fallback_first && group.candidates.find(candidate => candidate.filename === manualSelections[row.character]);
+          const selection: Selection = manual
+            ? { key: group.key, filename: manual.filename, reason: "전체 이미지에서 직접 선택했습니다." }
+            : await api.request("bot_mode/auto_batch", { ...body, operation: "select", key: group.key, prompt }) as Selection;
+          selections.push(selection);
+          setResults(current => ({ ...current, [row.character]: { ...current[row.character], [group.key]: selection } }));
+          if (stop.current || state.failed) return;
+          if (selections.length < row.groups.length) {
+            setStatuses(current => ({ ...current, [row.character]: `대표 선택 중 · ${selections.length}/${row.groups.length} 완료` }));
+            return;
           }
-          if (stop.current) { setStatuses(current => ({ ...current, [row.character]: "중단됨 · 적용하지 않음" })); break; }
           setStatuses(current => ({ ...current, [row.character]: "카드와 대표 이미지 적용 중…" }));
           const result = await api.request("bot_mode/action", { ...body, action: "auto_batch_apply", selections });
           if (result.skipped?.length) throw new Error(result.skipped.map((item: IllustrationData) => item.reason).join(" · "));
           completed++;
+          state.applied = true;
           setApplied(current => new Set([...current, row.character]));
           setStatuses(current => ({ ...current, [row.character]: row.groups[0]?.fallback_first ? `적용 완료 · ${manualSelections[row.character] ? "직접 선택한 이미지" : "첫 번째 이미지"}` : `적용 완료 · 프로필 ${row.groups.length}개` }));
           onChanged();
         } catch (error) {
-          failed++;
-          setStatuses(current => ({ ...current, [row.character]: `실패: ${(error as Error).message}` }));
+          if (!state.failed) {
+            state.failed = true;
+            failed++;
+            setStatuses(current => ({ ...current, [row.character]: `실패: ${(error as Error).message}` }));
+          }
         }
         setProgress({ done: completed + failed, total: targets.length });
-      }
+      })), maxConcurrency);
+      if (stop.current) setStatuses(current => ({ ...current, ...Object.fromEntries(states
+        .filter(state => !state.applied && !state.failed).map(state => [state.row.character, "중단됨 · 적용하지 않음"])) }));
       setMessage(`${completed}명 적용 완료${failed ? ` · ${failed}명 실패` : ""}${stop.current ? " · 중단됨" : ""}`);
     } finally { setBusy(false); setRunning(false); setStopping(false); }
   }
