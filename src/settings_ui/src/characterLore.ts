@@ -25,7 +25,7 @@ export function readCharacterLore(value: unknown, source: string): CharacterLore
   });
 }
 
-export const characterLoreId = (entry: CharacterLoreEntry): string => JSON.stringify([entry.source, entry.entry_id]);
+export const characterLoreId = (entry: Pick<CharacterLoreEntry, "source" | "entry_id">): string => JSON.stringify([entry.source, entry.entry_id]);
 const normalizedName = (value: string): string => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 export function matchCharacterLore(entry: CharacterLoreEntry, characterNames: readonly string[]): string[] {

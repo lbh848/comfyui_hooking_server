@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Panel } from "./components";
 import { SearchableSelect } from "./SearchableSelect";
 import { characterLoreId, type CharacterLoreEntry } from "./characterLore";
+import { useBotApi } from "./BotApiScope";
+import { IllustrationFeedback } from "./IllustBackups";
+
+type CharacterLoreAutoLink = { source: string; entry_id: string; characters: string[]; reason: string };
 
 export function LoreContent({ entry }: { entry: CharacterLoreEntry }) {
   return <div className="illust-lore-content">
@@ -26,17 +30,45 @@ export function CharacterImportedLore({ entries }: { entries: CharacterLoreEntry
 }
 
 export function CharacterLoreImport({ entries, characterNames, existingCharacterNames, assignments, disabled, onChange,
-  title = "추출된 캐릭터와 로어북", assignedEntries, onEdit, onCreate }: {
+  botName, onAutoLink, onBusyChange, title = "추출된 캐릭터와 로어북", assignedEntries, onEdit, onCreate }: {
   entries: CharacterLoreEntry[]; characterNames: string[]; existingCharacterNames: string[];
   assignments: Record<string, string[]>; disabled: boolean;
   onChange: (id: string, names: string[]) => void;
+  botName: string; onAutoLink: (assignments: Record<string, string[]>) => void; onBusyChange: (busy: boolean) => void;
   title?: string; assignedEntries?: Record<string, CharacterLoreEntry[]>;
   onEdit?: (character: string, entry: CharacterLoreEntry) => void; onCreate?: (character: string) => void;
 }) {
+  const api = useBotApi();
+  const [autoLinkBusy, setAutoLinkBusy] = useState(false);
+  const [autoLinkError, setAutoLinkError] = useState("");
+  const [autoLinks, setAutoLinks] = useState<CharacterLoreAutoLink[] | null>(null);
+  const [autoLinkMessage, setAutoLinkMessage] = useState("");
   const [search, setSearch] = useState("");
   const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [selecting, setSelecting] = useState<string | null>(null);
+  async function autoLinkCharacterLore() {
+    if (disabled || autoLinkBusy) return;
+    setAutoLinkBusy(true); onBusyChange(true); setAutoLinkError(""); setAutoLinks(null); setAutoLinkMessage("");
+    try {
+      const result = await api.request("bot_mode/character_lore_auto_link", {
+        bot_name: botName, character_names: [...new Set([...characterNames, ...existingCharacterNames])], entries,
+      });
+      const links = result.links as CharacterLoreAutoLink[];
+      const next = { ...assignments };
+      let added = 0;
+      for (const link of links) {
+        const id = characterLoreId(link);
+        const current = next[id] || [];
+        const selected = [...new Set([...current, ...link.characters])];
+        added += selected.length - current.length;
+        next[id] = selected;
+      }
+      onAutoLink(next); setAutoLinks(links);
+      setAutoLinkMessage(`LLM 분석 완료 · 연결 ${added}개 추가 · 미연결 항목 ${links.filter(link => !link.characters.length).length}개. 연결 내용을 확인한 뒤 저장하세요.`);
+    } catch (error) { setAutoLinkError(error instanceof Error ? error.message : String(error)); }
+    finally { setAutoLinkBusy(false); onBusyChange(false); }
+  }
   const characterEntries = assignedEntries || Object.fromEntries([...characterNames, ...existingCharacterNames].map(name =>
     [name, entries.filter(entry => assignments[characterLoreId(entry)]?.includes(name))]));
   const assigned = characterNames.filter(name => characterEntries[name].length).length;
@@ -85,6 +117,17 @@ export function CharacterLoreImport({ entries, characterNames, existingCharacter
   })}</div>;
   return <Panel title={title} className="illust-character-import-group">
     <div className="illust-form illust-character-import-body">
+    <div className="illust-actions"><button type="button" className="button secondary"
+      disabled={disabled || autoLinkBusy || !entries.length || !characterNames.length && !existingCharacterNames.length}
+      onClick={() => void autoLinkCharacterLore()}>{autoLinkBusy ? "로어북 자동 연결 중…" : "로어북 자동 연결 LLM"}</button>
+      {autoLinkBusy && <span className="field-help" role="status">로어북의 제목·활성화키·보조 활성화키를 확인하고 있습니다.</span>}</div>
+    <IllustrationFeedback error={autoLinkError} message={autoLinkMessage} />
+    {autoLinks && <details className="illust-lore-entry"><summary>LLM 연결 판단 {autoLinks.length}개</summary>
+      <div className="illust-form illust-lore-content">{autoLinks.map(link => <div key={characterLoreId(link)}>
+        <strong>{entries.find(entry => entry.source === link.source && entry.entry_id === link.entry_id)?.title}</strong>
+        <p className="field-help">{link.characters.join(", ") || "연결 없음"} · {link.reason}</p>
+      </div>)}</div>
+    </details>}
     <div className="illust-actions"><span className="field-help">캐릭터 {characterNames.length}명 · 로어북 연결 {assigned}명 · 연결 없음 {characterNames.length - assigned}명</span>
       <label className="illust-check"><input type="checkbox" checked={unassignedOnly} onChange={event => { setUnassignedOnly(event.target.checked); setPage(0); }} />연결 없는 캐릭터만 보기</label></div>
     <label className="field">캐릭터 검색<input value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} placeholder="캐릭터 이름" /></label>

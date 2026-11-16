@@ -381,6 +381,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
         </div>
       </Panel>}
       {sourceMode === "charx" && (entries.length > 0 || loreEntries.length > 0) && <CharacterLoreImport entries={loreEntries} characterNames={extractedCharacterNames}
+        botName={botName} onBusyChange={onBusyChange} onAutoLink={assignments => { setResult(null); setLoreOverrides(assignments); }}
         existingCharacterNames={loreCharacterNames.filter(name => !extractedCharacterNames.includes(name))}
         assignments={loreAssignments} disabled={busy || collecting} onChange={(id, names) => { setResult(null); setLoreOverrides(current => ({ ...current, [id]: names })); }} />}
       {result && <div className="illust-form" role="status"><p>캐릭터 {result.added}개 추가 · 이미지 {result.uploaded}장 추가 · {result.replaced}장 교체 · 동일 이미지 {result.skipped}장 건너뜀</p>

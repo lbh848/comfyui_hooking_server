@@ -40,7 +40,7 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
   const changed = names.filter(name => JSON.stringify(draft[name]) !== JSON.stringify(base?.[name]));
   const dirty = changed.length > 0;
   const disabled = busy || readOnly || !base;
-  const entries = useMemo(() => [...new Map([...Object.values(draft).flat(), ...archives.flatMap(archive => archive.lore_entries)]
+  const entries = useMemo(() => [...new Map([...archives.flatMap(archive => archive.lore_entries), ...Object.values(draft).flat()]
     .map(entry => [characterLoreId(entry), entry])).values()], [draft, archives]);
   const assignments = useMemo(() => Object.fromEntries(entries.map(entry => [characterLoreId(entry), names.filter(name =>
     draft[name].some(current => characterLoreId(current) === characterLoreId(entry)))])), [entries, draft]);
@@ -105,6 +105,11 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
           </section>
           {!!progress && <p className="field-help" role="status">{progress}</p>}
           <CharacterLoreImport title="캐릭터별 로어북 연결" entries={entries} characterNames={names} existingCharacterNames={[]}
+            botName={botName} onBusyChange={setBusy} onAutoLink={selected => {
+              setMessage(""); setDraft(current => Object.fromEntries(Object.entries(current).map(([name, characterEntries]) => [name,
+                entries.filter(entry => selected[characterLoreId(entry)]?.includes(name))
+                  .map(entry => characterEntries.find(current => characterLoreId(current) === characterLoreId(entry)) || entry)])));
+            }}
             assignedEntries={draft} assignments={assignments} disabled={disabled} onChange={changeAssignments} onEdit={edit}
             onCreate={character => edit(character, { source: "직접 입력", entry_id: crypto.randomUUID(), title: "", content: "", keys: [], secondary_keys: [], enabled: true, constant: false, selective: false, use_regex: false })} />
         </>}

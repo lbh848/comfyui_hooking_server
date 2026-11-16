@@ -32213,6 +32213,7 @@ app.router.add_post(
 app.router.add_post("/api/bot_mode/upload_preflight", bot_mode.handle_upload_preflight)
 app.router.add_post("/api/bot_mode/upload", bot_mode.handle_upload_image)
 app.router.add_get("/api/bot_mode/lore", bot_mode.handle_get_character_lore)
+app.router.add_post("/api/bot_mode/character_lore_auto_link", bot_mode.handle_auto_link_character_lore)
 app.router.add_get("/api/bot_mode/archive", bot_mode.handle_get_bot_archive)
 app.router.add_post("/api/bot_mode/archive", bot_mode.handle_upload_bot_archive)
 app.router.add_post("/api/bot_mode/import_asset", bot_mode.handle_import_asset)

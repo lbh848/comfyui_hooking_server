@@ -2960,6 +2960,18 @@ class BotMode:
             raise ValueError("봇을 찾을 수 없습니다.")
         return bot, BotArchiveStore(Path(BOT_DIR) / bot_name)
 
+    async def handle_auto_link_character_lore(self, request):
+        from modes.character_lore import auto_link_character_lore
+        try:
+            body = await request.json()
+            self._bot_archive_store(body.get("bot_name", ""))
+            return _json_ok(await auto_link_character_lore(body))
+        except (ValueError, TypeError) as exc:
+            return _json_error(str(exc))
+        except Exception:
+            traceback.print_exc()
+            return _json_error("로어북 자동 연결에 실패했습니다. LLM 로그를 확인하세요.", 500)
+
     async def handle_get_character_lore(self, request):
         try:
             bot, store = self._bot_archive_store(request.query.get("bot_name", ""))

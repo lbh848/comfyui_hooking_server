@@ -41,6 +41,7 @@ READ_PATHS = {
     "llm_edit_prompt_template",
 }
 WRITE_PATHS = {
+    "bot_mode/character_lore_auto_link",
     "bot_mode/archive",
     "bot_mode/suggest_name_tag",
     "bot_mode/auto_batch",

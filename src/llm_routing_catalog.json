@@ -76,6 +76,21 @@
   ],
   "tasks": [
     {
+      "key": "character_lore_auto_link",
+      "label": "로어북 자동 연결 LLM",
+      "kind": "텍스트/JSON",
+      "modality": "text",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm_sp2",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
       "key": "bot_name_tag",
       "label": "2차봇 이름 태그 자동 설정",
       "kind": "텍스트/JSON",
