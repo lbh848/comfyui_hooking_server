@@ -17,6 +17,11 @@ async def auto_link_character_lore(body):
             or any(not isinstance(name, str) or not name.strip() or len(name) > 200 for name in names)
             or len(set(names)) != len(names)):
         raise ValueError("자동 연결할 캐릭터 이름을 확인하세요. 최대 500명까지 연결할 수 있습니다.")
+    target_names = body.get("target_character_names", names)
+    if (not isinstance(target_names, list) or not target_names
+            or any(not isinstance(name, str) or name not in names for name in target_names)
+            or len(set(target_names)) != len(target_names)):
+        raise ValueError("로어북 자동 연결 대상은 캐릭터 목록에서 선택하세요.")
     entries = normalize_character_lore(body.get("entries"))
     if not entries:
         raise ValueError("자동 연결할 로어북이 없습니다.")
@@ -36,54 +41,65 @@ async def auto_link_character_lore(body):
         batches[-1].append(item)
         batch_size += size
 
-    links = []
+    characters = {name: {"character": name, "entries": [], "reason": ""} for name in target_names}
     for batch_index, batch in enumerate(batches, start=1):
         expected = {entry["entry"] for entry in batch}
         accepted = []
 
         def validate(raw):
             parsed = parse_llm_json(raw)
-            rows = parsed.get("links") if isinstance(parsed, dict) else None
-            if not isinstance(rows, list) or len(rows) != len(expected):
-                return False, "Return one links row for every supplied entry, including unlinked entries."
-            seen = set()
-            result = []
+            rows = parsed.get("characters") if isinstance(parsed, dict) else None
+            if not isinstance(rows, list):
+                return False, "Return a characters array containing every target character."
+            result = {}
             for row in rows:
                 if not isinstance(row, dict):
-                    return False, "Each links row must be an object."
-                entry_id, characters, reason = row.get("entry"), row.get("characters"), row.get("reason")
-                if type(entry_id) is not int or entry_id not in expected or entry_id in seen:
-                    return False, "Use each supplied entry number exactly once."
-                if (not isinstance(characters, list)
-                        or any(type(number) is not int or not 1 <= number <= len(names) for number in characters)
-                        or len(set(characters)) != len(characters)):
-                    return False, "Use only unique character numbers from the supplied character list."
-                if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
-                    return False, "Include a short reason of at most 1000 characters for each decision."
-                seen.add(entry_id)
-                entry = entries[entry_id - 1]
-                result.append({"source": entry["source"], "entry_id": entry["entry_id"],
-                               "characters": [names[number - 1] for number in characters], "reason": reason.strip()})
-            accepted[:] = result
+                    continue
+                name = row.get("character")
+                # Extra characters are ignored; they never invalidate complete target results.
+                if not isinstance(name, str) or name not in target_names:
+                    continue
+                entry_numbers = row.get("entries")
+                if not isinstance(entry_numbers, list):
+                    continue
+                item = result.setdefault(name, {"character": name, "entries": [], "reason": ""})
+                for entry_number in entry_numbers:
+                    if type(entry_number) is int and entry_number in expected:
+                        entry = entries[entry_number - 1]
+                        reference = {"source": entry["source"], "entry_id": entry["entry_id"]}
+                        if reference not in item["entries"]:
+                            item["entries"].append(reference)
+                if isinstance(row.get("reason"), str):
+                    item["reason"] = row["reason"].strip()[:1000]
+            missing = set(target_names) - result.keys()
+            if missing:
+                return False, f"Return a row for every target character. Missing character names: {sorted(missing)}. Use entries: [] when there is no matching lore."
+            accepted[:] = result.values()
             return True, ""
 
         context = create_llm_execution_context(
             CHARACTER_LORE_AUTO_LINK_TASK, call_name="로어북 자동 연결 LLM", json_mode=True,
             metadata={"bot_name": body.get("bot_name", ""), "character_count": len(names),
+                      "target_character_count": len(target_names),
                       "entry_count": len(batch), "batch": batch_index, "batch_count": len(batches)},
         )
         raw = await callLLMTask(CHARACTER_LORE_AUTO_LINK_TASK, [
             {"role": "system", "content": prompt},
             {"role": "user", "content": json.dumps({
-                "characters": [{"character": index, "name": name} for index, name in enumerate(names, start=1)],
+                "characters": names,
+                "target_characters": target_names,
                 "entries": batch,
             }, ensure_ascii=False)},
         ], json_mode=True, result_validator=validate, execution_context=context)
         valid, error = validate(raw)
         if not valid:
             raise ValueError("로어북 자동 연결 응답을 확인하지 못했습니다. 외부 LLM 분기의 로어북 자동 연결 LLM과 LLM 로그를 확인하세요. " + error)
-        links.extend(accepted)
-    return {"links": links}
+        for item in accepted:
+            current = characters[item["character"]]
+            current["entries"].extend(item["entries"])
+            if item["entries"] or not current["entries"]:
+                current["reason"] = " · ".join(filter(None, [current["reason"] if item["entries"] and len(current["entries"]) > len(item["entries"]) else "", item["reason"]]))
+    return {"characters": list(characters.values())}
 
 
 def format_character_lore(entries):

@@ -14,6 +14,8 @@ import { bytes } from "./formatBytes";
 type CharacterLore = Record<string, CharacterLoreEntry[]>;
 type LoreEdit = { character: string; entry: CharacterLoreEntry; keys: string; secondaryKeys: string };
 
+export const loreLinkingTitle = (botName: string) => `${botName} · 로어북 연결`;
+
 export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
   botName: string; readOnly: boolean; onClose: () => void; onChanged: () => void;
 }) {
@@ -30,7 +32,7 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState<LoreEdit | null>(null);
   const [discard, setDiscard] = useState(false);
-  const title = `${botName} · 로어북 연결`;
+  const title = loreLinkingTitle(botName);
   useEffect(() => {
     if (!resource.data || base) return;
     const initial = Object.fromEntries(resource.data.characters.map((character: { name: string; entries: CharacterLoreEntry[] }) => [character.name, character.entries]));
@@ -80,7 +82,7 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
     } finally { setBusy(false); setProgress(""); }
   }
   return <>
-    <Modal title={title} onClose={() => dirty ? setDiscard(true) : onClose()} closeDisabled={busy} backgroundable={false} className="illust-lore-modal">
+    <Modal title={title} onClose={() => dirty ? setDiscard(true) : onClose()} closeDisabled={busy} working={busy} className="illust-lore-modal">
       <div className="illust-form">
         <IllustrationFeedback error={resource.error || error} message={message} />
         {!base && <IllustrationLoading error={resource.error} retry={resource.reload} />}

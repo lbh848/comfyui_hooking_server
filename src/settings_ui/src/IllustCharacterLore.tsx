@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Panel } from "./components";
+import { Modal, Panel } from "./components";
 import { SearchableSelect } from "./SearchableSelect";
 import { characterLoreId, type CharacterLoreEntry } from "./characterLore";
 import { useBotApi } from "./BotApiScope";
 import { IllustrationFeedback } from "./IllustBackups";
 
-type CharacterLoreAutoLink = { source: string; entry_id: string; characters: string[]; reason: string };
+type CharacterLoreAutoLink = { character: string; entries: Pick<CharacterLoreEntry, "source" | "entry_id">[]; reason: string };
 
 export function LoreContent({ entry }: { entry: CharacterLoreEntry }) {
   return <div className="illust-lore-content">
@@ -43,34 +43,38 @@ export function CharacterLoreImport({ entries, characterNames, existingCharacter
   const [autoLinkError, setAutoLinkError] = useState("");
   const [autoLinks, setAutoLinks] = useState<CharacterLoreAutoLink[] | null>(null);
   const [autoLinkMessage, setAutoLinkMessage] = useState("");
+  const [autoLinkScopeOpen, setAutoLinkScopeOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [selecting, setSelecting] = useState<string | null>(null);
-  async function autoLinkCharacterLore() {
-    if (disabled || autoLinkBusy) return;
+  const allCharacterNames = [...new Set([...characterNames, ...existingCharacterNames])];
+  const characterEntries = assignedEntries || Object.fromEntries(allCharacterNames.map(name =>
+    [name, entries.filter(entry => assignments[characterLoreId(entry)]?.includes(name))]));
+  const unassignedCharacterNames = allCharacterNames.filter(name => !characterEntries[name].length);
+  async function autoLinkCharacterLore(selectedCharacterNames: string[]) {
+    if (disabled || autoLinkBusy || !selectedCharacterNames.length) return;
+    setAutoLinkScopeOpen(false);
     setAutoLinkBusy(true); onBusyChange(true); setAutoLinkError(""); setAutoLinks(null); setAutoLinkMessage("");
     try {
       const result = await api.request("bot_mode/character_lore_auto_link", {
-        bot_name: botName, character_names: [...new Set([...characterNames, ...existingCharacterNames])], entries,
+        bot_name: botName, character_names: allCharacterNames, target_character_names: selectedCharacterNames, entries,
       });
-      const links = result.links as CharacterLoreAutoLink[];
+      const links = result.characters as CharacterLoreAutoLink[];
       const next = { ...assignments };
       let added = 0;
       for (const link of links) {
-        const id = characterLoreId(link);
-        const current = next[id] || [];
-        const selected = [...new Set([...current, ...link.characters])];
-        added += selected.length - current.length;
-        next[id] = selected;
+        for (const entry of link.entries) {
+          const id = characterLoreId(entry);
+          const current = next[id] || [];
+          if (!current.includes(link.character)) { next[id] = [...current, link.character]; added++; }
+        }
       }
       onAutoLink(next); setAutoLinks(links);
-      setAutoLinkMessage(`LLM 분석 완료 · 연결 ${added}개 추가 · 미연결 항목 ${links.filter(link => !link.characters.length).length}개. 연결 내용을 확인한 뒤 저장하세요.`);
+      setAutoLinkMessage(`LLM 분석 완료 · 연결 ${added}개 추가 · 일치하는 로어북 없음 ${links.filter(link => !link.entries.length).length}명. 연결 내용을 확인한 뒤 저장하세요.`);
     } catch (error) { setAutoLinkError(error instanceof Error ? error.message : String(error)); }
     finally { setAutoLinkBusy(false); onBusyChange(false); }
   }
-  const characterEntries = assignedEntries || Object.fromEntries([...characterNames, ...existingCharacterNames].map(name =>
-    [name, entries.filter(entry => assignments[characterLoreId(entry)]?.includes(name))]));
   const assigned = characterNames.filter(name => characterEntries[name].length).length;
   const matchesSearch = (name: string) => (!unassignedOnly || !characterEntries[name].length) && name.toLowerCase().includes(search.toLowerCase());
   const compareConnections = (left: string, right: string) => Number(!!characterEntries[left].length) - Number(!!characterEntries[right].length);
@@ -115,17 +119,17 @@ export function CharacterLoreImport({ entries, characterNames, existingCharacter
       <div className="illust-form">{group.map(renderCharacter)}</div>
     </section>;
   })}</div>;
-  return <Panel title={title} className="illust-character-import-group">
+  return <><Panel title={title} className="illust-character-import-group">
     <div className="illust-form illust-character-import-body">
     <div className="illust-actions"><button type="button" className="button secondary"
       disabled={disabled || autoLinkBusy || !entries.length || !characterNames.length && !existingCharacterNames.length}
-      onClick={() => void autoLinkCharacterLore()}>{autoLinkBusy ? "로어북 자동 연결 중…" : "로어북 자동 연결 LLM"}</button>
+      onClick={() => setAutoLinkScopeOpen(true)}>{autoLinkBusy ? "로어북 자동 연결 중…" : "로어북 자동 연결 LLM"}</button>
       {autoLinkBusy && <span className="field-help" role="status">로어북의 제목·활성화키·보조 활성화키를 확인하고 있습니다.</span>}</div>
     <IllustrationFeedback error={autoLinkError} message={autoLinkMessage} />
-    {autoLinks && <details className="illust-lore-entry"><summary>LLM 연결 판단 {autoLinks.length}개</summary>
-      <div className="illust-form illust-lore-content">{autoLinks.map(link => <div key={characterLoreId(link)}>
-        <strong>{entries.find(entry => entry.source === link.source && entry.entry_id === link.entry_id)?.title}</strong>
-        <p className="field-help">{link.characters.join(", ") || "연결 없음"} · {link.reason}</p>
+    {autoLinks && <details className="illust-lore-entry"><summary>LLM 연결 판단 {autoLinks.length}명</summary>
+      <div className="illust-form illust-lore-content">{autoLinks.map(link => <div key={link.character}>
+        <strong>{link.character}</strong>
+        <p className="field-help">{link.entries.map(reference => entries.find(entry => characterLoreId(entry) === characterLoreId(reference))?.title).join(", ") || "연결 없음"}{link.reason && ` · ${link.reason}`}</p>
       </div>)}</div>
     </details>}
     <div className="illust-actions"><span className="field-help">캐릭터 {characterNames.length}명 · 로어북 연결 {assigned}명 · 연결 없음 {characterNames.length - assigned}명</span>
@@ -141,5 +145,18 @@ export function CharacterLoreImport({ entries, characterNames, existingCharacter
       {!existing.length && <p className="field-help">해당하는 캐릭터가 없습니다.</p>}
     </details>}
     </div>
-  </Panel>;
+  </Panel>
+    {autoLinkScopeOpen && <Modal title={`${botName} · 로어북 자동 연결 대상`} onClose={() => setAutoLinkScopeOpen(false)} backgroundable={false}>
+      <div className="illust-form">
+        <p>로어북을 자동 연결할 캐릭터를 선택하세요.</p>
+        <div className="illust-actions">
+          <button type="button" className="button primary" disabled={disabled || !unassignedCharacterNames.length}
+            onClick={() => void autoLinkCharacterLore(unassignedCharacterNames)}>연결 없는 캐릭터만 · {unassignedCharacterNames.length}명</button>
+          <button type="button" className="button secondary" disabled={disabled || !allCharacterNames.length}
+            onClick={() => void autoLinkCharacterLore(allCharacterNames)}>모든 캐릭터 · {allCharacterNames.length}명</button>
+          <button type="button" className="button" onClick={() => setAutoLinkScopeOpen(false)}>취소</button>
+        </div>
+      </div>
+    </Modal>}
+  </>;
 }
