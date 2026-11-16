@@ -11,6 +11,7 @@ import { TagLabel } from "./TagTooltip";
 import type { Resources } from "./useResources";
 import { enc, query, useIllustrationAction, type IllustrationData } from "./illustration";
 import { useBotApi, useBotResource } from "./BotApiScope";
+import { useVisibleOnce } from "./useVisibleOnce";
 
 type BatchKind = "face" | "appearance";
 const batchLabels: Record<BatchKind, string> = { face: "얼굴·눈 일괄 자동 분류", appearance: "외모·복장 일괄 정제" };
@@ -174,17 +175,7 @@ function ExtraProfilePreview({ botName, character, card, index, faceSelected, de
   revision: IllustrationData | null; readOnly: boolean; busy: boolean; onLock: () => void; onPrevious: () => void; onNext: () => void;
 }) {
   const api = useBotApi();
-  const previewRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const preview = previewRef.current;
-    if (!preview || visible) return;
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
-    }, { root: preview.closest(".illust-extra-tree"), rootMargin: "200px" });
-    observer.observe(preview);
-    return () => observer.disconnect();
-  }, [visible]);
+  const { ref: previewRef, visible } = useVisibleOnce<HTMLDivElement>(".illust-extra-tree");
   const images = useBotResource(active && visible ? `bot_mode/images?${query({ bot: botName, character: character.name, visual_card_id: card.id })}` : null);
   const previousRevision = useRef(revision);
   useEffect(() => {

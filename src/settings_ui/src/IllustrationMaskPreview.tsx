@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { illustrationMedia, type IllustrationData } from "./illustration";
+import { useVisibleOnce } from "./useVisibleOnce";
 import "./illustration-mask-preview.css";
 
 const regionColors = ["#ef4444", "#22c55e", "#3b82f6"];
@@ -84,16 +85,18 @@ export function IllustrationPreviewImage({ path, alt, layout, maskPath = "", fac
   showMask?: boolean; showFaces?: boolean; maskOpacity?: number; maskOutline?: boolean; thumbnail?: boolean; onOpen?: () => void; onSize?: (width: number, height: number) => void;
 }) {
   const imagePath = thumbnail && path.startsWith("/api/illustration_flow?") ? `${path}&thumbnail=1` : path;
-  const source = usePreviewImage(imagePath), mask = usePreviewImage(showMask ? maskPath : "");
+  const { ref, visible } = useVisibleOnce<HTMLDivElement>(".illust-flow-viewport");
+  const load = !thumbnail || visible;
+  const source = usePreviewImage(load ? imagePath : ""), mask = usePreviewImage(load && showMask ? maskPath : "");
   const [size, setSize] = useState({ path: "", width: 100, height: 100 });
   const [failed, setFailed] = useState("");
   const loaded = size.path === path && failed !== source.url;
   const error = source.error || (failed && failed === source.url ? "이미지를 불러오지 못했습니다." : "");
   const content: ReactNode = source.url && !error ? <>
-    <img src={source.url} alt={alt} onLoad={event => { const img = event.currentTarget; setSize({ path, width: img.naturalWidth, height: img.naturalHeight }); onSize?.(img.naturalWidth, img.naturalHeight); }} onError={() => setFailed(source.url)} />
+    <img src={source.url} alt={alt} decoding="async" onLoad={event => { const img = event.currentTarget; setSize({ path, width: img.naturalWidth, height: img.naturalHeight }); onSize?.(img.naturalWidth, img.naturalHeight); }} onError={() => setFailed(source.url)} />
     {loaded && (showMask || showFaces) && <IllustrationMaskOverlay layout={showMask && !maskPath ? layout : showMask && mask.url ? layout : null} maskUrl={showMask ? mask.url : ""} faces={showFaces ? faces : []} width={size.width} height={size.height} maskOpacity={maskOpacity} maskOutline={maskOutline} />}
   </> : <span className="field-help">{error || "미리보기를 불러오는 중…"}</span>;
-  return <><div className="illust-mask-image">{onOpen ? <button type="button" onClick={onOpen} aria-label={`${alt} 크게 보기`}>{content}</button> : content}</div>
+  return <><div ref={ref} className="illust-mask-image">{onOpen ? <button type="button" onClick={onOpen} aria-label={`${alt} 크게 보기`}>{content}</button> : content}</div>
     {showMask && maskPath && !mask.url && <span className="field-help" role="status">{mask.error || "마스크를 불러오는 중…"}</span>}</>;
 }
 
