@@ -38,6 +38,9 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
   const selected = targets.filter(target => target.selected);
   const ready = selected.filter(target => target.suggestion);
   const visible = targets.filter(target => ComfyVisualGuide.matches(target, search));
+  const lowConfidence = targets.filter(target => target.suggestion?.confidence === "low");
+  const visibleLowConfidence = visible.filter(target => target.suggestion?.confidence === "low");
+  const selectedLowConfidence = lowConfidence.filter(target => target.selected).length;
   const generatingIds = new Set(generating ? targetIds : []);
   function targetStatus(target: VisualGuideTarget) {
     const suggestion = target.suggestion;
@@ -50,6 +53,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
   }
   const characterGroups = new Map<string, VisualGuideTarget[]>();
   for (const target of visible) {
+    if (target.suggestion?.confidence === "low") continue;
     const group = characterGroups.get(target.character) || [];
     group.push(target); characterGroups.set(target.character, group);
   }
@@ -103,9 +107,10 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
       if (["completed", "failed", "cancelled"].includes(item.status)) {
         finished = true;
         const suggestions = item.result?.suggestions || item.progress_detail?.suggestions || [];
+        const failures = (item.result?.failures || item.progress_detail?.failures || []) as IllustrationData[];
         setTargets(current => { const next = current.map(target => ({ ...target })); ComfyVisualGuide.merge(next, suggestions); return next; });
-        setError(item.status === "failed" ? item.error || "자동 작성에 실패했습니다." : "");
-        setMessage(item.status === "failed" ? "완료된 제안은 검토 후 적용할 수 있습니다." : item.status === "cancelled" ? `자동 작성을 중단했습니다. 완료된 제안 ${suggestions.length}개를 검토할 수 있습니다.` : `제안 ${suggestions.length}개를 생성했습니다. 검토 후 적용하세요.`);
+        setError(failures.length ? failures.map(failure => `${failure.character}: ${failure.error}`).join("\n") : item.status === "failed" ? item.error || "자동 작성에 실패했습니다." : "");
+        setMessage(item.status === "failed" ? "완료된 제안은 검토 후 적용할 수 있습니다." : item.status === "cancelled" ? `자동 작성을 중단했습니다. 완료된 제안 ${suggestions.length}개를 검토할 수 있습니다.` : failures.length ? `제안 ${suggestions.length}개 생성 · 캐릭터 ${failures.length}명 작성 실패. 완료된 제안은 검토 후 적용할 수 있습니다.` : `제안 ${suggestions.length}개를 생성했습니다. 검토 후 적용하세요.`);
         setRequestId(""); setItemId(""); setProgress(null); setCancelRequested(false);
       }
       return true;
@@ -188,6 +193,26 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
     ? `2/2 · 대표 이미지 외형 분석 ${progress.profile_current || 0}/${progress.profile_total || 0}`
     : progress.total ? `1/${analyzeImages ? 2 : 1} · 캐릭터 분석 ${progress.completed || 0}/${progress.total} · ${progress.character || ""}` : "LLM 큐 대기 중…";
 
+  function renderTarget(target: VisualGuideTarget) {
+    const isLowConfidence = target.suggestion?.confidence === "low";
+    return <article className="illust-visual-guide-row" data-selected={target.selected} key={target.identity}>
+      <div className="illust-form"><label className="illust-check illust-visual-guide-card-select"><input type="checkbox" aria-label={`${target.character} ${target.profileLabel} 선택`} checked={target.selected} disabled={readOnly || busy} onChange={event => selectCards([target], event.target.checked)} /><strong>{target.character} · [{target.profileIndex + 1}] {target.profileLabel}</strong><span className="illust-visual-guide-card-selection">{target.selected ? "선택됨" : "선택 안 됨"}</span></label>
+        <div className="illust-visual-guide-current">{target.imageUrl ? <button className="illust-image-button" aria-label={`${target.character} ${target.profileLabel} 대표 이미지 확대`} onClick={() => setPreview(target)}><img className="illust-profile-thumb" src={api.media(target.imageUrl)} alt={`${target.character} ${target.profileLabel}`} /></button> : <span className="field-help">대표 이미지 없음</span>}
+          <div><p className="field-help">{target.repFilename}</p><p><strong>현재 별칭</strong> · {target.currentAliases.join(", ") || "비어 있음"}</p><p><strong>현재 기준</strong> · {target.currentGuide || "비어 있음"}</p><p><strong>현재 외형 참고</strong> · {target.currentVisualContext || "비어 있음"}</p></div>
+        </div>
+      </div>
+      {target.suggestion ? <fieldset className="illust-form" disabled={readOnly || busy}>
+        <div className="illust-actions"><strong>LLM 제안</strong><Badge tone={isLowConfidence ? "rose" : "neutral"}>신뢰도 {({ high: "높음", medium: "보통", low: "낮음" } as Record<string, string>)[target.suggestion.confidence]}</Badge></div>
+        <label className="field">작중 별칭<input value={target.suggestion.aliases.join(", ")} onChange={event => edit(target, { aliases: event.target.value.split(/,\s*/) })} placeholder="쉼표로 구분" /></label>
+        <label className="field">자연어 선택 기준<textarea rows={5} maxLength={4000} value={target.suggestion.selection_guide} onChange={event => edit(target, { selection_guide: event.target.value })} /></label>
+        <p className="field-help">판단 근거 · {target.suggestion.evidence || "근거 설명 없음"}</p>
+        {target.suggestion.visual_context_status === "ok" ? <label className="field">대표 이미지 외형 참고<textarea rows={4} maxLength={1200} value={target.suggestion.visual_context} onChange={event => edit(target, { visual_context: event.target.value })} /></label> : target.suggestion.visual_context_status === "skipped" ? <p className="field-help">이미지 분석 사용 안 함 · 기존 외형 참고 유지</p> : target.suggestion.visual_context_status ? <p className="field-error">대표 이미지 외형 분석 실패 · {target.suggestion.visual_context_error || "대표 이미지를 확인하세요."}</p> : generating && analyzeImages && targetIds.includes(target.identity) && <p className="field-help">선택 기준 작성 완료 · 대표 이미지 외형 분석 대기 중</p>}
+      </fieldset> : <div className="illust-visual-guide-empty">{generating && targetIds.includes(target.identity)
+        ? appearancePhase ? "완료된 선택 기준을 불러오는 중…" : "선택 기준 분석 대기·진행 중…"
+        : "선택 후 LLM 생성을 실행하세요."}</div>}
+    </article>;
+  }
+
   const generatedCharacterNames = new Set(Object.entries((resource.data?.characters || {}) as Record<string, IllustrationData>).filter(([, character]) => character.npc_generated === true).map(([name, character]) => String(character.name || name)));
   return <>
     <div className="illust-form illust-visual-guide-content">
@@ -209,7 +234,14 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
         <p className="field-help">{analyzeImages ? "선택 기준 작성 후 대표 이미지를 분석해 외형 참고도 작성합니다." : "이미지 분석 없이 별칭과 선택 기준만 작성합니다. 기존 외형 참고는 유지됩니다."}</p>
         {generating && <p className="field-help" role="status">{progressText}</p>}
         <IllustrationFeedback error={error || applyAction.error || cancelAction.error} message={message} />
-        <div className="illust-form illust-visual-guide-list" role="region" aria-label="프로필 선택 기준 결과" tabIndex={0}>{!visible.length ? <Empty title="검색된 카드가 없습니다">검색어를 바꿔보세요.</Empty> : [...characterGroups].sort(([a], [b]) => Number(generatedCharacterNames.has(a)) - Number(generatedCharacterNames.has(b))).flatMap(([character, cards], groupIndex, groups) => {
+        {lowConfidence.length > 0 && <p className="field-help illust-visual-guide-low-confidence-summary" role="status">신뢰도 낮음 {lowConfidence.length}개 · 선택 {selectedLowConfidence}개</p>}
+        <div className="illust-form illust-visual-guide-list" role="region" aria-label="프로필 선택 기준 결과" tabIndex={0}>
+          {visibleLowConfidence.length > 0 && <section className="illust-form illust-visual-guide-low-confidence" aria-label="신뢰도 낮음">
+            <div className="illust-actions"><h3>신뢰도 낮음</h3><Badge tone="rose">{visibleLowConfidence.length}개</Badge></div>
+            <p className="field-help">신뢰도가 낮아 자동으로 선택 해제된 제안입니다. 내용을 확인하거나 수정한 뒤 선택해 적용하세요.</p>
+            {visibleLowConfidence.map(renderTarget)}
+          </section>}
+          {!visible.length ? <Empty title="검색된 카드가 없습니다">검색어를 바꿔보세요.</Empty> : [...characterGroups].sort(([a], [b]) => Number(generatedCharacterNames.has(a)) - Number(generatedCharacterNames.has(b))).flatMap(([character, cards], groupIndex, groups) => {
           const states = cards.map(targetStatus);
           const pendingCount = states.filter(status => status === "pending").length;
           const missingCount = states.filter(status => status === "missing").length;
@@ -227,26 +259,11 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
               <span className="illust-visual-guide-status">{pendingCount ? `처리 대기·진행 ${pendingCount}개` : missingCount ? `미작성 ${missingCount}개` : "값 있음"}</span>
               {selection === "partial" && <span className="illust-visual-guide-selected-cards">선택 카드: {selectedCards.map(card => `[${card.profileIndex + 1}] ${card.profileLabel}`).join(" · ")}</span>}
             </summary>
-            <div className="illust-form illust-visual-guide-cards">{cards.map(target => <article className="illust-visual-guide-row" data-selected={target.selected} key={target.identity}>
-          <div className="illust-form"><label className="illust-check illust-visual-guide-card-select"><input type="checkbox" aria-label={`${target.character} ${target.profileLabel} 선택`} checked={target.selected} disabled={readOnly || busy} onChange={event => selectCards([target], event.target.checked)} /><strong>{target.character} · [{target.profileIndex + 1}] {target.profileLabel}</strong><span className="illust-visual-guide-card-selection">{target.selected ? "선택됨" : "선택 안 됨"}</span></label>
-            <div className="illust-visual-guide-current">{target.imageUrl ? <button className="illust-image-button" aria-label={`${target.character} ${target.profileLabel} 대표 이미지 확대`} onClick={() => setPreview(target)}><img className="illust-profile-thumb" src={api.media(target.imageUrl)} alt={`${target.character} ${target.profileLabel}`} /></button> : <span className="field-help">대표 이미지 없음</span>}
-              <div><p className="field-help">{target.repFilename}</p><p><strong>현재 별칭</strong> · {target.currentAliases.join(", ") || "비어 있음"}</p><p><strong>현재 기준</strong> · {target.currentGuide || "비어 있음"}</p><p><strong>현재 외형 참고</strong> · {target.currentVisualContext || "비어 있음"}</p></div>
-            </div>
-          </div>
-          {target.suggestion ? <fieldset className="illust-form" disabled={readOnly || busy}>
-            <div className="illust-actions"><strong>LLM 제안</strong><Badge tone={target.suggestion.confidence === "low" ? "rose" : "neutral"}>신뢰도 {({ high: "높음", medium: "보통", low: "낮음" } as Record<string, string>)[target.suggestion.confidence]}</Badge></div>
-            <label className="field">작중 별칭<input value={target.suggestion.aliases.join(", ")} onChange={event => edit(target, { aliases: event.target.value.split(/,\s*/) })} placeholder="쉼표로 구분" /></label>
-            <label className="field">자연어 선택 기준<textarea rows={5} maxLength={4000} value={target.suggestion.selection_guide} onChange={event => edit(target, { selection_guide: event.target.value })} /></label>
-            <p className="field-help">판단 근거 · {target.suggestion.evidence || "근거 설명 없음"}</p>
-            {target.suggestion.visual_context_status === "ok" ? <label className="field">대표 이미지 외형 참고<textarea rows={4} maxLength={1200} value={target.suggestion.visual_context} onChange={event => edit(target, { visual_context: event.target.value })} /></label> : target.suggestion.visual_context_status === "skipped" ? <p className="field-help">이미지 분석 사용 안 함 · 기존 외형 참고 유지</p> : target.suggestion.visual_context_status ? <p className="field-error">대표 이미지 외형 분석 실패 · {target.suggestion.visual_context_error || "대표 이미지를 확인하세요."}</p> : generating && analyzeImages && targetIds.includes(target.identity) && <p className="field-help">선택 기준 작성 완료 · 대표 이미지 외형 분석 대기 중</p>}
-          </fieldset> : <div className="illust-visual-guide-empty">{generating && targetIds.includes(target.identity)
-            ? appearancePhase ? "완료된 선택 기준을 불러오는 중…" : "선택 기준 분석 대기·진행 중…"
-            : "선택 후 LLM 생성을 실행하세요."}</div>}
-        </article>)}</div></details>];
+            <div className="illust-form illust-visual-guide-cards">{cards.map(renderTarget)}</div></details>];
         })}</div>
       </>}
     </div>
-    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준을 갱신합니다. 신뢰도가 낮은 제안은 자동 선택하지 않습니다.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
+    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준을 갱신합니다. 신뢰도가 낮은 제안은 상단에서 확인·수정한 뒤 선택하세요.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
     {preview && <Modal title={`${preview.character} · ${preview.profileLabel}`} onClose={() => setPreview(null)} backgroundable={false} className="illust-character-modal"><img className="illust-asset-preview" src={api.media(preview.imageUrl)} alt={preview.repFilename} /></Modal>}
   </>;
 }

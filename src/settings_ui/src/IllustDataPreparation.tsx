@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Crop, Play, RefreshCw } from "lucide-react";
 import { Badge, Modal, SettingsTabs } from "./components";
 import { IllustTagFilterEditor, tagFilterStepLabel, type TagFilterStep, type TagFilterProfiles } from "./IllustTagFilterEditor";
@@ -12,6 +12,22 @@ import "./illust-data-preparation.css";
 export const dataPreparationTitle = (botName: string, label = "삽화 데이터 준비") => `${botName} · ${label}`;
 const steps = ["캐릭터 선택", "기능 선택", "세부 설정", "최종 확인"];
 const statusLabels: Record<string, string> = { pending: "대기", running: "진행 중", paused: "확인 대기", completed: "완료", skipped: "건너뜀", cancelled: "중단됨", warning: "확인 필요", failed: "실패" };
+
+export function useDataPreparationRefresh(onChanged: () => void) {
+  const runningBots = useRef(new Set<string>());
+  useEffect(() => {
+    // The queue keeps publishing every completion. While preparation is running,
+    // this screen gets saved results from its stage updates instead of reloading
+    // all character galleries for each queue notification.
+    const refresh = () => { if (!runningBots.current.size) onChanged(); };
+    window.addEventListener("illustration-completed", refresh);
+    return () => window.removeEventListener("illustration-completed", refresh);
+  }, [onChanged]);
+  return useCallback((botName: string, running: boolean) => {
+    if (running) runningBots.current.add(botName);
+    else runningBots.current.delete(botName);
+  }, []);
+}
 
 function PreparationIssues({ stage, disabled, running, onRetry, onCrop }: {
   stage: IllustrationData; disabled: boolean; running: boolean; onRetry: (id: string) => void; onCrop: (item: IllustrationData) => void;
@@ -48,8 +64,9 @@ function PreparationIssues({ stage, disabled, running, onRetry, onCrop }: {
   </details>;
 }
 
-export function IllustDataPreparation({ botName, characters, readOnly, initialBackgrounded = false, label = "삽화 데이터 준비", onClose, onChanged }: {
+export function IllustDataPreparation({ botName, characters, readOnly, initialBackgrounded = false, label = "삽화 데이터 준비", onClose, onChanged, onRunningChange }: {
   botName: string; characters: IllustrationData[]; readOnly: boolean; initialBackgrounded?: boolean; label?: string; onClose: () => void; onChanged: () => void;
+  onRunningChange?: (botName: string, running: boolean) => void;
 }) {
   const api = useBotApi();
   const [data, setData] = useState<IllustrationData | null>(null);
@@ -81,9 +98,13 @@ export function IllustDataPreparation({ botName, characters, readOnly, initialBa
   const notified = useRef("");
   const running = run?.status === "running";
   const paused = run?.status === "paused";
-  const changedStages = (run?.stages || []).filter((stage: IllustrationData) => stage.done > 0 || ["completed", "warning", "failed", "cancelled"].includes(stage.status));
+  const changedStages = (run?.stages || []).filter((stage: IllustrationData) => (!running && stage.done > 0) || ["completed", "warning", "failed", "cancelled"].includes(stage.status));
   const resultRevision = run && (!running || changedStages.length)
     ? JSON.stringify([run.id, run.status, changedStages.map((stage: IllustrationData) => [stage.key, stage.status, stage.done])]) : "";
+  useEffect(() => {
+    onRunningChange?.(botName, running);
+    return () => onRunningChange?.(botName, false);
+  }, [botName, running, onRunningChange]);
   const disabled = readOnly || action.busy || settingsBusy;
   const rows = characters.map(character => {
     const profiles: IllustrationData[] = character.card_data?.character?.profiles || [];
@@ -173,7 +194,8 @@ export function IllustDataPreparation({ botName, characters, readOnly, initialBa
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [botName, running]);
   useEffect(() => {
-    // Refresh saved results during the run too, including partial failures and stops.
+    // Progress stays live through polling. Refresh the catalog at stage boundaries
+    // and on pause/stop, rather than reloading every character after each image.
     if (resultRevision && notified.current !== resultRevision) { notified.current = resultRevision; onChanged(); }
   }, [resultRevision, onChanged]);
 

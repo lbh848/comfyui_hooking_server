@@ -17,6 +17,7 @@ API_PREFIX = "/api/illust"
 # Keep the worker's public surface explicit. Never expose /api/config or arbitrary
 # server routes (credentials, filesystem actions, and other applications).
 READ_PATHS = {
+    "bot_mode/lore", "bot_mode/archive",
     "bot_mode/regenerate_image", "bot_mode/regenerate_emotion_outfit", "bot_mode/regenerate_emotion_image",
     "bot_mode/generate_emotion_images", "bot_mode/generate_profile_outfits",
     "backups", "backups/filters", "reschedule", "illustration/config", "asset_mode/tags",
@@ -40,6 +41,7 @@ READ_PATHS = {
     "llm_edit_prompt_template",
 }
 WRITE_PATHS = {
+    "bot_mode/archive",
     "bot_mode/suggest_name_tag",
     "bot_mode/auto_batch",
     "bot_mode/regenerate_image", "bot_mode/regenerate_emotion_outfit", "bot_mode/regenerate_emotion_image",
@@ -68,7 +70,7 @@ WRITE_PATHS = {
     "illustration/background-presets", "illustration/background-bots", "illustration/background-cards",
     "llm_edit_prompt_template",
 }
-MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image|illustration/background-image)"
+MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image|bot_mode/archive|illustration/background-image)"
 
 
 def illustration_media_path(path: str) -> bool:

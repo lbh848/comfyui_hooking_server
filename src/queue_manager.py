@@ -6680,9 +6680,6 @@ class QueueManager:
             )
             traceback.print_exc()
             raise ValueError("visual_card_index는 정수여야 합니다") from e
-        appearance_tags = params.get("appearance_tags") or []
-        outfit_tags = params.get("outfit_tags") or []
-        etc_tags = params.get("etc_tags") or []
         event_type = "bot_lb_extra_refine_progress"
 
         if not bot_name or not char_name:
@@ -6691,18 +6688,6 @@ class QueueManager:
                 f"bot={bot_name!r}, character={char_name!r}, card={visual_card_id!r}"
             )
             raise ValueError("bot_name, char_name이 필요합니다")
-        for field_name, value in (
-            ("appearance_tags", appearance_tags),
-            ("outfit_tags", outfit_tags),
-            ("etc_tags", etc_tags),
-        ):
-            if not isinstance(value, list):
-                print(
-                    f"[QUEUE:LB_EXTRA_REFINE] 태그 타입 오류: item={item.id}, "
-                    f"field={field_name}, type={type(value).__name__}, value={value!r}"
-                )
-                raise TypeError(f"{field_name}는 배열이어야 합니다")
-
         progress_base = {
             "bot_name": bot_name,
             "char_name": char_name,
@@ -6730,9 +6715,6 @@ class QueueManager:
             result = await run_lb_extra_refine(
                 bot_name,
                 char_name,
-                appearance_tags,
-                outfit_tags,
-                etc_tags,
                 visual_card_id,
                 batch_refine=item.params.get("batch_refine") is True,
                 execution_context=execution_context,

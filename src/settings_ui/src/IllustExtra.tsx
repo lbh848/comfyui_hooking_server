@@ -256,7 +256,6 @@ function RefineCards({ kind, botName, characters, readOnly, onClose }: { kind: B
         if (base.lb_extra_batch_locked || profile.skip_lb_extra_batch_refine) { setResults(current => [...current, `${label} · 잠금 설정으로 건너뜀`]); return; }
         const result = await api.request(`bot_mode/${isFace ? "auto_classify_face_tags" : "lb_extra_refine"}`, {
           bot: botName, character: target.character, batch_refine: true, visual_card_id: profile.id, visual_card_label: profile.label, visual_card_index: base.profiles.indexOf(profile) + 1,
-          ...(!isFace ? { appearance: tagEntries(profile.appearance || []).map(item => item.tag), outfit: tagEntries(profile.default_outfit || []).map(item => item.tag), etc: [] } : {}),
         }, abort.signal);
         if (cancelled.current) return;
         const fields = isFace ? ["face", "eye"] : ["appearance", "outfit"];
@@ -278,7 +277,7 @@ function RefineCards({ kind, botName, characters, readOnly, onClose }: { kind: B
       finally { setActiveTargets(current => current.filter(key => key !== targetKey)); }
     }, { signal: abort.signal }); } finally { setRunning(false); setActiveTargets([]); controller.current = null; }
   }
-  return <Modal title={batchLabels[kind]} onClose={onClose} closeDisabled={running} backgroundable={false} className="illust-character-modal"><div className="illust-form"><p className="field-help">{isFace ? "카드별 얼굴 이미지와 대표 이미지 프롬프트로 얼굴·눈 태그를 분류하고 저장합니다. 변경된 태그는 외모에도 반영됩니다." : "선택한 카드의 외모와 기본 복장을 대표 이미지로 정제하고 저장합니다."}</p>
+  return <Modal title={batchLabels[kind]} onClose={onClose} closeDisabled={running} backgroundable={false} className="illust-character-modal"><div className="illust-form"><p className="field-help">{isFace ? "카드별 얼굴 이미지와 해당 이미지의 분석 태그로 얼굴·눈 태그를 분류하고 저장합니다. 변경된 태그는 외모에도 반영됩니다." : "선택한 카드의 외모와 기본 복장을 대표 이미지와 해당 이미지의 분석 태그로 정제하고 저장합니다."}</p>
     {lockedCount > 0 && <p className="field-help">잠긴 캐릭터 {lockedCount}명의 모든 카드를 제외했습니다.</p>}
     {!targets.length && <Empty title="실행할 카드가 없습니다">캐릭터 잠금이나 카드별 잠금을 해제한 뒤 다시 열어주세요.</Empty>}
     <fieldset className="illust-form" disabled={readOnly || running}><div className="illust-actions"><span className="field-help">{selected.length} / {targets.length}개 선택</span><button type="button" className="button secondary" onClick={() => setSelected(targets.map(target => JSON.stringify([target.character, target.profile.id])))}>모두 선택</button><button type="button" className="button" onClick={() => setSelected([])}>선택 해제</button></div>{targets.map(target => { const key = JSON.stringify([target.character, target.profile.id]); return <label className="illust-check" key={key}><input type="checkbox" checked={selected.includes(key)} onChange={event => setSelected(current => event.target.checked ? [...current, key] : current.filter(value => value !== key))} />{target.character} · {target.profile.label}</label>; })}</fieldset>

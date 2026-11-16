@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import "../../frontend/static/bot_batch.js";
 import type { BotBatchEntry, BotBatchFile, BotBatchProgress, BotBatchResult, BotBatchRule } from "../../frontend/static/bot_batch.js";
-import { Modal, SettingsTabs, Toggle } from "./components";
+import { Modal, Panel, SettingsTabs, Toggle } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
 import { useIllustrationAction, type IllustrationData } from "./illustration";
 import { useBotApi, useBotResource } from "./BotApiScope";
@@ -12,6 +12,7 @@ import { characterLoreId, matchCharacterLore, type CharacterLoreEntry } from "./
 import { CharacterLoreImport } from "./IllustCharacterLore";
 import type { ImportedGlobalNote } from "./charxImages";
 import { analyzeCbsSyntax } from "./cbsSyntax";
+import { saveBotArchives } from "./botArchives";
 
 type CharacterAddFormProps = { botName: string; onClose: () => void; onAdded: () => void; busy: boolean; onBusyChange: (busy: boolean) => void };
 
@@ -56,7 +57,7 @@ function SingleAddIllustrationCharacter({ botName, onClose, onAdded, busy, onBus
 type PreviewEntry = BotBatchFile & { name: string; isExisting: boolean; error: string; action?: BotBatchEntry["action"]; existingFilename?: string; preflightIndex?: number };
 type CharacterImportResult = BotBatchResult & { loreImported?: number; globalNoteImported?: boolean };
 
-function CharacterArchiveInput({ kind, files, disabled, onChange }: {
+export function CharacterArchiveInput({ kind, files, disabled, onChange }: {
   kind: "bot" | "module"; files: File[]; disabled: boolean; onChange: (files: File[]) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -97,7 +98,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
   const api = useBotApi();
   const [files, setFiles] = useState<BotBatchFile[]>([]);
   const [excludedCount, setExcludedCount] = useState(0);
-  const [sourceMode, setSourceMode] = useState("image");
+  const [sourceMode, setSourceMode] = useState("charx");
   const [botFiles, setBotFiles] = useState<File[]>([]);
   const [moduleFiles, setModuleFiles] = useState<File[]>([]);
   const [loreEntries, setLoreEntries] = useState<CharacterLoreEntry[]>([]);
@@ -249,8 +250,9 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
     <td><button type="button" className="icon-button" disabled={busy || collecting} aria-label={`${entry.file.name} 가져오기 제외`} title="가져오기 제외"
       onClick={() => excludeFile(entry)}><X size={16} aria-hidden="true" /></button></td>
   </tr>), [orderedEntries, currentPage, comparing, error, busy, collecting, excludeFile]);
-  const newNames = [...new Set(entries.filter(entry => !entry.isExisting && !entry.error).map(entry => entry.name))];
-  const loreCharacterNames = useMemo(() => [...new Set([...existingNames, ...entries.filter(entry => !entry.error).map(entry => entry.name)])], [existingNames, entries]);
+  const extractedCharacterNames = useMemo(() => [...new Set(entries.filter(entry => !entry.error).map(entry => entry.name))], [entries]);
+  const newNames = extractedCharacterNames.filter(name => !existingNames.has(name));
+  const loreCharacterNames = useMemo(() => [...new Set([...existingNames, ...extractedCharacterNames])], [existingNames, extractedCharacterNames]);
   const loreAssignments = useMemo(() => Object.fromEntries(loreEntries.map(entry => {
     const id = characterLoreId(entry);
     return [id, (loreOverrides[id] ?? matchCharacterLore(entry, loreCharacterNames)).filter(name => loreCharacterNames.includes(name))];
@@ -264,14 +266,18 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
     (entries.length > 0 ? !!preflightId : loreImports.length > 0 || !!globalNote);
   async function importCharacters() {
     if (!ready) return;
-    const metadataTotal = Number(loreImports.length > 0) + Number(!!globalNote);
+    const archiveCount = sourceMode === "charx" ? botFiles.length + moduleFiles.length : 0;
+    const metadataTotal = archiveCount + Number(loreImports.length > 0) + Number(!!globalNote);
     onBusyChange(true); setResult(null); setError("");
     try {
+      if (sourceMode === "charx") await saveBotArchives(api, botName, botFiles, moduleFiles, loreEntries, (message, completed) => {
+        setProgress(message); setImportProgress({ completed, total: entries.length + metadataTotal });
+      });
       const result: CharacterImportResult = await ComfyBotBatch.importCharacters({ botName, names: newNames, preflightId,
         entries: entries.map(entry => ({ file: entry.file, name: entry.name, action: entry.action!, existingFilename: entry.existingFilename, preflightIndex: entry.preflightIndex! })),
         request: api.request, onProgress: (message, progress) => {
           setProgress(message);
-          setImportProgress({ completed: progress.completed, total: progress.total + metadataTotal });
+          setImportProgress({ completed: progress.completed + archiveCount, total: progress.total + metadataTotal });
         } });
       if (loreImports.length && !result.errors.length) {
         setProgress("캐릭터별 로어북을 저장하는 중…");
@@ -297,7 +303,9 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
 
   return <div className="illust-form">
       <fieldset className="illust-form" disabled={busy || collecting}>
-        <SettingsTabs label="파일 선택 방식" values={{ image: "이미지 파일 선택", charx: "CHARX 파일 선택" }} value={sourceMode} onChange={value => { if (!busy && !collecting) { clearSelection(); setSourceMode(value); } }} />
+        <Panel title="파일 선택" className="illust-character-import-group">
+        <div className="illust-form illust-character-import-body">
+        <SettingsTabs label="파일 선택 방식" values={{ charx: "CHARX 파일 선택", image: "이미지 파일 선택" }} value={sourceMode} onChange={value => { if (!busy && !collecting) { clearSelection(); setSourceMode(value); } }} />
         {sourceMode === "charx" ? <>
           <div className="illust-archive-inputs">
             <CharacterArchiveInput kind="bot" files={botFiles} disabled={busy || collecting} onChange={next => { setBotFiles(next); clearSelection(); }} />
@@ -318,8 +326,10 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
         {(files.length > 0 || excludedCount > 0) && <p className="field-help">이미지 {files.length.toLocaleString()}장 선택됨{excludedCount > 0 ? ` · ${excludedCount.toLocaleString()}장 제외` : ""}</p>}
         {!!selectionStatus && <p className="field-help" role="status">{selectionStatus}</p>}
         <IllustrationFeedback error={selectionError} />
-        <div className="illust-form">
-          <strong className="field">캐릭터명 추출 규칙</strong>
+        </div>
+        </Panel>
+        <Panel title="캐릭터명 추출 규칙" className="illust-character-import-group">
+        <div className="illust-form illust-character-import-body">
           {rules.map((rule, index) => <div className="illust-batch-rule" key={index}>
             <label className="field">규칙 {index + 1}<select value={rule.action} onChange={event => updateRule(index, { action: event.target.value as BotBatchRule["action"] })}>
               <option value="split_by">구분자로 분리</option><option value="strip_suffix">접미사 제거</option><option value="strip_prefix">접두사 제거</option><option value="replace">치환</option><option value="strip">공백 제거</option>
@@ -332,11 +342,24 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
           {rules.some(rule => rule.action === "split_by") && <p className="field-help">순번은 0부터 시작합니다. -1은 마지막 항목, 1:3은 첫 번째부터 세 번째 항목입니다.</p>}
           <div className="illust-actions"><button type="button" className="button secondary" onClick={() => { setResult(null); setPreflightId(""); setRules(current => [...current, { action: "split_by", separator: "_", take: 0 }]); }}><Plus size={14} />규칙 추가</button></div>
         </div>
+        </Panel>
       </fieldset>
-      {globalNotes.length > 0 && <section className="illust-form" aria-label="글로벌 노트 덮어쓰기">
-        <strong>글로벌 노트 덮어쓰기</strong>
-        {globalNotes.length === 1 ? <label className="illust-check"><input type="checkbox" checked={!!globalNote} disabled={busy || collecting}
-          onChange={event => { setResult(null); setGlobalNoteIndex(event.target.checked ? 0 : -1); }} />에셋·프로필 출력 지침으로 가져오기</label>
+      <Panel title="추출 결과 미리보기" aside={<span className="badge">이미지 {entries.length.toLocaleString()}장</span>} className="illust-character-import-group">
+        <div className="illust-form illust-character-import-body">
+        <IllustrationFeedback error={validationError} />
+        {!!progress && <p className="field-help" role="status">{progress}</p>}
+        <IllustrationFeedback error={error} />
+        {!entries.length ? <p className="field-help">파일을 선택하면 추출된 캐릭터명과 이미지 처리 방법이 표시됩니다.</p> : <>
+          <div className="illust-batch-preview"><table><thead><tr><th>파일명</th><th>캐릭터</th><th>처리</th><th>제외</th></tr></thead><tbody>{previewRows}</tbody></table></div>
+          {pageCount > 1 && <div className="illust-actions"><button type="button" className="button secondary" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>이전</button><span className="field-help">총 {entries.length.toLocaleString()}개 · {currentPage + 1}/{pageCount}페이지</span><button type="button" className="button secondary" disabled={currentPage === pageCount - 1} onClick={() => setPage(currentPage + 1)}>다음</button></div>}
+          {!!preflightId && !result && <p className="field-help">비교 완료 · 새 캐릭터 {newNames.length.toLocaleString()}개 · 이미지 추가 {count("added").toLocaleString()}장 · 교체 {count("replaced").toLocaleString()}장 · 건너뜀 {count("unchanged").toLocaleString()}장</p>}
+        </>}
+        </div>
+      </Panel>
+      {globalNotes.length > 0 && <Panel title="글로벌 노트 덮어쓰기" className="illust-character-import-group">
+        <div className="illust-form illust-character-import-body">
+        {globalNotes.length === 1 ? <div className="illust-check"><input type="checkbox" aria-label="에셋·프로필 출력 지침으로 가져오기" checked={!!globalNote} disabled={busy || collecting}
+          onChange={event => { setResult(null); setGlobalNoteIndex(event.target.checked ? 0 : -1); }} />에셋·프로필 출력 지침으로 가져오기</div>
           : <label className="field">가져올 글로벌 노트<select value={globalNoteIndex} disabled={busy || collecting}
             onChange={event => { setResult(null); setGlobalNoteIndex(Number(event.target.value)); }}>
             <option value={-1}>가져오지 않음</option>{globalNotes.map((note, index) => <option key={index} value={index}>{note.source}</option>)}
@@ -355,19 +378,10 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
           <p className="field-help">{instructionLength.toLocaleString()}자{!instructionResource.data && !instructionResource.error ? " · 저장 설정 확인 중…" : ""}</p>
           <IllustrationFeedback error={instructionResource.error || instructionError} />
         </>}
-      </section>}
-      <section className="illust-form" aria-label="추출 결과 미리보기">
-        <strong className="field">추출 결과 미리보기</strong>
-        <IllustrationFeedback error={validationError} />
-        {!!progress && <p className="field-help" role="status">{progress}</p>}
-        <IllustrationFeedback error={error} />
-        {!entries.length ? <p className="field-help">파일을 선택하면 추출된 캐릭터명과 이미지 처리 방법이 표시됩니다.</p> : <>
-          <div className="illust-batch-preview"><table><thead><tr><th>파일명</th><th>캐릭터</th><th>처리</th><th>제외</th></tr></thead><tbody>{previewRows}</tbody></table></div>
-          {pageCount > 1 && <div className="illust-actions"><button type="button" className="button secondary" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>이전</button><span className="field-help">총 {entries.length.toLocaleString()}개 · {currentPage + 1}/{pageCount}페이지</span><button type="button" className="button secondary" disabled={currentPage === pageCount - 1} onClick={() => setPage(currentPage + 1)}>다음</button></div>}
-          {!!preflightId && !result && <p className="field-help">비교 완료 · 새 캐릭터 {newNames.length.toLocaleString()}개 · 이미지 추가 {count("added").toLocaleString()}장 · 교체 {count("replaced").toLocaleString()}장 · 건너뜀 {count("unchanged").toLocaleString()}장</p>}
-        </>}
-      </section>
-      {sourceMode === "charx" && loreEntries.length > 0 && <CharacterLoreImport entries={loreEntries} characterNames={loreCharacterNames}
+        </div>
+      </Panel>}
+      {sourceMode === "charx" && (entries.length > 0 || loreEntries.length > 0) && <CharacterLoreImport entries={loreEntries} characterNames={extractedCharacterNames}
+        existingCharacterNames={loreCharacterNames.filter(name => !extractedCharacterNames.includes(name))}
         assignments={loreAssignments} disabled={busy || collecting} onChange={(id, names) => { setResult(null); setLoreOverrides(current => ({ ...current, [id]: names })); }} />}
       {result && <div className="illust-form" role="status"><p>캐릭터 {result.added}개 추가 · 이미지 {result.uploaded}장 추가 · {result.replaced}장 교체 · 동일 이미지 {result.skipped}장 건너뜀</p>
         {result.loreImported !== undefined && <p>로어북 {result.loreImported}개 저장됨</p>}

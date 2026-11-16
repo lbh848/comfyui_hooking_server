@@ -1,5 +1,26 @@
 """Imported lore belongs to a character, independently of its visual cards."""
 from copy import deepcopy
+import json
+
+
+def format_character_lore(entries):
+    """Render linked lore consistently for model-facing reference context."""
+    sections = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
+        sections.append("\n".join([
+            f"### Lorebook entry {index}: {entry.get('title') or '(untitled)'}",
+            f"Primary activation keys: {json.dumps(entry.get('keys') or [], ensure_ascii=False)}",
+            f"Secondary activation keys: {json.dumps(entry.get('secondary_keys') or [], ensure_ascii=False)}",
+            "Activation settings: " + json.dumps({
+                field: entry.get(field, field == "enabled")
+                for field in ("enabled", "constant", "selective", "use_regex")
+            }),
+            "Content:",
+            str(entry.get("content") or ""),
+        ]))
+    return "\n\n".join(sections)
 
 
 def normalize_character_lore(entries):
@@ -31,7 +52,7 @@ def normalize_character_lore(entries):
     return result
 
 
-def import_character_lore(bot, items):
+def import_character_lore(bot, items, *, replace=False):
     """Validate the whole import before changing any character; reimports update in place."""
     if not isinstance(items, list) or not items or len(items) > 500:
         raise ValueError("로어북을 저장할 캐릭터 목록이 필요합니다.")
@@ -49,7 +70,9 @@ def import_character_lore(bot, items):
         seen.add(name.casefold())
         incoming = normalize_character_lore(item.get("entries"))
         current = normalize_character_lore(character.get("imported_lore", []))
-        merged = {(entry["source"], entry["entry_id"]): entry for entry in current}
+        if replace and normalize_character_lore(item.get("base")) != current:
+            raise ValueError(f"{name}의 로어북이 다른 화면에서 변경되었습니다. 다시 열어 확인하세요.")
+        merged = {} if replace else {(entry["source"], entry["entry_id"]): entry for entry in current}
         merged.update({(entry["source"], entry["entry_id"]): entry for entry in incoming})
         pending.append((character, normalize_character_lore(list(merged.values()))))
         imported += len({(entry["source"], entry["entry_id"]) for entry in incoming})

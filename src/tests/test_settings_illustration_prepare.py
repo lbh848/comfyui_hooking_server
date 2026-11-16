@@ -239,7 +239,8 @@ class PreparationProgressTests(unittest.IsolatedAsyncioTestCase):
         for item in items:
             self.assertEqual(item.params["one_click_run_id"], run["id"])
             self.assertTrue(item.params["batch_refine"])
-            self.assertEqual(item.params["appearance_tags"], ["long hair"])
+            for field in ("appearance_tags", "outfit_tags", "etc_tags"):
+                self.assertNotIn(field, item.params)
             self.refine(item)
         run = await self.until(lambda value: next(s for s in value["stages"] if s["key"] == "data_patch")["total"] == 3)
         self.assertEqual(self.appearance_stage(run)["success"], 3)

@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { Panel } from "./components";
+import { SearchableSelect } from "./SearchableSelect";
 import { characterLoreId, type CharacterLoreEntry } from "./characterLore";
 
-function LoreContent({ entry }: { entry: CharacterLoreEntry }) {
+export function LoreContent({ entry }: { entry: CharacterLoreEntry }) {
   return <div className="illust-lore-content">
     <dl><div><dt>활성화키</dt><dd>{entry.keys.join(", ") || "없음"}</dd></div>
       <div><dt>보조 활성화키</dt><dd>{entry.secondary_keys.join(", ") || "없음"}</dd></div>
@@ -23,53 +25,78 @@ export function CharacterImportedLore({ entries }: { entries: CharacterLoreEntry
   </section>;
 }
 
-export function CharacterLoreImport({ entries, characterNames, assignments, disabled, onChange }: {
-  entries: CharacterLoreEntry[]; characterNames: string[]; assignments: Record<string, string[]>; disabled: boolean;
+export function CharacterLoreImport({ entries, characterNames, existingCharacterNames, assignments, disabled, onChange,
+  title = "추출된 캐릭터와 로어북", assignedEntries, onEdit, onCreate }: {
+  entries: CharacterLoreEntry[]; characterNames: string[]; existingCharacterNames: string[];
+  assignments: Record<string, string[]>; disabled: boolean;
   onChange: (id: string, names: string[]) => void;
+  title?: string; assignedEntries?: Record<string, CharacterLoreEntry[]>;
+  onEdit?: (character: string, entry: CharacterLoreEntry) => void; onCreate?: (character: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [selecting, setSelecting] = useState<string | null>(null);
-  const [characterSearch, setCharacterSearch] = useState("");
-  const assigned = entries.filter(entry => assignments[characterLoreId(entry)]?.length).length;
-  const filtered = entries.filter(entry => (!unassignedOnly || !assignments[characterLoreId(entry)]?.length) &&
-    [entry.title, entry.source, ...entry.keys, ...(assignments[characterLoreId(entry)] || [])].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const characterEntries = assignedEntries || Object.fromEntries([...characterNames, ...existingCharacterNames].map(name =>
+    [name, entries.filter(entry => assignments[characterLoreId(entry)]?.includes(name))]));
+  const assigned = characterNames.filter(name => characterEntries[name].length).length;
+  const matchesSearch = (name: string) => (!unassignedOnly || !characterEntries[name].length) && name.toLowerCase().includes(search.toLowerCase());
+  const compareConnections = (left: string, right: string) => Number(!!characterEntries[left].length) - Number(!!characterEntries[right].length);
+  const filtered = characterNames.filter(matchesSearch).sort(compareConnections);
+  const existing = existingCharacterNames.filter(matchesSearch).sort(compareConnections);
   const pageCount = Math.max(1, Math.ceil(filtered.length / 20));
   const currentPage = Math.min(page, pageCount - 1);
-  return <section className="illust-form" aria-label="로어북 연결">
-    <strong>로어북 연결</strong>
-    <p className="field-help">이름·활성화키가 한 캐릭터와 일치하면 자동 연결합니다. 연결된 항목의 제목·본문·활성화키를 캐릭터 공통 정보로 저장합니다.</p>
-    <div className="illust-actions"><span className="field-help">총 {entries.length}개 · 연결 {assigned}개 · 미연결 {entries.length - assigned}개</span>
-      <label className="illust-check"><input type="checkbox" checked={unassignedOnly} onChange={event => { setUnassignedOnly(event.target.checked); setPage(0); }} />미연결만 보기</label></div>
-    <label className="field">로어북 검색<input value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} placeholder="로어북 이름, 활성화키, 캐릭터" /></label>
-    <div className="illust-lore-list">{filtered.slice(currentPage * 20, (currentPage + 1) * 20).map(entry => {
-      const id = characterLoreId(entry);
-      const selected = assignments[id] || [];
-      return <article key={id} className="illust-lore-entry">
-        <details><summary>{entry.title}<span className="field-help">{entry.keys.join(", ") || "활성화키 없음"}</span></summary><LoreContent entry={entry} /></details>
+  const renderCharacter = (name: string) => <details key={name} className="illust-lore-entry illust-lore-character">
+      <summary><strong>{name}</strong><span className="field-help">{characterEntries[name].length ? `로어북 연결 ${characterEntries[name].length}개` : "연결된 로어북 없음"}</span></summary>
+      <div className="illust-form illust-lore-content">
+        {characterEntries[name].map(entry => {
+          const id = characterLoreId(entry);
+          return <div key={id} className="illust-lore-entry">
+            <details><summary>{entry.title}<span className="field-help">{entry.keys.join(", ") || "활성화키 없음"}</span></summary><LoreContent entry={entry} /></details>
+            <div className="illust-lore-targets">
+              {onEdit && <button type="button" className="button secondary small" disabled={disabled} aria-label={`${name}의 ${entry.title} 수정`} onClick={() => onEdit(name, entry)}>내용 수정</button>}
+              <button type="button" className="button secondary small" disabled={disabled}
+              aria-label={`${name}에서 ${entry.title} 연결 해제`} onClick={() => onChange(id, assignments[id].filter(value => value !== name))}>연결 해제</button></div>
+          </div>;
+        })}
         <div className="illust-lore-targets">
-          {selected.map(name => <button type="button" className="button secondary small" key={name} disabled={disabled}
-            aria-label={`${entry.title}에서 ${name} 연결 해제`} onClick={() => onChange(id, selected.filter(value => value !== name))}>{name} ×</button>)}
-          {selecting === id ? <>
-            <label className="field">연결할 캐릭터 검색<input autoFocus value={characterSearch} disabled={disabled}
-              onChange={event => setCharacterSearch(event.target.value)} placeholder="캐릭터 이름" /></label>
-            <label className="field"><span className="sr-only">{entry.title} 연결할 캐릭터</span><select value="" disabled={disabled}
-              onChange={event => { if (event.target.value) { onChange(id, [...selected, event.target.value]); setSelecting(null); } }}>
-              <option value="">캐릭터 선택</option>
-              {characterNames.filter(name => !selected.includes(name) && name.toLowerCase().includes(characterSearch.toLowerCase()))
-                .map(name => <option key={name} value={name}>{name}</option>)}
-            </select></label>
+          {selecting === name ? <>
+            <label className="field"><span className="sr-only">{name}에 연결할 로어북</span><SearchableSelect aria-label={`${name}에 연결할 로어북`} value="" disabled={disabled}
+              onChange={event => { const id = event.target.value; if (id) { onChange(id, [...(assignments[id] || []), name]); setSelecting(null); } }}>
+              <option value="" disabled hidden>로어북 선택</option>
+              {entries.filter(entry => !assignments[characterLoreId(entry)]?.includes(name))
+                .map(entry => <option key={characterLoreId(entry)} value={characterLoreId(entry)} data-search={[...entry.keys, ...entry.secondary_keys].join(" ")}>{entry.title} · {entry.source}</option>)}
+            </SearchableSelect></label>
             <button type="button" className="button secondary small" onClick={() => setSelecting(null)}>선택 닫기</button>
-          </> : <button type="button" className="button secondary small" disabled={disabled || !characterNames.length}
-            aria-label={`${entry.title} 연결할 캐릭터 선택`} onClick={() => { setCharacterSearch(""); setSelecting(id); }}>
-            {selected.length ? "캐릭터 추가 연결" : "가져오지 않음 · 캐릭터 선택"}
+          </> : <button type="button" className="button secondary small" disabled={disabled || characterEntries[name].length === entries.length}
+            aria-label={`${name}에 로어북 연결`} onClick={() => setSelecting(name)}>
+            로어북 연결
           </button>}
+          {onCreate && <button type="button" className="button secondary small" disabled={disabled} aria-label={`${name} 로어북 직접 입력`} onClick={() => onCreate(name)}>직접 입력</button>}
         </div>
-      </article>;
-    })}</div>
-    {!filtered.length && <p className="field-help">해당하는 로어북이 없습니다.</p>}
-    {pageCount > 1 && <div className="illust-actions"><button type="button" className="button secondary" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>이전 로어북</button>
-      <span className="field-help">{currentPage + 1}/{pageCount}페이지</span><button type="button" className="button secondary" disabled={currentPage === pageCount - 1} onClick={() => setPage(currentPage + 1)}>다음 로어북</button></div>}
-  </section>;
+      </div>
+    </details>;
+  const renderCharacterGroups = (names: string[]) => <div className="illust-lore-list">{[false, true].map(connected => {
+    const group = names.filter(name => !!characterEntries[name].length === connected);
+    return group.length > 0 && <section className="illust-lore-connection-group" key={String(connected)} data-connected={connected}>
+      <h3>{connected ? "로어북 연결됨" : "연결된 로어북 없음"}<span className="badge">{group.length}명</span></h3>
+      <div className="illust-form">{group.map(renderCharacter)}</div>
+    </section>;
+  })}</div>;
+  return <Panel title={title} className="illust-character-import-group">
+    <div className="illust-form illust-character-import-body">
+    <div className="illust-actions"><span className="field-help">캐릭터 {characterNames.length}명 · 로어북 연결 {assigned}명 · 연결 없음 {characterNames.length - assigned}명</span>
+      <label className="illust-check"><input type="checkbox" checked={unassignedOnly} onChange={event => { setUnassignedOnly(event.target.checked); setPage(0); }} />연결 없는 캐릭터만 보기</label></div>
+    <label className="field">캐릭터 검색<input value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} placeholder="캐릭터 이름" /></label>
+    {renderCharacterGroups(filtered.slice(currentPage * 20, (currentPage + 1) * 20))}
+    {!filtered.length && <p className="field-help">{characterNames.length ? "해당하는 캐릭터가 없습니다." : "현재 추출된 캐릭터가 없습니다."}</p>}
+    {pageCount > 1 && <div className="illust-actions"><button type="button" className="button secondary" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>이전 캐릭터</button>
+      <span className="field-help">{currentPage + 1}/{pageCount}페이지</span><button type="button" className="button secondary" disabled={currentPage === pageCount - 1} onClick={() => setPage(currentPage + 1)}>다음 캐릭터</button></div>}
+    {!!existingCharacterNames.length && !!entries.length && <details className="illust-lore-entry" open={!characterNames.length || undefined}>
+      <summary>추출 목록에 없는 기존 캐릭터 {existingCharacterNames.length}명</summary>
+      <div className="illust-lore-content">{renderCharacterGroups(existing)}</div>
+      {!existing.length && <p className="field-help">해당하는 캐릭터가 없습니다.</p>}
+    </details>}
+    </div>
+  </Panel>;
 }

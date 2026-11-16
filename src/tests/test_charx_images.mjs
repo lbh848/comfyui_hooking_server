@@ -20,6 +20,19 @@ function archive(assets, entries, { name = 'sample.charx', level = 6 } = {}) {
 const risumImages = Buffer.from('bwB6AAAA5iAPbCwFIJdhIHkOSLLbQOKyTAUgAGEgLUDiskwFIJdh5iDy0y0FIJdhINtA4rJMBSAAYSDTSEgFD0ggl2H09CCho0ShGOs0V9MsLGwgAGEgIABhICzyKiDPAGH0IC1A4rJMBTRIQLLy4iAAYSAgAGEgLSzlIM/Pe3sBRAAAALE71zhTbm9uxMTEU2BaL0PExMQNxMTEDfy9xMTEhe9mHsTExPVgL7Slp848JLgQxAsLHsR9n1tfxMTExGCK1y8JoHjcAQUAAADTsuIOQAA=', 'base64');
 const risumEmpty = Buffer.from('bwAzAAAA5iAPbCwFIJcgeQ5IsttA4rJMBSAAIC1A4rJMBSCX5iDy0y0FIJcg10BhDi3TKgVIIHt7AA==', 'base64');
 
+test('lore-only reads preserve card and module metadata without extracting image payloads', async () => {
+  const file = new File([zipSync({ 'card.json': strToU8(JSON.stringify({ data: {
+    assets: [asset('not-needed', 'missing.png')], character_book: { entries: [{ id: 'lore-1', keys: ['Alice'], content: 'Condition' }] },
+  } })) })], 'card.charx');
+  const module = new File([await readFile(new URL('./fixtures/character-lore.risum', import.meta.url))], 'lore.risum');
+  const result = await collectBotModuleImages([file], [module], new AbortController().signal, undefined, true);
+  assert.equal(result.files.length, 0);
+  assert.equal(result.loreEntries.length, 2);
+  assert.equal(result.loreEntries[0].source, '봇/card.charx');
+  assert.equal(result.loreEntries[0].content, 'Condition');
+  assert.equal(result.loreEntries[1].source, '모듈/lore.risum');
+});
+
 test('global notes preserve exact text and stay separate across bot and module CHARX files', async () => {
   const note = '  ## Asset output\r\nUse {{char}}_happy.webp.\nKeep <img> tags unchanged.  ';
   const card = (name, content) => new File([zipSync({ 'card.json': strToU8(JSON.stringify({ data: {

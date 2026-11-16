@@ -17,12 +17,12 @@ from aiohttp import web
 STAGES = (
     ("tag_analysis", "태그 분석", "대표 이미지의 태그를 분석합니다."),
     ("tag_filter", "태그 필터링", "선택한 필터 규칙을 대표 이미지 태그에 적용합니다."),
-    ("appearance_refine", "외모·복장 일괄 정제", "대표 이미지로 카드의 외모와 기본 복장을 정제하고 저장합니다. 잠긴 캐릭터·카드는 제외합니다."),
+    ("appearance_refine", "외모·복장 일괄 정제", "대표 이미지로 카드의 외모와 기본 복장을 정제하고 저장합니다. 연결된 캐릭터 로어북이 있으면 외모 묘사를 함께 참고합니다. 잠긴 캐릭터·카드는 제외합니다."),
     ("negative", "부정 프롬프트 적용", "대표 이미지에 선택한 부정 프롬프트를 적용합니다."),
     ("data_patch", "데이터 패치", "캐릭터 데이터를 보정하고 FACE 이미지를 생성합니다."),
     ("face_tag_analysis", "얼굴 태그 분석", "FACE 이미지의 태그를 분석합니다."),
     ("face_negative", "얼굴 부정 태그 적용", "FACE 이미지에 선택한 부정 태그를 적용합니다."),
-    ("llm_refine", "LLM 얼굴/눈 태그 정제", "LLM으로 얼굴과 눈 관련 태그를 정제합니다."),
+    ("llm_refine", "LLM 얼굴/눈 태그 정제", "LLM으로 얼굴과 눈 관련 태그를 정제합니다. 연결된 캐릭터 로어북이 있으면 머리색·눈색 등 고유한 외모를 함께 참고합니다."),
     ("face_filter", "얼굴 태그 필터링", "선택한 필터 규칙을 얼굴 이미지 태그에 적용합니다."),
 )
 
@@ -265,9 +265,7 @@ def register_data_preparation(server):
                         "bot_name": run["bot_name"], "char_name": character,
                         "visual_card_id": profile["id"], "visual_card_label": profile["label"],
                         "visual_card_index": index, "batch_refine": True,
-                        "appearance_tags": [tag["tag"] for tag in normalize_tag_entries(profile.get("appearance"))],
-                        "outfit_tags": [tag["tag"] for tag in normalize_tag_entries(profile.get("default_outfit"))],
-                        "etc_tags": [], "one_click_run_id": run["id"],
+                        "one_click_run_id": run["id"],
                     }, priority=10)
                     items.append(item)
                     snapshots[item.id] = (base, profile)

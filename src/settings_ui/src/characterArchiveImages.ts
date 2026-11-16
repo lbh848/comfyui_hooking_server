@@ -37,7 +37,7 @@ async function decodeRpack(data: Uint8Array, signal: AbortSignal): Promise<Uint8
 }
 
 async function collectRisumImages(archive: File, signal: AbortSignal,
-  onProgress?: (message: string) => void): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
   try {
     signal.throwIfAborted();
     if (archive.size > maxTotalSize) throw new Error("RISUM 파일은 1GB 이하로 선택하세요.");
@@ -65,6 +65,7 @@ async function collectRisumImages(archive: File, signal: AbortSignal,
     if (document?.type !== "risuModule" || !document.module ||
       (document.module.assets != null && !Array.isArray(document.module.assets))) throw new Error("RISUM 모듈 정보 형식이 올바르지 않습니다.");
     const assets = document.module.assets ?? [];
+    if (metadataOnly) return { files: [], skipped: 0, loreEntries: readCharacterLore(document.module.lorebook, archive.name), globalNotes: [] };
     const files: BotBatchFile[] = [];
     let skipped = 0;
     let index = 0;
@@ -98,7 +99,7 @@ async function collectRisumImages(archive: File, signal: AbortSignal,
 }
 
 export async function collectBotModuleImages(botFiles: readonly File[], moduleFiles: readonly File[], signal: AbortSignal,
-  onProgress?: (message: string) => void): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
   const files: BotBatchFile[] = [];
   const loreEntries: CharacterLoreEntry[] = [];
   const globalNotes: ImportedGlobalNote[] = [];
@@ -112,8 +113,8 @@ export async function collectBotModuleImages(botFiles: readonly File[], moduleFi
       }
       onProgress?.(`${role} · ${archive.name} 읽는 중…`);
       const selected = /\.risum$/i.test(archive.name)
-        ? await collectRisumImages(archive, signal, onProgress)
-        : await collectCharxImages([archive], signal, onProgress);
+        ? await collectRisumImages(archive, signal, onProgress, metadataOnly)
+        : await collectCharxImages([archive], signal, onProgress, metadataOnly);
       for (const entry of selected.files) {
         totalSize += entry.file.size;
         if (totalSize > maxTotalSize) throw new Error("선택한 이미지의 전체 크기가 1GB를 넘습니다.");

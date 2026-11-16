@@ -349,6 +349,10 @@ async def bot_distribution_middleware(request: web.Request, handler):
     if request.method not in {"POST", "DELETE"} or not request.path.startswith("/api/bot_mode/") or request.path == "/api/bot_mode/distribution" or request.path.startswith("/api/bot_mode/postprocess_"):
         return await handler(request)
     try:
+        if request.path == "/api/bot_mode/archive":
+            # Large original modules stream directly to their bot's staging file.
+            request["bot_archive_publish"] = lambda publish: _handle_bot_distribution_write(request, request.query, publish)
+            return await handler(request)
         body = await request.post() if request.content_type.startswith("multipart/") else await request.json()
         if not hasattr(body, "get"):
             raise ValueError("봇 요청을 확인하세요.")

@@ -11,7 +11,7 @@ import { AddIllustrationCharacter } from "./IllustCharacterAdd";
 import { EmotionFolderImages, EmotionFolderImagesModal } from "./EmotionFolderImages";
 import { EmotionProfileBatch } from "./EmotionProfileBatch";
 import { EmotionProfileOutfitGeneration } from "./EmotionProfileOutfitGeneration";
-import { IllustDataPreparation } from "./IllustDataPreparation";
+import { IllustDataPreparation, useDataPreparationRefresh } from "./IllustDataPreparation";
 import { IllustAssetProfileAliasSettings } from "./IllustAssetProfileAliasSettings";
 import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
 import { IllustMatchingRules } from "./IllustMatchingRules";
@@ -178,13 +178,12 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     outfitResource.reload(); emotionResource.reload(); patchStatus.reload();
     setCardRevision(value => value + 1); onCatalogChange();
   }, [resource.reload, characterResource.reload, profileResource.reload, outfitResource.reload, emotionResource.reload, patchStatus.reload, onCatalogChange]);
+  const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
-    window.addEventListener("illustration-completed", refreshCharacterStatus);
     // 프로필 복장 이미지 생성처럼 백업으로 저장되는 작업이 끝나면 폴더/카드 목록을 갱신한다.
     window.addEventListener("emotion-store-changed", refreshCharacterStatus);
     window.addEventListener("focus", refreshCharacterStatus);
     return () => {
-      window.removeEventListener("illustration-completed", refreshCharacterStatus);
       window.removeEventListener("emotion-store-changed", refreshCharacterStatus);
       window.removeEventListener("focus", refreshCharacterStatus);
     };
@@ -491,7 +490,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     </Modal>}
     {dataPreparationOpen && botName && currentBot && <IllustDataPreparation key={botName} botName={botName}
       characters={currentBot.characters || []} label="감정 삽화 데이터 준비" readOnly={toolsReadOnly}
-      onClose={() => setDataPreparationOpen(false)} onChanged={dataPreparationChanged} />}
+      onClose={() => setDataPreparationOpen(false)} onChanged={dataPreparationChanged} onRunningChange={onPreparationRunningChange} />}
     {generationOpen && botName && currentBot && <Modal title={`${botName} · 그리기 설정`} className="illust-character-modal" backgroundable={false}
       closeDisabled={generationBusy} onClose={() => { if (generationDirty) setDiscardGeneration(true); else { setGenerationOpen(false); setCardRevision(value => value + 1); } }}>
       <IllustBotGenerationSettings key={botName} botName={botName} readOnly={toolsReadOnly}

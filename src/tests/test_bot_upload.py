@@ -11,6 +11,8 @@ import threading
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
+from aiohttp import FormData, web
+from aiohttp.test_utils import TestClient, TestServer
 
 
 class BotUploadTests(unittest.IsolatedAsyncioTestCase):
@@ -51,6 +53,47 @@ class BotUploadTests(unittest.IsolatedAsyncioTestCase):
             "preflight_id": preflight_id, "preflight_index": str(index),
         }))
         return self.manager.handle_upload_image(request)
+
+    async def test_original_archives_stream_to_one_bot_and_reopen_without_duplicate_files(self):
+        import illustration_bot_distribution
+        package = ModuleType("modes")
+        package.__path__ = [str(Path(__file__).resolve().parents[1] / "modes")]
+        data = {"bots": [{"name": "Bot", "characters": [{"name": "Alice"}]}, {"name": "Other", "characters": []}]}
+        app = web.Application(client_max_size=1024, middlewares=[illustration_bot_distribution.bot_distribution_middleware])
+        app.router.add_post("/api/bot_mode/archive", self.manager.handle_upload_bot_archive)
+        app.router.add_get("/api/bot_mode/archive", self.manager.handle_get_bot_archive)
+        app.router.add_get("/api/bot_mode/lore", self.manager.handle_get_character_lore)
+        content = b"original archive bytes" * 10000
+        entry = {"source": "ignored", "entry_id": "entry-1", "title": "Alice", "content": "Condition", "keys": ["Alice"]}
+
+        async def publish(request, body, handler):
+            self.assertEqual(body["bot_name"], "Bot")
+            return await handler(request)
+
+        with patch.dict(sys.modules, {"modes": package}), patch.object(self.module, "_load_bot_data", return_value=data), \
+             patch.object(illustration_bot_distribution, "_handle_bot_distribution_write", side_effect=publish):
+            async with TestClient(TestServer(app)) as client:
+                for payload in (content, content, b"updated bytes"):
+                    form = FormData()
+                    form.add_field("lore_entries", json.dumps([entry]))
+                    form.add_field("file", payload, filename="source.charx", content_type="application/octet-stream")
+                    response = await client.post("/api/bot_mode/archive?bot_name=Bot&kind=bot", data=form)
+                    self.assertEqual(response.status, 200, await response.text())
+                    saved = (await response.json())["archive"]
+                    self.assertEqual(saved["sha256"], hashlib.sha256(payload).hexdigest())
+                    response = await client.get(f"/api/bot_mode/archive?bot_name=Bot&id={saved['id']}")
+                    self.assertEqual(await response.read(), payload)
+                    self.assertIn("attachment", response.headers["Content-Disposition"])
+                    response = await client.get("/api/bot_mode/lore?bot_name=Bot")
+                    state = await response.json()
+                    self.assertEqual(len(state["archives"]), 1)
+                    self.assertEqual(state["archives"][0]["lore_entries"][0]["source"], "봇/source.charx")
+                    self.assertEqual(len(list((self.root / "Bot").glob(".bot-archive-*.charx"))), 1)
+                response = await client.get("/api/bot_mode/lore?bot_name=Other")
+                self.assertEqual((await response.json())["archives"], [])
+                response = await client.get(f"/api/bot_mode/archive?bot_name=Other&id={saved['id']}")
+                self.assertGreaterEqual(response.status, 400)
+        self.assertFalse(list((self.root / "Bot").glob("*.upload")))
 
     async def test_staging_runs_concurrently_with_a_bound_and_preserves_each_file(self):
         files = [(f"image-{index}.png", bytes([index]) * 4096) for index in range(3)]

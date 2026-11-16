@@ -2,7 +2,7 @@ import { collectBotModuleImages } from "./characterArchiveImages";
 import type { CharacterArchiveMessage } from "./characterArchiveReader";
 
 const send = (message: CharacterArchiveMessage) => self.postMessage(message);
-self.onmessage = async ({ data }: MessageEvent<{ botFiles: File[]; moduleFiles: File[] }>) => {
+self.onmessage = async ({ data }: MessageEvent<{ botFiles: File[]; moduleFiles: File[]; metadataOnly?: boolean }>) => {
   try {
     let lastProgress = -Infinity;
     const result = await collectBotModuleImages(data.botFiles, data.moduleFiles, new AbortController().signal, message => {
@@ -12,7 +12,7 @@ self.onmessage = async ({ data }: MessageEvent<{ botFiles: File[]; moduleFiles: 
         send({ type: "progress", message });
         lastProgress = performance.now();
       }
-    });
+    }, data.metadataOnly);
     send({ type: "result", result });
   } catch (error) { send({ type: "error", message: error instanceof Error ? error.message : String(error) }); }
 };

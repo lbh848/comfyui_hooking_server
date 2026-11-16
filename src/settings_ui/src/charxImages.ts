@@ -56,7 +56,7 @@ function readZip(data: Uint8Array, filter: UnzipFileFilter, signal: AbortSignal)
 // RisuAI maps card.json's data.assets names to ZIP entries using embeded://.
 // Keep those names even when the archive itself uses numbered asset filenames.
 export async function collectCharxImages(source: FileList | DataTransfer | Iterable<File>, signal: AbortSignal,
-  onProgress?: (message: string) => void): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
   const archives = Array.from("files" in source ? source.files : source);
   const files: BotBatchFile[] = [];
   const loreEntries: CharacterLoreEntry[] = [];
@@ -85,6 +85,7 @@ export async function collectCharxImages(source: FileList | DataTransfer | Itera
       if (typeof card.data.post_history_instructions === "string" && card.data.post_history_instructions.trim()) {
         globalNotes.push({ source: archive.name, content: card.data.post_history_instructions });
       }
+      if (metadataOnly) continue;
       const assets: ImageAsset[] = [];
       for (const asset of card.data.assets ?? []) {
         if (!asset || asset.type === "icon" || typeof asset.uri !== "string") { skipped++; continue; }

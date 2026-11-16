@@ -492,7 +492,7 @@ class AssetToolMode:
                 comfy_name = result.get("name", filename)
         self._log("upload_done", {"comfy_name": comfy_name, "slot": slot_label})
 
-        # 워크플로우에 이미지 주입 + SoyaTextSender URL 보정
+        # Inject the image and collect local text outputs through Comfy history.
         workflow = _copy.deepcopy(api_workflow)
 
         image_injected = False
@@ -506,21 +506,18 @@ class AssetToolMode:
             if title == "분석이미지로드":
                 ninfo["inputs"]["image"] = comfy_name
                 image_injected = True
-            # SoyaTextSender 노드의 server_url을 현재 서버로 보정
             if class_type.startswith("SoyaTextSender"):
                 inputs = ninfo.get("inputs", {})
                 if callable(fetch_real_history) and inputs.get("node_title") == "WD_TAG_TEXT" and "text" in inputs:
-                    # Older SoyaTextSender nodes always POST to port 8189. The
-                    # internal worker uses an authenticated, dynamically assigned
-                    # port, so collect this prompt's tags from ComfyUI history.
-                    preview_id = f"tag_analysis_text_{nid}"
-                    while preview_id in workflow or preview_id in history_nodes:
-                        preview_id += "_"
-                    history_nodes[preview_id] = {
+                    # Replace the sender, rather than leaving its blocking POST
+                    # to port 8189 alongside a second output node. PreviewAny
+                    # preserves the string output and existing downstream links.
+                    history_nodes[nid] = {
                         "class_type": "PreviewAny",
                         "inputs": {"source": _copy.deepcopy(inputs["text"])},
                         "_meta": {"title": "WD_TAG_TEXT"},
                     }
+                    continue
                 server_url = ninfo.get("inputs", {}).get("server_url", "")
                 if not server_url or "8189" not in server_url:
                     PORT = getattr(_main_mod, 'PORT', 8189)
@@ -589,8 +586,8 @@ class AssetToolMode:
             traceback.print_exc()
             return {"success": False, "error": f"워크플로우({slot_label}) 실행 오류: {e}"}
 
-        # text_outputs에서 결과 수집
-        # SoyaTextSender POST가 WebSocket 완료 신호보다 늦게 도착할 수 있으므로 폴링 대기
+        # History can become visible just after the WebSocket completion event.
+        # Retain callback collection for runtimes without a history reader.
         print(f"[ASSET_TOOL] text_output 결과 대기 시작 ({slot_label}, 스냅샵: {len(existing_snapshot)}개)")
 
         analyzed_tags = []

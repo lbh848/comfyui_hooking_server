@@ -150,6 +150,7 @@ class InternalLoraRuntime:
             timeout = (aiohttp.ClientTimeout(total=None, sock_connect=30)
                        if external or path in {"/api/bot_mode/character_cards/suggest_metadata",
                                                "/api/bot_mode/auto_batch",
+                                               "/api/bot_mode/archive",
                                                "/api/asset_mode/qwen_edit/translate"} else self.session.timeout)
             async with self.session.request(request.method, self.url + path, params=request.query,
                                             headers=headers, data=request.content if request.can_read_body else None,
@@ -160,6 +161,7 @@ class InternalLoraRuntime:
                 ))
                 response = web.StreamResponse(status=upstream.status, headers={
                     "Content-Type": upstream.headers.get("Content-Type", "application/json"),
+                    **({"Content-Disposition": upstream.headers["Content-Disposition"]} if "Content-Disposition" in upstream.headers else {}),
                     "Cache-Control": upstream.headers.get("Cache-Control", "no-store") if cacheable_media else "no-store",
                 })
                 await response.prepare(request)

@@ -55,9 +55,9 @@ export function IllustCharacterTags({ botName, characterName, card, render, inde
   const appearance = () => tagEntries([gender, ...tagEntries(state.fields.appearance, known)], known);
   const outfit = () => tagEntries(state.fields.outfit || "", known);
   const refsSaved = saved && JSON.stringify(savedReferences) === JSON.stringify(render.rep_images || []);
-  const llmReady = refsSaved && !imagesLoading && !!mainPrompt.trim() && !source.loading;
-  const llmHint = !refsSaved ? "대표 이미지를 선택한 뒤 캐릭터 카드를 먼저 저장하세요." : imagesLoading ? "이미지를 불러오는 중입니다." : !mainPrompt.trim() ? "LLM 실행에는 메인 대표 이미지의 태그 프롬프트가 필요합니다." : "";
-  const faceHint = llmHint || (!face ? "LLM 자동 분류에는 이 카드의 얼굴 이미지가 필요합니다." : "");
+  const imageHint = !refsSaved ? "대표 이미지를 선택한 뒤 캐릭터 카드를 먼저 저장하세요." : imagesLoading ? "이미지를 불러오는 중입니다." : "";
+  const llmHint = imageHint || (!mainPrompt.trim() ? "LLM 실행에는 메인 대표 이미지의 태그 분석 결과가 필요합니다." : "");
+  const faceHint = imageHint || (!face ? "LLM 자동 분류에는 이 카드의 얼굴 이미지가 필요합니다." : !String(face.prompt || "").trim() ? "LLM 자동 분류에는 얼굴 이미지의 태그 분석 결과가 필요합니다." : "");
   const history = useBotResource(saved ? `backups?${query({ bot_name: botName, manual_character: characterName, visual_profile_id: card.id })}` : null);
   const [historyPreview, setHistoryPreview] = useState<IllustrationData | null>(null);
   useEffect(() => {
@@ -78,12 +78,11 @@ export function IllustCharacterTags({ botName, characterName, card, render, inde
   }
   async function llm(kind: "face" | "appearance") {
     const isFace = kind === "face";
-    if (!llmReady || (isFace && !face) || disabled) return;
+    if ((isFace ? faceHint : llmHint) || disabled) return;
     if (snapshot !== checkpoint && !window.confirm(isFace ? "편집 중인 얼굴·눈 태그를 자동 분류 결과로 교체할까요?" : "편집 중인 외모·기본 복장을 정제 결과로 교체할까요?")) return;
     await action.run(async () => {
       const result = await api.request(`bot_mode/${isFace ? "auto_classify_face_tags" : "lb_extra_refine"}`, {
         bot: botName, character: characterName, visual_card_id: card.id, visual_card_label: card.label, visual_card_index: index + 1,
-        ...(!isFace ? { appearance: withoutGender(source.groups.appearance, gender).map(item => item.tag), outfit: source.groups.outfit.map(item => item.tag), etc: source.groups.etc.map(item => item.tag) } : {}),
       });
       if (!Array.isArray(result.data?.[isFace ? "face" : "appearance"]) || !Array.isArray(result.data?.[isFace ? "eye" : "outfit"])) throw new Error("LLM의 태그 응답 형식이 올바르지 않습니다. 기존 편집값을 유지했습니다.");
       state.setFields(current => isFace ? { ...current, face_tags: text(withoutGender(tagEntries(result.data.face, known), gender)), eye_tags: text(tagEntries(result.data.eye, known)) }
@@ -110,8 +109,8 @@ export function IllustCharacterTags({ botName, characterName, card, render, inde
   const previewImages = [{ ...(face || {}), previewLabel: "얼굴 이미지" }, ...references.map((item, i) => ({ ...item, previewLabel: `대표 이미지 ${i + 1}`, previewAlt: "대표 이미지" }))];
   return <Modal title={`${characterName} · ${card.label} · 캐릭터 태그 편집`} onClose={close} closeDisabled={busy} backgroundable={false} className="illust-tag-editor-modal unified">
     <div className="illust-tag-toolbar"><TagViewControls state={state} /><div className="illust-actions">
-      <button type="button" className="button secondary" title={faceHint} disabled={disabled || !llmReady || !face} onClick={() => void llm("face")}><Sparkles size={14} />얼굴·눈 자동 분류</button>
-      <button type="button" className="button secondary" title={llmHint} disabled={disabled || !llmReady} onClick={() => void llm("appearance")}><Sparkles size={14} />외모·복장 정제</button>
+      <button type="button" className="button secondary" title={faceHint} disabled={disabled || !!faceHint} onClick={() => void llm("face")}><Sparkles size={14} />얼굴·눈 자동 분류</button>
+      <button type="button" className="button secondary" title={llmHint} disabled={disabled || !!llmHint} onClick={() => void llm("appearance")}><Sparkles size={14} />외모·복장 정제</button>
       <button type="button" className="button secondary" onClick={() => setTool("history")}><History size={14} />그리기 내역</button>
       <button type="button" className="button secondary" onClick={() => setTool("secondary-bot")}><Bot size={14} />2차봇 설정</button>
       <button type="button" className="button secondary" onClick={() => setTool("settings")}><Settings2 size={14} />추가 설정</button>

@@ -1,9 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type SelectHTMLAttributes } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type SelectHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Search, X } from "lucide-react";
 import "./searchable-select.css";
 
-type Option = { value: string; label: string; group: string; disabled: boolean; hidden: boolean; selected: boolean };
+type Option = { value: string; label: string; search: string; group: string; disabled: boolean; hidden: boolean; selected: boolean };
 type Position = { top: number; left: number; width: number; maxHeight: number; above: boolean };
 
 // Keep the native select as the source of truth for option groups, form validation,
@@ -23,14 +23,14 @@ export function SearchableSelect({ children, ...props }: SelectHTMLAttributes<HT
   const [position, setPosition] = useState<Position | null>(null);
   const label = props["aria-label"];
   const needle = query.trim().toLocaleLowerCase();
-  const visible = options.map((option, index) => ({ ...option, index })).filter(option => !option.hidden && (!needle || option.label.toLocaleLowerCase().includes(needle)));
+  const visible = options.map((option, index) => ({ ...option, index })).filter(option => !option.hidden && (!needle || `${option.label} ${option.search}`.toLocaleLowerCase().includes(needle)));
   const enabled = visible.filter(option => !option.disabled && !collapsed.has(option.group));
   const activeIndex = enabled.some(option => option.index === active) ? active : enabled[0]?.index ?? -1;
   const groups = [...new Set(visible.map(option => option.group))];
 
   useLayoutEffect(() => {
     const select = native.current!;
-    const next = Array.from(select.options, option => ({ value: option.value, label: option.label,
+    const next = Array.from(select.options, option => ({ value: option.value, label: option.label, search: option.dataset.search || "",
       group: option.parentElement instanceof HTMLOptGroupElement ? option.parentElement.label : "",
       disabled: option.disabled || option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled,
       hidden: option.hidden, selected: option.selected }));
@@ -109,19 +109,6 @@ export function SearchableSelect({ children, ...props }: SelectHTMLAttributes<HT
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    function outside(event: Event) {
-      const target = event.target;
-      // autoFocus fires before the popup ref is attached during a portal commit.
-      const insidePopup = target instanceof Element && target.closest(".searchable-select-popup")?.id === `${id}-popup`;
-      if (target instanceof Node && !insidePopup && !trigger.current?.contains(target)) setOpen(false);
-    }
-    document.addEventListener("pointerdown", outside);
-    document.addEventListener("focusin", outside);
-    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); };
-  }, [open, id]);
-
   useLayoutEffect(() => {
     const container = list.current, option = document.getElementById(`${id}-option-${activeIndex}`);
     if (!container || !option) return;
@@ -145,14 +132,16 @@ export function SearchableSelect({ children, ...props }: SelectHTMLAttributes<HT
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
         if (event.key === "Tab") {
-          const stops = event.currentTarget.querySelectorAll<HTMLElement>("input, .searchable-select-group");
+          const stops = event.currentTarget.querySelectorAll<HTMLElement>("input, .searchable-select-close, .searchable-select-group");
           if (event.target === stops[event.shiftKey ? 0 : stops.length - 1]) close(true);
         }
       }}
       style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight, transform: position.above ? "translateY(-100%)" : undefined }}>
       <div className="searchable-select-search"><Search size={15} aria-hidden="true" /><input autoFocus type="text" role="combobox" aria-label={`${label} 검색`}
         aria-expanded="true" aria-autocomplete="list" aria-controls={`${id}-list`} aria-activedescendant={activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
-        placeholder="검색…" autoComplete="off" spellCheck={false} value={query} onChange={event => { setQuery(event.target.value); setActive(-1); setCollapsed(new Set()); }} onKeyDown={keyDown} /></div>
+        placeholder="검색…" autoComplete="off" spellCheck={false} value={query} onChange={event => { setQuery(event.target.value); setActive(-1); setCollapsed(new Set()); }} onKeyDown={keyDown} />
+        <button type="button" className="searchable-select-close" aria-label={`${label} 선택 닫기`} onClick={() => close(true)}><X size={15} aria-hidden="true" /></button>
+      </div>
       <div ref={list} id={`${id}-list`} role="listbox" aria-label={label} className="searchable-select-list">
         {groups.map((group, groupIndex) => <div key={group} role={group ? "group" : "presentation"} aria-labelledby={group ? `${id}-group-${groupIndex}` : undefined}>
           {group && <button type="button" id={`${id}-group-${groupIndex}`} className="searchable-select-group" aria-expanded={!collapsed.has(group)} aria-controls={`${id}-group-options-${groupIndex}`}

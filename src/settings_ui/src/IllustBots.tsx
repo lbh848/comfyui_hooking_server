@@ -14,12 +14,13 @@ import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
 import { IllustLoraBatch } from "./IllustLoraBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
 import { CharacterImportedLore } from "./IllustCharacterLore";
+import { IllustLoreLinking } from "./IllustLoreLinking";
 import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
 import { useCharacterImageRegeneration } from "./useCharacterImageRegeneration";
 import { useEmotionBulkGeneration, type EmotionBulkMode } from "./useEmotionBulkGeneration";
 import { useEmotionImageRegeneration } from "./useEmotionImageRegeneration";
 import { useEmotionOutfitRegeneration } from "./useEmotionOutfitRegeneration";
-import { IllustDataPreparation, dataPreparationTitle } from "./IllustDataPreparation";
+import { IllustDataPreparation, dataPreparationTitle, useDataPreparationRefresh } from "./IllustDataPreparation";
 import { IllustPreparationFaceCrop } from "./IllustPreparationFaceCrop";
 import { IllustAssetProfileAliasSettings, assetProfileAliasSettingsTitle } from "./IllustAssetProfileAliasSettings";
 import { useModalWorkspace } from "./ModalWorkspace";
@@ -64,6 +65,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [representativeBatches, setRepresentativeBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [loraBatchOpen, setLoraBatchOpen] = useState(false);
+  const [loreLinkingOpen, setLoreLinkingOpen] = useState(false);
   const [secondaryBotBatches, setSecondaryBotBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [gallery, setGallery] = useState<{ botName: string; name: string } | null>(null);
   const listScroll = useRef(0);
@@ -89,10 +91,10 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const refreshCharacterStatus = useCallback(() => {
     resource.reload(); patchStatus.reload(); setCardRevision(value => value + 1);
   }, [resource.reload, patchStatus.reload]);
+  const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
-    window.addEventListener("illustration-completed", refreshCharacterStatus);
     window.addEventListener("focus", refreshCharacterStatus);
-    return () => { window.removeEventListener("illustration-completed", refreshCharacterStatus); window.removeEventListener("focus", refreshCharacterStatus); };
+    return () => window.removeEventListener("focus", refreshCharacterStatus);
   }, [refreshCharacterStatus]);
   const isBuiltin = (name: string) => distribution.data?.bots.some((item: IllustrationData) => item.name === name && item.scope === "builtin");
   const isLocked = (name: string) => !distribution.data || (isBuiltin(name) && !builtinUnlockToken);
@@ -183,6 +185,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
         else setSystemInstructionBots(current => current.includes(bot.name) ? current : [...current, bot.name]);
       }}>커스텀 시스템 지침</button>
       {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setLoraBatchOpen(true)}>로라 일괄 적용</button>}
+      {!emotionScope && <button className="button" disabled={distributionBusy} onClick={() => setLoreLinkingOpen(true)}>로어북 연결</button>}
     </div></Panel>}
     {bot && gallery && <nav className="illust-breadcrumb" aria-label="봇 설정 위치">
       <button type="button" onClick={() => setGallery(null)}>{bot.name}</button><ChevronRight size={14} /><span aria-current="page">{gallery.name} · 전체 이미지</span>
@@ -224,9 +227,10 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     {secondaryBotBatches.map(item => <IllustSecondaryBotBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionBusy || !bots.some(bot => bot.name === item.name)} onClose={() => setSecondaryBotBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {representativeBatches.map(item => <IllustRepresentativeBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionAction.busy} onClose={() => setRepresentativeBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {loraBatchOpen && bot && <IllustLoraBatch key={bot.name} botName={bot.name} inventory={inventory} readOnly={toolsReadOnly} onClose={() => setLoraBatchOpen(false)} onChanged={refreshCharacterStatus} />}
+    {loreLinkingOpen && bot && <IllustLoreLinking key={bot.name} botName={bot.name} readOnly={toolsReadOnly} onClose={() => setLoreLinkingOpen(false)} onChanged={refreshCharacterStatus} />}
     {dataPreparationBots.map(name => <IllustDataPreparation key={name} botName={name} characters={bots.find(item => item.name === name)?.characters || []}
       initialBackgrounded={restoredBots.current.has(`preparation:${name}`)}
-      readOnly={isLocked(name) || distributionBusy} onClose={() => { restoredBots.current.delete(`preparation:${name}`); setDataPreparationBots(current => current.filter(value => value !== name)); }} onChanged={refreshCharacterStatus} />)}
+      readOnly={isLocked(name) || distributionBusy} onClose={() => { restoredBots.current.delete(`preparation:${name}`); setDataPreparationBots(current => current.filter(value => value !== name)); }} onChanged={refreshCharacterStatus} onRunningChange={onPreparationRunningChange} />)}
     {assetProfileAliasSettingsBots.map(name => <IllustAssetProfileAliasSettings key={name} botName={name} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)}
       initialBackgrounded={restoredBots.current.has(`instruction:${name}`)}
       onClose={() => { restoredBots.current.delete(`instruction:${name}`); clearWorkSession(`${api.scope}:instruction:${name}`); clearWorkSession(`${api.scope}:visual-guide:${name}`); setAssetProfileAliasSettingsBots(current => current.filter(value => value !== name)); }} onApplied={refreshCharacterStatus} />)}

@@ -5,7 +5,7 @@ export type CharacterArchiveMessage = { type: "progress"; message: string }
   | { type: "result"; result: CharacterArchiveResult } | { type: "error"; message: string };
 
 export function readCharacterArchives(botFiles: readonly File[], moduleFiles: readonly File[], signal: AbortSignal,
-  onProgress?: (message: string) => void): Promise<CharacterArchiveResult> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<CharacterArchiveResult> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     // File objects share their immutable blob data with the worker. Keep ZIP
@@ -24,7 +24,7 @@ export function readCharacterArchives(botFiles: readonly File[], moduleFiles: re
     };
     worker.onerror = event => { event.preventDefault(); cleanup(); reject(new Error(event.message || "파일 분석을 완료하지 못했습니다.")); };
     worker.onmessageerror = () => { cleanup(); reject(new Error("파일 분석 결과를 읽지 못했습니다.")); };
-    try { worker.postMessage({ botFiles, moduleFiles }); }
+    try { worker.postMessage({ botFiles, moduleFiles, metadataOnly }); }
     catch (error) { cleanup(); reject(error); }
   });
 }

@@ -408,6 +408,15 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-batch-dropzone { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 28px 16px; border: 1px dashed var(--control-border); border-radius: 8px; background: var(--lavender); color: var(--muted); font: inherit; cursor: pointer; }
 .illust-batch-dropzone.dragging, .illust-batch-dropzone:hover { border-color: var(--rose); color: var(--ink); }
 .illust-batch-dropzone:disabled { opacity: .5; cursor: default; }
+.illust-character-import-group { flex-shrink: 0; }
+.illust-character-import-group > .panel-header { flex-wrap: wrap; background: var(--lavender); }
+.illust-character-import-group > .panel-header h2 { margin: 0; font-size: 14px; }
+.illust-character-import-body { padding: 16px; }
+.illust-character-import-body > .field-help { margin: 0; }
+.illust-lore-connection-group { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.illust-lore-connection-group[data-connected="false"] { border-color: var(--rose); background: var(--rose-soft); }
+.illust-lore-connection-group > h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; }
+.illust-lore-connection-group > .illust-form { gap: 8px; }
 .illust-archive-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .illust-archive-input { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
 .illust-archive-input > strong { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -419,9 +428,15 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-imported-lore { display: grid; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .illust-imported-lore h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0; font-size: 14px; }
 .illust-lore-list { display: grid; gap: 8px; max-height: 460px; overflow-y: auto; }
+.illust-lore-modal { width: min(960px, calc(100vw - 32px)); }
+.illust-lore-footer { position: sticky; bottom: 0; padding: 12px 0; background: var(--panel); border-top: 1px solid var(--line); }
 .illust-lore-entry { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .illust-lore-entry summary { cursor: pointer; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .illust-lore-entry summary .field-help { display: block; margin-top: 5px; font-weight: 400; }
+.illust-lore-character > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.illust-lore-character > summary::before { content: "▸"; }
+.illust-lore-character[open] > summary::before { content: "▾"; }
+.illust-lore-character > summary .field-help { margin: 0; }
 .illust-lore-content { margin-top: 12px; min-width: 0; font-size: 12px; }
 .illust-lore-content dl { display: grid; gap: 8px; margin: 0; }
 .illust-lore-content dl > div { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 8px; }
@@ -1073,6 +1088,9 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 .illust-visual-guide-current { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: start; font-size: 12px; line-height: 1.6; }
 .illust-visual-guide-current p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .illust-visual-guide-empty { display: grid; place-content: center; min-height: 150px; border: 1px dashed var(--line); border-radius: 8px; font-size: 12px; color: var(--muted); }
+.illust-visual-guide-low-confidence { flex-shrink: 0; min-width: 0; padding: 12px; border: 1px solid var(--rose); border-radius: 8px; background: var(--rose-soft); }
+.illust-visual-guide-low-confidence h3 { margin: 0; font-size: 14px; }
+.illust-visual-guide-low-confidence > .field-help, .illust-visual-guide-low-confidence-summary { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px), (max-height: 650px) {
   .illust-visual-guide-content { overflow-y: auto; overscroll-behavior: contain; }
   .illust-visual-guide-content > .illust-visual-guide-list { flex: none; overflow: visible; scrollbar-gutter: auto; }

@@ -1,5 +1,6 @@
 """Character batch locks persist independently of card edits and exclusions."""
 from copy import deepcopy
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -8,7 +9,7 @@ import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 class CharacterBatchLockTests(unittest.IsolatedAsyncioTestCase):
@@ -23,6 +24,7 @@ class CharacterBatchLockTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(sys.modules, {"modes": package}):
             spec.loader.exec_module(module)
         cls.module = module
+        cls.modes_package = package
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -96,6 +98,36 @@ class CharacterBatchLockTests(unittest.IsolatedAsyncioTestCase):
             "characters": [{"character": "Alice", "entries": [entry]}, {"character": "Missing", "entries": [entry]}]}))
         self.assertGreaterEqual(response.status, 400)
         self.assertEqual(self.read(), self.initial)
+
+    async def test_manual_lore_edit_and_unlink_preserve_other_characters_and_cards(self):
+        entry = {"entry_id": "manual-1", "source": "직접 입력", "title": "Alice", "content": "A condition",
+                 "keys": ["Alice"], "secondary_keys": [], "enabled": True, "constant": False, "selective": False, "use_regex": False}
+        action = {"action": "save_character_lore", "bot_name": "TestBot"}
+        response = await self.manager.handle_bot_action(self.request({**action,
+            "characters": [{"character": "Alice", "base": [], "entries": [entry]}]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.root()["imported_lore"], [entry])
+        updated = {**entry, "content": "Revised condition"}
+        response = await self.manager.handle_bot_action(self.request({**action,
+            "characters": [{"character": "Alice", "base": [entry], "entries": [updated]}]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.root()["imported_lore"], [updated])
+        response = await self.manager.handle_bot_action(self.request({**action,
+            "characters": [{"character": "Alice", "base": [updated], "entries": []}]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.root()["imported_lore"], [])
+        self.assertEqual(self.root()["visual_cards"], self.initial["bots"][0]["characters"][0]["visual_cards"])
+        self.assertEqual(self.read()["bots"][0]["characters"][1], self.initial["bots"][0]["characters"][1])
+
+    async def test_lore_save_does_not_overwrite_a_newer_connection(self):
+        entry = {"entry_id": "1", "source": "bot.charx", "content": "Existing"}
+        await self.manager.handle_bot_action(self.request({"action": "import_character_lore", "bot_name": "TestBot",
+            "characters": [{"character": "Alice", "entries": [entry]}]}))
+        before = self.read()
+        response = await self.manager.handle_bot_action(self.request({"action": "save_character_lore", "bot_name": "TestBot",
+            "characters": [{"character": "Bob", "base": [], "entries": [entry]}, {"character": "Alice", "base": [], "entries": []}]}))
+        self.assertGreaterEqual(response.status, 400)
+        self.assertEqual(self.read(), before)
 
     async def test_imported_global_note_replaces_only_selected_bots_asset_instruction(self):
         initial = deepcopy(self.initial)
@@ -317,6 +349,78 @@ class CharacterBatchLockTests(unittest.IsolatedAsyncioTestCase):
         response = await self.save(base, edited, batch=True)
         self.assertGreaterEqual(response.status, 400)
         self.assertEqual(self.path.read_bytes(), before)
+
+    def prepare_refinement_inputs(self, response):
+        from PIL import Image
+
+        data = self.read()
+        cards = data["bots"][0]["characters"][0]["visual_cards"]
+        cards[0]["rep_images"] = ["other.webp"]
+        cards[1].update(rep_images=["representative.webp"], skip_lb_extra_batch_refine=False,
+                        appearance=[{"tag": "purple hair"}], default_outfit=[{"tag": "dress"}])
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+        bot_dir = Path(self.temporary.name) / "bots"
+        directory = bot_dir / "TestBot" / "Alice"
+        representative = directory / "representative.webp"
+        face = directory / self.module.PROFILE_ASSET_FOLDER / "card_2" / "_face_image.webp"
+        for image_path, color, prompt in (
+            (directory / "other.webp", "red", "blonde hair, armor"),
+            (representative, "green", "grey hair, kimono, shoulder tattoo, unclassified source detail"),
+            (face, "blue", "white hair, pink eyes, blunt bangs, unclassified face detail"),
+        ):
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (8, 8), color).save(image_path, "WEBP")
+            image_path.with_name(image_path.stem + "_prompt.json").write_text(
+                json.dumps({"prompt": prompt}), encoding="utf-8")
+
+        llm = SimpleNamespace(callLLMVisionTask=AsyncMock(return_value=json.dumps(response)),
+            supports_vision=Mock(return_value=True), get_config=Mock(return_value={}),
+            routing_primary_service=Mock(return_value="openai"),
+            routing_primary_model=Mock(return_value="test-model"),
+            routing_primary_slot=Mock(return_value="llm1"))
+        patcher = patch.dict(sys.modules, {
+            "modes": self.modes_package,
+            "modes.llm_service": llm,
+            "modes.lighbd_service": SimpleNamespace(_log_lighbd_history=Mock()),
+            "server": SimpleNamespace(notify_frontend=AsyncMock()),
+        })
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for target, value in (
+            ("BOT_DIR", str(bot_dir)),
+            ("_load_lb_extra_refine_custom", Mock(return_value=("", False))),
+            ("_load_auto_face_tag_custom", Mock(return_value=("", False))),
+            ("_load_lb_extra_refine_builtin", Mock(return_value='{"appearance":"{Appearance}","outfit":"{outfit}","etc":"{etc}"}')),
+            ("_load_auto_face_tag_builtin", Mock(return_value='{"appearance":"{appearance}","outfit":"{attire}","etc":"{etc}"}')),
+        ):
+            patcher = patch.object(self.module, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return representative, face, llm.callLLMVisionTask
+
+    async def test_appearance_refinement_sends_selected_image_analysis_instead_of_card_tags(self):
+        representative, _, call = self.prepare_refinement_inputs({"appearance": ["grey hair"], "outfit": ["kimono"]})
+        result = await self.module.run_lb_extra_refine("TestBot", "Alice", "card_2", batch_refine=True)
+        self.assertTrue(result["success"], result)
+        call.assert_awaited_once()
+        sent = call.await_args
+        self.assertEqual(base64.b64decode(sent.kwargs["image_b64"]), representative.read_bytes())
+        pools = json.loads(sent.args[1][-1]["content"])
+        tags = {tag.strip() for pool in pools.values() for tag in pool.split(",") if tag.strip()}
+        self.assertEqual(tags, {"grey hair", "kimono", "shoulder tattoo", "unclassified source detail"})
+        self.assertIn("unclassified source detail", pools["etc"])
+
+    async def test_face_refinement_sends_face_analysis_instead_of_representative_or_card_tags(self):
+        _, face, call = self.prepare_refinement_inputs({"face": ["white hair", "blunt bangs"], "eye": ["pink eyes"]})
+        result = await self.module.run_auto_classify_face_tags("TestBot", "Alice", "card_2")
+        self.assertTrue(result["success"], result)
+        call.assert_awaited_once()
+        sent = call.await_args
+        self.assertEqual(base64.b64decode(sent.kwargs["image_b64"]), face.read_bytes())
+        pools = json.loads(sent.args[1][-1]["content"])
+        tags = {tag.strip() for pool in pools.values() for tag in pool.split(",") if tag.strip()}
+        self.assertEqual(tags, {"white hair", "pink eyes", "blunt bangs", "unclassified face detail"})
+        self.assertIn("unclassified face detail", pools["etc"])
 
 
 if __name__ == "__main__":
