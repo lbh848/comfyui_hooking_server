@@ -75,7 +75,7 @@ export function ImageEditor({ context, image, test, shared, onClose, onSave, onR
     setNegative(current => current === previous.negative ? savedNegative : current);
     previousPrompt.current = { positive: savedPositive, negative: savedNegative };
   }, [savedPositive, savedNegative]);
-  const [original] = useState(() => ({ positive: loraPromptText(image.original_positive ?? image.positive ?? "", context.profile), negative: image.original_negative ?? image.negative ?? "" }));
+  const original = { positive: loraPromptText(image.original_positive ?? image.positive ?? "", context.profile), negative: image.original_negative ?? image.negative ?? "" };
   const [mode, setMode] = useState("text"), [originalMode, setOriginalMode] = useState("text");
   const [showDescriptions, setShowDescriptions] = useState(false), [zoom, setZoom] = useState(false), [promptEditor, setPromptEditor] = useState(false);
   const [rules, setRules] = useState<string[]>([]), [ruleDraft, setRuleDraft] = useState("");

@@ -718,11 +718,11 @@ def save_uploaded_image(character: str, entry: str, filename: str, file_data: by
 
 
 def add_training_images(character: str, entry: str, sources: list) -> dict:
-    """Copy asset or bot images and prompts into the project's training folder."""
-    return add_project_images(character, _training_dir(character, entry), sources)
+    """Copy training images with empty prompts for the image tagging result."""
+    return add_project_images(character, _training_dir(character, entry), sources, copy_prompt=False)
 
 
-def add_project_images(character: str, t_dir: str, sources: list, *, test_profile: str | None = None) -> dict:
+def add_project_images(character: str, t_dir: str, sources: list, *, test_profile: str | None = None, copy_prompt: bool = True) -> dict:
     """Use the same physical copy rules for training and test images."""
     os.makedirs(t_dir, exist_ok=True)
 
@@ -767,7 +767,7 @@ def add_project_images(character: str, t_dir: str, sources: list, *, test_profil
             prompt_src = os.path.splitext(src_path)[0] + "_prompt.json"
             prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
             pdata = {"positive": "", "negative": "", "original_positive": "", "original_negative": ""}
-            if os.path.isfile(prompt_src):
+            if copy_prompt and os.path.isfile(prompt_src):
                 with open(prompt_src, "r", encoding="utf-8") as f:
                     pdata = json.load(f)
                 positive = pdata.get("positive", pdata.get("prompt", ""))

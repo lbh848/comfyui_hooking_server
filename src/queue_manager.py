@@ -6383,7 +6383,7 @@ class QueueManager:
             # source별 결과 저장
             save_mode = self._TAG_SAVE_MODE.get(source)
             if save_mode == "asset":
-                self._save_asset_prompt(img, positive)
+                self._save_asset_prompt(img, positive, reset_original_positive=source == "asset_lora")
             elif save_mode == "bot":
                 self._save_bot_prompt(img, positive)
             elif save_mode == "instance_lora":
@@ -7611,7 +7611,7 @@ class QueueManager:
             return f"{type(e).__name__}: {e}"
 
     @staticmethod
-    def _save_asset_prompt(img: dict, positive: str):
+    def _save_asset_prompt(img: dict, positive: str, *, reset_original_positive: bool = False):
         """에셋 모드 _prompt.json 저장."""
         filepath = img.get("filepath", "")
         filename = img.get("filename", "")
@@ -7631,6 +7631,8 @@ class QueueManager:
                 )
                 traceback.print_exc()
         existing["positive"] = positive
+        if reset_original_positive:
+            existing["original_positive"] = positive
         existing.setdefault("negative", "")
         existing.setdefault("character", img.get("character", ""))
         existing.setdefault("appearance", "")
