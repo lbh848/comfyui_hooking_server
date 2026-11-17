@@ -1401,6 +1401,7 @@ class ComfyInstallerService:
             "lora_training_workflow_source_paths.moss": 167,
             "style_lora_training_workflow_source_paths.moss": 168,
             "workflow_pack_extra_paths.lora_training_anima_v2": 165,
+            "workflow_pack_extra_paths.lora_training_anima_v2_1": 165,
             "workflow_pack_extra_paths.style_lora_training_anima_v2": 166,
             "debug_workflow_source_path": 170,
             "video_workflow_source_paths.i2v": 180,

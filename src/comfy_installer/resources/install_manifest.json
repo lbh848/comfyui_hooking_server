@@ -1103,6 +1103,20 @@
         "model_ids": [
           "anima-base-v1",
           "anima-text-encoder",
+      {
+        "id": "workflow_pack_extra_paths.lora_training_anima_v2_1",
+        "name": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
+        "archive_name": "workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
+        "bindings": [
+          "workflow_pack_extra_paths.lora_training_anima_v2_1"
+        ],
+        "model_ids": [
+          "anima-base-v1",
+          "anima-text-encoder",
+          "anima-vae",
+          "anime-sharp-v4-upscaler"
+        ]
+      },
           "anima-vae"
         ]
       },
@@ -1162,3 +1176,4 @@
     ]
   }
 }
+      "workflow_pack_extra_paths.lora_training_anima_v2_1",

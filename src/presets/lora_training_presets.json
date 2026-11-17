@@ -25,6 +25,30 @@
       }
     },
     {
+      "id": "builtin-anima-default-v2",
+      "profile": "anima",
+      "name": "ANIMA 기본 v2",
+      "settings": {
+        "il_rate": 5e-05,
+        "save_per_step": 50,
+        "save_after": 0,
+        "gen_w": 704,
+        "gen_h": 1024,
+        "resolution": 1024,
+        "dim": 32,
+        "alpha": 128,
+        "step_mode": "epochs",
+        "step_per_image": 4,
+        "total_steps": 4,
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
+        "profile": "anima",
+        "multi_img_folder_name": "soya_lora",
+        "upscale": false,
+        "optimizer_type": "AdamW",
+        "max_train_epochs": 8
+      }
+    },
+    {
       "id": "builtin-ilxl-default",
       "profile": "sdxl",
       "name": "ILXL 기본",
