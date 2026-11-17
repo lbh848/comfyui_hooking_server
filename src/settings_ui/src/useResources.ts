@@ -2,21 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type Draft, type LoraEntry, type ModelEntry } from "./data";
 import { loadSettings } from "./settings";
 
-type ResourceDetails = { deleteBlockedReason?: string; moveBlockedReason?: string; downloadUrl?: string; sourceUrl?: string };
+type ResourceDetails = { deleteBlockedReason?: string; moveBlockedReason?: string; downloadUrl?: string; sourceUrl?: string;
+  linked?: boolean; linkId?: string; linkedSource?: string; linkedFolder?: string; linkedCount?: number };
 export type MovedResource = (ModelEntry | LoraEntry) & ResourceDetails;
 type Inventory = { models: (ModelEntry & ResourceDetails)[]; loras: (LoraEntry & ResourceDetails)[] };
 const emptyInventory: Inventory = { models: [], loras: [] };
 const unknownProtection = "삭제 가능 여부를 확인할 수 없습니다. 설정 서버를 다시 시작하고 새로고침하세요.";
 const unknownMoveProtection = "이동 가능 여부를 확인할 수 없습니다. 설정 서버를 다시 시작하고 새로고침하세요.";
 
-function mergeResourceAnnotation<T extends ModelEntry | LoraEntry>(file: T, annotation?: T) {
+function mergeResourceAnnotation<T extends (ModelEntry | LoraEntry) & ResourceDetails>(file: T, annotation?: T) {
   // Preserve previously edited names as aliases; an explicit empty alias clears them.
   const alias = annotation?.alias ?? (annotation?.metadataEdited !== false && annotation?.name !== file.name ? annotation?.name : "") ?? "";
   // Names and triggers always come from the current file metadata.
   const family = annotation && annotation.metadataEdited !== false &&
     (annotation.metadataEdited || !["", "미확인", "unknown"].includes(annotation.family.trim().toLowerCase()))
     ? annotation.family : file.family;
-  return { ...file, ...annotation, name: file.name, alias, family, trigger: file.trigger,
+  return { ...file, ...annotation, linked: file.linked, linkId: file.linkId, linkedSource: file.linkedSource,
+    linkedFolder: file.linkedFolder, linkedCount: file.linkedCount, name: file.name, alias, family, trigger: file.trigger,
     metadataEdited: annotation ? annotation.metadataEdited : false };
 }
 
@@ -67,7 +69,8 @@ export function useResources(draft?: Pick<Draft, "models" | "loras">) {
     if (!response.ok || !body) throw new Error(body?.error || "파일을 삭제하지 못했습니다. 목록을 새로고침하고 다시 시도하세요.");
     // Discard any inventory request that began before this deletion.
     generation.current++;
-    setInventory(current => ({ models: current.models.filter(item => item.id !== identity), loras: current.loras.filter(item => item.id !== identity) }));
+    const deletedIds = new Set<string>(body.deletedIds || [identity]);
+    setInventory(current => ({ models: current.models.filter(item => !deletedIds.has(item.id)), loras: current.loras.filter(item => !deletedIds.has(item.id)) }));
     setLoading(false);
     setError("");
     return body.warning || "";
@@ -112,6 +115,7 @@ export type Resources = ReturnType<typeof useResources>;
 export type ResourceEntry = Resources["models"][number] | Resources["loras"][number];
 
 export function resourceAnnotation<T extends ResourceDetails>(item: T) {
-  const { deleteBlockedReason: _deleteBlockedReason, moveBlockedReason: _moveBlockedReason, downloadUrl: _downloadUrl, sourceUrl: _sourceUrl, ...annotation } = item;
+  const { deleteBlockedReason: _deleteBlockedReason, moveBlockedReason: _moveBlockedReason, downloadUrl: _downloadUrl, sourceUrl: _sourceUrl,
+    linked: _linked, linkId: _linkId, linkedSource: _linkedSource, linkedFolder: _linkedFolder, linkedCount: _linkedCount, ...annotation } = item;
   return annotation;
 }

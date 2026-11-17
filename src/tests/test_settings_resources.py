@@ -148,6 +148,69 @@ class ResourceLibraryTests(unittest.TestCase):
         self.junction(self.models, outside)
         self.assertEqual(self.library.scan(), {"models": [], "loras": []})
 
+    def test_registered_external_models_and_loras_coexist_with_local_files(self):
+        external = Path(self.temporary.name) / "external ComfyUI"
+        for folder in ("checkpoints", "loras"):
+            source = external / "models" / folder / "nested" / "shared.safetensors"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"external model")
+            source.with_suffix(".metadata.json").write_text(json.dumps({"base_model": "SDXL", "trigger": "sample trigger"}))
+            source.with_suffix(".preview.png").write_bytes(b"external preview")
+            self.file(f"{folder}/shared.safetensors", b"local model")
+            kind = "loras" if folder == "loras" else "models"
+            inspection = self.library.links.inspect(str(external), kind)
+            self.assertEqual([item["folder"] for item in inspection["folders"]], [folder])
+            self.assertEqual(inspection["folders"][0]["count"], 1)
+            self.assertEqual(self.library.links.connect(str(external), kind, [folder])["connected"], 1)
+        # Registrations persist across application restarts; local files keep their paths.
+        inventory = ResourceLibrary(self.source).scan()
+        for kind, folder in (("models", "checkpoints"), ("loras", "loras")):
+            self.assertEqual(len(inventory[kind]), 2)
+            linked = next(item for item in inventory[kind] if item.get("linked"))
+            local = next(item for item in inventory[kind] if not item.get("linked"))
+            self.assertEqual(local["path"], f"{folder}/shared.safetensors")
+            self.assertEqual(linked["family"], "SDXL")
+            self.assertEqual(linked["trigger"], "sample trigger")
+            self.assertEqual(linked["linkedCount"], 1)
+            source = external / "models" / folder / "nested" / "shared.safetensors"
+            self.assertTrue((self.models / linked["path"]).samefile(source))
+            self.assertEqual(linked["linkedSource"], str(source.resolve()))
+            self.assertFalse(self.library._inside(self.models / linked["path"]))
+            self.assertEqual(self.library.details(linked["id"])["id"], linked["id"])
+            self.assertEqual(self.library.thumbnail(linked["id"]).read_bytes(), b"external preview")
+
+    def test_disconnect_preserves_external_models_metadata_and_other_resources(self):
+        external = Path(self.temporary.name) / "external" / "models"
+        originals = {}
+        for folder in ("checkpoints", "loras"):
+            source = external / folder
+            source.mkdir(parents=True)
+            for filename, content in (("first.safetensors", b"first model"), ("second.pt", b"second model"),
+                                      ("first.metadata.json", b'{"base_model":"SDXL"}'), ("first.preview.png", b"preview")):
+                path = source / filename
+                path.write_bytes(content)
+                originals[path] = content
+            self.library.links.connect(str(external), "loras" if folder == "loras" else "models", [folder])
+        local = self.file("checkpoints/local.pt", b"keep local model")
+        inventory = self.library.scan()
+        linked_models = [item for item in inventory["models"] if item.get("linked")]
+        entry = linked_models[0]
+        with self.assertRaises(ValueError):
+            self.library.refresh_metadata(entry["id"], "")
+        with self.assertRaises(ResourceMoveBlockedError):
+            self.library.move(entry["id"], "vae")
+        result = self.library.delete(entry["id"])
+        self.assertEqual(set(result["deletedIds"]), {item["id"] for item in linked_models})
+        inventory = self.library.scan()
+        self.assertEqual([item["name"] for item in inventory["models"]], ["local"])
+        self.assertEqual(len(inventory["loras"]), 2)
+        self.library.disconnect_link(inventory["loras"][0]["linkId"])
+        self.assertEqual(self.library.scan()["loras"], [])
+        self.assertEqual(self.library.links.status(), [])
+        self.assertEqual(local.read_bytes(), b"keep local model")
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+
     def test_scan_failure_is_not_reported_as_an_empty_installation(self):
         self.file("checkpoints/real.pt")
         with patch("settings_resources.os.walk", side_effect=PermissionError("denied")):

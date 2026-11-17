@@ -1,10 +1,11 @@
 import { useEffect, useId, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import { Check, Copy, Download, ExternalLink, FolderInput, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, FolderInput, Link2, Pencil, Plus, RefreshCw, Search, Trash2, Unlink, Upload } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { modelKinds, type Draft, type LoraEntry, type ModelEntry } from "./data";
 import { resourceAnnotation, resourceDisplayName, type ResourceEntry, type Resources } from "./useResources";
 import { ResourceDownloads } from "./ResourceDownloads";
 import { ResourceUpload } from "./ResourceUpload";
+import { ResourceLinkedUpload } from "./ResourceLinkedUpload";
 import { ResourceDetails } from "./ResourceDetails";
 import { ResourceCustomTrigger } from "./ResourceCustomTrigger";
 import { ResourceThumbnail } from "./ResourceThumbnail";
@@ -60,11 +61,11 @@ function ResourceCard({ item, selected, onSelect, onEdit, onMove, onDelete, noti
       </div>
       <div className="resource-card-content">
         <div className="resource-card-heading">
-          <Badge>{resourceCategory(item)}</Badge>
+          <div className="resource-card-badges"><Badge>{resourceCategory(item)}</Badge>{item.linked && <Badge tone="lavender">LINKED</Badge>}</div>
           <div className="resource-card-actions">
             <button className="icon-button" aria-label={`${name} 편집`} onClick={onEdit}><Pencil size={14} /></button>
             <button className="icon-button" aria-label={`${name} 이동`} title={item.moveBlockedReason || "폴더 이동"} disabled={!!item.moveBlockedReason} onClick={onMove}><FolderInput size={14} /></button>
-            <button className="icon-button resource-delete" aria-label={`${name} 삭제`} title={item.deleteBlockedReason || "삭제"} disabled={!!item.deleteBlockedReason} aria-describedby={item.deleteBlockedReason ? `delete-blocked-${item.id}` : undefined} onClick={onDelete}><Trash2 size={14} /></button>
+            <button className="icon-button resource-delete" aria-label={`${name} ${item.linked ? "연결 해제" : "삭제"}`} title={item.deleteBlockedReason || (item.linked ? "폴더 연결 해제" : "삭제")} disabled={!!item.deleteBlockedReason} aria-describedby={item.deleteBlockedReason ? `delete-blocked-${item.id}` : undefined} onClick={onDelete}>{item.linked ? <Unlink size={14} /> : <Trash2 size={14} />}</button>
           </div>
         </div>
         <h2><button onClick={onEdit} title={item.name}>{name}</button></h2>
@@ -100,6 +101,7 @@ function ResourceLibrary({ setDraft, notify, resources, kind, isSaved, saveState
   const [detailsWorking, setDetailsWorking] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [linkedUploadOpen, setLinkedUploadOpen] = useState(false);
   const [editing, setEditing] = useState<ResourceEntry | null>(null);
   const currentEditing = editing ? entries.find(item => item.id === editing.id) ?? editing : null;
   const [deleting, setDeleting] = useState<ResourceEntry | null>(null);
@@ -158,9 +160,10 @@ function ResourceLibrary({ setDraft, notify, resources, kind, isSaved, saveState
     setDeleteError("");
     try {
       const warning = await resources.remove(deleting.id);
-      setDraft(d => ({ ...d, models: d.models.filter(item => item.id !== deleting.id), loras: d.loras.filter(item => item.id !== deleting.id) }));
+      const deletedIds = new Set(entries.filter(item => deleting.linked ? item.linkId === deleting.linkId : item.id === deleting.id).map(item => item.id));
+      setDraft(d => ({ ...d, models: d.models.filter(item => !deletedIds.has(item.id)), loras: d.loras.filter(item => !deletedIds.has(item.id)) }));
       setDeleteWarning(warning);
-      notify(`${resourceDisplayName(deleting)} 파일을 삭제했습니다.`);
+      notify(deleting.linked ? "폴더 연결을 해제했습니다. 외부 원본 파일은 유지됩니다." : `${resourceDisplayName(deleting)} 파일을 삭제했습니다.`);
       setDeleting(null);
     } catch (cause) {
       setDeleteError(cause instanceof Error ? cause.message : "파일을 삭제하지 못했습니다.");
@@ -206,10 +209,11 @@ function ResourceLibrary({ setDraft, notify, resources, kind, isSaved, saveState
     <div className="stack resource-library">
       <div className="resource-library-header">
         <div><h2>{label} 라이브러리</h2><span>{entries.length}개</span><span className="resource-total-size" role="status">전체 용량 {resources.loading ? "계산 중…" : resources.error ? "확인 불가" : bytes(totalSize)}</span></div>
-        <div className="download-actions"><button className="button secondary" disabled={resources.loading} onClick={() => void resources.refresh()}><RefreshCw size={15} />새로고침</button><button className="button primary" onClick={() => setDownloadOpen(true)}><Download size={15} />{label} 설치</button><button className="button secondary" onClick={() => setUploadOpen(true)}><Upload size={15} />{label} 업로드</button></div>
+        <div className="download-actions"><button className="button secondary" disabled={resources.loading} onClick={() => void resources.refresh()}><RefreshCw size={15} />새로고침</button><button className="button primary" onClick={() => setDownloadOpen(true)}><Download size={15} />{label} 설치</button><button className="button secondary" onClick={() => setUploadOpen(true)}><Upload size={15} />{label} 업로드</button><button className="button secondary" onClick={() => setLinkedUploadOpen(true)}><Link2 size={15} />링크드 업로드</button></div>
       </div>
       <ResourceDownloads kind={kind} open={downloadOpen} onClose={() => setDownloadOpen(false)} onInstalled={resources.refresh} isSaved={isSaved} saveState={saveState} hasCivitaiKey={hasCivitaiKey} />
       {uploadOpen && <ResourceUpload kind={kind} onClose={() => setUploadOpen(false)} onUploaded={resources.refresh} notify={notify} />}
+      {linkedUploadOpen && <ResourceLinkedUpload kind={kind} onClose={() => setLinkedUploadOpen(false)} onLinked={resources.refresh} notify={notify} />}
       {moving && <ResourceMove item={moving} resources={resources} onClose={() => setMoving(null)} onMoved={(item, warning) => {
         // IDs are derived from paths; carry the user's annotations to the new ID.
         setDraft(d => {
@@ -252,19 +256,20 @@ function ResourceLibrary({ setDraft, notify, resources, kind, isSaved, saveState
         </div>
         {!resources.loading && !resources.error && !visible.length && <Panel title={`${label} 라이브러리`}><Empty title={entries.length ? "표시할 항목이 없습니다" : "아직 설치 전입니다"}>{entries.length ? "검색 조건이나 필터를 변경하세요." : ""}</Empty></Panel>}
       </div>
-      {deleting && <Modal title={`${label} 삭제`} onClose={() => { if (!deleteBusy) setDeleting(null); }} closeDisabled={deleteBusy}>
+      {deleting && <Modal title={`${label} ${deleting.linked ? "연결 해제" : "삭제"}`} onClose={() => { if (!deleteBusy) setDeleting(null); }} closeDisabled={deleteBusy}>
         <div className="form-stack" aria-busy={deleteBusy}>
-          <p><strong>{resourceDisplayName(deleting)}</strong> 파일을 삭제하시겠습니까?</p>
+          <p><strong>{resourceDisplayName(deleting)}</strong> {deleting.linked ? "파일이 속한 폴더의 연결을 해제하시겠습니까?" : "파일을 삭제하시겠습니까?"}</p>
           <div className="resource-delete-details"><p className="resource-file-path">{deleting.path}</p><p className="resource-file-size">용량 <strong>{bytes(Number(deleting.size))}</strong></p></div>
-          <p>같은 이름의 썸네일과 메타데이터도 삭제합니다. 다른 모델과 공유하는 파일은 유지합니다. 삭제한 파일은 복구할 수 없습니다.</p>
+          {deleting.linked ? <><p className="resource-file-path">{deleting.linkedFolder}</p><p>이 폴더에 연결된 {deleting.linkedCount}개 파일이 목록에서 제거됩니다. 외부 원본 파일과 썸네일·메타데이터는 유지됩니다.</p></> : <p>같은 이름의 썸네일과 메타데이터도 삭제합니다. 다른 모델과 공유하는 파일은 유지합니다. 삭제한 파일은 복구할 수 없습니다.</p>}
           {deleteError && <p className="field-error" role="alert">{deleteError}</p>}
           {deleteBlockedReason && <p className="field-error" role="alert">{deleteBlockedReason}</p>}
-          <div className="modal-actions"><button className="button secondary" disabled={deleteBusy} onClick={() => setDeleting(null)}>취소</button><button className="button danger" disabled={deleteBusy || !!deleteBlockedReason} onClick={() => void deleteEntry()}><Trash2 size={15} />{deleteBusy ? "삭제 중…" : "삭제"}</button></div>
+          <div className="modal-actions"><button className="button secondary" disabled={deleteBusy} onClick={() => setDeleting(null)}>취소</button><button className="button danger" disabled={deleteBusy || !!deleteBlockedReason} onClick={() => void deleteEntry()}>{deleting.linked ? <Unlink size={15} /> : <Trash2 size={15} />}{deleteBusy ? "처리 중…" : deleting.linked ? "연결 해제" : "삭제"}</button></div>
         </div>
       </Modal>}
       {editorOpen && editing && <Modal title={`${label} 편집`} className="resource-details-modal" onClose={() => setEditorOpen(false)} working={detailsWorking}>
         <div className="resource-editor-layout">
         <form className="form-stack" onSubmit={save}>
+          {currentEditing?.linked && <><div><Badge tone="lavender">LINKED</Badge></div><div className="field"><span>외부 원본 위치</span><p className="resource-file-path">{currentEditing.linkedSource}</p></div></>}
           <label className="field">{label} 이름<input readOnly value={currentEditing?.name ?? editing.name} /></label>
           <div className="field"><span>현재 위치</span><p className="resource-file-path">{currentEditing?.path ?? editing.path}</p>
             <div><button className="button secondary" type="button" disabled={detailsWorking || !!currentEditing?.moveBlockedReason} title={currentEditing?.moveBlockedReason || "편집 내용을 적용하고 이동할 폴더를 선택합니다."} onClick={event => { const form = event.currentTarget.form; if (form?.reportValidity()) applyEditor(form, true); }}><FolderInput size={15} />폴더 이동</button></div>
@@ -280,7 +285,7 @@ function ResourceLibrary({ setDraft, notify, resources, kind, isSaved, saveState
           {currentEditing?.sourceUrl && httpUrl(currentEditing.sourceUrl) && <div className="download-actions"><a className="button secondary small" href={currentEditing.sourceUrl} target="_blank" rel="noopener noreferrer" aria-label={`${currentEditing.name} 모델 페이지 (새 탭)`}><ExternalLink size={15} />모델 페이지</a></div>}
           <div className="modal-actions"><button className="button secondary" type="button" onClick={() => setEditorOpen(false)}>취소</button><button className="button primary" type="submit">{editing ? "적용" : "추가"}</button></div>
         </form>
-        <ResourceDetails key={editing.id} id={editing.id} name={editing.name} thumbnail={editing.thumbnail} notify={notify} onUpdated={resources.refresh} onWorkingChange={setDetailsWorking} />
+        <ResourceDetails key={editing.id} id={editing.id} name={editing.name} thumbnail={editing.thumbnail} linked={currentEditing?.linked} notify={notify} onUpdated={resources.refresh} onWorkingChange={setDetailsWorking} />
         </div>
       </Modal>}
     </div>

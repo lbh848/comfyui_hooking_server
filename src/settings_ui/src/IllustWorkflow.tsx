@@ -228,7 +228,7 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
               if (model) update(key, modelPath(model.path));
             }}>
               {(!selected || !models.some(item => item.id === selected.id)) && <option value={selected?.id || ""} disabled>{inventory.loading ? "모델 목록을 불러오는 중…" : currentName ? `${currentName} · 현재 모델` : "모델 선택"}</option>}
-              {models.map(item => <option key={item.id} value={item.id}>{resourceDisplayName(item)}</option>)}
+              {models.map(item => <option key={item.id} value={item.id}>{resourceDisplayName(item)}{item.linked ? " · LINKED" : ""}</option>)}
             </select>{!inventory.loading && !inventory.error && !models.length && <span className="field-help">모델 관리에 {kind} 모델을 등록한 뒤 목록을 새로고침하세요.</span>}</label></div>;
           })}</div>
         </div></div>

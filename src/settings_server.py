@@ -376,8 +376,51 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
             async with resource_lock:
                 result = await asyncio.to_thread(resource_library.scan)
             return web.json_response(result, headers=headers)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=headers)
         except OSError:
             return web.json_response({"error": "모델 폴더를 읽을 수 없습니다. 폴더 접근 권한을 확인하고 다시 시도하세요."}, status=500, headers=headers)
+
+    async def resource_links(request: web.Request) -> web.Response:
+        headers = {"Cache-Control": "no-store"}
+        if request.headers.get("X-Comfy-Settings") != "1":
+            raise web.HTTPForbidden()
+        try:
+            if request.method == "GET":
+                async with resource_lock:
+                    result = {"links": await asyncio.to_thread(resource_library.links.status)}
+            else:
+                body = {}
+                if request.method == "POST":
+                    if request.content_type != "application/json":
+                        return web.json_response({"error": "연결할 폴더를 JSON으로 전송하세요."}, status=415, headers=headers)
+                    body = await request.json()
+                    if not isinstance(body, dict) or body.get("action") not in ("scan", "connect"):
+                        raise ValueError("모델 연결 요청을 확인하세요.")
+                async with installer_lock, resource_lock:
+                    if request.method == "POST" and body["action"] == "scan":
+                        result = await asyncio.to_thread(resource_library.links.inspect, body.get("source"), body.get("kind"))
+                    else:
+                        if installer is not None and (await asyncio.to_thread(installer.status)).get("state") == "running":
+                            return web.json_response({"error": "초기 설치가 끝난 뒤 모델 연결을 변경하세요."}, status=409, headers=headers)
+                        if downloads is not None and downloads.status().get("state") == "running":
+                            return web.json_response({"error": "모델·LoRA 다운로드를 일시 정지하거나 완료한 뒤 연결을 변경하세요."}, status=409, headers=headers)
+                        if request.method == "DELETE":
+                            result = await asyncio.to_thread(resource_library.disconnect_link, request.match_info["link_id"])
+                        else:
+                            blockers = resource_library.installation_blockers()
+                            if blockers:
+                                return web.json_response({"error": " · ".join(blockers)}, status=409, headers=headers)
+                            result = await asyncio.to_thread(resource_library.links.connect, body.get("source"), body.get("kind"), body.get("folders"))
+            return web.json_response(result, headers=headers)
+        except FileExistsError as exc:
+            return web.json_response({"error": str(exc)}, status=409, headers=headers)
+        except FileNotFoundError as exc:
+            return web.json_response({"error": str(exc)}, status=404, headers=headers)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=headers)
+        except OSError:
+            return web.json_response({"error": "모델 폴더를 연결하지 못했습니다. 경로와 폴더 접근 권한을 확인하세요."}, status=500, headers=headers)
 
     async def resource_details(request: web.Request) -> web.Response:
         headers = {"Cache-Control": "no-store"}
@@ -423,6 +466,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
             return web.json_response(result, headers=headers)
         except ResourceDeleteBlockedError as exc:
             return web.json_response({"error": str(exc)}, status=403, headers=headers)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=headers)
         except FileNotFoundError:
             return web.json_response({"error": "삭제할 파일이 없습니다. 목록을 새로고침하세요."}, status=404, headers=headers)
         except OSError:
@@ -818,6 +863,9 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_post("/api/setting/emotion-preset-groups/{action:create|save|duplicate|rename|delete|unlock|lock}", emotion_preset_groups)
     app.router.add_get("/api/setting/preset-assets/{path:.+}", preset_asset)
     app.router.add_get("/api/setting/resources", resources)
+    app.router.add_get("/api/setting/resources/links", resource_links)
+    app.router.add_post("/api/setting/resources/links", resource_links)
+    app.router.add_delete("/api/setting/resources/links/{link_id}", resource_links)
     app.router.add_get("/api/setting/resources/{identity}/details", resource_details)
     app.router.add_post("/api/setting/resources/{identity}/details", resource_details)
     app.router.add_get("/api/setting/workflows", workflows)

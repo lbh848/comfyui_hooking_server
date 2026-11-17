@@ -11,6 +11,7 @@ export const modelFolders = [
   ["clip_vision", "CLIP vision"], ["embeddings", "Embedding"], ["hypernetworks", "Hypernetwork"],
 ];
 export interface ModelEntry {
+  linked?: boolean;
   id: string;
   name: string;
   alias?: string;
@@ -25,6 +26,7 @@ export interface ModelEntry {
   path?: string;
 }
 export interface LoraEntry {
+  linked?: boolean;
   id: string;
   name: string;
   alias?: string;

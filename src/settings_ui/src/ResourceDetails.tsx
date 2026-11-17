@@ -12,7 +12,7 @@ type Details = {
   publishedAt: string; stats: Record<string, unknown>; images: Example[];
   metadata: Record<string, unknown>; civitaiVersionId: string; warning?: string;
 };
-type Props = { id: string; name: string; thumbnail?: string; notify: (message: string) => void; onUpdated: () => Promise<void>; onWorkingChange?: (working: boolean) => void };
+type Props = { id: string; name: string; thumbnail?: string; linked?: boolean; notify: (message: string) => void; onUpdated: () => Promise<void>; onWorkingChange?: (working: boolean) => void };
 const tabs = ["예시 이미지", "모델 정보", "전체 메타데이터"];
 const labels: Record<string, string> = {
   steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", cfgScale: "CFG", cfg_scale: "CFG", seed: "Seed",
@@ -36,7 +36,7 @@ function ExampleMedia({ item, name, active }: { item: Example; name: string; act
     : <img src={item.url} alt={name} decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
-export function ResourceDetails({ id, name, thumbnail, notify, onUpdated, onWorkingChange }: Props) {
+export function ResourceDetails({ id, name, thumbnail, linked, notify, onUpdated, onWorkingChange }: Props) {
   const [data, setData] = useState<Details | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -107,7 +107,7 @@ export function ResourceDetails({ id, name, thumbnail, notify, onUpdated, onWork
     {error && <div className="field-error" role="alert"><p>{error}</p>{!data && <button type="button" className="button secondary small" onClick={() => setAttempt(value => value + 1)}>다시 불러오기</button>}</div>}
     {data && <>
       <div className="resource-details-heading"><div><h3>{data.modelName}</h3>{data.versionName && <p>{data.versionName}</p>}</div>
-        {data.civitaiVersionId && <button type="button" className="button secondary small" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={13} />{refreshing ? "정보를 가져오는 중…" : "Civitai 정보 새로고침"}</button>}
+        {data.civitaiVersionId && !linked && <button type="button" className="button secondary small" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={13} />{refreshing ? "정보를 가져오는 중…" : "Civitai 정보 새로고침"}</button>}
       </div>
       {data.warning && <p className="field-help" role="status">{data.warning}</p>}
       <div className="segmented resource-details-tabs" role="tablist" aria-label="다운로드 정보">

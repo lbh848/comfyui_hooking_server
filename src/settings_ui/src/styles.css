@@ -1339,6 +1339,17 @@ td .badge {
 .resource-card-content { padding: 12px 14px 15px; }
 .resource-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .resource-card-heading .badge { font-size: 9px; }
+.resource-card-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.resource-linked-upload h3 { margin: 0; font-size: 14px; }
+.resource-linked-upload .field-help { overflow-wrap: anywhere; }
+.resource-linked-folders { display: grid; gap: 8px; }
+.resource-linked-folder { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.resource-linked-folder input { flex: 0 0 auto; width: 16px; height: 16px; }
+.resource-linked-folder > span { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.resource-linked-folder small { color: var(--muted); }
+.resource-linked-connection { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.resource-linked-connection > button { justify-self: start; }
+.resource-linked-connection p { margin: 0; }
 .resource-card-actions { display: flex; }
 .resource-card-actions .icon-button, .resource-trigger-heading .icon-button { width: 26px; height: 26px; }
 .resource-card h2 { margin: 7px 0 13px; font-size: 13px; line-height: 1.6; }

@@ -21,6 +21,7 @@ from comfy_installer.operations import uv_python_path
 from comfy_installer.runtime_state import load_runtime_receipt, RuntimeStateError
 from json_store import write_json_atomic
 from settings_resource_details import civitai_version, resource_details, resource_source_url
+from settings_resource_links import ResourceLinks
 
 
 MODEL_EXTENSIONS = {".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx", ".pkl", ".torchscript"}
@@ -76,10 +77,17 @@ class ResourceLibrary:
         self.project_root = Path(project_root).resolve()
         self.root = data_root(project_root) / "comfy" / "models"
         self._previews: dict[str, tuple[Path, Path]] = {}
+        self.links = ResourceLinks(self.project_root, self.root)
 
     def _inside(self, path: Path) -> bool:
         # Do not follow symlinks or Windows junctions outside this model folder.
         return path.resolve().is_relative_to(self.root.absolute())
+
+    def _read_root(self, path: Path, links: list[dict] | None = None) -> Path | None:
+        if self._inside(path):
+            return self.root
+        link = self.links.match(path, self.links.read() if links is None else links)
+        return Path(link["source"]) if link else None
 
     def installation_blockers(self) -> list[str]:
         comfy_root = self.root.parent
@@ -103,11 +111,13 @@ class ResourceLibrary:
                 raise ValueError("프로젝트 외부로 연결된 모델 경로에는 설치할 수 없습니다.")
         return target
 
-    def _metadata(self, model: Path) -> dict:
-        return read_model_metadata(model, self.root)
+    def _metadata(self, model: Path, links: list[dict] | None = None) -> dict:
+        root = self._read_root(model, links)
+        return read_model_metadata(model, root) if root else {}
 
-    def preview_path(self, model: Path) -> Path | None:
-        return preview_path(model, self.root)
+    def preview_path(self, model: Path, links: list[dict] | None = None) -> Path | None:
+        root = self._read_root(model, links)
+        return preview_path(model, root) if root else None
 
     def scan(self) -> dict:
         result: dict[str, list] = {"models": [], "loras": []}
@@ -116,6 +126,7 @@ class ResourceLibrary:
         if not self.root.resolve().is_relative_to(data_root(self.project_root).absolute()) or not self.root.is_dir():
             self._previews = {}
             return result
+        links = self.links.read()
         # Reload the same manifest used by the installer on every inventory/delete.
         # Resolve aliases as well as normal paths so an internal junction cannot
         # expose a managed file as an unprotected entry.
@@ -142,16 +153,16 @@ class ResourceLibrary:
         for directory, children, filenames in os.walk(self.root, followlinks=True, onerror=walk_error):
             current = Path(directory)
             resolved = current.resolve()
-            if resolved in visited or not self._inside(current):
+            if resolved in visited or self._read_root(current, links) is None:
                 children[:] = []
                 continue
             visited.add(resolved)
             children[:] = sorted(name for name in children
-                                 if not name.startswith(".") and self._inside(current / name)
+                                 if not name.startswith(".") and self._read_root(current / name, links) is not None
                                  and not is_managed_lora((current / name).resolve()))
             for name in sorted(filenames):
                 path = current / name
-                if path.suffix.lower() not in MODEL_EXTENSIONS or not self._inside(path):
+                if path.suffix.lower() not in MODEL_EXTENSIONS or self._read_root(path, links) is None:
                     continue
                 try:
                     stat = path.stat()
@@ -164,7 +175,8 @@ class ResourceLibrary:
                 relative = path.relative_to(self.root)
                 folder = relative.parts[0] if len(relative.parts) > 1 else ""
                 identity = hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()
-                metadata = self._metadata(path)
+                link = self.links.match(path, links)
+                metadata = self._metadata(path, links)
                 civitai = metadata.get("civitai") if isinstance(metadata.get("civitai"), dict) else {}
                 download_url = public_download_url(manifest_models.get(path.resolve(), {}).get("url"))
                 if not download_url:
@@ -176,7 +188,7 @@ class ResourceLibrary:
                     download_url = public_download_url(metadata.get("hf_url"))
                 family = metadata.get("base_model") or "미확인"
                 words = metadata.get("trigger") or ""
-                preview = self.preview_path(path)
+                preview = self.preview_path(path, links)
                 if preview:
                     previews[identity] = (path, preview)
                 item = {
@@ -189,10 +201,23 @@ class ResourceLibrary:
                     "deleteBlockedReason": manifest_error or (MANIFEST_DELETE_BLOCKED if path.resolve() in manifest_models else ""),
                     "moveBlockedReason": MANIFEST_MOVE_UNAVAILABLE if manifest_error else (MANIFEST_MOVE_BLOCKED if path.resolve() in manifest_models else ""),
                 }
+                if link:
+                    item.update(linked=True, linkId=link["id"], linkedSource=str(path.resolve()),
+                                linkedFolder=link["source"], deleteBlockedReason="",
+                                moveBlockedReason="LINKED 파일의 위치는 변경할 수 없습니다. 연결을 해제한 뒤 다시 연결하세요.")
                 if folder == "loras":
                     result["loras"].append({**item, "category": "LoRA", "weight": 0.7, "enabled": False})
                 else:
                     result["models"].append({**item, "kind": MODEL_KINDS.get(folder, "Other"), "planned": False})
+        linked_counts: dict[str, int] = {}
+        for items in result.values():
+            for item in items:
+                if item.get("linked"):
+                    linked_counts[item["linkId"]] = linked_counts.get(item["linkId"], 0) + 1
+        for items in result.values():
+            for item in items:
+                if item.get("linked"):
+                    item["linkedCount"] = linked_counts[item["linkId"]]
         self._previews = previews
         return result
 
@@ -203,7 +228,7 @@ class ResourceLibrary:
         if entry is None:
             raise FileNotFoundError("파일이 없습니다. 목록을 새로고침하세요.")
         model = self.root / entry["path"]
-        if not self._inside(model) or not model.is_file():
+        if self._read_root(model) is None or not model.is_file():
             raise FileNotFoundError("파일이 없습니다. 목록을 새로고침하세요.")
         return entry, model
 
@@ -213,6 +238,8 @@ class ResourceLibrary:
 
     def refresh_metadata(self, identity: str, civitai_key: str) -> dict:
         entry, model = self.resolve(identity)
+        if entry.get("linked"):
+            raise ValueError("LINKED 파일의 정보는 외부 ComfyUI에서 관리하세요. 원본 메타데이터는 변경하지 않습니다.")
         metadata = self._metadata(model)
         version_id = resource_details(entry, metadata)["civitaiVersionId"]
         if not version_id:
@@ -328,6 +355,9 @@ class ResourceLibrary:
 
     def delete(self, identity: str) -> dict:
         entry, model = self.resolve(identity)
+        if entry.get("linked"):
+            result = self.disconnect_link(entry["linkId"])
+            return {"deleted": identity, "warning": "", **result}
         if entry["deleteBlockedReason"]:
             raise ResourceDeleteBlockedError(entry["deleteBlockedReason"])
         # Different model formats can share the same thumbnail and metadata.
@@ -351,10 +381,19 @@ class ResourceLibrary:
         warning = "모델 파일은 삭제했지만 일부 썸네일·메타데이터를 삭제하지 못했습니다: " + ", ".join(failed) if failed else ""
         return {"deleted": identity, "warning": warning}
 
+    def disconnect_link(self, identity: str) -> dict:
+        inventory = self.scan()
+        deleted_ids = [item["id"] for items in inventory.values() for item in items if item.get("linkId") == identity]
+        result = self.links.disconnect(identity)
+        for deleted_id in deleted_ids:
+            self._previews.pop(deleted_id, None)
+        return {**result, "deletedIds": deleted_ids}
+
     def thumbnail(self, identity: str) -> Path | None:
         pair = self._previews.get(identity)
         if pair:
             model, preview = pair
-            if self._inside(model) and self._inside(preview) and model.is_file() and preview.is_file():
+            model_root = self._read_root(model)
+            if model_root and preview.resolve().is_relative_to(model_root) and model.is_file() and preview.is_file():
                 return preview
         return None

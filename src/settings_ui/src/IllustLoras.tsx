@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Empty, Modal, SettingsTabs, Toggle } from "./components";
+import { Badge, Empty, Modal, SettingsTabs, Toggle } from "./components";
 import { ResourceThumbnail } from "./ResourceThumbnail";
 import { resourceDisplayName, type Resources } from "./useResources";
 import type { IllustrationData } from "./illustration";
@@ -132,7 +132,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
             const incompatible = incompatibleBase(item);
             return <li key={item.id}>
               <div className="illust-lora-thumbnail"><ResourceThumbnail name={name} thumbnail={item.thumbnail} /></div>
-              <div className="illust-lora-summary"><strong>{name} <LoraPageLink name={name} url={item.sourceUrl} /></strong><small>{item.family}{incompatible ? ` · ${profile === "ilxl" ? "ANIMA" : "ILXL"} 지원 그림 모델에서 사용` : ""}</small>{isInternalLora(item) && <small>{item.detail || loraPath(item.path)}</small>}<span title={defaultTrigger(item)}>{defaultTrigger(item) || "기본 트리거 없음"}</span></div>
+              <div className="illust-lora-summary"><strong>{name} <LoraPageLink name={name} url={item.sourceUrl} /></strong>{item.linked && <div><Badge tone="lavender">LINKED</Badge></div>}<small>{item.family}{incompatible ? ` · ${profile === "ilxl" ? "ANIMA" : "ILXL"} 지원 그림 모델에서 사용` : ""}</small>{isInternalLora(item) && <small>{item.detail || loraPath(item.path)}</small>}<span title={defaultTrigger(item)}>{defaultTrigger(item) || "기본 트리거 없음"}</span></div>
               <button type="button" className="button" disabled={isAdded || incompatible} aria-label={`${name} 선택`} onClick={() => add(item)}><Plus size={14} />{isAdded ? "추가됨" : "선택"}</button>
             </li>;
           })}</ul> : !error && <Empty title="검색된 LoRA가 없습니다">{query.trim() ? "검색어를 바꿔보세요." : source === "internal" ? internalSource === "all" ? "로라 작업 공간에서 학습을 완료한 뒤 목록을 새로고침하세요." : `${internalLoraFilterLabels[internalSource]} LoRA가 없습니다. 다른 탭을 확인하거나 로라 작업 공간에서 학습을 완료한 뒤 새로고침하세요.` : "설정의 외부 LoRA 관리에 LoRA를 등록한 뒤 목록을 새로고침하세요."}</Empty>}
