@@ -155,12 +155,15 @@ def build_workflow_items(
     grouped: dict[Path, list[str]] = {}
     for binding_key, source in bindings.items():
         grouped.setdefault(source.resolve(), []).append(binding_key)
+    item_ids_by_bindings = {
+        frozenset(item["bindings"]): item["id"] for item in manifest.workflow_items
+    }
     items: list[dict] = []
     for source, item_bindings in grouped.items():
         sorted_bindings = sorted(item_bindings)
         items.append(
             {
-                "id": sorted_bindings[0],
+                "id": item_ids_by_bindings.get(frozenset(item_bindings), sorted_bindings[0]),
                 "name": source.name,
                 "archive_name": f"workflows/{source.name}",
                 "bindings": sorted_bindings,

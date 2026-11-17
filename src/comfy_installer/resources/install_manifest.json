@@ -939,18 +939,6 @@
       },
       {
         "bindings": [
-          "lora_training_workflow_source_paths.anima"
-        ],
-        "id": "lora_training_workflow_source_paths.anima",
-        "model_ids": [
-          "anima-base-v1",
-          "anima-text-encoder",
-          "anima-vae",
-          "anime-sharp-v4-upscaler"
-        ]
-      },
-      {
-        "bindings": [
           "lora_training_workflow_source_paths.sdxl"
         ],
         "id": "lora_training_workflow_source_paths.sdxl",
@@ -959,17 +947,6 @@
           "illustrious-xl-v1",
           "illustrious-xl-v1-vae",
           "rin-flanime-v3"
-        ]
-      },
-      {
-        "bindings": [
-          "style_lora_training_workflow_source_paths.anima"
-        ],
-        "id": "style_lora_training_workflow_source_paths.anima",
-        "model_ids": [
-          "anima-base-v1",
-          "anima-text-encoder",
-          "anima-vae"
         ]
       },
       {
@@ -1093,6 +1070,7 @@
       },
       {
         "bindings": [
+          "lora_training_workflow_source_paths.anima",
           "workflow_pack_extra_paths.lora_training_anima_v2"
         ],
         "id": "workflow_pack_extra_paths.lora_training_anima_v2",
@@ -1119,6 +1097,7 @@
       },
       {
         "bindings": [
+          "style_lora_training_workflow_source_paths.anima",
           "workflow_pack_extra_paths.style_lora_training_anima_v2"
         ],
         "id": "workflow_pack_extra_paths.style_lora_training_anima_v2",
@@ -1129,21 +1108,9 @@
         ]
       },
       {
-        "id": "lora_training_workflow_source_paths.moss",
-        "bindings": [
-          "lora_training_workflow_source_paths.moss"
-        ],
-        "model_ids": [
-          "moss-image-sft-int8",
-          "moss-4step-akhaliq-v2",
-          "qwen35-9b-int8",
-          "flux2-vae-small",
-          "anime-sharp-v4-upscaler"
-        ]
-      },
-      {
         "id": "workflow_pack_extra_paths.lora_training_moss_v2",
         "bindings": [
+          "lora_training_workflow_source_paths.moss",
           "workflow_pack_extra_paths.lora_training_moss_v2"
         ],
         "model_ids": [
@@ -1154,11 +1121,13 @@
         ]
       },
       {
-        "id": "style_lora_training_workflow_source_paths.moss",
+        "id": "workflow_pack_extra_paths.style_lora_training_moss_v2",
         "bindings": [
-          "style_lora_training_workflow_source_paths.moss"
+          "style_lora_training_workflow_source_paths.moss",
+          "workflow_pack_extra_paths.style_lora_training_moss_v2"
         ],
         "model_ids": [
+          "moss-image-base-int8",
           "moss-image-sft-int8",
           "moss-4step-akhaliq-v2",
           "qwen35-9b-int8",
@@ -1168,6 +1137,7 @@
     ],
     "optional_bindings": [
       "workflow_pack_extra_paths.lora_training_moss_v2",
+      "workflow_pack_extra_paths.style_lora_training_moss_v2",
       "workflow_pack_extra_paths.anima_rgba_asset",
       "workflow_pack_extra_paths.illustration_dual_vae",
       "workflow_pack_extra_paths.illustration_moss_8step",

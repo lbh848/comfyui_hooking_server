@@ -121,7 +121,7 @@
     {
       "id": "builtin-moss-style-int8",
       "profile": "moss",
-      "name": "MOSS 그림체 · INT8 16GB",
+      "name": "MOSS 그림체",
       "settings": {
         "profile": "moss",
         "il_rate": 0.0001,
@@ -130,15 +130,16 @@
         "gen_w": 768,
         "gen_h": 1024,
         "resolution": 1024,
-        "dim": 16,
-        "alpha": 16,
-        "step_mode": "total",
-        "step_per_image": 100,
-        "total_steps": 3000,
-        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_MOSS_V1_0.json",
+        "dim": 32,
+        "alpha": 128,
+        "step_mode": "epochs",
+        "step_per_image": 8,
+        "total_steps": 8,
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_MOSS_V2_0.json",
         "multi_img_folder_name": "soya_lora",
         "upscale": false,
-        "optimizer_type": "default"
+        "optimizer_type": "Muon",
+        "max_train_epochs": 8
       }
     },
     {

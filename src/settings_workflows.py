@@ -35,6 +35,7 @@ WORKFLOW_GROUPS = {
     "workflow_pack_extra_paths.lora_training_anima_v2": ("LoRA 학습", "ANIMA"),
     "workflow_pack_extra_paths.lora_training_anima_v2_1": ("LoRA 학습", "ANIMA"),
     "workflow_pack_extra_paths.style_lora_training_anima_v2": ("LoRA 학습", "ANIMA"),
+    "workflow_pack_extra_paths.style_lora_training_moss_v2": ("LoRA 학습", "MOSS"),
     "face_extract_workflow_source_path": ("공통", "얼굴 추출"),
     "video_workflow_source_paths.i2v": ("영상", "H3 · I2V"),
     "video_workflow_source_paths.i2v_fast": ("영상", "H3 · I2V"),

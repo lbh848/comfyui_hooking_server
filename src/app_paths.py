@@ -27,12 +27,12 @@ WORKFLOW_FILENAMES = {
     "face_extract_workflow_source_path": "배포_공방_얼굴추출_V1_0.json",
     "debug_workflow_source_path": "배포_공방_디버깅_V1_0.json",
     "gemma4_workflow_source_path": "배포_공방_Gemma4_이미지분석_V1_0.json",
-    "lora_training_workflow_source_paths.anima": "배포_공방_LoRA학습_캐릭터_ANIMA_V1_0.json",
+    "lora_training_workflow_source_paths.anima": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
     "lora_training_workflow_source_paths.sdxl": "배포_공방_LoRA학습_캐릭터_ILXL_V1_1.json",
-    "lora_training_workflow_source_paths.moss": "배포_공방_LoRA학습_캐릭터_MOSS_V1_0.json",
-    "style_lora_training_workflow_source_paths.anima": "배포_공방_LoRA학습_스타일_ANIMA_V1_0.json",
+    "lora_training_workflow_source_paths.moss": "배포_공방_LoRA학습_캐릭터_MOSS_V2_0.json",
+    "style_lora_training_workflow_source_paths.anima": "배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
     "style_lora_training_workflow_source_paths.sdxl": "배포_공방_LoRA학습_스타일_ILXL_V1_1.json",
-    "style_lora_training_workflow_source_paths.moss": "배포_공방_LoRA학습_스타일_MOSS_V1_0.json",
+    "style_lora_training_workflow_source_paths.moss": "배포_공방_LoRA학습_스타일_MOSS_V2_0.json",
     "workflow_pack_extra_paths.anima_rgba_asset": "배포_공방_ANIMA_V4_투명배경.json",
     "workflow_pack_extra_paths.illustration_dual_vae": "배포_공방_삽화_DUAL_VAE_V1.json",
     "workflow_pack_extra_paths.illustration_moss_4step": "배포_공방_삽화_MOSS_4STEP_V1.json",
@@ -41,6 +41,7 @@ WORKFLOW_FILENAMES = {
     "workflow_pack_extra_paths.lora_training_anima_v2_1": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
     "workflow_pack_extra_paths.style_lora_training_anima_v2": "배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
     "workflow_pack_extra_paths.lora_training_moss_v2": "배포_공방_LoRA학습_캐릭터_MOSS_V2_0.json",
+    "workflow_pack_extra_paths.style_lora_training_moss_v2": "배포_공방_LoRA학습_스타일_MOSS_V2_0.json",
 }
 TAG_ANALYSIS_WORKFLOW_PATHS = {
     key: f"{WORKFLOW_DIR}/{WORKFLOW_FILENAMES[key]}"

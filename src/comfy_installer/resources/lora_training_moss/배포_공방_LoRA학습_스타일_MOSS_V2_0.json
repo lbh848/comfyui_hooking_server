@@ -1,7 +1,7 @@
 {
   "id": "5da02226-704e-43bd-b853-bde0dab95509",
   "revision": 0,
-  "last_node_id": 477,
+  "last_node_id": 478,
   "last_link_id": 788,
   "nodes": [
     {
@@ -2109,21 +2109,13 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            711,
-            788
+            711
           ]
         }
       ],
       "properties": {
         "Node name for S&R": "UNETLoader",
         "cnr_id": "comfy-core",
-        "models": [
-          {
-            "name": "z_image_turbo_bf16.safetensors",
-            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors",
-            "directory": "diffusion_models"
-          }
-        ],
         "enableTabs": false,
         "tabWidth": 65,
         "tabXOffset": 10,
@@ -2138,11 +2130,12 @@
         }
       },
       "widgets_values": [
-        "moss_image_sft_int8_convrot.safetensors",
+        "moss_image_base_int8_convrot.safetensors",
         "default"
       ],
       "color": "#233",
-      "bgcolor": "#355"
+      "bgcolor": "#355",
+      "title": "MOSS-Image Base · ConvRot INT8"
     },
     {
       "id": 435,
@@ -2225,7 +2218,7 @@
     },
     {
       "id": 434,
-      "type": "md_soya_InstantReferenceLoRA",
+      "type": "md_soya_MossReferenceLoRAV2",
       "pos": [
         -414.9324814900575,
         -436.0798843921477
@@ -2475,7 +2468,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "md_soya_InstantReferenceLoRA"
+        "Node name for S&R": "md_soya_MossReferenceLoRAV2"
       },
       "widgets_values": [
         1,
@@ -2495,7 +2488,7 @@
         "",
         true
       ],
-      "title": "MOSS Image INT8 LoRA (16GB)"
+      "title": "md_soya MOSS LoRA V2"
     },
     {
       "id": 446,
@@ -3053,7 +3046,7 @@
         }
       },
       "widgets_values": [
-        "[1]workshop_subject, A portrait of a person in a blue jacket.\n[PROFILE]\nmoss\n[N_IMG]\n1\n[STEP_PER_IMAGE]\n3000\n[IL_RATE]\n0.0001\n[SAVE_PER_STEP]\n200\n[MULTI_IMG_FOLDER_NAME]\nsoya_lora\n[LORA_SAVE_PATH]\nSOYA_STYLE_LORA/moss/workshop_style\n[GEN_W]\n768\n[GEN_H]\n1024\n[UPSCALE]\nfalse\n[RESOLUTION]\n1024\n[SAVE_AFTER]\n0\n[TEST_POSITIVE]\n[1]workshop_subject, A portrait of a person in a garden.\n[TEST_NEGATIVE]\n[1]\n[DIM]\n16\n[ALPHA]\n16\n[END]"
+        "[1]workshop_subject, A portrait of a person in a blue jacket.\n[PROFILE]\nmoss\n[N_IMG]\n1\n[STEP_PER_IMAGE]\n8\n[IL_RATE]\n0.0001\n[SAVE_PER_STEP]\n200\n[MULTI_IMG_FOLDER_NAME]\nsoya_lora\n[LORA_SAVE_PATH]\nSOYA_STYLE_LORA/moss/workshop_style\n[GEN_W]\n768\n[GEN_H]\n1024\n[UPSCALE]\nfalse\n[RESOLUTION]\n1024\n[SAVE_AFTER]\n0\n[TEST_POSITIVE]\n[1]workshop_subject, A portrait of a person in a garden.\n[TEST_NEGATIVE]\n[1]\n[DIM]\n32\n[ALPHA]\n128\n[END]"
       ]
     },
     {
@@ -3270,14 +3263,14 @@
     },
     {
       "id": 5,
-      "type": "md_soya_ReferenceTrainOptions",
+      "type": "md_soya_MossTrainOptionsV2",
       "pos": [
         -871.1185660780047,
         -126.03098581421375
       ],
       "size": [
         326.123046875,
-        394
+        504
       ],
       "flags": {},
       "order": 43,
@@ -3417,6 +3410,46 @@
             "name": "block_weight"
           },
           "link": null
+        },
+        {
+          "name": "optimizer_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "optimizer_type"
+          },
+          "link": null
+        },
+        {
+          "name": "max_train_epochs",
+          "type": "INT",
+          "widget": {
+            "name": "max_train_epochs"
+          },
+          "link": null
+        },
+        {
+          "name": "warmup_ratio",
+          "type": "FLOAT",
+          "widget": {
+            "name": "warmup_ratio"
+          },
+          "link": null
+        },
+        {
+          "name": "ema_window",
+          "type": "FLOAT",
+          "widget": {
+            "name": "ema_window"
+          },
+          "link": null
+        },
+        {
+          "name": "stream",
+          "type": "COMBO",
+          "widget": {
+            "name": "stream"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -3430,13 +3463,13 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "md_soya_ReferenceTrainOptions"
+        "Node name for S&R": "md_soya_MossTrainOptionsV2"
       },
       "widgets_values": [
-        3000,
+        8,
         0.0001,
-        16,
-        16,
+        32,
+        128,
         "1024",
         true,
         true,
@@ -3447,8 +3480,14 @@
         0,
         42,
         true,
-        ""
-      ]
+        "",
+        "Muon",
+        8,
+        0.05,
+        0.1,
+        "fp32"
+      ],
+      "title": "md_soya MOSS Train Options V2"
     },
     {
       "id": 476,
@@ -3679,6 +3718,74 @@
         1.0
       ],
       "title": "MOSS 4STEP LoRA (preview only)"
+    },
+    {
+      "id": 478,
+      "type": "UNETLoader",
+      "pos": [
+        -793.748943395716,
+        -1415.0865487785102
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "UNet 모델 파일명",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "가중치 데이터 유형",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "모델",
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            788
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader",
+        "cnr_id": "comfy-core",
+        "enableTabs": false,
+        "tabWidth": 65,
+        "tabXOffset": 10,
+        "hasSecondTab": false,
+        "secondTabText": "Send Back",
+        "secondTabOffset": 80,
+        "secondTabWidth": 65,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.5.2",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "moss_image_sft_int8_convrot.safetensors",
+        "default"
+      ],
+      "color": "#233",
+      "bgcolor": "#355",
+      "title": "MOSS-Image SFT · Preview"
     }
   ],
   "links": [
@@ -4196,7 +4303,7 @@
     ],
     [
       788,
-      11,
+      478,
       0,
       477,
       0,

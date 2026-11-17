@@ -11,14 +11,19 @@ preset supplies rank 32, alpha 128, Muon, learning rate 5e-5,
 resolution 1024, and the selected step budget. The training preview uses the
 Base checkpoint with Euler, sgm_uniform, 50 steps and CFG 3.0.
 
-The style V1 workflow trains the MOSS-Image-SFT ConvRot INT8 model
-with the Qwen3.5-9B INT8 encoder and FLUX.2 VAE on sd-scripts.
-Its previews use the separate SFT 4-step LoRA with Euler,
-simple scheduling and CFG 1.
+The `MOSS 그림체` preset selects the style V2 workflow. Training uses the
+Base ConvRot INT8 checkpoint, the connected Qwen3.5-9B INT8 encoder and
+FLUX.2 VAE. The V2 trainer uses Muon at 1e-4, rank 32, alpha 128, Kaiming
+initialization, 8 epochs, batch and accumulation 1, clip 1.0, 5% warmup,
+caption dropout 0, EMA window 0.1, BF16 LoRA output and FP32 residuals.
+REPA is off. With 30 images this gives 240 updates. The default checkpoint
+interval is 200 updates. Previews use the separate SFT model with its
+4-step LoRA at strength 1, Euler, simple scheduling and CFG 1.
 
 The V2 loader prepares reusable forward weights and backward initialization
 shards from the selected ConvRot file in a cache keyed by the source SHA-256.
 For Base this requires approximately 14.9 GB of additional disk space.
+The original style V1 workflow uses SFT and the sd-scripts backend.
 Model download metadata is in `install_manifest.json`.
 
 The upstream memory table reports roughly 9.1GB for INT8 DiT/encoder, batch 1,

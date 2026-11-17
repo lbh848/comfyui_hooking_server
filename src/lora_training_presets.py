@@ -12,7 +12,7 @@ from app_paths import config_root, install_root, resolve_install_path
 from asset_preset_scope import AssetPresetLock, write_scope_documents
 from configuration import settings_lock
 from lora_training_steps import training_step_settings
-from lora_training_workflow import training_optimizer_type
+from lora_training_workflow import EPOCH_TRAINING_NODES, training_optimizer_type
 from preset_locations import PRESET_LOCATIONS
 
 
@@ -32,8 +32,8 @@ def validate_training_settings(value, profile):
     if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {"step_mode", "total_steps", "max_train_epochs", "workflow_source_path", "optimizer_type"}
             or value.get("profile") != profile):
         raise ValueError("학습 프로필과 설정 항목을 확인하세요.")
-    if value.get("step_mode") == "epochs" and profile != "anima":
-        raise ValueError("Epochs 학습은 ANIMA 프로필에서 선택하세요.")
+    if value.get("step_mode") == "epochs" and profile not in EPOCH_TRAINING_NODES:
+        raise ValueError("Epochs 학습은 ANIMA 또는 MOSS 프로필에서 선택하세요.")
     for key, minimum in NUMBER_MINIMUMS.items():
         number = value[key]
         if (type(number) not in (int, float) or number < minimum or number > 9007199254740991
