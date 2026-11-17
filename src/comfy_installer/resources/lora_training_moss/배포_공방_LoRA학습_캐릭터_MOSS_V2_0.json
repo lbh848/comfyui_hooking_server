@@ -1,7 +1,7 @@
 {
   "id": "5da02226-704e-43bd-b853-bde0dab95509",
   "revision": 0,
-  "last_node_id": 477,
+  "last_node_id": 478,
   "last_link_id": 788,
   "nodes": [
     {
@@ -2606,7 +2606,7 @@
           "name": "preview_model",
           "shape": 7,
           "type": "MODEL",
-          "link": null
+          "link": 757
         },
         {
           "localized_name": "preview_clip",
@@ -2809,10 +2809,10 @@
         true,
         0,
         42,
-        50,
-        3.0,
+        4,
+        1.0,
         "euler",
-        "sgm_uniform",
+        "simple",
         768,
         1024,
         "",
@@ -3818,6 +3818,134 @@
       "widgets_values": [
         "0"
       ]
+    },
+    {
+      "id": 477,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        -405,
+        -1050
+      ],
+      "size": [
+        350,
+        82
+      ],
+      "flags": {},
+      "order": 44,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 788
+        },
+        {
+          "localized_name": "lora_name",
+          "name": "lora_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "lora_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "strength_model",
+          "name": "strength_model",
+          "type": "FLOAT",
+          "widget": {
+            "name": "strength_model"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            757
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoraLoaderModelOnly",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "moss_image_sft_4step_v2.0.safetensors",
+        1.0
+      ],
+      "title": "MOSS 4STEP LoRA (preview only)"
+    },
+    {
+      "id": 478,
+      "type": "UNETLoader",
+      "pos": [
+        -793.748943395716,
+        -1415.0865487785102
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "UNet 모델 파일명",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "가중치 데이터 유형",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "모델",
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            788
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader",
+        "cnr_id": "comfy-core",
+        "enableTabs": false,
+        "tabWidth": 65,
+        "tabXOffset": 10,
+        "hasSecondTab": false,
+        "secondTabText": "Send Back",
+        "secondTabOffset": 80,
+        "secondTabWidth": 65,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.5.2",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "moss_image_sft_int8_convrot.safetensors",
+        "default"
+      ],
+      "color": "#233",
+      "bgcolor": "#355",
+      "title": "MOSS-Image SFT · Preview"
     }
   ],
   "links": [
@@ -4356,6 +4484,22 @@
       475,
       0,
       "INT"
+    ],
+    [
+      757,
+      477,
+      0,
+      434,
+      6,
+      "MODEL"
+    ],
+    [
+      788,
+      478,
+      0,
+      477,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [

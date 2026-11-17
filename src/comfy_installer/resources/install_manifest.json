@@ -1125,6 +1125,8 @@
         ],
         "model_ids": [
           "moss-image-base-int8",
+          "moss-image-sft-int8",
+          "moss-4step-akhaliq-v2",
           "qwen35-9b-int8",
           "flux2-vae-small",
           "anime-sharp-v4-upscaler"
