@@ -12683,7 +12683,7 @@
             const cloudOnlyMode = installMode === 'cloud_only';
             if (compatibilityMode && !window.confirm(
                 'NVIDIA 호환 설치를 시작할까요?\n\n' +
-                'RTX 2070/2080 같은 Turing(sm75)부터 지원하기 위해 SageAttention과 전용 Triton을 설치하지 않습니다.\n' +
+                'RTX 2070/2080 같은 Turing(sm75)부터 지원하기 위해 SageAttention, FlashAttention 2, 전용 Triton을 설치하지 않습니다.\n' +
                 '지원하지 않는 GPU이거나 GPU가 없으면 CPU로 설치합니다.\n' +
                 '설치 후 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 disabled로 설정해야 합니다.'
             )) return;

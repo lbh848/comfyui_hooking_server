@@ -131,7 +131,7 @@ export function InstallControls({ isSaved, saveState, revision, hasCivitaiKey, h
             {disabled ? installBlockers.join(" · ") : "설치 가능"}
           </p>
         </div>
-        <p className="field-help">호환 설치는 SageAttention과 전용 Triton을 제외합니다.</p>
+        <p className="field-help">호환 설치는 SageAttention, FlashAttention 2, 전용 Triton을 제외합니다.</p>
         {confirmation && <Modal title="기존 ComfyUI 삭제 후 설치" onClose={() => setConfirmation(null)}>
           <div className="form-stack">
             <p>기존 <strong>comfy 폴더 전체</strong>를 삭제한 뒤 {confirmation === "nvidia_compatibility" ? "호환 설치" : "기본설치"}를 진행합니다.</p>

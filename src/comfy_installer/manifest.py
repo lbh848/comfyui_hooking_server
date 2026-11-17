@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
+from .install_modes import ACCELERATION_WHEELS
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -191,26 +193,27 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     f"{torch_cuda!r}"
                 )
             _require_string(profile, "triton_package", context)
-        sageattention = profile.get("sageattention")
-        if kind == "nvidia" and sageattention is None:
+        if kind == "nvidia" and profile.get("sageattention") is None:
             raise ManifestError(
                 f"{context}.sageattention이 NVIDIA 프로필에 없습니다."
             )
-        if sageattention is not None:
-            if not isinstance(sageattention, dict):
-                raise ManifestError(f"{context}.sageattention이 객체가 아닙니다.")
-            _require_string(sageattention, "url", f"{context}.sageattention")
-            sage_hash = _require_string(
-                sageattention, "sha256", f"{context}.sageattention"
-            ).lower()
-            if not _SHA256_RE.fullmatch(sage_hash):
+        for key in ACCELERATION_WHEELS:
+            if key not in profile:
+                continue
+            wheel = profile[key]
+            wheel_context = f"{context}.{key}"
+            if not isinstance(wheel, dict):
+                raise ManifestError(f"{wheel_context}이 객체가 아닙니다.")
+            _require_string(wheel, "url", wheel_context)
+            digest = _require_string(wheel, "sha256", wheel_context).lower()
+            if not _SHA256_RE.fullmatch(digest):
                 raise ManifestError(
-                    f"{context}.sageattention.sha256 형식이 유효하지 않습니다."
+                    f"{wheel_context}.sha256 형식이 유효하지 않습니다."
                 )
-            sage_size = sageattention.get("size")
-            if not isinstance(sage_size, int) or sage_size <= 0:
+            size = wheel.get("size")
+            if type(size) is not int or size <= 0:
                 raise ManifestError(
-                    f"{context}.sageattention.size가 양의 정수가 아닙니다."
+                    f"{wheel_context}.size가 양의 정수가 아닙니다."
                 )
     if not any(profile.get("kind") == "nvidia" for profile in gpu_profiles):
         raise ManifestError("NVIDIA GPU 프로필이 없습니다.")

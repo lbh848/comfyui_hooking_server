@@ -21,8 +21,10 @@ SUPPORTED_INSTALL_MODES = frozenset(
 )
 
 NVIDIA_COMPATIBILITY_MINIMUM_COMPUTE = "7.5"
+ACCELERATION_WHEELS = ("sageattention", "flash_attn")
+NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES = ("sageattention", "flash-attn", "triton-windows", "triton")
 NVIDIA_COMPATIBILITY_WARNING = (
-    "호환 설치에는 SageAttention과 전용 Triton을 설치하지 않습니다. "
+    "호환 설치에는 SageAttention, FlashAttention 2, 전용 Triton을 설치하지 않습니다. "
     "설치 후 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 "
     "해당 노드를 disabled로 설정하세요."
 )
@@ -46,22 +48,14 @@ def effective_gpu_profile(
     mode = normalize_install_mode(install_mode)
     effective = copy.deepcopy(profile)
     effective["install_mode"] = mode
-    if mode == INSTALL_MODE_CLOUD_ONLY or effective.get("kind") == "cpu":
-        # 로컬 추론이 없으므로 SageAttention·Triton 을 설치할 이유가 없다.
-        # 호환 설치와 달리 최소 compute capability 도 두지 않는다 — 로컬 GPU 가
-        # 아예 없는 구성이 정상이라, 하한을 두면 정상 구성이 막힌다.
-        effective["sageattention_required"] = False
-        effective.pop("sageattention", None)
-        effective.pop("triton_package", None)
-        return effective
-    if mode == INSTALL_MODE_STANDARD or effective.get("kind") != "nvidia":
-        return effective
-
-    effective["minimum_compute_capability"] = (
-        NVIDIA_COMPATIBILITY_MINIMUM_COMPUTE
-    )
+    if effective.get("kind") == "nvidia":
+        if mode == INSTALL_MODE_STANDARD:
+            return effective
+        if mode == INSTALL_MODE_NVIDIA_COMPATIBILITY:
+            effective["minimum_compute_capability"] = NVIDIA_COMPATIBILITY_MINIMUM_COMPUTE
     effective["sageattention_required"] = False
-    effective.pop("sageattention", None)
+    for key in ACCELERATION_WHEELS:
+        effective.pop(key, None)
     effective.pop("triton_package", None)
     return effective
 

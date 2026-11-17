@@ -756,6 +756,11 @@
     "gpu_profiles": [
       {
         "id": "nvidia-cu130",
+        "flash_attn": {
+          "sha256": "d07add7cca7c330a70674c29114398eeb46192a372f9da5d92e3e9b908f8ad3b",
+          "size": 239528870,
+          "url": "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.13/flash_attn-2.8.3%2Bcu130torch2.10-cp312-cp312-win_amd64.whl"
+        },
         "index_url": "https://download.pytorch.org/whl/cu130",
         "kind": "nvidia",
         "minimum_compute_capability": "8.0",
@@ -776,6 +781,11 @@
       },
       {
         "id": "nvidia-cu128",
+        "flash_attn": {
+          "sha256": "9ca9d69be86ad501e28a2123478b45b5a833a5d253cc14c69915a46e809f4d0e",
+          "size": 250820364,
+          "url": "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.13/flash_attn-2.8.3%2Bcu128torch2.10-cp312-cp312-win_amd64.whl"
+        },
         "index_url": "https://download.pytorch.org/whl/cu128",
         "kind": "nvidia",
         "minimum_compute_capability": "8.0",

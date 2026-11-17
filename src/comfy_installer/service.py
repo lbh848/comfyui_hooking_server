@@ -60,6 +60,7 @@ from .e2e import (
 )
 from comfy_allocation import CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
 from .install_modes import (
+    NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES,
     INSTALL_MODE_CLOUD_ONLY,
     INSTALL_MODE_NVIDIA_COMPATIBILITY,
     INSTALL_MODE_STANDARD,
@@ -3000,8 +3001,7 @@ class ComfyInstallerService:
             warning = compatibility_warning(mode)
             if warning:
                 self._log(
-                    "[업데이트][호환 설치 유지] SageAttention을 다시 "
-                    f"설치하지 않습니다. {warning}",
+                    f"[업데이트][호환 설치 유지] {warning}",
                     "warning",
                 )
             self._set_phase("config_backup")
@@ -3113,8 +3113,9 @@ class ComfyInstallerService:
                     "reused": True,
                     "preinstall_wheels": [],
                     "sageattention_wheel": None,
+                    "flash_attn_wheel": None,
                     "excluded_acceleration_packages": (
-                        ["sageattention", "triton-windows", "triton"]
+                        list(NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES)
                         if mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
                         else []
                     ),
@@ -3431,8 +3432,7 @@ class ComfyInstallerService:
             warning = compatibility_warning(mode)
             if warning:
                 self._log(
-                    "[업데이트][호환 설치 유지] SageAttention을 다시 "
-                    f"설치하지 않습니다. {warning}",
+                    f"[업데이트][호환 설치 유지] {warning}",
                     "warning",
                 )
 
@@ -3713,8 +3713,9 @@ class ComfyInstallerService:
                     "reused": True,
                     "preinstall_wheels": [],
                     "sageattention_wheel": None,
+                    "flash_attn_wheel": None,
                     "excluded_acceleration_packages": (
-                        ["sageattention", "triton-windows", "triton"]
+                        list(NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES)
                         if mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
                         else []
                     ),
@@ -3798,6 +3799,8 @@ class ComfyInstallerService:
                 comfy_root=self.comfy_root,
                 python=python,
                 gpu_profile=profile,
+                # A node-only update preserves the installed Python profile.
+                verify_flash_attn=component != "soya" or "python_profile" not in reasons,
                 cancel_event=self._cancel,
                 log=self._log,
             )

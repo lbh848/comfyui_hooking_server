@@ -15,7 +15,11 @@ from threading import Event
 from typing import Callable
 
 from .downloader import ProgressCallback, ResumableDownloader
-from .install_modes import INSTALL_MODE_NVIDIA_COMPATIBILITY
+from .install_modes import (
+    ACCELERATION_WHEELS,
+    INSTALL_MODE_NVIDIA_COMPATIBILITY,
+    NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES,
+)
 from .operations import CommandCancelled, isolated_subprocess_env, run_command, uv_python_path
 from .python_runtime import (
     MANAGED_PYTHON_MARKER,
@@ -193,6 +197,44 @@ def create_comfy_venv(
         ) from exc
 
 
+def install_acceleration_wheels(
+    *,
+    comfy_root: Path,
+    python: Path,
+    gpu_profile: dict,
+    downloader: ResumableDownloader,
+    cache_root: Path,
+    cancel_event: Event,
+    log: LogCallback | None,
+    progress: ProgressCallback | None,
+) -> dict[str, str | None]:
+    installed = {}
+    for key in ACCELERATION_WHEELS:
+        wheel = gpu_profile.get(key)
+        installed[key + "_wheel"] = None
+        if not wheel:
+            continue
+        filename = Path(wheel["url"].split("?", 1)[0]).name.replace("%2B", "+")
+        wheel_path = cache_root / "wheels" / filename
+        downloader.download(
+            url=wheel["url"],
+            target=wheel_path,
+            expected_size=wheel["size"],
+            expected_sha256=wheel["sha256"],
+            cancel_event=cancel_event,
+            progress=progress,
+        )
+        _uv_pip(
+            python=python,
+            cwd=comfy_root,
+            arguments=["install", "--cache-dir", str(cache_root / "uv"), str(wheel_path)],
+            cancel_event=cancel_event,
+            log=log,
+        )
+        installed[key + "_wheel"] = str(wheel_path)
+    return installed
+
+
 def install_python_dependencies(
     *,
     comfy_root: Path,
@@ -273,47 +315,28 @@ def install_python_dependencies(
                 log=log,
             )
 
-        sage = gpu_profile.get("sageattention")
-        sage_path: Path | None = None
-        if sage:
-            sage_path = wheel_cache / Path(
-                str(sage["url"]).split("?", 1)[0]
-            ).name.replace("%2B", "+")
-            downloader.download(
-                url=str(sage["url"]),
-                target=sage_path,
-                expected_size=int(sage["size"]),
-                expected_sha256=str(sage["sha256"]),
-                cancel_event=cancel_event,
-                progress=progress,
-            )
-            _uv_pip(
-                python=python,
-                cwd=comfy_root,
-                arguments=["install", str(sage_path)],
-                cancel_event=cancel_event,
-                log=log,
-            )
+        acceleration_wheels = install_acceleration_wheels(
+            comfy_root=comfy_root, python=python, gpu_profile=gpu_profile,
+            downloader=downloader, cache_root=cache_root, cancel_event=cancel_event,
+            log=log, progress=progress,
+        )
 
         excluded_acceleration_packages: list[str] = []
         if (
             gpu_profile.get("install_mode")
             == INSTALL_MODE_NVIDIA_COMPATIBILITY
         ):
-            excluded_acceleration_packages = [
-                "sageattention",
-                "triton-windows",
-                "triton",
-            ]
+            excluded_acceleration_packages = list(NVIDIA_COMPATIBILITY_EXCLUDED_PACKAGES)
             if log:
                 log(
-                    "[Python][호환 설치] SageAttention/Triton 제거: "
+                    "[Python][호환 설치] 가속 패키지 제거: "
                     + ", ".join(excluded_acceleration_packages)
                 )
             detection_script = (
                 "import importlib.metadata,json;"
-                "wanted={'sageattention','triton-windows','triton'};"
-                "installed={str(d.metadata.get('Name','')).lower() "
+                "from packaging.utils import canonicalize_name;"
+                f"wanted=set({excluded_acceleration_packages!r});"
+                "installed={canonicalize_name(d.metadata.get('Name') or '') "
                 "for d in importlib.metadata.distributions()};"
                 "print(json.dumps(sorted(wanted & installed)))"
             )
@@ -348,6 +371,8 @@ def install_python_dependencies(
                     cwd=comfy_root,
                     arguments=[
                         "uninstall",
+                        "--cache-dir",
+                        str(cache_root / "uv"),
                         *installed_acceleration_packages,
                     ],
                     cancel_event=cancel_event,
@@ -355,7 +380,7 @@ def install_python_dependencies(
                 )
             elif log:
                 log(
-                    "[Python][호환 설치] 기존 SageAttention/Triton이 "
+                    "[Python][호환 설치] 기존 가속 패키지가 "
                     "없어 제거 단계를 건너뜁니다."
                 )
 
@@ -363,7 +388,7 @@ def install_python_dependencies(
             "python": str(python),
             "profile": str(gpu_profile["id"]),
             "preinstall_wheels": preinstalled,
-            "sageattention_wheel": str(sage_path) if sage_path else None,
+            **acceleration_wheels,
             "excluded_acceleration_packages": excluded_acceleration_packages,
         }
     except DependencyInstallError:
@@ -615,6 +640,7 @@ def runtime_probe_script(
     requires_nvidia: bool,
     requires_triton: bool,
     requires_sageattention: bool,
+    requires_flash_attn: bool = False,
 ) -> str:
     """독립 환경 검증 프로브 스크립트."""
 
@@ -624,6 +650,7 @@ def runtime_probe_script(
             f"requires_nvidia={requires_nvidia!r}",
             f"requires_triton={requires_triton!r}",
             f"requires_sageattention={requires_sageattention!r}",
+            f"requires_flash_attn={requires_flash_attn!r}",
             "result={",
             "'prefix':sys.prefix,",
             "'executable':sys.executable,",
@@ -670,6 +697,17 @@ def runtime_probe_script(
             "    result['gpu_acceleration_validation']='PyTorch CUDA; SageAttention disabled'",
             "else:",
             "    result['gpu_acceleration_validation']='skipped: CPU profile'",
+            "if requires_flash_attn:",
+            "    try:",
+            "        from flash_attn import flash_attn_func",
+            "        q,k,v=[torch.randn((1,128,2,128),device='cuda',dtype=torch.bfloat16,requires_grad=True) for _ in range(3)]",
+            "        output=flash_attn_func(q,k,v)",
+            "        output.float().mean().backward()",
+            "        result['flash_attn_execution']=(output.shape==q.shape and",
+            "            all(t is not None and torch.isfinite(t).all().item() for t in (output,q.grad,k.grad,v.grad)))",
+            "    except Exception as exc:",
+            "        result['flash_attn_error']=repr(exc)",
+            "        traceback.print_exc()",
             "print(json.dumps(result,ensure_ascii=False))",
             # onnxruntime 텔레메트리 스레드가 업로드 중인 채로 인터프리터 종료와
             # 겹치면 SIGSEGV 가 난다. 정리할 상태가 없는 일회성 프로브라 종료
@@ -688,6 +726,7 @@ def verify_isolated_runtime(
     gpu_profile: dict,
     cancel_event: Event,
     log: LogCallback | None,
+    verify_flash_attn: bool = True,
 ) -> dict:
     requires_nvidia = gpu_profile.get("kind") == "nvidia"
     requires_sageattention = bool(
@@ -697,10 +736,12 @@ def verify_isolated_runtime(
         )
     )
     requires_triton = bool(gpu_profile.get("triton_package"))
+    requires_flash_attn = verify_flash_attn and bool(gpu_profile.get("flash_attn"))
     probe_script = runtime_probe_script(
         requires_nvidia=requires_nvidia,
         requires_triton=requires_triton,
         requires_sageattention=requires_sageattention,
+        requires_flash_attn=requires_flash_attn,
     )
     try:
         lines = run_command(
@@ -779,6 +820,11 @@ def verify_isolated_runtime(
                 raise DependencyInstallError(
                     f"Triton import 실패: {result['triton_error']}"
                 )
+            if requires_flash_attn and result.get("flash_attn_execution") is not True:
+                raise DependencyInstallError(
+                    "FlashAttention 2 CUDA 순전파·역전파 검증 실패: "
+                    + str(result.get("flash_attn_error", "출력 또는 기울기 오류"))
+                )
             if requires_sageattention and "sageattention_error" in result:
                 raise DependencyInstallError(
                     "SageAttention import 실패: "
@@ -806,7 +852,8 @@ def verify_isolated_runtime(
                 f"gpu={result.get('gpu')}, "
                 f"compute={result.get('gpu_compute_capability')}, "
                 f"sageattention_required={requires_sageattention}, "
-                f"sageattention_execution={result.get('sageattention_execution')}"
+                f"sageattention_execution={result.get('sageattention_execution')}, "
+                f"flash_attn_execution={result.get('flash_attn_execution')}"
             )
         return result
     except DependencyInstallError:
