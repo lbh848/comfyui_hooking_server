@@ -3,12 +3,17 @@ import { Play, Settings2 } from "lucide-react";
 import { Badge, Modal, Panel } from "./components";
 import { contextParams, loraRequest, prefix, query, trainingDefaults, type LoraCategory, type LoraContext, type LoraData } from "./internalLora";
 import { trainingFields as fields } from "./LoraTrainingFields";
-import { LoraTrainingPresetPicker, trainingProfileLabel } from "./LoraTrainingPresets";
+import { LoraTrainingPresetPicker, trainingProfileLabel, type TrainingProfile } from "./LoraTrainingPresets";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
+
+const animaProjectProfiles: readonly TrainingProfile[] = ["anima", "sdxl"];
+const mossProjectProfiles: readonly TrainingProfile[] = ["moss"];
+const styleProjectProfiles = [...animaProjectProfiles, ...mossProjectProfiles];
 
 export type BotLoraTrainingHandle = { train: (character: LoraData) => Promise<void> };
 export function InternalLoraTraining({ context, detail, refresh, notify, trainingRef }: { context: LoraContext; detail: LoraData; refresh: () => Promise<void>; notify: (m: string) => void; trainingRef?: Ref<BotLoraTrainingHandle> }) {
   const { category, character, profile } = context;
+  const presetProfiles = category === "style" ? styleProjectProfiles : profile === "moss" ? mossProjectProfiles : animaProjectProfiles;
   const [config, setConfig] = useState<LoraData>(() => ({ ...trainingDefaults(category === "style" ? profile : detail.training_config?.profile || "anima"), ...(category === "style" ? detail.training_config?.[profile] : detail.training_config) }));
   const [trigger, setTrigger] = useState(character?.trigger || detail.trigger || ""); const [description, setDescription] = useState(detail.description || "");
   const current = JSON.stringify({ config, trigger, description });
@@ -58,7 +63,7 @@ export function InternalLoraTraining({ context, detail, refresh, notify, trainin
     <div className="internal-lora-fields">
       {(category !== "bot" || character) && <label className="field">트리거 키워드<input value={trigger} disabled={busy} onChange={e => { setSaveDelay(600); setTrigger(e.target.value); }} /></label>}
       {category !== "bot" && <label className="field internal-lora-wide">설명<textarea value={description} disabled={busy} onChange={e => { setSaveDelay(600); setDescription(e.target.value); }} /></label>}
-      <LoraTrainingPresetPicker value={config.training_preset_id || ""} disabled={locked} onChange={(settings, id) => { setError(""); setSaveDelay(0); setConfig(current => ({ ...(category === "asset" ? current : {}), ...settings, training_preset_id: id })); }} />
+      <LoraTrainingPresetPicker profiles={presetProfiles} value={config.training_preset_id || ""} disabled={locked} onChange={(settings, id) => { setError(""); setSaveDelay(0); setConfig(current => ({ ...(category === "asset" ? current : {}), ...settings, training_preset_id: id })); }} />
     </div>
     {(error || autosave.error || autosave.inputError) && <p className="field-error" role="alert">{error || autosave.error || autosave.inputError}</p>}
     {autosave.error && <button type="button" className="button" disabled={locked} onClick={() => void autosave.retry()}>자동 저장 다시 시도</button>}

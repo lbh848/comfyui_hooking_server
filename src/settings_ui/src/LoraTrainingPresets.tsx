@@ -119,31 +119,49 @@ export function LoraTrainingPresets({ profile, active, notify }: {
   </div>;
 }
 
-export function LoraTrainingPresetPicker({ profile, value, disabled, onChange }: { profile?: TrainingProfile; value: string; disabled: boolean; onChange: (settings: LoraData, id: string) => void }) {
+export function LoraTrainingPresetPicker({ profiles, value, disabled, onChange }: {
+  profiles: readonly TrainingProfile[]; value: string; disabled: boolean; onChange: (settings: LoraData, id: string) => void;
+}) {
   const [presets, setPresets] = useState<TrainingPreset[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const availablePresets = presets.filter(preset => profiles.includes(preset.profile));
+  const selectedPreset = availablePresets.find(preset => preset.id === value);
   const latestOnChange = useRef(onChange);
   latestOnChange.current = onChange;
   useEffect(() => {
-    const preset = presets.find(item => item.id === value);
-    if (preset) latestOnChange.current({ ...preset.settings }, preset.id);
-  }, [presets, value]);
+    if (selectedPreset) latestOnChange.current({ ...selectedPreset.settings }, selectedPreset.id);
+  }, [selectedPreset]);
   useEffect(() => {
     let controller: AbortController;
     const load = () => {
       controller?.abort(); controller = new AbortController(); const signal = controller.signal;
       setLoading(true); setError("");
-      void Promise.all((profile ? [profile] : ["anima", "sdxl", "moss"] as TrainingProfile[]).map(item => loraRequest(path(item), undefined, signal))).then(results => {
+      void Promise.all(profiles.map(profile => loraRequest(path(profile), undefined, signal))).then(results => {
         if (!signal.aborted) setPresets(results.flatMap(result => result.presets));
       }).catch(cause => { if (!signal.aborted) setError(cause.message); }).finally(() => { if (!signal.aborted) setLoading(false); });
     };
     setPresets([]); load();
     window.addEventListener(changedEvent, load);
     return () => { controller?.abort(); window.removeEventListener(changedEvent, load); };
-  }, [profile]);
+  }, [profiles]);
   return <div className="internal-lora-wide internal-lora-preset-picker">
-    <div className="internal-lora-actions"><label className="field internal-lora-preset-select">학습 프로필 프리셋<select value={value} disabled={disabled || loading || !!error} onChange={event => { const preset = presets.find(item => item.id === event.target.value); if (preset) onChange({ ...preset.settings }, preset.id); }}><option value="" disabled>{loading ? "불러오는 중…" : "프리셋 선택"}</option>{value && !presets.some(item => item.id === value) && <option value={value}>현재 적용된 프리셋</option>}{(profile ? [profile] : ["anima", "sdxl", "moss"] as TrainingProfile[]).flatMap(type => (["builtin", "local"] as const).map(scope => <optgroup key={`${type}-${scope}`} label={`${profile ? "" : `${trainingProfileLabel(type)} · `}${scopes[scope]}`}>{presets.filter(item => item.profile === type && item.scope === scope).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>))}</select></label><button type="button" className="button" disabled={disabled || loading} aria-label="학습 프로필 프리셋 새로고침" onClick={() => window.dispatchEvent(new Event(changedEvent))}><RefreshCw size={14} /></button></div>
+    <div className="internal-lora-actions">
+      <label className="field internal-lora-preset-select">학습 프로필 프리셋<select value={value} disabled={disabled || loading || !!error} onChange={event => {
+        const preset = availablePresets.find(item => item.id === event.target.value);
+        if (preset) onChange({ ...preset.settings }, preset.id);
+      }}>
+        <option value="" disabled>{loading ? "불러오는 중…" : "프리셋 선택"}</option>
+        {value && !selectedPreset && <option value={value} disabled>현재 적용된 프리셋</option>}
+        {profiles.flatMap(profile => (["builtin", "local"] as const).map(scope => {
+          const group = availablePresets.filter(preset => preset.profile === profile && preset.scope === scope);
+          return group.length > 0 && <optgroup key={`${profile}-${scope}`} label={`${trainingProfileLabel(profile)} · ${scopes[scope]}`}>
+            {group.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+          </optgroup>;
+        }))}
+      </select></label>
+      <button type="button" className="button" disabled={disabled || loading} aria-label="학습 프로필 프리셋 새로고침" onClick={() => window.dispatchEvent(new Event(changedEvent))}><RefreshCw size={14} /></button>
+    </div>
     {error && <p className="field-error" role="alert">{error}</p>}
   </div>;
 }
