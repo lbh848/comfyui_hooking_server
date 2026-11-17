@@ -172,6 +172,7 @@ def list_projects() -> list:
         entry = {
             "id": project_id,
             "name": pdata.get("name", project_id),
+            "profile": pdata.get("profile"),
             "trigger": pdata.get("trigger", ""),
             "description": pdata.get("description", ""),
             "image_count": len(images),
@@ -190,7 +191,7 @@ def list_projects() -> list:
     return result
 
 
-def create_project(name: str, trigger: str = "", description: str = "") -> dict:
+def create_project(name: str, trigger: str = "", description: str = "", profile: str | None = None) -> dict:
     name = (name or "").strip()
     if not name:
         print("[STYLE_LORA] 프로젝트 생성 실패: 이름 누락")
@@ -199,6 +200,12 @@ def create_project(name: str, trigger: str = "", description: str = "") -> dict:
     if name_error:
         print(f"[STYLE_LORA] 잘못된 프로젝트명: name={name!r}, error={name_error}")
         return {"success": False, "error": name_error}
+    if profile is not None:
+        from modes.lora_mode import validate_lora_project_profile
+
+        profile_error = validate_lora_project_profile(profile)
+        if profile_error:
+            return {"success": False, "error": profile_error}
     data = _load_data()
     project_id = _gen_id(name)
     projects = data.setdefault("projects", {})
@@ -206,7 +213,7 @@ def create_project(name: str, trigger: str = "", description: str = "") -> dict:
         return {"success": False, "error": "이미 존재하는 프로젝트입니다 (다시 시도하세요)"}
 
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    projects[project_id] = {
+    project = {
         "name": name,
         "trigger": (trigger or "").strip() or name,
         "description": description or "",
@@ -217,7 +224,12 @@ def create_project(name: str, trigger: str = "", description: str = "") -> dict:
         "usage_count": 0,
         "created_at": now,
     }
-    _save_data(data)
+    if profile is not None:
+        project["profile"] = profile
+        project["training_config"]["selected_profile"] = profile
+    projects[project_id] = project
+    if not _save_data(data):
+        return {"success": False, "error": "프로젝트를 저장하지 못했습니다."}
     os.makedirs(_project_dir(project_id), exist_ok=True)
     print(f"[STYLE_LORA] 프로젝트 생성: {project_id} (name={name}, trigger={trigger})")
     return {"success": True, "id": project_id}

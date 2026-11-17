@@ -35455,7 +35455,7 @@ async def handle_api_instance_lora_prompt_filter_save(request):
 # ─── 스타일(그림체) LoRA API 핸들러 ──────────────────────────────
 
 async def handle_api_style_lora_projects(request):
-    """프로젝트 목록. POST 로 create(body.name, body.trigger, body.description). 평면 구조(그룹 없음)."""
+    """List style LoRA projects or create a project with the requested profile."""
     try:
         from modes import style_lora_mode as sm
         if request.method == "POST":
@@ -35465,7 +35465,7 @@ async def handle_api_style_lora_projects(request):
                 return web.json_response({"success": False, "error": "name 필수"}, status=400)
             trigger = (body.get("trigger") or "").strip()
             description = body.get("description", "") or ""
-            return web.json_response(sm.create_project(name, trigger, description))
+            return web.json_response(sm.create_project(name, trigger, description, profile=body.get("profile")))
         return web.json_response({"success": True, "data": sm.list_projects()})
     except Exception as e:
         print(f"[STYLE_LORA_API] projects 실패: {e}")
