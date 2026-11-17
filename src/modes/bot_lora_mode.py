@@ -15,6 +15,7 @@ import traceback
 import re
 from urllib.parse import quote, urlencode
 from PIL import Image
+from lora_paths import lora_training_session_names
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
 from modes.lora_preview import training_preview_filename
@@ -2245,10 +2246,8 @@ def _list_bot_trained_sessions(
     session_priority = _resolve_session_priority(char_cfg, entry_dir, session_reps)
 
     sessions = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
+    for name in lora_training_session_names(entry_dir):
         path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
         step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
         has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
         session_rep = session_reps.get(name, "")
@@ -2294,7 +2293,7 @@ def _resolve_session_priority(char_cfg: dict, entry_dir: str, session_reps: dict
     priority = list(char_cfg.get("session_priority", []) or [])
     if priority:
         if os.path.isdir(entry_dir):
-            existing = {n for n in os.listdir(entry_dir) if os.path.isdir(os.path.join(entry_dir, n))}
+            existing = set(lora_training_session_names(entry_dir))
             filtered = [n for n in priority if n in existing]
             if filtered:
                 return filtered
@@ -2304,14 +2303,7 @@ def _resolve_session_priority(char_cfg: dict, entry_dir: str, session_reps: dict
             return priority
     if not os.path.isdir(entry_dir):
         return []
-    auto = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
-        path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
-        if session_reps.get(name, ""):
-            auto.append(name)
-    return auto
+    return [name for name in lora_training_session_names(entry_dir) if session_reps.get(name, "")]
 
 
 def get_char_session_priority(

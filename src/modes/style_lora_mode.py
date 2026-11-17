@@ -12,6 +12,7 @@ Style LoRA(그림체 로라) 매니징 모듈
 """
 
 from app_paths import data_root
+from lora_paths import lora_training_session_names
 from lora_training_steps import training_step_settings
 
 import datetime
@@ -944,14 +945,7 @@ def _resolve_style_session_priority(tm: dict, entry_dir: str, reps: dict) -> lis
         return priority
     if not os.path.isdir(entry_dir):
         return []
-    auto = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
-        path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
-        if reps.get(name):
-            auto.append(name)
-    return auto
+    return [name for name in lora_training_session_names(entry_dir) if reps.get(name)]
 
 
 def list_style_trained_sessions(style_lora_load_path: str, profile: str, project_id: str) -> list:
@@ -971,10 +965,8 @@ def list_style_trained_sessions(style_lora_load_path: str, profile: str, project
     session_priority = _resolve_style_session_priority(tm, entry_dir, reps)
 
     sessions = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
+    for name in lora_training_session_names(entry_dir):
         path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
         step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
         has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
         rep = reps.get(name) or {}

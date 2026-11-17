@@ -1,4 +1,5 @@
 """Shared category roots for trained LoRA storage and remote artifacts."""
+import os
 from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Mapping
@@ -53,6 +54,13 @@ DEFAULT_LORA_CATEGORY_FOLDERS = (
     "SOYA_BOT_LORA",
     "SOYA_STYLE_LORA",
 )
+
+
+def lora_training_session_names(directory: str) -> list[str]:
+    """List training sessions, excluding the trainer's old progress directory."""
+    with os.scandir(directory) as entries:
+        return sorted((entry.name for entry in entries if entry.name.casefold() != "logs" and entry.is_dir()),
+                      reverse=True)
 
 
 def default_lora_load_paths() -> dict[str, str]:

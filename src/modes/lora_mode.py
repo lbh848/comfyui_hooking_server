@@ -19,7 +19,7 @@ from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
 from modes.lora_preview import training_preview_filename
-from lora_paths import ASSET_LORA_FOLDER
+from lora_paths import ASSET_LORA_FOLDER, lora_training_session_names
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -375,10 +375,8 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
     session_reps = (manage_entry or {}).get("session_representatives", {})
 
     sessions = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
+    for name in lora_training_session_names(entry_dir):
         path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
         step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
         has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
 
