@@ -52,22 +52,22 @@
       "profile": "anima",
       "name": "ANIMA 그림체",
       "settings": {
-        "il_rate": 0.0001,
+        "il_rate": 5e-05,
         "save_per_step": 100,
-        "save_after": 200,
+        "save_after": 0,
         "gen_w": 704,
         "gen_h": 1024,
         "resolution": 1024,
         "dim": 32,
-        "alpha": 16,
+        "alpha": 128,
         "step_mode": "per_image",
-        "step_per_image": 2000,
-        "total_steps": 2000,
+        "step_per_image": 4,
+        "total_steps": 4,
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
         "upscale": false,
-        "optimizer_type": "default"
+        "optimizer_type": "AdamW"
       }
     },
     {

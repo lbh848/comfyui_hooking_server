@@ -3475,8 +3475,8 @@
         -126.03098581421375
       ],
       "size": [
-        360,
-        480
+        440,
+        1060
       ],
       "flags": {},
       "order": 43,
@@ -3607,6 +3607,158 @@
             "name": "engine_path"
           },
           "link": null
+        },
+        {
+          "name": "preview_spectrum",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "preview_spectrum"
+          },
+          "link": null
+        },
+        {
+          "name": "optimizer_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "optimizer_type"
+          },
+          "link": null
+        },
+        {
+          "name": "max_train_epochs",
+          "type": "INT",
+          "widget": {
+            "name": "max_train_epochs"
+          },
+          "link": null
+        },
+        {
+          "name": "gradient_accumulation_steps",
+          "type": "INT",
+          "widget": {
+            "name": "gradient_accumulation_steps"
+          },
+          "link": null
+        },
+        {
+          "name": "lr_scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "lr_scheduler"
+          },
+          "link": null
+        },
+        {
+          "name": "lr_warmup_steps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "lr_warmup_steps"
+          },
+          "link": null
+        },
+        {
+          "name": "clip_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_mode"
+          },
+          "link": null
+        },
+        {
+          "name": "max_grad_norm",
+          "type": "FLOAT",
+          "widget": {
+            "name": "max_grad_norm"
+          },
+          "link": null
+        },
+        {
+          "name": "clip_k",
+          "type": "FLOAT",
+          "widget": {
+            "name": "clip_k"
+          },
+          "link": null
+        },
+        {
+          "name": "clip_window",
+          "type": "INT",
+          "widget": {
+            "name": "clip_window"
+          },
+          "link": null
+        },
+        {
+          "name": "clip_per_micro",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clip_per_micro"
+          },
+          "link": null
+        },
+        {
+          "name": "clip_sigma_bands",
+          "type": "STRING",
+          "widget": {
+            "name": "clip_sigma_bands"
+          },
+          "link": null
+        },
+        {
+          "name": "down_init",
+          "type": "COMBO",
+          "widget": {
+            "name": "down_init"
+          },
+          "link": null
+        },
+        {
+          "name": "caption_dropout_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "caption_dropout_rate"
+          },
+          "link": null
+        },
+        {
+          "name": "ema_window",
+          "type": "FLOAT",
+          "widget": {
+            "name": "ema_window"
+          },
+          "link": null
+        },
+        {
+          "name": "timestep_sampling",
+          "type": "COMBO",
+          "widget": {
+            "name": "timestep_sampling"
+          },
+          "link": null
+        },
+        {
+          "name": "sigmoid_bias",
+          "type": "FLOAT",
+          "widget": {
+            "name": "sigmoid_bias"
+          },
+          "link": null
+        },
+        {
+          "name": "discrete_flow_shift",
+          "type": "FLOAT",
+          "widget": {
+            "name": "discrete_flow_shift"
+          },
+          "link": null
+        },
+        {
+          "name": "stream",
+          "type": "COMBO",
+          "widget": {
+            "name": "stream"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -3624,9 +3776,9 @@
       },
       "widgets_values": [
         50,
-        0.0005,
+        5e-05,
         32,
-        16,
+        128,
         "1024",
         true,
         0,
@@ -3636,7 +3788,26 @@
         0.99,
         "torch",
         false,
-        ""
+        "",
+        true,
+        "AdamW",
+        8,
+        2,
+        "constant_with_warmup",
+        0.05,
+        "median",
+        1.0,
+        2.0,
+        50,
+        true,
+        "0.2,0.4,0.6,0.8",
+        "weight_svd",
+        0.1,
+        0.1,
+        "sigmoid",
+        0.0,
+        1.0,
+        "fp32"
       ]
     }
   ],

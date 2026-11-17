@@ -1,5 +1,6 @@
 """Shared step settings and image scheduling for LoRA training and previews."""
 from __future__ import annotations
+import math
 
 
 def training_step_settings(settings: dict, *, default_mode="per_image", default_step=50) -> dict:
@@ -22,6 +23,11 @@ def prepare_training_images(images: list, settings: dict, *, default_mode="per_i
     Total mode keeps every source image once, regardless of the step budget.
     """
     steps = training_step_settings(settings, default_mode=default_mode, default_step=default_step)
+    from lora_training_workflow import training_workflow_epoch_settings
+    epoch_settings = training_workflow_epoch_settings(settings)
+    if epoch_settings.get("max_train_epochs", 0):
+        total_steps = epoch_settings["max_train_epochs"] * math.ceil(len(images) / epoch_settings["gradient_accumulation_steps"])
+        return images, 1, total_steps
     if steps["step_mode"] == "per_image":
         step = steps["step_per_image"]
         return images, step, len(images) * step

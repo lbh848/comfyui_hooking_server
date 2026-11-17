@@ -1,5 +1,6 @@
 """Resolve selected training workflows and apply their execution settings."""
 import copy
+import json
 from pathlib import Path
 from app_paths import SOURCE_DIR, resolve_install_path
 
@@ -23,6 +24,31 @@ def training_workflow_source_path(training_config: dict, project_root: Path = SO
     if not workflow_path.is_file():
         raise ValueError(f"학습 워크플로우 파일을 찾을 수 없습니다: {workflow_path}")
     return str(workflow_path)
+
+
+def training_workflow_epoch_settings(training_config: dict) -> dict:
+    """Read the selected workflow's literal epoch settings for preview and submission."""
+    if not training_config.get("workflow_source_path", ""):
+        return {}
+    from illustration_json import workflow_json_settings_nodes
+
+    workflow_path = training_workflow_source_path(training_config)
+    workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8-sig"))
+    nodes = workflow_json_settings_nodes(workflow, widget_names=("max_train_epochs", "gradient_accumulation_steps"))
+    epoch_settings = []
+    for node in nodes.values():
+        if not isinstance(node, dict) or node.get("class_type") != "md_soya_AnimaTrainOptionsV2" or node.get("mode", 0) != 0:
+            continue
+        inputs = node.get("inputs", {})
+        settings = {"max_train_epochs": inputs.get("max_train_epochs", 0),
+                    "gradient_accumulation_steps": inputs.get("gradient_accumulation_steps", 1)}
+        for key, minimum in (("max_train_epochs", 0), ("gradient_accumulation_steps", 1)):
+            if type(settings[key]) is not int or settings[key] < minimum:
+                raise ValueError(f"학습 워크플로우의 {key} 값을 확인하세요.")
+        epoch_settings.append(settings)
+    if any(settings != epoch_settings[0] for settings in epoch_settings):
+        raise ValueError("학습 워크플로우의 Epochs와 Gradient Accumulation 설정을 통일하세요.")
+    return epoch_settings[0] if epoch_settings else {}
 
 
 def build_training_workflow(api_workflow: dict, positive_text: str, negative_text: str, total_steps: int, optimizer_type: str = "default") -> dict:

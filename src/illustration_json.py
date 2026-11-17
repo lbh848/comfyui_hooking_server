@@ -175,7 +175,7 @@ def workflow_source_resolver(workflow: dict):
     return resolve
 
 
-def workflow_json_settings_nodes(workflow: dict) -> dict:
+def workflow_json_settings_nodes(workflow: dict, *, widget_names=None) -> dict:
     """Project UI widgets onto the same input contract used by API workflows."""
     if not isinstance(workflow.get("nodes"), list):
         return workflow
@@ -186,7 +186,7 @@ def workflow_json_settings_nodes(workflow: dict) -> dict:
         inputs = {}
         widgets = [item for item in node.get("inputs", []) if item.get("widget")]
         values = node.get("widgets_values", [])
-        for selector in ("sampling_key", "model_key", *FIRST_SAMPLER_CONTROLS):
+        for selector in widget_names if widget_names is not None else ("sampling_key", "model_key", *FIRST_SAMPLER_CONTROLS):
             position = next((i for i, item in enumerate(widgets) if item["name"] == selector), None)
             if position is not None:
                 if len(widgets) != len(values):
