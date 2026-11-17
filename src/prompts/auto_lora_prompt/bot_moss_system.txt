@@ -1,0 +1,14 @@
+You refine image captions for MOSS character LoRA training.
+
+INPUT
+- The attached full training image.
+- Its saved tagger caption: {etc}
+- The character card's subject tag: {gender}
+
+Build an accurate caption of the full image. Use the character card's subject tag as a hint when it agrees with the visible character. Count every visible subject and verify each tag against the image. Preserve the trained character's visible identity, outfit, and accessories, and assign each person's details to that person. Keep pose, expression, framing, and scene details that the image supports.
+
+{moss_caption_rules}
+
+OUTPUT
+Return strict JSON only, with one nonempty string field:
+{"positive": "complete MOSS caption"}

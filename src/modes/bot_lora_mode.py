@@ -513,6 +513,12 @@ def _get_project_config(data: dict, bot_name: str, project_name: str) -> dict | 
     return data.get("bot_loras", {}).get(bot_name, {}).get(project_name)
 
 
+def get_training_profile(bot_name: str, project_name: str) -> str:
+    """Resolve the saved bot LoRA project's training profile."""
+    project = _get_project_config(_load_bot_lora_manage(), bot_name, project_name) or {}
+    return project.get("training_config", {}).get("profile") or "anima"
+
+
 def _get_char_config(
     data: dict,
     bot_name: str,
@@ -1410,8 +1416,7 @@ def add_bot_char_test_images(
     """Import character test images using the asset LoRA prompt rules."""
     from modes.lora_mode import add_project_images
 
-    project = _get_project_config(_load_bot_lora_manage(), bot_name, project_name) or {}
-    profile = project.get("training_config", {}).get("profile", "anima")
+    profile = get_training_profile(bot_name, project_name)
     return add_project_images(
         "", _bot_char_test_dir(bot_name, project_name, char_name, visual_card_id),
         sources, test_profile=profile,
@@ -1797,8 +1802,7 @@ def add_bot_test_images(bot_name: str, project_name: str, sources: list) -> dict
     """Import common test images using the asset LoRA prompt rules."""
     from modes.lora_mode import add_project_images
 
-    project = _get_project_config(_load_bot_lora_manage(), bot_name, project_name) or {}
-    profile = project.get("training_config", {}).get("profile", "anima")
+    profile = get_training_profile(bot_name, project_name)
     return add_project_images("", _bot_test_dir(bot_name, project_name), sources, test_profile=profile)
 
 

@@ -35,9 +35,12 @@ AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_
 AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_custom.txt")
 AUTO_LORA_PROMPT_META_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_meta.json")
 
-MOSS_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_moss_system.txt")
-MOSS_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_custom.txt")
-MOSS_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_meta.json")
+BOT_MOSS_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "bot_moss_system.txt")
+BOT_MOSS_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_bot_moss_custom.txt")
+BOT_MOSS_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_bot_moss_meta.json")
+ASSET_MOSS_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_moss_system.txt")
+ASSET_MOSS_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_custom.txt")
+ASSET_MOSS_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_meta.json")
 MOSS_CAPTION_RULES_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "moss_caption_rules.txt")
 
 # 봇 LoRA "테스트 이미지 일괄 세팅" 전용 템플릿. 텍스트 only LLM.
@@ -73,12 +76,15 @@ _auto_lora_prompt_builtin_style_mtime: float = 0.0
 def _auto_lora_prompt_paths(template_set: str = "", is_asset: bool = False) -> tuple[str, str, str]:
     """template_set 별 (builtin, custom, meta) 파일 경로 반환.
     - "" (기본): is_asset 기준으로 캐릭터/에셋 템플릿 선택 (기존 동작 보존)
+    - "moss": is_asset 기준으로 캐릭터/에셋 MOSS 템플릿 선택
     - "style": 스타일 LoRA 전용 템플릿 (is_asset 무시)
     """
     if template_set == "style":
         return (STYLE_LORA_PROMPT_BUILTIN_FILE, STYLE_LORA_PROMPT_CUSTOM_FILE, STYLE_LORA_PROMPT_META_FILE)
-    if template_set == "moss" and is_asset:
-        return (MOSS_LORA_PROMPT_BUILTIN_FILE, MOSS_LORA_PROMPT_CUSTOM_FILE, MOSS_LORA_PROMPT_META_FILE)
+    if template_set == "moss":
+        if is_asset:
+            return (ASSET_MOSS_LORA_PROMPT_BUILTIN_FILE, ASSET_MOSS_LORA_PROMPT_CUSTOM_FILE, ASSET_MOSS_LORA_PROMPT_META_FILE)
+        return (BOT_MOSS_LORA_PROMPT_BUILTIN_FILE, BOT_MOSS_LORA_PROMPT_CUSTOM_FILE, BOT_MOSS_LORA_PROMPT_META_FILE)
     if is_asset:
         return (AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE, AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE, AUTO_LORA_PROMPT_META_ASSET_FILE)
     return (AUTO_LORA_PROMPT_BUILTIN_FILE, AUTO_LORA_PROMPT_CUSTOM_FILE, AUTO_LORA_PROMPT_META_FILE)
@@ -111,7 +117,7 @@ def _load_auto_lora_prompt_builtin(is_asset: bool = False, template_set: str = "
     global _auto_lora_prompt_builtin_asset_cache, _auto_lora_prompt_builtin_asset_mtime
     global _auto_lora_prompt_builtin_style_cache, _auto_lora_prompt_builtin_style_mtime
     path = _auto_lora_prompt_paths(template_set, is_asset)[0]
-    if template_set == "moss" and is_asset:
+    if template_set == "moss":
         return _load_moss_lora_prompt_builtin(path)
     if template_set == "style":
         cache_val = _auto_lora_prompt_builtin_style_cache
@@ -404,7 +410,7 @@ async def run_auto_refine_lora_prompt(
       - "style":             style_ctx(group, project) + filename → 스타일 LoRA 프로젝트 이미지
                              (항상 스타일 전용 템플릿 / 성별 자동추론)
 
-    template_set: "" (기본, is_asset 기반) | "style" (스타일 LoRA 전용 템플릿).
+    template_set: "" (기본, is_asset 기반) | "moss" (MOSS 학습 캡션) | "style" (스타일 LoRA 전용 템플릿).
                   source_type=="style" 이면 자동으로 "style" 로 강제.
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
@@ -451,7 +457,10 @@ async def run_auto_refine_lora_prompt(
             return {"success": False, "error": "bot_lora_training 소스는 bot, project 필드가 필요합니다."}
         if source_type == "training" and not entry:
             return {"success": False, "error": "training 소스는 entry 필드가 필요합니다."}
-        if source_type == "training":
+        if source_type == "bot_lora_training":
+            from modes.bot_lora_mode import get_training_profile
+            template_set = get_training_profile(bot_name, project_name)
+        elif source_type == "training":
             from modes.lora_mode import get_training_profile
             is_asset = True
             template_set = get_training_profile(char_name, entry)
@@ -553,6 +562,7 @@ async def run_auto_refine_lora_prompt(
             return {"success": False, "error": "프롬프트 템플릿이 비어 있습니다."}
 
         rendered = _render_auto_lora_prompt_prompt(template, current_positive, gender_tag)
+        gender_fallback = "" if template_set == "moss" else gender_tag
 
         # 이미지 base64
         try:
@@ -609,7 +619,7 @@ async def run_auto_refine_lora_prompt(
                 image_mime=image_mime,
                 result_validator=lambda result: (
                     _parse_auto_lora_prompt_response(
-                        result, gender_fallback=gender_tag
+                        result, gender_fallback=gender_fallback
                     ) is not None,
                     "LoRA 프롬프트 JSON 파싱 실패",
                 ),
@@ -622,7 +632,7 @@ async def run_auto_refine_lora_prompt(
         total_elapsed = time.time() - t0
 
         if raw and not raw.startswith("[LLM 실패]"):
-            parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
+            parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_fallback)
             if parsed is not None:
                 # 첫 호출을 먼저 독립적으로 완료·기록한다. 선택적 2차 검수는 별도
                 # route/위젯/자세히 기록을 사용하므로 두 LLM 호출의 통계가 섞이지 않는다.
@@ -1052,7 +1062,8 @@ async def handle_get_auto_lora_prompt(request):
     """
     try:
         is_asset = request.query.get("asset") in ("1", "true", "True")
-        template_set = request.query.get("profile", "") if is_asset else ""
+        profile = request.query.get("profile", "")
+        template_set = profile if is_asset or profile == "moss" else ""
         builtin = _load_auto_lora_prompt_builtin(is_asset, template_set)
         custom, use_custom = _load_auto_lora_prompt_custom(is_asset, template_set)
         return web.json_response({
@@ -1081,7 +1092,8 @@ async def handle_set_auto_lora_prompt(request):
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
         is_asset = bool(body.get("asset", False))
-        template_set = (body.get("profile") or request.query.get("profile", "")) if is_asset else ""
+        profile = body.get("profile") or request.query.get("profile", "")
+        template_set = profile if is_asset or profile == "moss" else ""
         _save_auto_lora_prompt_custom(custom, use_custom, is_asset, template_set)
         return web.json_response({"success": True})
     except Exception as e:
