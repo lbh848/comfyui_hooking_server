@@ -121,7 +121,14 @@ def _workflow_model_ids(source: Path, manifest: InstallManifest, *, include_runt
         )
 
     values = set(_workflow_string_values(workflow, include_runtime_fields=include_runtime_fields))
-    matched: list[str] = []
+    extra = workflow.get("extra")
+    declared_model_ids = extra.get("model_ids", []) if isinstance(extra, dict) else []
+    if not isinstance(declared_model_ids, list) or not all(isinstance(value, str) for value in declared_model_ids):
+        raise WorkflowPackError(f"워크플로우 model_ids가 문자열 배열이 아닙니다: {source.name}")
+    unknown = set(declared_model_ids) - {str(model["id"]) for model in manifest.models}
+    if unknown:
+        raise WorkflowPackError(f"등록되지 않은 워크플로우 모델: {source.name}: {', '.join(sorted(unknown))}")
+    matched: list[str] = list(dict.fromkeys(declared_model_ids))
     for model in manifest.models:
         relative = str(model["relative_path"]).replace("\\", "/").casefold()
         without_models = (
@@ -136,7 +143,8 @@ def _workflow_model_ids(source: Path, manifest: InstallManifest, *, include_runt
             or any(value.endswith(f"/{candidate}") for candidate in candidates)
             for value in values
         ):
-            matched.append(str(model["id"]))
+            if str(model["id"]) not in matched:
+                matched.append(str(model["id"]))
     return sorted(matched)
 
 

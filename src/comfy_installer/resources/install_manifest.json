@@ -98,7 +98,7 @@
       "name": "comfyui-soya-custom-nodes",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
       "source_type": "git",
-      "ref": "4ad14b6de17136c6ba6ad5cbebe96bfc43a3fde1"
+      "ref": "e380054bc048c0d5e4074b93180ec79c0c6d2997"
     },
     {
       "name": "ComfyUI-MOSS-Toolkit",
@@ -644,6 +644,94 @@
       "sha256": "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
       "size": 9748121532,
       "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/2929efe3cdd506c0a430bcfca70a9a8d805cc095/text_encoders/qwen3.5_9b_int8_convrot.safetensors"
+    },
+    {
+      "id": "anima-tagger-checkpoint-config-json",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/config.json",
+      "sha256": "928a1cc57a06cd99040ce99ed0431e428db5563e41385b1c573dc4933d997379",
+      "size": 20378,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/config.json"
+    },
+    {
+      "id": "anima-tagger-checkpoint-vocab-json",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/vocab.json",
+      "sha256": "fc0fd84ba817e261f6447306784c995108cc9ba9e5eba363fda019c34ecf71c4",
+      "size": 414201,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/vocab.json"
+    },
+    {
+      "id": "anima-tagger-checkpoint-rules-yaml",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/rules.yaml",
+      "sha256": "59822e33a90d413449774f3e84d99e4b8dbb980a66ee4954d65d80f6ec96b8f4",
+      "size": 6849,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/rules.yaml"
+    },
+    {
+      "id": "anima-tagger-checkpoint-groups-yaml",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/groups.yaml",
+      "sha256": "522ec841dafcc1229af18908042fc825195742aa2229b652c0b51dca1408f4f0",
+      "size": 28618,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/groups.yaml"
+    },
+    {
+      "id": "anima-tagger-checkpoint-thresholds-safetensors",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/thresholds.safetensors",
+      "sha256": "bcc2d968cdac52218ab187d3914b287787e048d2d2a7956e87bdc314ef8144e8",
+      "size": 10208,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/thresholds.safetensors"
+    },
+    {
+      "id": "anima-tagger-checkpoint-sidecar-json",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/sidecar.json",
+      "sha256": "12614dab44b664817851c573cfb7ad1000565f6729916246a9c81966055accfc",
+      "size": 1560,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/sidecar.json"
+    },
+    {
+      "id": "anima-tagger-checkpoint-sidecar-safetensors",
+      "license": "MIT",
+      "relative_path": "models/captioners/anima-tagger-pixai/sidecar.safetensors",
+      "sha256": "d59c82b95e95a5611bf26e3cc3be804c39724d633bb4e1c5975909615a6a2137",
+      "size": 291252,
+      "url": "https://huggingface.co/sorryhyun/anima-tagger/resolve/fbe45963eb3e59d131b98d20375509e2582b5c33/pixai/sidecar.safetensors"
+    },
+    {
+      "id": "anima-tagger-backbone-model-safetensors",
+      "license": "Apache-2.0",
+      "relative_path": "models/captioners/huggingface/hub/models--pixai-labs--pixai-tagger-v1.0/snapshots/9fe10addf9326e292da8a85a98ea74cd91b41771/model.safetensors",
+      "sha256": "f29e475205cbcbc25b52a075840c7809d6215be15f45375113ba09c49bf90292",
+      "size": 1945425796,
+      "url": "https://huggingface.co/pixai-labs/pixai-tagger-v1.0/resolve/9fe10addf9326e292da8a85a98ea74cd91b41771/model.safetensors"
+    },
+    {
+      "id": "anima-tagger-backbone-config-json",
+      "license": "Apache-2.0",
+      "relative_path": "models/captioners/huggingface/hub/models--pixai-labs--pixai-tagger-v1.0/snapshots/9fe10addf9326e292da8a85a98ea74cd91b41771/config.json",
+      "sha256": "f8a19b38661c37dc5fd519f2137be70f6f897972021b4ebc17b7d35a0e27b9dd",
+      "size": 693918,
+      "url": "https://huggingface.co/pixai-labs/pixai-tagger-v1.0/resolve/9fe10addf9326e292da8a85a98ea74cd91b41771/config.json"
+    },
+    {
+      "id": "anima-tagger-backbone-preprocessor-config-json",
+      "license": "Apache-2.0",
+      "relative_path": "models/captioners/huggingface/hub/models--pixai-labs--pixai-tagger-v1.0/snapshots/9fe10addf9326e292da8a85a98ea74cd91b41771/preprocessor_config.json",
+      "sha256": "20451575e627950993de7b00641d5b263eceb3e7436e4ad518fea2411b60e49d",
+      "size": 600,
+      "url": "https://huggingface.co/pixai-labs/pixai-tagger-v1.0/resolve/9fe10addf9326e292da8a85a98ea74cd91b41771/preprocessor_config.json"
+    },
+    {
+      "id": "anima-tagger-backbone-tagger-pipeline-py",
+      "license": "Apache-2.0",
+      "relative_path": "models/captioners/huggingface/hub/models--pixai-labs--pixai-tagger-v1.0/snapshots/9fe10addf9326e292da8a85a98ea74cd91b41771/tagger_pipeline.py",
+      "sha256": "3431279fdfff234f62664999fc1fe6bb20f1e8756f7435d0e165ebd4456f7fcd",
+      "size": 43696,
+      "url": "https://huggingface.co/pixai-labs/pixai-tagger-v1.0/resolve/9fe10addf9326e292da8a85a98ea74cd91b41771/tagger_pipeline.py"
     }
   ],
   "python": {
@@ -1037,6 +1125,27 @@
           "qwen35-9b-int8",
           "flux2-vae-small"
         ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.anima_tagger",
+        "name": "배포_공방_범용태그분석_ANIMA_V1_0.json",
+        "archive_name": "workflows/배포_공방_범용태그분석_ANIMA_V1_0.json",
+        "bindings": [
+          "workflow_pack_extra_paths.anima_tagger"
+        ],
+        "model_ids": [
+          "anima-tagger-checkpoint-config-json",
+          "anima-tagger-checkpoint-vocab-json",
+          "anima-tagger-checkpoint-rules-yaml",
+          "anima-tagger-checkpoint-groups-yaml",
+          "anima-tagger-checkpoint-thresholds-safetensors",
+          "anima-tagger-checkpoint-sidecar-json",
+          "anima-tagger-checkpoint-sidecar-safetensors",
+          "anima-tagger-backbone-model-safetensors",
+          "anima-tagger-backbone-config-json",
+          "anima-tagger-backbone-preprocessor-config-json",
+          "anima-tagger-backbone-tagger-pipeline-py"
+        ]
       }
     ],
     "optional_bindings": [
@@ -1047,7 +1156,8 @@
       "workflow_pack_extra_paths.lora_training_anima_v2",
       "workflow_pack_extra_paths.style_lora_training_anima_v2",
       "lora_training_workflow_source_paths.moss",
-      "style_lora_training_workflow_source_paths.moss"
+      "style_lora_training_workflow_source_paths.moss",
+      "workflow_pack_extra_paths.anima_tagger"
     ],
     "release_version": "v6",
     "required_bindings": [
