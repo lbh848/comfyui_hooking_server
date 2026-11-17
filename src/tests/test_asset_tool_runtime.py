@@ -87,7 +87,6 @@ class AssetToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
                   "_meta": {"title": "WD_TAG_TEXT"}},
         }
         self.tool._api_workflow = copy.deepcopy(self.workflow)
-        self.tool._fallback_api_workflow = copy.deepcopy(self.workflow)
         image = BytesIO()
         Image.new("RGB", (2, 2)).save(image, format="PNG")
         self.image = image.getvalue()
@@ -114,14 +113,14 @@ class AssetToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"])
         self.runtime.resolve_comfy_port.assert_called_once_with("tag_analysis")
 
-    async def test_empty_primary_tags_use_fallback_workflow(self):
+    async def test_empty_tags_fail_without_retrying_another_workflow(self):
         self.history_tags = ["", "1girl, red_eyes"]
-        self.tool.fallback_workflow_source_path = "fallback.json"
         with self.modules():
             result = await self.tool.analyze_image(self.image)
-        self.assertEqual(result, {"success": True, "tags": ["1girl", "red eyes"]})
-        self.assertEqual(len(self.workflows), 2)
-        self.assertTrue(self.tool.update_workflow.call_args_list[1].kwargs["use_fallback"])
+        self.assertFalse(result["success"])
+        self.assertTrue(result["error"])
+        self.assertEqual(len(self.workflows), 1)
+        self.tool.update_workflow.assert_awaited_once()
 
     async def test_history_can_arrive_after_websocket_completion(self):
         self.history_pending = True

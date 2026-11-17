@@ -1018,7 +1018,6 @@ E2E_PROFILE_BY_BINDING = {
     ),
     "anima_inpainting_workflow_source_path": E2E_PROFILE_IMAGE_EDIT,
     "tag_analysis_workflow_source_path": E2E_PROFILE_FACE_TAG,
-    "asset_tag_analysis_workflow_source_path": E2E_PROFILE_STANDARD,
     "lora_training_workflow_source_paths.anima": (
         E2E_PROFILE_TRAINING_ANIMA
     ),

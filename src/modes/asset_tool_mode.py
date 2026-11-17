@@ -36,13 +36,9 @@ class AssetToolMode:
     """에셋툴 모드 매니저"""
 
     def __init__(self):
-        self.workflow_source_path: str = ""  # primary (스마트매치/얼굴) 태그 분석 워크플로우
+        self.workflow_source_path: str = ""  # Tag analysis workflow.
         self._api_workflow: Optional[dict] = None
         self._workflow_hash: str = ""
-        # 폴백 태그 분석 워크플로우 (primary 결과가 비었을 때, 예: 얼굴 미감지)
-        self.fallback_workflow_source_path: str = ""
-        self._fallback_api_workflow: Optional[dict] = None
-        self._fallback_hash: str = ""
         # 내장 WD Tagger (ComfyUI 경유 없이 CPU ONNX 추론)
         self.use_builtin_tagger: bool = False
         self.builtin_tagger = None
@@ -69,9 +65,6 @@ class AssetToolMode:
         worker = copy.copy(self)
         worker._lock = asyncio.Lock()
         worker._api_workflow = copy.deepcopy(self._api_workflow)
-        worker._fallback_api_workflow = copy.deepcopy(
-            self._fallback_api_workflow
-        )
         worker._analysis_cache = dict(self._analysis_cache)
         worker._is_analyzing = False
         return worker
@@ -89,24 +82,12 @@ class AssetToolMode:
 
     async def update_workflow(
         self,
-        use_fallback: bool = False,
         comfy_task_key: str = "tag_analysis",
     ) -> bool:
-        # primary / fallback 슬롯 분기
-        if use_fallback:
-            src = self.fallback_workflow_source_path
-            api_attr = "_fallback_api_workflow"
-            hash_attr = "_fallback_hash"
-            cache_api_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_fallback_api.json")
-            stored_hash_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_fallback_hash.txt")
-            slot_label = "fallback"
-        else:
-            src = self.workflow_source_path
-            api_attr = "_api_workflow"
-            hash_attr = "_workflow_hash"
-            cache_api_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_api.json")
-            stored_hash_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_hash.txt")
-            slot_label = "primary"
+        src = self.workflow_source_path
+        cache_api_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_api.json")
+        stored_hash_path = os.path.join(CURRENT_MODE_WORK_DIR, "tag_analysis_hash.txt")
+        slot_label = "primary"
 
         src = str(resolve_install_path(src, BASE_DIR)) if src else ""
         if not src or not os.path.isfile(src):
@@ -114,8 +95,8 @@ class AssetToolMode:
             return False
 
         file_hash = self._compute_file_hash(src)
-        cur_api = getattr(self, api_attr)
-        cur_hash = getattr(self, hash_attr)
+        cur_api = self._api_workflow
+        cur_hash = self._workflow_hash
         if file_hash == cur_hash and cur_api is not None:
             print(f"[ASSET_TOOL] 워크플로우 캐시 히트 ({slot_label}, hash={file_hash[:12]})")
             return True
@@ -129,9 +110,9 @@ class AssetToolMode:
         if file_hash == stored_hash and os.path.isfile(cache_api_path):
             try:
                 with open(cache_api_path, "r", encoding="utf-8") as f:
-                    setattr(self, api_attr, json.load(f))
-                setattr(self, hash_attr, file_hash)
-                print(f"[ASSET_TOOL] API 워크플로우 디스크 캐시 로드 ({slot_label}, 노드 {len(getattr(self, api_attr))}개)")
+                    self._api_workflow = json.load(f)
+                self._workflow_hash = file_hash
+                print(f"[ASSET_TOOL] API 워크플로우 디스크 캐시 로드 ({slot_label}, 노드 {len(self._api_workflow)}개)")
                 return True
             except Exception:
                 pass
@@ -149,7 +130,7 @@ class AssetToolMode:
             return False
 
         if self._is_api_format(wf_data):
-            setattr(self, api_attr, wf_data)
+            self._api_workflow = wf_data
         else:
             if self.convert_workflow_func:
                 try:
@@ -158,7 +139,7 @@ class AssetToolMode:
                         task_key=comfy_task_key,
                     )
                     if api_wf:
-                        setattr(self, api_attr, api_wf)
+                        self._api_workflow = api_wf
                         # API 변환 결과를 디스크에 캐시
                         os.makedirs(CURRENT_MODE_WORK_DIR, exist_ok=True)
                         try:
@@ -176,9 +157,9 @@ class AssetToolMode:
                     print(f"[ASSET_TOOL] 워크플로우 변환 예외 ({slot_label}): {e}")
                     return False
             else:
-                setattr(self, api_attr, wf_data)
+                self._api_workflow = wf_data
 
-        setattr(self, hash_attr, file_hash)
+        self._workflow_hash = file_hash
         # 해시를 디스크에 저장
         try:
             with open(stored_hash_path, "w") as f:
@@ -236,25 +217,11 @@ class AssetToolMode:
         if self.use_builtin_tagger:
             return await self._analyze_builtin(image_data)
 
-        # 1) primary (스마트매치/얼굴) 워크플로우
-        result = await self._run_comfy_workflow(image_data, use_fallback=False,
-                                                progress_callback=progress_callback,
-                                                comfy_task_key=comfy_task_key)
-        if result.get("success") and result.get("tags"):
-            return result
-
-        # 2) 폴백 워크플로우 (primary 결과가 비었을 때, 예: 얼굴 미감지)
-        if self.fallback_workflow_source_path:
-            print(f"[ASSET_TOOL] primary 결과 없음 → 폴백 워크플로우로 재시도 (reason={result.get('error', '태그없음')})")
-            fb = await self._run_comfy_workflow(image_data, use_fallback=True,
-                                                progress_callback=progress_callback,
-                                                comfy_task_key=comfy_task_key)
-            if fb.get("success") and fb.get("tags"):
-                return fb
-            return {"success": False,
-                    "error": f"태그 분석 실패 (primary: {result.get('error', '태그없음')} / fallback: {fb.get('error', '태그없음')})"}
-
-        return result
+        return await self._run_comfy_workflow(
+            image_data,
+            progress_callback=progress_callback,
+            comfy_task_key=comfy_task_key,
+        )
 
     async def _analyze_builtin(self, image_data: bytes) -> dict:
         """내장 WD Tagger (CPU ONNX) 로 태그 추출."""
@@ -286,23 +253,17 @@ class AssetToolMode:
     async def _run_comfy_workflow(
         self,
         image_data: bytes,
-        use_fallback: bool = False,
         progress_callback: Optional[Callable] = None,
         *,
         comfy_task_key: str = "tag_analysis",
     ) -> dict:
-        """ComfyUI 경유 태그 분석. use_fallback 이면 폴백 워크플로우 슬롯 사용."""
-        slot_label = "fallback" if use_fallback else "primary"
+        """Analyze tags with the configured ComfyUI workflow."""
+        slot_label = "primary"
         async with ASSET_TOOL_WORKFLOW_PREPARE_LOCK:
             ok = await self.update_workflow(
-                use_fallback=use_fallback,
                 comfy_task_key=comfy_task_key,
             )
-            api_workflow = copy.deepcopy(
-                self._fallback_api_workflow
-                if use_fallback
-                else self._api_workflow
-            )
+            api_workflow = copy.deepcopy(self._api_workflow)
         if not ok:
             return {"success": False, "error": f"태그 분석 워크플로우({slot_label})를 로드할 수 없습니다"}
         if not api_workflow:
@@ -610,8 +571,7 @@ class AssetToolMode:
                     for text in texts:
                         if isinstance(text, str):
                             analyzed_tags.extend(t.strip() for t in text.replace("\n", ",").split(",") if t.strip())
-                # A completed history entry with empty tags should trigger the
-                # fallback workflow immediately (for example, no detected face).
+                # Report empty completed output without waiting or retrying.
                 if real_prompt_id in history:
                     if not analyzed_tags:
                         return {"success": False, "error": f"태그 분석 결과({slot_label})의 태그가 비어 있습니다"}

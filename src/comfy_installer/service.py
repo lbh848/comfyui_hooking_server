@@ -1392,7 +1392,6 @@ class ComfyInstallerService:
             "anima_only_asset_workflow_source_path": 60,
             "anima_inpainting_workflow_source_path": 80,
             "tag_analysis_workflow_source_path": 90,
-            "asset_tag_analysis_workflow_source_path": 100,
             "utility_workflow_source_path": 110,
             "face_extract_workflow_source_path": 120,
             "lora_training_workflow_source_paths.anima": 130,

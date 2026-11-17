@@ -31,7 +31,7 @@ from external_connection import allowed_external_path, allowed_external_control,
 CONFIG_KEYS = (
     "lora_load_path", "bot_lora_load_path", "style_lora_load_path",
     "lora_training_workflow_source_paths", "style_lora_training_workflow_source_paths",
-    "tag_analysis_workflow_source_path", "asset_tag_analysis_workflow_source_path",
+    "tag_analysis_workflow_source_path",
     "use_builtin_tagger", "comfy_input_dir",
 )
 
@@ -64,7 +64,6 @@ def main() -> None:
             server.REAL_COMFY_PORT = int(value.get("comfyui_port", 8188))
             server.REAL_COMFY_ILLUST_PORT = value.get("comfyui_port_illustration")
             server.asset_tool.workflow_source_path = value["tag_analysis_workflow_source_path"]
-            server.asset_tool.fallback_workflow_source_path = value["asset_tag_analysis_workflow_source_path"]
             server.llm_service.update_config({key: value.get(key, default)
                 for key, default in server.llm_service.get_config().items() if key in server.DEFAULT_CONFIG})
         # A migration or another process may replace a file during the load.

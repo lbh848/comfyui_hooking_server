@@ -24,7 +24,6 @@ WORKFLOW_FILENAMES = {
     "anima_only_asset_workflow_source_path": "배포_공방_에셋_ANIMA_V4.json",
     "anima_inpainting_workflow_source_path": "배포_공방_인페인트_ANIMA_V2_0.json",
     "tag_analysis_workflow_source_path": "배포_공방_범용태그분석_ANIMA_V1_0.json",
-    "asset_tag_analysis_workflow_source_path": "배포_공방_범용태그분석_V1_0.json",
     "face_extract_workflow_source_path": "배포_공방_얼굴추출_V1_0.json",
     "debug_workflow_source_path": "배포_공방_디버깅_V1_0.json",
     "gemma4_workflow_source_path": "배포_공방_Gemma4_이미지분석_V1_0.json",
@@ -43,7 +42,7 @@ WORKFLOW_FILENAMES = {
 }
 TAG_ANALYSIS_WORKFLOW_PATHS = {
     key: f"{WORKFLOW_DIR}/{WORKFLOW_FILENAMES[key]}"
-    for key in ("tag_analysis_workflow_source_path", "asset_tag_analysis_workflow_source_path")
+    for key in ("tag_analysis_workflow_source_path",)
 }
 
 

@@ -1659,7 +1659,6 @@ bot_mode.set_queue_manager(queue_manager)
 # ─── 에셋툴 모드 초기화 ───
 asset_tool = asset_tool_mode.AssetToolMode()
 asset_tool.workflow_source_path = app_config.get("tag_analysis_workflow_source_path", "")
-asset_tool.fallback_workflow_source_path = app_config.get("asset_tag_analysis_workflow_source_path", "")
 asset_tool.mode_log_func = mode_logger.log
 asset_tool.use_builtin_tagger = bool(app_config.get("use_builtin_tagger", False))
 if asset_tool.use_builtin_tagger:
@@ -1674,7 +1673,7 @@ if asset_tool.use_builtin_tagger:
         traceback.print_exc()
         asset_tool.builtin_tagger = None
 bot_mode.set_asset_tool(asset_tool)
-print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}, fallback={asset_tool.fallback_workflow_source_path}, builtin_tagger={asset_tool.use_builtin_tagger}")
+print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}, builtin_tagger={asset_tool.use_builtin_tagger}")
 
 # ─── 포즈 편집 모드 초기화 ───
 pose_mode.det_model_path = app_config.get("dwpose_det_model", "")
@@ -23343,14 +23342,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_tool._api_workflow = None
                 asset_tool._workflow_hash = ""
 
-            # 폴백 태그 분석 워크플로우 설정 업데이트
-            if "asset_tag_analysis_workflow_source_path" in body:
-                fb_path = str(body["asset_tag_analysis_workflow_source_path"])
-                app_config["asset_tag_analysis_workflow_source_path"] = fb_path
-                asset_tool.fallback_workflow_source_path = fb_path
-                asset_tool._fallback_api_workflow = None
-                asset_tool._fallback_hash = ""
-
             # 내장 WD Tagger 사용 여부 업데이트
             if "use_builtin_tagger" in body:
                 asset_tool.use_builtin_tagger = bool(body["use_builtin_tagger"])
@@ -25277,12 +25268,6 @@ def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
             )
             asset_tool._api_workflow = None
             asset_tool._workflow_hash = ""
-        if "asset_tag_analysis_workflow_source_path" in bindings:
-            asset_tool.fallback_workflow_source_path = str(
-                bindings["asset_tag_analysis_workflow_source_path"]
-            )
-            asset_tool._fallback_api_workflow = None
-            asset_tool._fallback_hash = ""
         print(
             "[COMFY_INSTALL][INTEGRITY] 복구 워크플로우 런타임 반영 완료: "
             f"bindings={sorted(bindings)}"

@@ -881,13 +881,6 @@
       },
       {
         "bindings": [
-          "asset_tag_analysis_workflow_source_path"
-        ],
-        "id": "asset_tag_analysis_workflow_source_path",
-        "model_ids": []
-      },
-      {
-        "bindings": [
           "comfy_workflow_source_path",
           "illustration_workflow_source_paths.v3_anima"
         ],
@@ -1154,7 +1147,6 @@
       "anima_asset_workflow_source_path",
       "anima_inpainting_workflow_source_path",
       "anima_only_asset_workflow_source_path",
-      "asset_tag_analysis_workflow_source_path",
       "comfy_workflow_source_path",
       "debug_workflow_source_path",
       "face_extract_workflow_source_path",

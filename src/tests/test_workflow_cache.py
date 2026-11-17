@@ -88,17 +88,15 @@ class WorkflowPreparationTests(unittest.IsolatedAsyncioTestCase):
         self.work = self.root / "current_work"
         self.work.mkdir()
 
-    async def test_asset_generation_and_both_tag_analysis_slots_refresh_protected_cache(self):
-        for filename, class_name, fallback in [("asset_mode", "AssetMode", False),
-                                               ("asset_tool_mode", "AssetToolMode", False),
-                                               ("asset_tool_mode", "AssetToolMode", True)]:
+    async def test_asset_generation_and_tag_analysis_refresh_protected_cache(self):
+        for filename, class_name in [("asset_mode", "AssetMode"),
+                                     ("asset_tool_mode", "AssetToolMode")]:
             module = self.modes[filename]
-            with self.subTest(mode=filename, fallback=fallback), \
+            with self.subTest(mode=filename), \
                     patch.object(module, "MODE_WORKFLOW_DIR", str(self.cache)), \
                     patch.object(module, "CURRENT_MODE_WORK_DIR", str(self.work)):
                 mode = getattr(module, class_name)()
                 mode.workflow_source_path = str(self.source)
-                mode.fallback_workflow_source_path = str(self.source)
                 destination = self.cache / self.source.name
                 if destination.exists():
                     destination.chmod(destination.stat().st_mode | stat.S_IWUSR)
@@ -108,8 +106,8 @@ class WorkflowPreparationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(await mode.update_asset_workflow())
                     self.assertEqual(mode._asset_api_workflow, WORKFLOW)
                 else:
-                    self.assertTrue(await mode.update_workflow(use_fallback=fallback))
-                    self.assertEqual(getattr(mode, "_fallback_api_workflow" if fallback else "_api_workflow"), WORKFLOW)
+                    self.assertTrue(await mode.update_workflow())
+                    self.assertEqual(mode._api_workflow, WORKFLOW)
                 self.assertTrue(destination.stat().st_mode & stat.S_IWUSR)
                 self.assertFalse(self.source.stat().st_mode & stat.S_IWUSR)
 

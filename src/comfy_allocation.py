@@ -148,7 +148,6 @@ COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
     ),
     "tag_analysis": (
         "tag_analysis_workflow_source_path",
-        "asset_tag_analysis_workflow_source_path",
     ),
     # lora_training_* 는 에셋·봇·인스턴스 학습이 공유한다
     # (queue_manager.py:3691·3815·4694).
