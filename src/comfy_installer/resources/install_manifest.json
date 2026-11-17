@@ -983,12 +983,24 @@
         ]
       },
       {
+        "id": "tag_analysis_workflow_source_path",
+        "name": "배포_공방_범용태그분석_ANIMA_V1_0.json",
+        "archive_name": "workflows/배포_공방_범용태그분석_ANIMA_V1_0.json",
         "bindings": [
           "tag_analysis_workflow_source_path"
         ],
-        "id": "tag_analysis_workflow_source_path",
         "model_ids": [
-          "face-yolov8n"
+          "anima-tagger-checkpoint-config-json",
+          "anima-tagger-checkpoint-vocab-json",
+          "anima-tagger-checkpoint-rules-yaml",
+          "anima-tagger-checkpoint-groups-yaml",
+          "anima-tagger-checkpoint-thresholds-safetensors",
+          "anima-tagger-checkpoint-sidecar-json",
+          "anima-tagger-checkpoint-sidecar-safetensors",
+          "anima-tagger-backbone-model-safetensors",
+          "anima-tagger-backbone-config-json",
+          "anima-tagger-backbone-preprocessor-config-json",
+          "anima-tagger-backbone-tagger-pipeline-py"
         ]
       },
       {
@@ -1125,27 +1137,6 @@
           "qwen35-9b-int8",
           "flux2-vae-small"
         ]
-      },
-      {
-        "id": "workflow_pack_extra_paths.anima_tagger",
-        "name": "배포_공방_범용태그분석_ANIMA_V1_0.json",
-        "archive_name": "workflows/배포_공방_범용태그분석_ANIMA_V1_0.json",
-        "bindings": [
-          "workflow_pack_extra_paths.anima_tagger"
-        ],
-        "model_ids": [
-          "anima-tagger-checkpoint-config-json",
-          "anima-tagger-checkpoint-vocab-json",
-          "anima-tagger-checkpoint-rules-yaml",
-          "anima-tagger-checkpoint-groups-yaml",
-          "anima-tagger-checkpoint-thresholds-safetensors",
-          "anima-tagger-checkpoint-sidecar-json",
-          "anima-tagger-checkpoint-sidecar-safetensors",
-          "anima-tagger-backbone-model-safetensors",
-          "anima-tagger-backbone-config-json",
-          "anima-tagger-backbone-preprocessor-config-json",
-          "anima-tagger-backbone-tagger-pipeline-py"
-        ]
       }
     ],
     "optional_bindings": [
@@ -1156,8 +1147,7 @@
       "workflow_pack_extra_paths.lora_training_anima_v2",
       "workflow_pack_extra_paths.style_lora_training_anima_v2",
       "lora_training_workflow_source_paths.moss",
-      "style_lora_training_workflow_source_paths.moss",
-      "workflow_pack_extra_paths.anima_tagger"
+      "style_lora_training_workflow_source_paths.moss"
     ],
     "release_version": "v6",
     "required_bindings": [

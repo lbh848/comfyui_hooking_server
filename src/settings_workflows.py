@@ -40,7 +40,7 @@ WORKFLOW_GROUPS = {
     "video_workflow_source_paths.first_last_fast": ("영상", "H3 · FLF2V"),
     "video_workflow_source_paths.ref2v": ("영상", "H3 · REF2V"),
     "video_workflow_source_paths.ref2v_fast": ("영상", "H3 · REF2V"),
-    "tag_analysis_workflow_source_path": ("공통", "얼굴 태그 분석"),
+    "tag_analysis_workflow_source_path": ("공통", "태그 분석"),
     "asset_tag_analysis_workflow_source_path": ("공통", "범용 태그 분석"),
     "utility_workflow_source_path": ("공통", "삽화 유틸리티"),
     "debug_workflow_source_path": ("공통", "디버깅"),
