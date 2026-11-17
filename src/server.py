@@ -33892,7 +33892,7 @@ async def handle_api_bot_lora_project_add(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         from modes.bot_lora_mode import add_project
-        result = add_project(bot_name, project_name, selected_chars, face_chars)
+        result = add_project(bot_name, project_name, selected_chars, face_chars, profile=body.get("profile", "anima"))
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 프로젝트 추가 실패: {e}")

@@ -1449,6 +1449,12 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
     return result
 
 
+def validate_lora_project_profile(profile: str) -> str:
+    if profile not in ("anima", "moss"):
+        return "프로젝트 타입은 ILXL/ANIMA 또는 MOSS를 선택하세요."
+    return ""
+
+
 def add_lora_entry(name: str, character: str, trigger: str, description: str, profile: str = "anima") -> dict:
     """새 LoRA 항목 추가"""
     if not name or not name.strip():
@@ -1457,8 +1463,9 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str, pr
     if not trigger or not trigger.strip():
         print("[LORA_MANAGE] 트리거 키워드 누락")
         return {"success": False, "error": "트리거 키워드를 입력하세요"}
-    if profile not in ("anima", "moss"):
-        return {"success": False, "error": "프로젝트 타입은 ILXL/ANIMA 또는 MOSS를 선택하세요."}
+    profile_error = validate_lora_project_profile(profile)
+    if profile_error:
+        return {"success": False, "error": profile_error}
     character = character or LORA_PROJECT_OWNER
 
     name = name.strip()

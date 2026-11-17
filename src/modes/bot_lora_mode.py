@@ -929,6 +929,7 @@ def add_project(
     project_name: str,
     selected_chars: list | None = None,
     face_chars: list | None = None,
+    profile: str = "anima",
 ) -> dict:
     """새 카드별 독립 학습 프로젝트 추가.
 
@@ -939,6 +940,11 @@ def add_project(
         return {"success": False, "error": "봇 이름 누락"}
     if not project_name or not project_name.strip():
         return {"success": False, "error": "프로젝트 이름을 입력하세요"}
+
+    from modes.lora_mode import validate_lora_project_profile
+    profile_error = validate_lora_project_profile(profile)
+    if profile_error:
+        return {"success": False, "error": profile_error}
 
     project_name = project_name.strip()
     name_error = validate_lora_project_name(project_name)
@@ -968,7 +974,7 @@ def add_project(
     add_keys = rep_keys | face_keys
 
     bot_projects[project_name] = {
-        "training_config": {},
+        "training_config": {"profile": profile},
         "characters": {},
     }
     project = bot_projects[project_name]

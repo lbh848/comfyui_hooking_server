@@ -97,14 +97,14 @@ function ProjectForm({ category, sources, initialOwner, source, onClose, onSaved
     try {
       if (selectingCharacters && !characters.length) throw new Error("캐릭터를 최소 1개 선택하세요.");
       if (category === "asset") await loraRequest(source ? "lora/manage/duplicate" : "lora/manage/add", source ? { source_character: source.character, source_entry: source.name, target_entry: name, trigger, description, training_config: source.training_config } : { name, trigger, description, profile: String(form.get("profile") || "anima") });
-      else if (category === "bot") await loraRequest(source ? "bot_lora/project/duplicate" : "bot_lora/project/add", source ? { bot: owner, src_project: source.name, dst_project: name } : { bot: owner, name, characters: botLoraCharacterSelection(characters) });
+      else if (category === "bot") await loraRequest(source ? "bot_lora/project/duplicate" : "bot_lora/project/add", source ? { bot: owner, src_project: source.name, dst_project: name } : { bot: owner, name, characters: botLoraCharacterSelection(characters), profile: String(form.get("profile") || "anima") });
       else await loraRequest("style_lora/projects", { name, trigger, description });
       notify(source ? "프로젝트를 복제했습니다." : "프로젝트를 추가했습니다."); onSaved();
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }}><div className="internal-lora-form">
     {category === "bot" && source && <p className="field-help">봇: <strong>{owner}</strong></p>}
     <label className="field"><span>프로젝트 이름{selectingCharacters && <span className="field-error"> *</span>}</span><input name="name" required disabled={busy} placeholder={selectingCharacters ? "예: anima-v11" : undefined} defaultValue={source ? `${source.name}_copy` : ""} />{selectingCharacters && <span className="field-help">허용 문자: 영문/숫자, _, -, .</span>}</label>
-    {category === "asset" && !source && <label className="field">프로젝트 타입<select name="profile" defaultValue="anima" disabled={busy}><option value="anima">ILXL/ANIMA</option><option value="moss">MOSS</option></select><span className="field-help">MOSS는 LLM 정제에서 대상별 태그를 묶고 중복을 정리합니다.</span></label>}
+    {(category === "asset" || category === "bot") && !source && <label className="field">프로젝트 타입<select name="profile" defaultValue="anima" disabled={busy}><option value="anima">ILXL/ANIMA</option><option value="moss">MOSS</option></select>{category === "asset" && <span className="field-help">MOSS는 LLM 정제에서 대상별 태그를 묶고 중복을 정리합니다.</span>}</label>}
     {category !== "bot" && <><label className="field">트리거 키워드<input name="trigger" required={category === "asset"} defaultValue={source?.trigger || ""} /></label><label className="field">설명<textarea name="description" defaultValue={source?.description || ""} /></label></>}
     {selectingCharacters && <BotLoraCharacterSelection bot={owner} characters={units} selected={characters} onChange={setCharacters} disabled={busy} />}
     {source && <p className="field-help">학습 이미지와 설정을 복제합니다. 학습된 LoRA는 복제하지 않습니다.</p>}
