@@ -533,6 +533,8 @@ def workflow_json_defaults(workflow: dict) -> dict:
     for source_id, keys in sources.items():
         source = workflow[source_id]["inputs"]["value"]
         payload = json.loads(source)
+        if is_moss_document(payload):
+            result["workflow.sequential_offload"] = read_prompt_path(payload, "workflow.sequential_offload") is True
         for key, value_type in keys.items():
             settings = read_prompt_path(payload, key)
             if not isinstance(settings, value_type) or value_type is str and not settings.strip():
@@ -570,6 +572,10 @@ def validate_workflow_json_settings(fields: dict, defaults: dict) -> None:
     if not isinstance(fields, dict) or set(fields) != set(defaults):
         raise ValueError("워크플로우에서 사용하는 모델·샘플링·LoRA 설정을 모두 입력하세요.")
     for key, value in fields.items():
+        if isinstance(defaults[key], bool):
+            if not isinstance(value, bool):
+                raise ValueError(f"{key}: 켜기 또는 끄기를 선택하세요.")
+            continue
         if _is_lora_data_key(key):
             if not isinstance(value, dict) or set(value) != {"list"} or not isinstance(value["list"], list):
                 raise ValueError("LoRA 설정에는 list 배열이 필요합니다.")
@@ -1096,6 +1102,7 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         negative=workflow.get("negative") or negative or "",
         sampling=sampling, lora_list=loras,
         lora_filter=saved_loras.get("filter", ""),
+        sequential_offload=workflow.get("sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
     rebuilt = MossPromptBuilder.build(document["moss"], controller)
     # A replay keeps the source captured with the original request, but the
@@ -1173,6 +1180,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         negative=fields.get("NEGATIVE_ANIMA") or negative or "",
         sampling=sampling, lora_list=lora_list,
         lora_filter=controller_loras.get("filter", ""),
+        sequential_offload=fields.get("workflow.sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
     rebuilt = MossPromptBuilder.build(moss, controller)
     # The in-graph repair node reads this control block. Keep it even when the

@@ -233,6 +233,11 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
           })}</div>
         </div></div>
         <div hidden={section !== "sampling"}><fieldset className="illust-form" disabled={readOnly}>
+          {"workflow.sequential_offload" in fields && <div className="field">
+            <span>모델 순차 오프로딩</span>
+            <div className="illust-actions"><Toggle label="모델 순차 오프로딩" checked={fields["workflow.sequential_offload"] === true} onChange={enabled => update("workflow.sequential_offload", enabled)} /><span>{fields["workflow.sequential_offload"] === true ? "켜짐" : "꺼짐"}</span></div>
+            <span className="field-help">8GB 등 VRAM이 부족한 환경에서 선택하세요. 모델과 LoRA는 RAM에 보관하고, 텍스트 인코더·생성 모델·VAE가 VRAM을 순서대로 사용합니다. 기본값은 꺼짐이며 모델 전환 시간이 추가될 수 있습니다.</span>
+          </div>}
           <div className="illust-actions"><p className="field-help">{sampling.data?.source === "comfyui" ? "연결된 ComfyUI의 샘플러·스케줄러 목록입니다." : "ComfyUI 기본 샘플러·스케줄러 목록입니다. 연결되면 설치된 목록을 불러옵니다."}</p><button type="button" className="button" onClick={sampling.reload}><RefreshCw size={14} />샘플링 목록 새로고침</button></div>
           {groupSamplingStages(fields).map(group => <details className="illust-sampling-group" data-group={group.key} key={group.key} open={group.key === "ANIMA_FIRST_SAMPLER" || group.key === "workflow.sampling"}>
             <summary>{group.label}</summary>
