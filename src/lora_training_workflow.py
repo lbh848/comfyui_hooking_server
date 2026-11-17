@@ -26,36 +26,36 @@ def training_workflow_source_path(training_config: dict, project_root: Path = SO
     return str(workflow_path)
 
 
-def training_workflow_epoch_settings(training_config: dict) -> dict:
-    """Read the selected workflow's literal epoch settings for preview and submission."""
-    if not training_config.get("workflow_source_path", ""):
-        return {}
+def training_workflow_accumulation_steps(training_config: dict) -> int:
+    """Read the shared batch-1 accumulation setting used to size epoch training."""
     from illustration_json import workflow_json_settings_nodes
 
     workflow_path = training_workflow_source_path(training_config)
     workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8-sig"))
-    nodes = workflow_json_settings_nodes(workflow, widget_names=("max_train_epochs", "gradient_accumulation_steps"))
-    epoch_settings = []
+    nodes = workflow_json_settings_nodes(workflow, widget_names=("gradient_accumulation_steps",))
+    accumulation_steps = []
     for node in nodes.values():
         if not isinstance(node, dict) or node.get("class_type") != "md_soya_AnimaTrainOptionsV2" or node.get("mode", 0) != 0:
             continue
         inputs = node.get("inputs", {})
-        settings = {"max_train_epochs": inputs.get("max_train_epochs", 0),
-                    "gradient_accumulation_steps": inputs.get("gradient_accumulation_steps", 1)}
-        for key, minimum in (("max_train_epochs", 0), ("gradient_accumulation_steps", 1)):
-            if type(settings[key]) is not int or settings[key] < minimum:
-                raise ValueError(f"학습 워크플로우의 {key} 값을 확인하세요.")
-        epoch_settings.append(settings)
-    if any(settings != epoch_settings[0] for settings in epoch_settings):
-        raise ValueError("학습 워크플로우의 Epochs와 Gradient Accumulation 설정을 통일하세요.")
-    return epoch_settings[0] if epoch_settings else {}
+        gradient_accumulation_steps = inputs.get("gradient_accumulation_steps", 1)
+        if type(gradient_accumulation_steps) is not int or gradient_accumulation_steps < 1:
+            raise ValueError("학습 워크플로우의 gradient_accumulation_steps 값을 확인하세요.")
+        accumulation_steps.append(gradient_accumulation_steps)
+    if not accumulation_steps:
+        raise ValueError("Epochs 학습에는 ANIMA V2 학습 워크플로우를 선택하세요.")
+    if len(set(accumulation_steps)) != 1:
+        raise ValueError("학습 워크플로우의 Gradient Accumulation 설정을 통일하세요.")
+    return accumulation_steps[0]
 
 
-def build_training_workflow(api_workflow: dict, positive_text: str, negative_text: str, total_steps: int, optimizer_type: str = "default") -> dict:
+def build_training_workflow(api_workflow: dict, positive_text: str, negative_text: str, total_steps: int, optimizer_type: str = "default", *, training_config: dict | None = None) -> dict:
     """Bind captions and an explicit step limit without duplicating the dataset."""
     if type(total_steps) is not int or total_steps < 1:
         raise ValueError("전체 STEP은 1 이상이어야 합니다.")
     optimizer_type = training_optimizer_type(optimizer_type)
+    from lora_training_steps import training_step_settings
+    steps = training_step_settings(training_config or {})
     workflow = copy.deepcopy(api_workflow)
     step_options = 0
     for node in workflow.values():
@@ -69,6 +69,8 @@ def build_training_workflow(api_workflow: dict, positive_text: str, negative_tex
         if node.get("class_type") in ("md_soya_ReferenceTrainOptions", "md_soya_AnimaTrainOptionsV2"):
             # Replace the legacy N_IMG * STEP_PER_IMAGE link with the exact count.
             node.setdefault("inputs", {})["steps_override"] = total_steps
+            if node.get("class_type") == "md_soya_AnimaTrainOptionsV2":
+                node["inputs"]["max_train_epochs"] = steps["max_train_epochs"] if steps["step_mode"] == "epochs" else 0
             if optimizer_type != "default":
                 node["inputs"]["optimizer_type"] = optimizer_type
             step_options += 1

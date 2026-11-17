@@ -29,9 +29,11 @@ class TrainingPresetConflict(ValueError):
 
 def validate_training_settings(value, profile):
     keys = {*NUMBER_MINIMUMS, "profile", "multi_img_folder_name", "upscale"}
-    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {"step_mode", "total_steps", "workflow_source_path", "optimizer_type"}
+    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {"step_mode", "total_steps", "max_train_epochs", "workflow_source_path", "optimizer_type"}
             or value.get("profile") != profile):
         raise ValueError("학습 프로필과 설정 항목을 확인하세요.")
+    if value.get("step_mode") == "epochs" and profile != "anima":
+        raise ValueError("Epochs 학습은 ANIMA 프로필에서 선택하세요.")
     for key, minimum in NUMBER_MINIMUMS.items():
         number = value[key]
         if (type(number) not in (int, float) or number < minimum or number > 9007199254740991

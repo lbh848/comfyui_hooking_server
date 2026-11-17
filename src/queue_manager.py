@@ -4533,7 +4533,7 @@ class QueueManager:
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"), training_config=training_config)
 
         # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
         try:
@@ -4683,7 +4683,7 @@ class QueueManager:
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"), training_config=training_config)
 
         # 진행률 알림
         if self.notify_frontend:
@@ -5589,7 +5589,7 @@ class QueueManager:
             if conv_err or api_wf is None:
                 raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
-            wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, profile_settings.get("optimizer_type", "default"))
+            wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, profile_settings.get("optimizer_type", "default"), training_config=profile_settings)
 
             # 진행률 알림 (style 도 동일 이벤트, payload 에 source/project 추가)
             profile_label = f" ({profile})" if len(profiles_to_train) > 1 else ""

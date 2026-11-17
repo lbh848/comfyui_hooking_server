@@ -63,7 +63,7 @@
       "name": "comfyui-instant-lora_v_soya",
       "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
       "source_type": "git",
-        "ref": "a2b0ecf60f0a0c23b4d08b681c25143f77a3152a"
+        "ref": "99869e63290f534c9ae7d9b6dd15e24870e3fc18"
     },
     {
       "name": "comfyui-kjnodes",

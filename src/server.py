@@ -34625,7 +34625,7 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"워크플로우 변환 실패: {conv_err}"})
             return
 
-        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"))
+        wf = build_training_workflow(api_wf, positive_text, negative_text, total_steps, training_config.get("optimizer_type", "default"), training_config=training_config)
 
         prompt_id, _ = await submit_to_real_comfy(
             wf,

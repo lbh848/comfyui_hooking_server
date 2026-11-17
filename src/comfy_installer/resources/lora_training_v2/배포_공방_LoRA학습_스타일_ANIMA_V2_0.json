@@ -3791,7 +3791,7 @@
         "",
         true,
         "AdamW",
-        8,
+        0,
         2,
         "constant_with_warmup",
         0.05,

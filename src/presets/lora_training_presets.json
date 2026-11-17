@@ -60,14 +60,15 @@
         "resolution": 1024,
         "dim": 32,
         "alpha": 128,
-        "step_mode": "per_image",
+        "step_mode": "epochs",
         "step_per_image": 4,
         "total_steps": 4,
         "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
         "profile": "anima",
         "multi_img_folder_name": "soya_lora",
         "upscale": false,
-        "optimizer_type": "AdamW"
+        "optimizer_type": "AdamW",
+        "max_train_epochs": 8
       }
     },
     {
