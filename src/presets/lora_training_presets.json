@@ -157,7 +157,7 @@
         "step_mode": "total",
         "step_per_image": 100,
         "total_steps": 300,
-        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_MOSS_V1_0.json",
+        "workflow_source_path": "data/comfy/user/default/workflows/배포_공방_LoRA학습_캐릭터_MOSS_V2_0.json",
         "optimizer_type": "Muon",
         "profile": "moss",
         "multi_img_folder_name": "soya_lora",

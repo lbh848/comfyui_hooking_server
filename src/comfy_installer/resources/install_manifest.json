@@ -63,7 +63,7 @@
       "name": "comfyui-instant-lora_v_soya",
       "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
       "source_type": "git",
-        "ref": "99869e63290f534c9ae7d9b6dd15e24870e3fc18"
+      "ref": "2e7dc5106fec8fce3652db7a24f17a4c42c4a141"
     },
     {
       "name": "comfyui-kjnodes",
@@ -582,6 +582,14 @@
       "url": "https://huggingface.co/localai0301/Anima-RGBA/resolve/c1e34fb312d98af65db290fc5aba4dfb2f03f49b/anima_rgba_vae.safetensors"
     },
     {
+      "id": "moss-image-base-int8",
+      "license": "Apache-2.0",
+      "relative_path": "models/diffusion_models/moss_image_base_int8_convrot.safetensors",
+      "sha256": "f601c1e1161915fb3fea003da0c1782e374dd960fbb3978bc0e4e3fa1f2d8e6f",
+      "size": 5413698958,
+      "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/ee0804c4049fa6e33069d5652ed1448397056f98/diffusion_models/moss_image_base_int8_convrot.safetensors"
+    },
+    {
       "id": "moss-image-sft-int8",
       "license": "Apache-2.0",
       "relative_path": "models/diffusion_models/moss_image_sft_int8_convrot.safetensors",
@@ -1096,14 +1104,6 @@
         ]
       },
       {
-        "bindings": [
-          "workflow_pack_extra_paths.style_lora_training_anima_v2"
-        ],
-        "id": "workflow_pack_extra_paths.style_lora_training_anima_v2",
-        "model_ids": [
-          "anima-base-v1",
-          "anima-text-encoder",
-      {
         "id": "workflow_pack_extra_paths.lora_training_anima_v2_1",
         "name": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
         "archive_name": "workflows/배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
@@ -1117,6 +1117,14 @@
           "anime-sharp-v4-upscaler"
         ]
       },
+      {
+        "bindings": [
+          "workflow_pack_extra_paths.style_lora_training_anima_v2"
+        ],
+        "id": "workflow_pack_extra_paths.style_lora_training_anima_v2",
+        "model_ids": [
+          "anima-base-v1",
+          "anima-text-encoder",
           "anima-vae"
         ]
       },
@@ -1128,6 +1136,18 @@
         "model_ids": [
           "moss-image-sft-int8",
           "moss-4step-akhaliq-v2",
+          "qwen35-9b-int8",
+          "flux2-vae-small",
+          "anime-sharp-v4-upscaler"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.lora_training_moss_v2",
+        "bindings": [
+          "workflow_pack_extra_paths.lora_training_moss_v2"
+        ],
+        "model_ids": [
+          "moss-image-base-int8",
           "qwen35-9b-int8",
           "flux2-vae-small",
           "anime-sharp-v4-upscaler"
@@ -1147,11 +1167,13 @@
       }
     ],
     "optional_bindings": [
+      "workflow_pack_extra_paths.lora_training_moss_v2",
       "workflow_pack_extra_paths.anima_rgba_asset",
       "workflow_pack_extra_paths.illustration_dual_vae",
       "workflow_pack_extra_paths.illustration_moss_8step",
       "workflow_pack_extra_paths.illustration_moss_4step",
       "workflow_pack_extra_paths.lora_training_anima_v2",
+      "workflow_pack_extra_paths.lora_training_anima_v2_1",
       "workflow_pack_extra_paths.style_lora_training_anima_v2",
       "lora_training_workflow_source_paths.moss",
       "style_lora_training_workflow_source_paths.moss"
@@ -1176,4 +1198,3 @@
     ]
   }
 }
-      "workflow_pack_extra_paths.lora_training_anima_v2_1",

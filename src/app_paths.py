@@ -40,6 +40,7 @@ WORKFLOW_FILENAMES = {
     "workflow_pack_extra_paths.lora_training_anima_v2": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_0.json",
     "workflow_pack_extra_paths.lora_training_anima_v2_1": "배포_공방_LoRA학습_캐릭터_ANIMA_V2_1.json",
     "workflow_pack_extra_paths.style_lora_training_anima_v2": "배포_공방_LoRA학습_스타일_ANIMA_V2_0.json",
+    "workflow_pack_extra_paths.lora_training_moss_v2": "배포_공방_LoRA학습_캐릭터_MOSS_V2_0.json",
 }
 TAG_ANALYSIS_WORKFLOW_PATHS = {
     key: f"{WORKFLOW_DIR}/{WORKFLOW_FILENAMES[key]}"

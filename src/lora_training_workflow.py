@@ -5,6 +5,7 @@ from pathlib import Path
 from app_paths import SOURCE_DIR, resolve_install_path
 
 TRAINING_OPTIMIZERS = ("default", "AdamW", "AdamW8bit", "Muon")
+EPOCH_TRAINING_NODES = {"anima": "md_soya_AnimaTrainOptionsV2", "moss": "md_soya_MossTrainOptionsV2"}
 
 
 def training_optimizer_type(value="default") -> str:
@@ -33,9 +34,10 @@ def training_workflow_accumulation_steps(training_config: dict) -> int:
     workflow_path = training_workflow_source_path(training_config)
     workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8-sig"))
     nodes = workflow_json_settings_nodes(workflow, widget_names=("gradient_accumulation_steps",))
+    options_type = EPOCH_TRAINING_NODES.get(training_config.get("profile", "anima"))
     accumulation_steps = []
     for node in nodes.values():
-        if not isinstance(node, dict) or node.get("class_type") != "md_soya_AnimaTrainOptionsV2" or node.get("mode", 0) != 0:
+        if not isinstance(node, dict) or node.get("class_type") != options_type or node.get("mode", 0) != 0:
             continue
         inputs = node.get("inputs", {})
         gradient_accumulation_steps = inputs.get("gradient_accumulation_steps", 1)
@@ -43,7 +45,7 @@ def training_workflow_accumulation_steps(training_config: dict) -> int:
             raise ValueError("학습 워크플로우의 gradient_accumulation_steps 값을 확인하세요.")
         accumulation_steps.append(gradient_accumulation_steps)
     if not accumulation_steps:
-        raise ValueError("Epochs 학습에는 ANIMA V2 학습 워크플로우를 선택하세요.")
+        raise ValueError("Epochs 학습에는 선택한 프로필의 V2 학습 워크플로우가 필요합니다.")
     if len(set(accumulation_steps)) != 1:
         raise ValueError("학습 워크플로우의 Gradient Accumulation 설정을 통일하세요.")
     return accumulation_steps[0]
@@ -66,10 +68,10 @@ def build_training_workflow(api_workflow: dict, positive_text: str, negative_tex
             node["inputs"]["value"] = positive_text
         elif title == "부정프롬프트":
             node["inputs"]["value"] = negative_text
-        if node.get("class_type") in ("md_soya_ReferenceTrainOptions", "md_soya_AnimaTrainOptionsV2"):
+        if node.get("class_type") == "md_soya_ReferenceTrainOptions" or node.get("class_type") in EPOCH_TRAINING_NODES.values():
             # Replace the legacy N_IMG * STEP_PER_IMAGE link with the exact count.
             node.setdefault("inputs", {})["steps_override"] = total_steps
-            if node.get("class_type") == "md_soya_AnimaTrainOptionsV2":
+            if node.get("class_type") in EPOCH_TRAINING_NODES.values():
                 node["inputs"]["max_train_epochs"] = steps["max_train_epochs"] if steps["step_mode"] == "epochs" else 0
             if optimizer_type != "default":
                 node["inputs"]["optimizer_type"] = optimizer_type
