@@ -35,6 +35,14 @@ AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_
 AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_custom.txt")
 AUTO_LORA_PROMPT_META_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_meta.json")
 
+MOSS_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_moss_system.txt")
+MOSS_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_custom.txt")
+MOSS_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_moss_meta.json")
+MOSS_CAPTION_RULES_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "moss_caption_rules.txt")
+MOSS_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_moss_test_setup_system.txt")
+MOSS_TEST_SETUP_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "asset_moss_test_setup_prompt_custom.txt")
+MOSS_TEST_SETUP_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "asset_moss_test_setup_prompt_meta.json")
+
 # 봇 LoRA "테스트 이미지 일괄 세팅" 전용 템플릿. 텍스트 only LLM.
 # {test_prompt} = 공통 테스트 이미지 프롬프트(품질/자세/표정), {character_prompt} = 캐릭터 카드 수정 프롬프트(복장/외모).
 BOT_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "bot_test_setup_system.txt")
@@ -72,9 +80,28 @@ def _auto_lora_prompt_paths(template_set: str = "", is_asset: bool = False) -> t
     """
     if template_set == "style":
         return (STYLE_LORA_PROMPT_BUILTIN_FILE, STYLE_LORA_PROMPT_CUSTOM_FILE, STYLE_LORA_PROMPT_META_FILE)
+    if template_set == "moss" and is_asset:
+        return (MOSS_LORA_PROMPT_BUILTIN_FILE, MOSS_LORA_PROMPT_CUSTOM_FILE, MOSS_LORA_PROMPT_META_FILE)
     if is_asset:
         return (AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE, AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE, AUTO_LORA_PROMPT_META_ASSET_FILE)
     return (AUTO_LORA_PROMPT_BUILTIN_FILE, AUTO_LORA_PROMPT_CUSTOM_FILE, AUTO_LORA_PROMPT_META_FILE)
+
+
+def load_moss_caption_rules() -> str:
+    """Read the shared format rules used by refinement and final review."""
+    with open(MOSS_CAPTION_RULES_FILE, encoding="utf-8") as source:
+        return source.read().strip()
+
+
+def _load_moss_lora_prompt_builtin(path: str) -> str:
+    """Expand the shared MOSS caption contract for both the editor and execution.
+
+    Format reference: sorryhyun/anima_lora docs/moss/README.md#captions and
+    library/moss/captions.py, using vision LLM attribution instead of segmentation.
+    """
+    with open(path, encoding="utf-8") as source:
+        template = source.read()
+    return template.replace("{moss_caption_rules}", load_moss_caption_rules())
 
 
 def _load_auto_lora_prompt_builtin(is_asset: bool = False, template_set: str = "") -> str:
@@ -87,6 +114,8 @@ def _load_auto_lora_prompt_builtin(is_asset: bool = False, template_set: str = "
     global _auto_lora_prompt_builtin_asset_cache, _auto_lora_prompt_builtin_asset_mtime
     global _auto_lora_prompt_builtin_style_cache, _auto_lora_prompt_builtin_style_mtime
     path = _auto_lora_prompt_paths(template_set, is_asset)[0]
+    if template_set == "moss" and is_asset:
+        return _load_moss_lora_prompt_builtin(path)
     if template_set == "style":
         cache_val = _auto_lora_prompt_builtin_style_cache
         mtime_val = _auto_lora_prompt_builtin_style_mtime
@@ -217,9 +246,11 @@ def _load_bot_test_setup_prompt_builtin() -> str:
         return ""
 
 
-def _load_asset_test_setup_prompt_builtin() -> str:
+def _load_asset_test_setup_prompt_builtin(template_set: str = "") -> str:
     """에셋 LoRA 테스트 조합 전용 builtin 프롬프트 로드. mtime 기반 캐싱."""
     global _asset_test_setup_prompt_builtin_cache, _asset_test_setup_prompt_builtin_mtime
+    if template_set == "moss":
+        return _load_moss_lora_prompt_builtin(MOSS_TEST_SETUP_PROMPT_BUILTIN_FILE)
     path = ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE
     if not os.path.isfile(path):
         print(f"[INSTANCE_LORA] asset_test_setup builtin 파일 없음: {path}")
@@ -250,19 +281,21 @@ def _render_bot_test_setup_prompt(template: str, test_prompt: str, character_pro
     return rendered
 
 
-def _test_setup_prompt_paths(is_asset: bool = False) -> tuple[str, str, str]:
+def _test_setup_prompt_paths(is_asset: bool = False, template_set: str = "") -> tuple[str, str, str]:
     """bot/asset 테스트 세팅 프롬프트 (builtin, custom, meta) 파일 경로 반환.
     is_asset=True 이면 에셋 전용(학습 에셋 외관) 템플릿/설정을, 아니면 캐릭터(봇 LoRA) 템플릿/설정을 반환한다.
     auto_lora_prompt 의 _auto_lora_prompt_paths 와 동일한 bot/asset 분리 패턴."""
+    if is_asset and template_set == "moss":
+        return (MOSS_TEST_SETUP_PROMPT_BUILTIN_FILE, MOSS_TEST_SETUP_PROMPT_CUSTOM_FILE, MOSS_TEST_SETUP_PROMPT_META_FILE)
     if is_asset:
         return (ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE, ASSET_TEST_SETUP_PROMPT_CUSTOM_FILE, ASSET_TEST_SETUP_PROMPT_META_FILE)
     return (BOT_TEST_SETUP_PROMPT_BUILTIN_FILE, BOT_TEST_SETUP_PROMPT_CUSTOM_FILE, BOT_TEST_SETUP_PROMPT_META_FILE)
 
 
-def _load_test_setup_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
+def _load_test_setup_prompt_custom(is_asset: bool = False, template_set: str = "") -> tuple[str, bool]:
     """테스트 세팅 커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False).
     is_asset=True 이면 에셋 전용 custom/meta 파일을 로드한다."""
-    custom_file, meta_file = _test_setup_prompt_paths(is_asset)[1:]
+    custom_file, meta_file = _test_setup_prompt_paths(is_asset, template_set)[1:]
     custom = ""
     if os.path.isfile(custom_file):
         try:
@@ -285,11 +318,11 @@ def _load_test_setup_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
     return custom, use_custom
 
 
-def _save_test_setup_prompt_custom(text: str, use_custom: bool, is_asset: bool = False) -> None:
+def _save_test_setup_prompt_custom(text: str, use_custom: bool, is_asset: bool = False, template_set: str = "") -> None:
     """테스트 세팅 커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업.
     is_asset=True 이면 에셋 전용 custom/meta 파일에 저장한다."""
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-    custom_file, meta_file = _test_setup_prompt_paths(is_asset)[1:]
+    custom_file, meta_file = _test_setup_prompt_paths(is_asset, template_set)[1:]
 
     if os.path.isfile(custom_file):
         try:
@@ -425,6 +458,10 @@ async def run_auto_refine_lora_prompt(
             return {"success": False, "error": "bot_lora_training 소스는 bot, project 필드가 필요합니다."}
         if source_type == "training" and not entry:
             return {"success": False, "error": "training 소스는 entry 필드가 필요합니다."}
+        if source_type == "training":
+            from modes.lora_mode import get_training_profile
+            is_asset = True
+            template_set = get_training_profile(char_name, entry)
         if not current_positive or not current_positive.strip():
             return {"success": False, "error": "정제할 긍정 프롬프트가 비어 있습니다."}
 
@@ -629,6 +666,7 @@ async def run_auto_refine_lora_prompt(
                         prompt_id=prompt_id,
                         source_type=source_type,
                         review_mode="style_caption" if source_type == "style" else "single_source",
+                        caption_format="moss" if template_set == "moss" else "",
                         image_roles=[
                             "style LoRA source image; preserve depicted content but exclude visual-style descriptions"
                             if source_type == "style"
@@ -856,11 +894,15 @@ async def run_auto_refine_test_setup(
             return {"success": False, "error": "공통 테스트 이미지 프롬프트(test_positive)가 비어 있습니다."}
 
         is_asset = source_type == "asset_test_setup"
-        custom_text, use_custom = _load_test_setup_prompt_custom(is_asset)
+        template_set = ""
+        if is_asset:
+            from modes.lora_mode import get_training_profile
+            template_set = get_training_profile(character, entry)
+        custom_text, use_custom = _load_test_setup_prompt_custom(is_asset, template_set)
         if use_custom and custom_text.strip():
             template = custom_text
         elif is_asset:
-            template = _load_asset_test_setup_prompt_builtin()
+            template = _load_asset_test_setup_prompt_builtin(template_set)
         else:
             template = _load_bot_test_setup_prompt_builtin()
         if not template.strip():
@@ -958,6 +1000,7 @@ async def run_auto_refine_test_setup(
                         prompt_id=prompt_id,
                         source_type=source_type,
                         review_mode="single_source" if shared_test else "asset_test_transfer" if is_asset_test else "test_transfer",
+                        caption_format="moss" if template_set == "moss" else "",
                         image_roles=["shared test reference; supplies pose, expression, action, framing, composition, background, and quality only; exclude identity, outfit, appearance, artist names, and trigger tokens"] if shared_test else [
                             "source asset image; supplies the learned asset's defining visible properties"
                             if is_asset_test
@@ -1021,8 +1064,9 @@ async def handle_get_auto_lora_prompt(request):
     """
     try:
         is_asset = request.query.get("asset") in ("1", "true", "True")
-        builtin = _load_auto_lora_prompt_builtin(is_asset)
-        custom, use_custom = _load_auto_lora_prompt_custom(is_asset)
+        template_set = request.query.get("profile", "") if is_asset else ""
+        builtin = _load_auto_lora_prompt_builtin(is_asset, template_set)
+        custom, use_custom = _load_auto_lora_prompt_custom(is_asset, template_set)
         return web.json_response({
             "success": True,
             "data": {
@@ -1049,7 +1093,8 @@ async def handle_set_auto_lora_prompt(request):
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
         is_asset = bool(body.get("asset", False))
-        _save_auto_lora_prompt_custom(custom, use_custom, is_asset)
+        template_set = (body.get("profile") or request.query.get("profile", "")) if is_asset else ""
+        _save_auto_lora_prompt_custom(custom, use_custom, is_asset, template_set)
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[INSTANCE_LORA] auto_lora_prompt 저장 실패 (asset={is_asset}): {e}")
@@ -1062,8 +1107,9 @@ async def handle_get_bot_test_setup_prompt(request):
     ?asset=1 이면 에셋 전용(학습 에셋 외관) builtin/custom/use_custom 을 반환한다."""
     try:
         is_asset = request.query.get("asset", "").strip() in ("1", "true", "True")
-        builtin = _load_asset_test_setup_prompt_builtin() if is_asset else _load_bot_test_setup_prompt_builtin()
-        custom, use_custom = _load_test_setup_prompt_custom(is_asset)
+        template_set = request.query.get("profile", "") if is_asset else ""
+        builtin = _load_asset_test_setup_prompt_builtin(template_set) if is_asset else _load_bot_test_setup_prompt_builtin()
+        custom, use_custom = _load_test_setup_prompt_custom(is_asset, template_set)
         return web.json_response({
             "success": True,
             "data": {
@@ -1088,7 +1134,8 @@ async def handle_set_bot_test_setup_prompt(request):
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
         is_asset = bool(body.get("asset", False))
-        _save_test_setup_prompt_custom(custom, use_custom, is_asset)
+        template_set = (body.get("profile") or request.query.get("profile", "")) if is_asset else ""
+        _save_test_setup_prompt_custom(custom, use_custom, is_asset, template_set)
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[INSTANCE_LORA] bot_test_setup_prompt 저장 실패 (asset={is_asset}): {e}")

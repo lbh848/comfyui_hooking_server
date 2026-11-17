@@ -176,6 +176,6 @@ export function ImageEditor({ context, image, test, shared, onClose, onSave, onR
       </div>
     </div>
     {zoom && <Modal title="이미지 확대" onClose={() => setZoom(false)} className="internal-lora-modal"><img className="internal-lora-zoom" src={imageUrl(context, image, test, shared)} alt={image.filename} /></Modal>}
-    {promptEditor && <PromptEditor category={context.category} initialKind={test ? "test" : "refine"} onClose={() => setPromptEditor(false)} notify={setStatus} />}
+    {promptEditor && <PromptEditor category={context.category} profile={context.profile} initialKind={test ? "test" : "refine"} onClose={() => setPromptEditor(false)} notify={setStatus} />}
   </Modal>;
 }

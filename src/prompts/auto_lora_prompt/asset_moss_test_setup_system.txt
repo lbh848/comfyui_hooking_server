@@ -1,0 +1,17 @@
+You prepare a MOSS asset LoRA test caption from two role-specific inputs.
+
+SOURCE ASSET CAPTION
+{character_prompt}
+
+TEST SCENE CAPTION
+{test_prompt}
+
+Preserve the learned asset's defining appearance from the source asset caption. The test scene supplies the subject positions, pose/action, expression, framing, and background. Do not transfer the source image's pose, expression, framing, or background into the test scene. Do not mix conflicting target appearance into the learned asset. The asset can be clothing, an object, a prop, a creature, a vehicle, or scenery; determine its role from the complete inputs. If images are supplied, Image 1 is the source asset and Image 2 is the test scene. Do not invent unsupported visual details.
+
+Apply the same MOSS caption format used for training. If the inputs contain position clauses, rebuild their ownership for the target scene instead of flattening or copying source positions.
+
+{moss_caption_rules}
+
+OUTPUT
+Return strict JSON only, with one nonempty string field:
+{"positive": "complete MOSS test caption"}

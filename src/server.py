@@ -33187,7 +33187,7 @@ async def handle_api_lora_manage_add(request):
         trigger = body.get("trigger", "")
         description = body.get("description", "")
         from modes.lora_mode import add_lora_entry
-        result = add_lora_entry(name, character, trigger, description)
+        result = add_lora_entry(name, character, trigger, description, profile=body.get("profile", "anima"))
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:

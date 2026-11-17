@@ -79,7 +79,7 @@ export function InternalLoraPage({ category, notify }: { category: LoraCategory;
         </button>)}</div> : !error && <Empty title={search ? "검색 결과가 없습니다" : "봇이 없습니다"}>
           {search ? "검색 조건을 변경해 주세요." : "등록된 봇이 여기에 표시됩니다."}
         </Empty>
-        : shown.length ? <div className="internal-lora-projects">{shown.map(p => <button className="internal-lora-project" key={JSON.stringify([p.character, p.bot, p.id, p.name])} onClick={() => setSelected(p)}><span className="internal-lora-project-icon">{loraProjectPreview(category, p) ? <img src={loraProjectPreview(category, p)} alt={`${p.name} 대표 이미지`} loading="lazy" /> : <Folder size={28} />}</span><Badge>{loraProjectLabel(p)}</Badge><h2>{p.name}</h2><p>{p.trigger || p.description || "프로젝트 열기"}</p><small>{category === "bot" ? `${p.profile_count ?? p.character_count}개 캐릭터 카드` : category === "style" ? `학습 이미지 ${p.image_count}개` : p.training_config?.profile?.toUpperCase() || "ANIMA · SDXL"}</small></button>)}</div> : !error && <Empty title="프로젝트가 없습니다">{search ? "검색 조건을 변경해 주세요." : "프로젝트 추가로 LoRA 학습을 준비하세요."}</Empty>}
+        : shown.length ? <div className="internal-lora-projects">{shown.map(p => <button className="internal-lora-project" key={JSON.stringify([p.character, p.bot, p.id, p.name])} onClick={() => setSelected(p)}><span className="internal-lora-project-icon">{loraProjectPreview(category, p) ? <img src={loraProjectPreview(category, p)} alt={`${p.name} 대표 이미지`} loading="lazy" /> : <Folder size={28} />}</span><Badge>{loraProjectLabel(p)}</Badge><h2>{p.name}</h2><p>{p.trigger || p.description || "프로젝트 열기"}</p><small>{category === "bot" ? `${p.profile_count ?? p.character_count}개 캐릭터 카드` : category === "style" ? `학습 이미지 ${p.image_count}개` : p.training_config?.profile === "moss" ? "MOSS" : "ILXL/ANIMA"}</small></button>)}</div> : !error && <Empty title="프로젝트가 없습니다">{search ? "검색 조건을 변경해 주세요." : "프로젝트 추가로 LoRA 학습을 준비하세요."}</Empty>}
     </>}
     {(dialog === "create" || dialog === "duplicate") && <ProjectForm category={category} sources={sources} initialOwner={owner} source={dialog === "duplicate" ? selected : null} notify={notify} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); void refresh(); }} />}
   </div>;
@@ -96,7 +96,7 @@ function ProjectForm({ category, sources, initialOwner, source, onClose, onSaved
     e.preventDefault(); const form = new FormData(e.currentTarget); const name = String(form.get("name") || "").trim(); const trigger = String(form.get("trigger") || "").trim(); const description = String(form.get("description") || ""); setBusy(true); setError("");
     try {
       if (selectingCharacters && !characters.length) throw new Error("캐릭터를 최소 1개 선택하세요.");
-      if (category === "asset") await loraRequest(source ? "lora/manage/duplicate" : "lora/manage/add", source ? { source_character: source.character, source_entry: source.name, target_entry: name, trigger, description, training_config: source.training_config } : { name, trigger, description });
+      if (category === "asset") await loraRequest(source ? "lora/manage/duplicate" : "lora/manage/add", source ? { source_character: source.character, source_entry: source.name, target_entry: name, trigger, description, training_config: source.training_config } : { name, trigger, description, profile: String(form.get("profile") || "anima") });
       else if (category === "bot") await loraRequest(source ? "bot_lora/project/duplicate" : "bot_lora/project/add", source ? { bot: owner, src_project: source.name, dst_project: name } : { bot: owner, name, characters: botLoraCharacterSelection(characters) });
       else await loraRequest("style_lora/projects", { name, trigger, description });
       notify(source ? "프로젝트를 복제했습니다." : "프로젝트를 추가했습니다."); onSaved();
@@ -104,6 +104,7 @@ function ProjectForm({ category, sources, initialOwner, source, onClose, onSaved
   }}><div className="internal-lora-form">
     {category === "bot" && source && <p className="field-help">봇: <strong>{owner}</strong></p>}
     <label className="field"><span>프로젝트 이름{selectingCharacters && <span className="field-error"> *</span>}</span><input name="name" required disabled={busy} placeholder={selectingCharacters ? "예: anima-v11" : undefined} defaultValue={source ? `${source.name}_copy` : ""} />{selectingCharacters && <span className="field-help">허용 문자: 영문/숫자, _, -, .</span>}</label>
+    {category === "asset" && !source && <label className="field">프로젝트 타입<select name="profile" defaultValue="anima" disabled={busy}><option value="anima">ILXL/ANIMA</option><option value="moss">MOSS</option></select><span className="field-help">MOSS는 LLM 정제에서 대상별 태그를 묶고 중복을 정리합니다.</span></label>}
     {category !== "bot" && <><label className="field">트리거 키워드<input name="trigger" required={category === "asset"} defaultValue={source?.trigger || ""} /></label><label className="field">설명<textarea name="description" defaultValue={source?.description || ""} /></label></>}
     {selectingCharacters && <BotLoraCharacterSelection bot={owner} characters={units} selected={characters} onChange={setCharacters} disabled={busy} />}
     {source && <p className="field-help">학습 이미지와 설정을 복제합니다. 학습된 LoRA는 복제하지 않습니다.</p>}

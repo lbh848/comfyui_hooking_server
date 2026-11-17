@@ -1350,6 +1350,12 @@ def _get_entry(data: dict, character: str, name: str) -> dict | None:
     return data.get("loras", {}).get(character, {}).get(name)
 
 
+def get_training_profile(character: str, entry: str) -> str:
+    """Resolve the saved asset project's profile for caption preparation."""
+    info = _get_entry(_load_lora_manage(), character, entry) or {}
+    return info.get("training_config", {}).get("profile") or "anima"
+
+
 def training_save_path(character: str, entry: str) -> str:
     """Path relative to SOYA_CHAR_LORA, shared by training and preview."""
     return f"{ASSET_LORA_FOLDER}/{_safe_dirname(character)}/Lora/{_safe_dirname(entry)}"
@@ -1443,7 +1449,7 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
     return result
 
 
-def add_lora_entry(name: str, character: str, trigger: str, description: str) -> dict:
+def add_lora_entry(name: str, character: str, trigger: str, description: str, profile: str = "anima") -> dict:
     """새 LoRA 항목 추가"""
     if not name or not name.strip():
         print("[LORA_MANAGE] 이름 누락")
@@ -1451,6 +1457,8 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str) ->
     if not trigger or not trigger.strip():
         print("[LORA_MANAGE] 트리거 키워드 누락")
         return {"success": False, "error": "트리거 키워드를 입력하세요"}
+    if profile not in ("anima", "moss"):
+        return {"success": False, "error": "프로젝트 타입은 ILXL/ANIMA 또는 MOSS를 선택하세요."}
     character = character or LORA_PROJECT_OWNER
 
     name = name.strip()
@@ -1471,6 +1479,7 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str) ->
     data.setdefault("loras", {}).setdefault(character, {})[name] = {
         "trigger": trigger.strip(),
         "description": description.strip(),
+        "training_config": {"profile": profile, "lora_save_path": training_save_path(character, name)},
     }
     if not _save_lora_manage(data):
         return {"success": False, "error": "프로젝트를 저장하지 못했습니다."}

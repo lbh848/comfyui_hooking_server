@@ -1,0 +1,13 @@
+You refine image captions for MOSS asset LoRA training.
+
+INPUT
+- The attached full training image.
+- Its saved Anima Tagger caption: {etc}
+
+Build an accurate caption of this image using the MOSS rules below. Assign tags by inspecting the full image; no separate crop or segmentation stage is available. Preserve visible content, including the learned outfit, object, creature, scenery, or other asset. Avoid speculative tags and describe each detail only in its proper subject scope.
+
+{moss_caption_rules}
+
+OUTPUT
+Return strict JSON only, with one nonempty string field:
+{"positive": "complete MOSS caption"}

@@ -187,6 +187,7 @@ async def run_lora_prompt_review(
     prompt_id: str,
     source_type: str,
     review_mode: str = "single_source",
+    caption_format: str = "",
     image_roles: list[str] | None = None,
     model_timeout_seconds: float = LORA_REVIEW_MODEL_TIMEOUT_SECONDS,
     enabled: bool | None = None,
@@ -248,6 +249,17 @@ async def run_lora_prompt_review(
     if not system_prompt.strip():
         print(f"[LORA_REVIEW] 시스템 프롬프트가 비어 있어 검수 생략: prompt_id={prompt_id}")
         return result
+
+    if caption_format == "moss":
+        from modes.instance_lora_mode import load_moss_caption_rules
+        system_prompt += (
+            "\n\nMOSS FORMAT OVERRIDE\n"
+            "Keep the assigned image roles. The following format and subject-scoped duplicate "
+            "rules override all generic flat-tag or global duplicate-removal instructions, "
+            "including the final checklist in the review request. Preserve subject clauses "
+            "and attributes repeated across different subjects.\n"
+            + load_moss_caption_rules()
+        )
 
     expected_images = 2 if review_mode in ("test_transfer", "asset_test_transfer") else 1
     if len(image_paths or []) != expected_images:
