@@ -1,6 +1,6 @@
 {
   "id": "fd099f17-0228-4919-b6ae-acc2bf265063",
-  "revision": 0,
+  "revision": 1,
   "last_node_id": 14,
   "last_link_id": 27,
   "nodes": [
@@ -75,8 +75,8 @@
         277.1057418902189
       ],
       "size": [
-        300,
-        110
+        330,
+        200
       ],
       "flags": {},
       "order": 1,
@@ -92,6 +92,14 @@
           "type": "COMBO",
           "widget": {
             "name": "device"
+          },
+          "link": null
+        },
+        {
+          "name": "exclude_tags",
+          "type": "STRING",
+          "widget": {
+            "name": "exclude_tags"
           },
           "link": null
         }
@@ -110,7 +118,8 @@
         "Node name for S&R": "SoyaAnimaTagger_mdsoya"
       },
       "widgets_values": [
-        "auto"
+        "auto",
+        "safe, sensitive, nsfw, explicit, original"
       ],
       "title": "Anima Tagger (Soya)"
     },
