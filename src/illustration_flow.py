@@ -4,6 +4,7 @@ import base64
 import contextvars
 import copy
 import functools
+import hashlib
 import inspect
 import json
 import os
@@ -14,7 +15,7 @@ import traceback
 import uuid
 
 from app_paths import DATA_DIR
-from json_store import write_json_atomic
+from json_store import _write_bytes_atomic, write_json_atomic
 from modes.illustration_prompt_assembly import input_variables
 
 _run = contextvars.ContextVar("illustration_flow_run", default=None)
@@ -41,6 +42,10 @@ _histories = {workshop: {} for workshop in WORKSHOPS}
 _history = {}
 _history_dirty = set()
 _history_task = None
+HISTORY_SAVE_INTERVAL = 2.0
+_HISTORY_IMAGE_FIELDS = ("_preview_image", "_preview_mask", "_preview_source")
+_HISTORY_STORED_FIELDS = (*_HISTORY_IMAGE_FIELDS, "submitted_prompt", "input", "input_variables", "output")
+_history_field_cache = {}
 
 
 def normalize_workshop(value) -> str:
@@ -110,6 +115,13 @@ def configure(notify):
                     run = json.loads(path.read_text(encoding="utf-8"))
                     if run.get("kind") != "illustration" or path.stem != run["id"]:
                         continue
+                    for node in run["nodes"].values():
+                        for key, filename in node.pop("_stored_fields", {}).items():
+                            if key not in _HISTORY_STORED_FIELDS or os.path.basename(filename) != filename:
+                                raise ValueError("Invalid illustration flow field reference")
+                            stored_path = directory / run["id"] / filename
+                            node[key] = (stored_path.read_bytes() if key in _HISTORY_IMAGE_FIELDS
+                                         else json.loads(stored_path.read_text(encoding="utf-8")))
                     # Existing standalone character regenerations were recorded before
                     # their queue requests explicitly opted out of illustration history.
                     if (not run.get("session_id") and not run.get("backup_names")
@@ -121,8 +133,8 @@ def configure(notify):
                         continue
                     run["workshop"] = _legacy_workshop(run)
                     for node in run["nodes"].values():
-                        for key in ("_preview_image", "_preview_mask", "_preview_source"):
-                            if node.get(key):
+                        for key in _HISTORY_IMAGE_FIELDS:
+                            if isinstance(node.get(key), str):
                                 node[key] = base64.b64decode(node[key], validate=True)
                         if node["status"] not in TERMINAL:
                             node.update(status="cancelled", ended_at=run["updated_at"],
@@ -135,8 +147,13 @@ def configure(notify):
                     if run["workshop"] != directory_workshop:
                         destination = _history_dirs[run["workshop"]] / path.name
                         destination.parent.mkdir(parents=True, exist_ok=True)
+                        stored_directory = directory / run["id"]
+                        if stored_directory.is_dir():
+                            shutil.copytree(stored_directory, destination.with_suffix(""), dirs_exist_ok=True)
                         shutil.copy2(path, destination)
                         path.unlink(missing_ok=True)
+                        if stored_directory.is_dir():
+                            shutil.rmtree(stored_directory)
                         print(
                             f"[ILLUST_FLOW] 흐름 기록 공간 이동: run={run['id']}, "
                             f"{directory_workshop} -> {run['workshop']}"
@@ -206,36 +223,79 @@ def backup_workshops():
     return mapping
 
 
+def _write_history(payloads, retained):
+    """Write large node fields once; recurring checkpoints contain only references."""
+    for run_id, (workshop, payload) in payloads.items():
+        directory = _history_dirs[workshop]
+        stored_directory = directory / run_id
+        cache = _history_field_cache.setdefault((workshop, run_id), {})
+        referenced = set()
+        for node_id, node in payload["nodes"].items():
+            stored_fields = {}
+            for key in _HISTORY_STORED_FIELDS:
+                if key not in node:
+                    continue
+                value = node.pop(key)
+                if value is None or value == "":
+                    node[key] = value
+                    continue
+                cached = cache.get((node_id, key))
+                if cached is not None and cached[0] == value:
+                    filename = cached[1]
+                else:
+                    data = (value if key in _HISTORY_IMAGE_FIELDS else
+                            json.dumps(serializable(value), ensure_ascii=False, allow_nan=False,
+                                       separators=(",", ":")).encode("utf-8"))
+                    filename = hashlib.sha256(data).hexdigest() + (".bin" if key in _HISTORY_IMAGE_FIELDS else ".json")
+                    stored_path = stored_directory / filename
+                    if not stored_path.is_file():
+                        _write_bytes_atomic(stored_path, data)
+                    cache[node_id, key] = (value, filename)
+                stored_fields[key] = filename
+                referenced.add(filename)
+            if stored_fields:
+                node["_stored_fields"] = stored_fields
+        # Publish references only after their data is durably stored.
+        write_json_atomic(directory / f"{run_id}.json", serializable(payload))
+        if stored_directory.is_dir():
+            for path in stored_directory.iterdir():
+                if path.is_file() and path.name not in referenced:
+                    path.unlink(missing_ok=True)
+        for key in list(cache):
+            if key[1] not in payload["nodes"].get(key[0], {}).get("_stored_fields", {}):
+                del cache[key]
+    for workshop, directory in _history_dirs.items():
+        if not directory.is_dir():
+            continue
+        for path in directory.glob("*.json"):
+            if path.stem not in retained[workshop]:
+                path.unlink(missing_ok=True)
+                stored_directory = directory / path.stem
+                if stored_directory.is_dir():
+                    shutil.rmtree(stored_directory)
+        for cache_key in list(_history_field_cache):
+            if cache_key[0] == workshop and cache_key[1] not in retained[workshop]:
+                del _history_field_cache[cache_key]
+
+
 async def _persist_history():
     while _history_dirty:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(HISTORY_SAVE_INTERVAL)
         dirty = set(_history_dirty)
         _history_dirty.clear()
         payloads = {}
         for run_id in dirty & _history.keys():
             run = _history[run_id]
             workshop = run_workshop(run)
-            payload = serializable({key: value for key, value in run.items()
-                                    if not key.startswith("_") and key != "publish_pending"})
+            # Detach mutable containers on the loop; strings and image bytes are
+            # immutable and deepcopy shares them. Encoding and disk I/O stay off it.
+            payload = copy.deepcopy({key: value for key, value in run.items()
+                                     if not key.startswith("_") and key != "publish_pending"})
             payload["workshop"] = workshop
-            for node_id, node in run["nodes"].items():
-                for key in ("_preview_image", "_preview_mask", "_preview_source"):
-                    if node.get(key):
-                        payload["nodes"][node_id][key] = base64.b64encode(node[key]).decode("ascii")
             payloads[run_id] = (workshop, payload)
-
-        def write():
-            for run_id, (workshop, payload) in payloads.items():
-                write_json_atomic(_history_dirs[workshop] / f"{run_id}.json", payload)
-            for workshop, directory in _history_dirs.items():
-                if not directory.is_dir():
-                    continue
-                retained = set(_histories[workshop])
-                for path in directory.glob("*.json"):
-                    if path.stem not in retained:
-                        path.unlink(missing_ok=True)
+        retained = {workshop: set(runs) for workshop, runs in _histories.items()}
         try:
-            await asyncio.to_thread(write)
+            await asyncio.to_thread(_write_history, payloads, retained)
         except Exception:
             print("[ILLUST_FLOW] 기록 저장 실패")
             traceback.print_exc()

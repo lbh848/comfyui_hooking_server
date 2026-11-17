@@ -14081,8 +14081,8 @@ async def handle_view(request: web.Request) -> web.Response:
                     f"prompt_id={pid!r}, filename={filename!r}, "
                     f"bytes={len(entry['image_bytes'])}"
                 )
-            result_bytes, ct = convert_image_for_client(
-                entry["image_bytes"], entry.get("prompt", {})
+            result_bytes, ct = await asyncio.to_thread(
+                convert_image_for_client, entry["image_bytes"], entry.get("prompt", {})
             )
             return web.Response(body=result_bytes, content_type=ct)
     return web.Response(body=create_placeholder_png(), content_type="image/png")
