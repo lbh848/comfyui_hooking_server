@@ -1,6 +1,6 @@
 {
   "id": "fd099f17-0228-4919-b6ae-acc2bf265063",
-  "revision": 1,
+  "revision": 2,
   "last_node_id": 14,
   "last_link_id": 27,
   "nodes": [
@@ -75,8 +75,8 @@
         277.1057418902189
       ],
       "size": [
-        330,
-        200
+        350,
+        290
       ],
       "flags": {},
       "order": 1,
@@ -102,6 +102,30 @@
             "name": "exclude_tags"
           },
           "link": null
+        },
+        {
+          "name": "include_rating",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "include_rating"
+          },
+          "link": null
+        },
+        {
+          "name": "include_character",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "include_character"
+          },
+          "link": null
+        },
+        {
+          "name": "include_copyright",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "include_copyright"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -119,7 +143,10 @@
       },
       "widgets_values": [
         "auto",
-        "safe, sensitive, nsfw, explicit, original"
+        "",
+        false,
+        false,
+        false
       ],
       "title": "Anima Tagger (Soya)"
     },
