@@ -602,7 +602,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       <div className="illust-card-slots" aria-label={`${characterName} 외형 카드`}>
         <strong>캐릭터 카드</strong>
         {draft.profiles.map((item: IllustrationData, i: number) => <button type="button" key={item.id} className={`button ${index === i ? "primary" : ""}`} aria-pressed={index === i} aria-label={`${characterName} 카드 ${i + 1} · ${item.label}`} disabled={busy} onClick={() => { setIndex(i); setDetail(null); }}>{i + 1}{item.id === draft.default_visual_profile_id ? " · 기본" : ""}</button>)}
-        <button type="button" className="button" aria-label={`${characterName} 카드 추가`} disabled={readOnly || busy || draft.profiles.length >= (data?.max_cards || 10)} onClick={() => {
+        <button type="button" className="button" aria-label={`${characterName} 카드 추가`} disabled={readOnly || busy || draft.profiles.length >= (data?.max_cards ?? 0)} onClick={() => {
           const profiles = [...draft.profiles, {
             id: `card_${crypto.randomUUID().slice(0, 8)}`, label: `카드 ${draft.profiles.length + 1}`,
             selection_guide: "", visual_context: "", aliases: [], appearance: [], default_outfit: [], skip_lb_extra_batch_refine: false,

@@ -14,7 +14,7 @@ import re
 import traceback
 
 
-MAX_VISUAL_CARDS = 10
+MAX_VISUAL_CARDS = 20
 LEGACY_VISUAL_PROFILE_ID = "card_1"
 PROFILE_ASSET_FOLDER = "_visual_profiles"
 

@@ -48,12 +48,12 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
         api.request(`bot_mode/character_cards?${query({ bot_name: botName, character: row.charName })}`, undefined, signal),
         api.request(`bot_mode/images?${query({ bot: botName, character: row.charName })}`, undefined, signal),
       ]);
-      return { ...row, profiles: ComfyRepBatch.profilesFromState(cards.character.profiles), baseOrder: images.images, maxCards: cards.max_cards || 10, loaded: true, error: "" };
+      return { ...row, profiles: ComfyRepBatch.profilesFromState(cards.character.profiles), baseOrder: images.images, maxCards: cards.max_cards, loaded: true, error: "" };
     } catch (error) { return { ...row, loaded: true, error: error instanceof Error ? error.message : String(error) }; }
   }
   useEffect(() => {
     const controller = new AbortController();
-    const initialRows = initialCharacters.current.map(character => ({ charName: character.name as string, profiles: [], baseOrder: [], loaded: false, error: "", maxCards: 10 }));
+    const initialRows = initialCharacters.current.map(character => ({ charName: character.name as string, profiles: [], baseOrder: [], loaded: false, error: "", maxCards: 0 }));
     setRows(initialRows);
     void ComfyRepBatch.runLimited(initialRows.map(row => async () => {
       if (controller.signal.aborted) return;
@@ -192,7 +192,7 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
               const palette = ComfyRepBatch.characterPalette(row.charName);
               return <details key={row.charName} className="illust-rep-batch-character" style={{ background: palette.background, borderColor: palette.border }}>
               <summary style={{ background: palette.header }} aria-label={`${row.charName} 카드 접기·펼치기`}>
-                <strong>{row.charName}</strong><span>프로필 {row.profiles.filter(profile => !profile.removePending).length}/{row.maxCards}</span>
+                <strong>{row.charName}</strong>{row.loaded && !row.error && <span>프로필 {row.profiles.filter(profile => !profile.removePending).length}/{row.maxCards}</span>}
                 <span className="illust-rep-batch-character-actions">
                   <button type="button" className="button secondary small illust-rep-batch-add-profile" disabled={busy || readOnly || !canAdd(row)} onClick={event => { event.preventDefault(); event.stopPropagation(); addProfile(row); }}><Plus size={14} />프로필 추가</button>
                   <button type="button" className="button secondary small" disabled={!row.loaded || !!row.error || !row.baseOrder.length || !row.profiles.length} onClick={event => { event.preventDefault(); event.stopPropagation(); openGallery(row); }}><Images size={14} />전체 이미지 보기</button>

@@ -41329,7 +41329,6 @@
             showBotView('bots');
         }
 
-        const VISUAL_CARD_LIMIT = 10;
         const VISUAL_CARD_RENDER_FIELDS = [
             'absolute_tags', 'character_negative', 'eye_prompt', 'eye_tags',
             'face_loras', 'face_tags', 'gender_tag', 'image_name_tag',
@@ -41425,7 +41424,7 @@
                 const defaultIndex = Math.max(0, (data.profiles || []).findIndex(p => p.id === data.default_visual_profile_id));
                 if (defaultIndex > 0) data.profiles.unshift(data.profiles.splice(defaultIndex, 1)[0]);
                 _visualCardStates[charName.toLowerCase()] = {
-                    source: result.source || 'legacy', data,
+                    source: result.source || 'legacy', data, maxCards: result.max_cards,
                     base: JSON.parse(JSON.stringify(data)),
                 };
                 if (!Number.isInteger(_visualCardSlots[charName])) _visualCardSlots[charName] = 0;
@@ -41452,7 +41451,7 @@
                 _visualCardSlots = {};
             }
             await Promise.all((bot.characters || []).map(char => {
-                return _visualCardState(char.name) ? Promise.resolve() : _loadVisualCardState(char.name);
+                return _visualCardState(char.name)?.maxCards ? Promise.resolve() : _loadVisualCardState(char.name);
             }));
         }
 
@@ -41478,6 +41477,7 @@
                     if (!state) throw new Error(`저장 응답의 캐릭터 카드를 찾지 못했습니다: ${character.name}`);
                     state.source = result.source || 'cards';
                     state.data = character;
+                    state.maxCards = result.max_cards;
                     state.base = JSON.parse(JSON.stringify(character));
                 });
                 if (result.bots) botData.bots = result.bots;
@@ -41492,15 +41492,17 @@
         function _visualCardSlotHtml(charName) {
             const state = _visualCardState(charName);
             const profiles = state?.data?.profiles || [];
+            const maxCards = state?.maxCards ?? 0;
             const active = _visualCardSlots[charName] || 0;
             const slots = profiles.map((_, index) => `<button onclick="event.stopPropagation(); switchVisualCard('${escAttr(charName)}',${index})" title="캐릭터 카드 ${index + 1}" style="min-width:32px;height:30px;padding:0 8px;border:1px solid ${index === active ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${index === active ? 'var(--accent)' : 'var(--surface2)'};color:${index === active ? '#fff' : 'var(--text)'};cursor:pointer;font-weight:700">[${index + 1}]</button>`).join('');
-            const add = profiles.length < VISUAL_CARD_LIMIT
+            const add = profiles.length < maxCards
                 ? `<button onclick="event.stopPropagation(); addVisualCard('${escAttr(charName)}')" title="빈 캐릭터 카드 추가" style="height:30px;padding:0 10px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-weight:700">＋</button>`
                 : '';
             const remove = active > 0
                 ? `<button onclick="event.stopPropagation(); removeVisualCard('${escAttr(charName)}')" title="현재 카드 삭제" style="height:30px;padding:0 9px;border:1px solid #ef444477;border-radius:6px;background:transparent;color:#ef4444;cursor:pointer">삭제</button>`
                 : '<span style="font-size:.7rem;color:var(--text2);padding:0 3px">기본 카드</span>';
-            return `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">${slots}${add}${remove}<span style="font-size:.68rem;color:var(--text2);margin-left:3px">최대 ${VISUAL_CARD_LIMIT}장</span></div>`;
+            const limit = maxCards ? `<span style="font-size:.68rem;color:var(--text2);margin-left:3px">최대 ${maxCards}장</span>` : '';
+            return `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">${slots}${add}${remove}${limit}</div>`;
         }
 
         function switchVisualCard(charName, index) {
@@ -41524,13 +41526,13 @@
 
         async function addVisualCard(charName) {
             const state = _visualCardState(charName);
-            if (!state) {
+            if (!state?.maxCards) {
                 console.error('[VISUAL_CARD] 새 카드를 추가할 캐릭터 상태 없음', charName);
                 showToast('캐릭터 카드 상태를 찾지 못했습니다.', 'error');
                 return;
             }
-            if ((state.data.profiles || []).length >= VISUAL_CARD_LIMIT) {
-                showToast(`캐릭터 카드는 최대 ${VISUAL_CARD_LIMIT}장까지 등록할 수 있습니다.`, 'error');
+            if ((state.data.profiles || []).length >= state.maxCards) {
+                showToast(`캐릭터 카드는 최대 ${state.maxCards}장까지 등록할 수 있습니다.`, 'error');
                 return;
             }
             const index = state.data.profiles.length;
@@ -51479,7 +51481,7 @@
         // 캐릭터 카드(외형 프로필)마다 메인 대표(rep_images[0])를 지정한다.
         // 새 프로필은 모달 안의 초안으로만 추가하고, 적용할 때 대표 변경과 함께 저장한다.
         let _repBatchModalOpen = false;
-        let _repBatchRowData = []; // [{charName, profiles:[], baseOrder:[{filename,url}], loaded, error}]
+        let _repBatchRowData = []; // [{charName, profiles:[], baseOrder:[{filename,url}], loaded, error, maxCards}]
         let _repBatchDraftSeq = 0;
 
         function _repBatchProfilesFromState(charName) {
@@ -51513,6 +51515,7 @@
                     profiles: _repBatchProfilesFromState(c.name),
                     baseOrder: [],
                     loaded: false,
+                    maxCards: state?.maxCards ?? 0,
                     error: (!state || state.source === 'fallback') ? '프로필 정보를 불러오지 못했습니다.' : ''
                 };
             });
@@ -51678,7 +51681,7 @@
             }) : [];
             const removePendingCount = row.profiles.filter(profile => profile.removePending).length;
             const activeProfileCount = row.profiles.length - removePendingCount;
-            const canAdd = activeProfileCount < VISUAL_CARD_LIMIT;
+            const canAdd = activeProfileCount < row.maxCards;
             const canDeleteCharacter = row.profiles.length > 0 && row.profiles.every(profile => !profile.rep0 && !profile.isNew);
             const profilesHtml = row.profiles.map((profile, profileIndex) => {
                 if (showAll && profileIndex !== allProfileIndex) return '';
@@ -51811,7 +51814,7 @@
                 '<summary class="rep-batch-card-header" title="카드 접기·펼치기" aria-label="' + escAttr(row.charName) + ' 카드 접기·펼치기" style="background:' + palette.header + ';border-color:' + palette.border + ';">' +
                     '<span class="rep-batch-card-arrow" aria-hidden="true">▸</span>' +
                     '<span style="font-weight:800;font-size:1.02rem;letter-spacing:.01em;">' + escHtml(row.charName) + '</span>' +
-                    '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + activeProfileCount + '/' + VISUAL_CARD_LIMIT + (removePendingCount ? ' · 삭제 예정 ' + removePendingCount : '') + '</span>' +
+                    '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + activeProfileCount + '/' + row.maxCards + (removePendingCount ? ' · 삭제 예정 ' + removePendingCount : '') + '</span>' +
                     '<button onclick="_repBatchAddDraftProfile(' + i + ')" ' + (canAdd ? '' : 'disabled') + ' style="border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:' + (canAdd ? 'pointer' : 'not-allowed') + ';font-size:0.68rem;opacity:' + (canAdd ? '1' : '.45') + ';">＋ 프로필 추가</button>' +
                     (hasImages ? '<button type="button" data-role="rep-batch-all" onclick="_repBatchBuildOverlay(' + i + ',0)" style="border:1px solid var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:pointer;font-size:.68rem;">전체 이미지 보기</button>' : '') +
                     (canDeleteCharacter ? '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:auto;background:var(--error);color:#fff;border:none;padding:2px 8px;border-radius:999px;cursor:pointer;font-size:0.62rem;">🗑 캐릭터 삭제</button>' : '') +
@@ -51832,10 +51835,10 @@
 
         function _repBatchAddDraftProfile(rowIndex) {
             const row = _repBatchRowData[rowIndex];
-            if (!row) return;
+            if (!row?.maxCards) return;
             const activeCount = row.profiles.filter(profile => !profile.removePending).length;
-            if (activeCount >= VISUAL_CARD_LIMIT) {
-                showToast(`캐릭터 프로필은 최대 ${VISUAL_CARD_LIMIT}개까지 추가할 수 있습니다.`, 'error');
+            if (activeCount >= row.maxCards) {
+                showToast(`캐릭터 프로필은 최대 ${row.maxCards}개까지 추가할 수 있습니다.`, 'error');
                 return;
             }
             row.profiles.push({
