@@ -15811,15 +15811,18 @@ async def handle_api_backups(request: web.Request) -> web.Response:
     def build_page():
         backup_dir = get_backup_base_dir(request.query.get("scope", ""))
         def scan_files():
-            files = set()
-            for pattern in ("*.webp", "*.avif"):
-                files.update(glob.glob(os.path.join(backup_dir, pattern)))
             dated_files = []
-            for path in files:
-                try:
-                    dated_files.append((os.path.getmtime(path), path))
-                except FileNotFoundError:
-                    continue  # Retention cleanup may run alongside this scan.
+            # Windows directory enumeration already includes each file's mtime.
+            # Reuse it instead of opening every backup for a separate stat call.
+            with os.scandir(backup_dir) as entries:
+                for entry in entries:
+                    if os.path.splitext(entry.name)[1].lower() not in {".webp", ".avif"}:
+                        continue
+                    try:
+                        if entry.is_file():
+                            dated_files.append((entry.stat().st_mtime, entry.path))
+                    except FileNotFoundError:
+                        continue  # Retention cleanup may run alongside this scan.
             return [path for _, path in sorted(dated_files, reverse=True)]
         files = scan_files()
 

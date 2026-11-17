@@ -1,7 +1,7 @@
 """Backup search runs before pagination and keeps the server responsive."""
 import ast
 import asyncio
-import glob
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -20,7 +20,7 @@ class BackupImagePagesTests(unittest.IsolatedAsyncioTestCase):
         handler = next(node for node in tree.body if getattr(node, "name", None) == "handle_api_backups")
         self.reader = Mock(return_value=False)
         self.engine = {
-            "asyncio": asyncio, "glob": glob, "os": os, "web": web,
+            "asyncio": asyncio, "os": os, "web": web,
             "reschedule_queue": None,
             "get_backup_base_dir": lambda *args, **kwargs: "/fixture",
             "lighbd_service": SimpleNamespace(_load_lighbd_history=lambda: []),
@@ -31,7 +31,9 @@ class BackupImagePagesTests(unittest.IsolatedAsyncioTestCase):
         self.files = [f"/fixture/image_{index:05}.webp" for index in range(9137)]
 
     async def request(self, query):
-        with patch.object(glob, "glob", side_effect=lambda pattern: self.files if pattern.endswith("*.webp") else []), \
+        entries = [SimpleNamespace(path=path, name=Path(path).name, is_file=lambda: True,
+                                   stat=lambda: SimpleNamespace(st_mtime=1)) for path in self.files]
+        with patch.object(os, "scandir", return_value=nullcontext(entries)), \
              patch.object(os.path, "getmtime", return_value=1), \
              patch.object(os.path, "getsize", return_value=1), \
              patch.object(os.path, "exists", return_value=False):
@@ -57,12 +59,12 @@ class BackupImagePagesTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_directory_scan_does_not_block_the_event_loop(self):
         entered, release = threading.Event(), threading.Event()
-        def scan(pattern):
+        def scan(directory):
             entered.set()
             if not release.wait(5):
                 raise TimeoutError("directory scan blocked the event loop")
-            return []
-        with patch.object(glob, "glob", side_effect=scan):
+            return nullcontext([])
+        with patch.object(os, "scandir", side_effect=scan):
             task = asyncio.create_task(self.engine["handle_api_backups"](SimpleNamespace(query={})))
             try:
                 self.assertTrue(await asyncio.to_thread(entered.wait, 2))
