@@ -1,0 +1,12 @@
+.migration-source { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.migration-source .field { flex: 1 1 300px; min-width: 0; }
+.migration-group { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+.migration-group summary { cursor: pointer; font-weight: 650; }
+.migration-group summary small, .migration-group p, .migration-check small { color: var(--muted); font-weight: 400; }
+.migration-group summary small { margin-left: 6px; }
+.migration-group p { font-size: 13px; margin: 10px 0; }
+.migration-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 6px 12px; border-top: 1px solid var(--line); }
+.migration-check { display: flex; align-items: baseline; gap: 8px; padding: 8px 0; overflow-wrap: anywhere; font-size: 13px; }
+.migration-check input { flex: 0 0 16px; width: 16px; min-height: 16px; height: 16px; margin: 0; accent-color: var(--rose-dark); align-self: start; }
+.migration-check small { display: block; }
+.migration-page .panel-body { overflow-wrap: anywhere; }

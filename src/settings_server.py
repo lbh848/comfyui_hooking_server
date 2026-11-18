@@ -856,6 +856,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     record_llm_history = register_llm_logs(app, project_root, SETTINGS_UI_SCHEMA, internal_lora)
     from settings_memo import register_memo
     register_memo(app, project_root, SETTINGS_UI_SCHEMA)
+    from settings_project_migration import register_project_migration
+    register_project_migration(app, project_root, SETTINGS_UI_SCHEMA)
     app.router.add_get("/api/setting/autocomplete", autocomplete)
     app.router.add_get("/api/setting/presets", preset_requests)
     app.router.add_post("/api/setting/presets/{action:save|delete|hide|restore|commit|validate|compare|trace|analyze|classify|unlock|lock}", preset_requests)

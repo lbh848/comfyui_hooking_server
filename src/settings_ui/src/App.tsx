@@ -11,6 +11,7 @@ import {
   Link2,
   KeyRound,
   Menu,
+  PackageOpen,
   RefreshCw,
   Search,
   Server,
@@ -33,6 +34,7 @@ import {
 } from "./pages";
 import { ModelsPage, LorasPage } from "./ResourcePages";
 import { WorkflowsPage } from "./WorkflowsPage";
+import { MigrationPage } from "./MigrationPage";
 import { PresetsPage } from "./PresetsPage";
 import { WorkQueuePage } from "./WorkQueuePage";
 import { LlmLogsPage } from "./LlmLogsPage";
@@ -52,6 +54,7 @@ const navigation: {
     items: [
       { id: "install", icon: ArrowDownToLine, label: "초기 설치" },
       { id: "updates", icon: RefreshCw, label: "업데이트" },
+      { id: "migration", icon: PackageOpen, label: "이사하기" },
     ],
   },
   {
@@ -171,6 +174,7 @@ export default function App() {
   const pageContent: Record<Page, ReactNode> = {
     install: <InstallPage apiKeys={apiKeys} setApiKeys={setApiKeys} isSaved={isSaved} saveState={saveState} revision={revision} />,
     updates: <UpdatesPage />,
+    migration: <MigrationPage />,
     "comfy-runtime": <ComfyRuntimePage />,
     models: <ModelsPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,
     loras: <LorasPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,

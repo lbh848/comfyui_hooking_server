@@ -1,7 +1,7 @@
 import { llmProviders, llms, llmSlotIds, type LlmProvider, type LlmSlot } from "./llm";
 import { llmRouting, isLlmRouting, type LlmRoute } from "./llmRouting";
 export type Page =
-  "install" | "updates" | "models" | "loras" | "workflows" | "presets" | "api" | "other-api" | "comfy-runtime" | "work-queue" | "llm-logs" | "program-logs" | "memo";
+  "install" | "updates" | "migration" | "models" | "loras" | "workflows" | "presets" | "api" | "other-api" | "comfy-runtime" | "work-queue" | "llm-logs" | "program-logs" | "memo";
 export type ModelKind =
   "Checkpoint" | "Diffusion" | "VAE" | "Text encoder" | "Upscaler" | "ControlNet" | "CLIP vision" | "Embedding" | "Other";
 export const modelKinds: ModelKind[] = ["Checkpoint", "Diffusion", "VAE", "Text encoder", "Upscaler", "ControlNet", "CLIP vision", "Embedding", "Other"];
@@ -229,6 +229,11 @@ export const pageInfo: Record<
   updates: {
     title: "업데이트",
     description: "프로그램과 내장 워크플로우를 함께 관리하세요.",
+    section: "설치 및 업데이트",
+  },
+  migration: {
+    title: "이사하기",
+    description: "원본 프로젝트에서 가져올 자원을 선택하세요.",
     section: "설치 및 업데이트",
   },
   models: {
