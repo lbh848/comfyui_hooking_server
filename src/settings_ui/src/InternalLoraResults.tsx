@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, RefreshCw, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal } from "./components";
 import { contextParams, enc, loraRepresentative, loraRequest, loraSessionSummary, loraSessionsByPriority, mediaUrl, prefix, query, type LoraContext, type LoraData } from "./internalLora";
 
@@ -158,13 +158,20 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
               </div></div>
               {step.previews.length > 0 && <div className="internal-lora-images">{step.previews.map((filename: string) => {
                 const isRepresentativeImage = isSessionRepresentative && mediaUrl(sessionRepresentative?.preview || "") === mediaUrl(previewPath(filename));
-                return <div key={filename}><button className="internal-lora-image-open" onClick={() => setZoom(mediaUrl(previewPath(filename)))}><img src={mediaUrl(previewPath(filename))} alt={`${step.name} · ${filename}`} loading="lazy" /></button>
-                  <button className="button" disabled={busy || isRepresentativeImage} onClick={() => void act(() => representative(step, filename), "세션 대표 이미지와 LoRA를 지정했습니다.")}><Star size={13} />{isRepresentativeImage ? "현재 세션 대표 이미지" : "세션 대표로 설정"}</button>
+                return <div className={`internal-lora-image${isRepresentativeImage ? " selected" : ""}`} key={filename}>
+                  <button type="button" className="internal-lora-image-open" onClick={() => setZoom(mediaUrl(previewPath(filename)))}><img src={mediaUrl(previewPath(filename))} alt={`${step.name} · ${filename}`} loading="lazy" /></button>
+                  <div className="internal-lora-preview-footer">
+                    {isRepresentativeImage
+                      ? <span className="internal-lora-preview-representative"><Check size={16} aria-hidden="true" />현재 세션 대표 이미지</span>
+                      : <button type="button" className="button primary internal-lora-representative-button" disabled={busy} onClick={() => void act(() => representative(step, filename), "세션 대표 이미지와 LoRA를 지정했습니다.")}><Star size={16} aria-hidden="true" />세션 대표로 설정</button>}
+                  </div>
                 </div>;
               })}</div>}
               {withoutPreviews && <span className="field-help">저장된 미리보기 이미지가 없습니다.</span>}
               <div className="internal-lora-toolbar"><span className="field-help">{step.safetensors}</span><div className="internal-lora-actions">
-                {withoutPreviews && <button className="button" disabled={busy || isSessionRepresentative} onClick={() => void act(() => representative(step), "세션 대표 LoRA를 지정했습니다.")}><Star size={13} />세션 대표로 설정</button>}
+                {withoutPreviews && (isSessionRepresentative
+                  ? <span className="internal-lora-preview-representative"><Check size={16} aria-hidden="true" />현재 세션 대표 LoRA</span>
+                  : <button type="button" className="button primary internal-lora-representative-button" disabled={busy} onClick={() => void act(() => representative(step), "세션 대표 LoRA를 지정했습니다.")}><Star size={16} aria-hidden="true" />세션 대표로 설정</button>)}
                 {step.config_format !== null && <button className="button" disabled={busy} onClick={async () => {
                   try {
                     const result = await loraRequest(`${root}/trained/toml?${query({ ...params, session, step: step.name })}`);
