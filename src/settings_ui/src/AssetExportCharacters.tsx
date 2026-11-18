@@ -37,7 +37,7 @@ export function AssetExportCharacters({ active, names, selectedCharacters, busy,
         <span className="asset-export-character-label"><strong>{name}</strong><small>{tags.data ? groupFor(name) || "미지정" : "그룹 불러오는 중…"}</small></span>
       </label>)}</div>}
       {!!names.length && !visible.length && <Empty title="검색 결과가 없습니다">다른 그룹을 선택하거나 검색어를 변경하세요.</Empty>}
-      <p className="field-help">여러 캐릭터를 선택하면 캐릭터별 폴더가 들어 있는 ZIP 하나로 내보냅니다. 그룹을 바꿔도 선택은 유지됩니다.</p>
+      <p className="field-help">선택한 캐릭터의 에셋은 모두 ZIP 최상위에 저장됩니다. 그룹을 바꿔도 선택은 유지됩니다.</p>
     </div>
   </Panel>;
 }

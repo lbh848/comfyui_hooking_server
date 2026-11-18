@@ -16,7 +16,7 @@ def build_asset_export_plans(mode, body: dict) -> list[tuple[str, dict]]:
         raise ValueError("내보낼 캐릭터를 하나 이상 선택하세요.")
     available = set(mode.list_characters())
     seen = set()
-    folders = set()
+    filename_owners = {}
     plans = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -27,16 +27,23 @@ def build_asset_export_plans(mode, body: dict) -> list[tuple[str, dict]]:
         if character in seen:
             raise ValueError(f"같은 캐릭터가 중복 선택되었습니다: {character}")
         seen.add(character)
-        folder = mode._normalize_export_collision_key(mode._safe_dirname(character))
-        if folder in folders:
-            raise ValueError(f"ZIP의 캐릭터 폴더 이름이 중복됩니다: {character}")
-        folders.add(folder)
         mapping = entry.get("mapping")
         if mapping is not None and not isinstance(mapping, dict):
             raise ValueError(f"{character}: 이름 치환 규칙을 확인하세요.")
-        plans.append((character, mode.build_character_export_plan(
+        plan = mode.build_character_export_plan(
             character, entry.get("outfits"), entry.get("expressions"), mapping_override=mapping,
-        )))
+        )
+        if len(entries) > 1 and plan["success"]:
+            for item in plan["files"]:
+                filename = item["filename"]
+                key = mode._normalize_export_collision_key(filename)
+                owner = filename_owners.setdefault(key, character)
+                if owner != character:
+                    raise ValueError(
+                        f"‘{owner}’와 ‘{character}’의 최종 파일명 ‘{filename}’이 겹칩니다. "
+                        "이름 설정에서 두 캐릭터의 파일명을 다르게 지정하세요."
+                    )
+        plans.append((character, plan))
     return plans
 
 
@@ -50,8 +57,6 @@ def public_asset_export_plans(mode, plans: list[tuple[str, dict]]) -> dict:
 
 
 def export_asset_zip(mode, plans: list[tuple[str, dict]]) -> bytes:
-    # Keep single-character ZIPs flat. Each character in a batch gets its own folder.
-    # The original exporter owns conversion, quality, representative selection and naming.
     if len(plans) == 1:
         character, plan = plans[0]
         result = mode.export_character_zip(character, export_plan=plan)
@@ -65,10 +70,9 @@ def export_asset_zip(mode, plans: list[tuple[str, dict]]) -> bytes:
             character_zip = mode.export_character_zip(character, export_plan=plan)
             if character_zip is None:
                 raise ValueError(f"{character}: 내보낼 대표 이미지가 없습니다.")
-            folder = mode._safe_dirname(character)
             with character_zip, zipfile.ZipFile(character_zip) as source:
                 for info in source.infolist():
-                    target = zipfile.ZipInfo(f"{folder}/{info.filename}", info.date_time)
+                    target = zipfile.ZipInfo(info.filename, info.date_time)
                     target.compress_type = zipfile.ZIP_DEFLATED
                     with source.open(info) as reader, archive.open(target, "w", force_zip64=True) as writer:
                         shutil.copyfileobj(reader, writer)
