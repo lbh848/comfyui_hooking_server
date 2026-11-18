@@ -61,9 +61,9 @@
     },
     {
       "name": "comfyui-instant-lora_v_soya",
+      "ref": "c999fd3af05e8bf024230015964bed46e755169b",
       "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
-      "source_type": "git",
-      "tracking_branch": "main"
+      "source_type": "git"
     },
     {
       "name": "comfyui-kjnodes",
@@ -96,9 +96,9 @@
     },
     {
       "name": "comfyui-soya-custom-nodes",
+      "ref": "eeaf641d21a749ed07d709ddeacd6f7de57ec9dc",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
-      "source_type": "git",
-      "tracking_branch": "main"
+      "source_type": "git"
     },
     {
       "name": "rgthree-comfy",
@@ -114,9 +114,9 @@
     },
     {
       "name": "comfyui-workflow-to-api-converter-endpoint",
+      "ref": "ac59738273c68bb29e2478fbb03bb52ab7c93564",
       "repository": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint.git",
-      "source_type": "git",
-      "tracking_branch": "main"
+      "source_type": "git"
     },
     {
       "name": "ComfyUI-Anima-2.9B",
