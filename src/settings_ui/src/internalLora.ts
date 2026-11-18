@@ -18,11 +18,15 @@ export const enc = encodeURIComponent;
 export const query = (value: LoraData) => new URLSearchParams(Object.entries(value).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => [k, String(v)])).toString();
 export const mediaUrl = (path: string) => path.startsWith("/api/") && !path.startsWith(apiRoot + "/") ? apiRoot + path.slice(4) : path;
 export const prefix = (category: LoraCategory) => category === "asset" ? "lora" : `${category}_lora`;
-export function loraRepresentative(value: unknown): { safetensors: string; preview: string } | null {
+export function loraRepresentative(value: unknown): { safetensors: string; preview: string; session?: string } | null {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
     return parsed && typeof parsed === "object" && "safetensors" in parsed && typeof parsed.safetensors === "string"
-      ? { safetensors: parsed.safetensors, preview: "preview" in parsed && typeof parsed.preview === "string" ? parsed.preview : "" } : null;
+      ? {
+          safetensors: parsed.safetensors,
+          preview: "preview" in parsed && typeof parsed.preview === "string" ? parsed.preview : "",
+          session: "session" in parsed && typeof parsed.session === "string" ? parsed.session : undefined,
+        } : null;
   } catch { return null; }
 }
 export function contextParams(context: LoraContext): LoraData {
@@ -63,6 +67,8 @@ export function loraProjectPreview(category: LoraCategory, project: LoraProject)
   return "";
 }
 export const loraSessionsByPriority = (sessions: LoraData[]) => sessions.slice().sort((a, b) => (a.priority_rank || Number.MAX_SAFE_INTEGER) - (b.priority_rank || Number.MAX_SAFE_INTEGER));
+export const loraSessionSummary = (session: LoraData) =>
+  `LoRA ${session.step_count}개${session.has_final ? " · 최종 포함" : ""}`;
 export async function addLoraImages(context: LoraContext, rows: LoraData[], source: string, test = false, shared = false) {
   const params = contextParams(context);
   if (source === "bot" && context.category === "bot") return loraRequest("bot_lora/training_images/add_from_bot", { ...params, filenames: rows.map(row => row.filename) });

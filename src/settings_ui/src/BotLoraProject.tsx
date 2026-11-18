@@ -9,7 +9,7 @@ import { InternalLoraProgress } from "./InternalLoraProgress";
 import { BotProjectImport, BotTestSetup } from "./InternalLoraExtras";
 import { BotLoraBatchRefine } from "./BotLoraBatchRefine";
 import { WorkQueuePage } from "./WorkQueuePage";
-import { addLoraImages, contextParams, imageUrl, loraRepresentative, loraRequest, loraSessionsByPriority, mediaUrl, query, type LoraContext, type LoraData, type LoraProject } from "./internalLora";
+import { addLoraImages, contextParams, imageUrl, loraRepresentative, loraRequest, loraSessionSummary, loraSessionsByPriority, mediaUrl, query, type LoraContext, type LoraData, type LoraProject } from "./internalLora";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { useLoraRefinementRevision } from "./useLoraRefinementRevision";
 import { useLoraTrainingRevision } from "./useLoraTrainingRevision";
@@ -135,7 +135,7 @@ export function BotLoraProject({ project, notify, onBack, onDuplicate }: {
                 <section aria-label="학습 이미지"><h3>학습 이미지 ({card.training_images.length}/3장)</h3>{images(card)}</section>
                 <section className="bot-lora-trained" aria-label="학습된 LoRA"><div className="internal-lora-actions"><h3>학습된 LoRA</h3><button className="button secondary" onClick={() => setDialog({ kind: "results", unitKey: card.unit_key })}>관리</button><button className="button secondary" disabled={busy || !sessions.length} onClick={() => cleanup(card)}>대표 외 LoRA 정리</button></div>
                   {representative?.preview && <button className="bot-lora-representative" aria-label={`${card.name} · ${card.visual_card_label} 학습 결과 확대`} onClick={() => setZoom(mediaUrl(representative.preview))}><img src={mediaUrl(representative.preview)} loading="lazy" decoding="async" alt={`${card.name} 학습된 LoRA 대표 이미지`} /></button>}
-                  <div className="bot-lora-session-list">{sessions.map(session => <button key={session.name} onClick={() => setDialog({ kind: "results", unitKey: card.unit_key, session: session.name })}><span>{session.name}</span><small>{session.step_count} STEP</small></button>)}</div>
+                  <div className="bot-lora-session-list">{sessions.map(session => <button key={session.name} onClick={() => setDialog({ kind: "results", unitKey: card.unit_key, session: session.name })}><span>{session.name}</span><small>{loraSessionSummary(session)}</small></button>)}</div>
                   {!sessions.length && <p className="field-help">학습 이력 없음</p>}
                 </section>
               </div>

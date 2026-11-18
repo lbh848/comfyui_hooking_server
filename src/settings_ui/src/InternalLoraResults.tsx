@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal } from "./components";
-import { contextParams, enc, loraRepresentative, loraRequest, loraSessionsByPriority, mediaUrl, prefix, query, type LoraContext, type LoraData } from "./internalLora";
+import { contextParams, enc, loraRepresentative, loraRequest, loraSessionSummary, loraSessionsByPriority, mediaUrl, prefix, query, type LoraContext, type LoraData } from "./internalLora";
 
 type LoraResultsProps = {
   context: LoraContext; detail: LoraData; refresh: () => Promise<void>; notify: (message: string) => void; initialSession?: string; trainingRevision?: number;
@@ -31,7 +31,7 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
   const [busy, setBusy] = useState(false);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   const submitting = useRef(false);
-  const [toml, setToml] = useState<string | null>(null);
+  const [trainingConfig, setTrainingConfig] = useState<{ content: string; format: string } | null>(null);
   const [zoom, setZoom] = useState("");
   const params = contextParams(context);
   const paramsQuery = query(params);
@@ -60,7 +60,11 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
     const controller = new AbortController();
     setLoadingSteps(true);
     void loraRequest(`${root}/trained/steps?${paramsQuery}&${query({ session })}`, undefined, controller.signal)
-      .then(result => { if (!controller.signal.aborted) setSteps(result.steps.slice().sort((a: LoraData, b: LoraData) => a.name.localeCompare(b.name, undefined, { numeric: true }))); })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setSteps(result.steps.slice().sort((a: LoraData, b: LoraData) =>
+          Number(!!a.is_final) - Number(!!b.is_final) || a.name.localeCompare(b.name, undefined, { numeric: true })));
+      })
       .catch(cause => { if (!controller.signal.aborted) setLoadError(cause.message); })
       .finally(() => { if (!controller.signal.aborted) setLoadingSteps(false); });
     return () => controller.abort();
@@ -83,13 +87,14 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
     return `/api/${root}/trained/preview/${segments.map(enc).join("/")}${context.category === "bot" ? `?${query({ visual_card_id: context.character?.visual_card_id || "" })}` : ""}`;
   }
   function isEntrySession(sessionName: string) {
+    if (entryRepresentative?.session) return entryRepresentative.session === sessionName;
     return !!entryRepresentative?.preview && mediaUrl(entryRepresentative.preview).startsWith(mediaUrl(previewPath("", sessionName)));
   }
-  async function representative(step: LoraData, filename: string) {
-    const value = { safetensors: step.safetensors, preview: previewPath(filename) };
+  async function representative(step: LoraData, filename?: string) {
+    const value = { safetensors: step.safetensors, preview: filename ? previewPath(filename) : "" };
     if (context.category === "asset") return loraRequest("lora/manage/update", {
       ...params, name: context.project.name, session_name: session, session_representative: JSON.stringify(value),
-      ...(isEntrySession(session) ? { representative: JSON.stringify(value) } : {}),
+      ...(isEntrySession(session) ? { representative: JSON.stringify({ ...value, session }) } : {}),
     });
     return loraRequest(`${root}/trained/session-representative`, { ...params, session, representative: context.category === "style" ? value : JSON.stringify(value) });
   }
@@ -121,10 +126,10 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
         return <div className={`internal-lora-session ${row.name === session ? "selected" : ""}`} key={row.name}>
           <button disabled={busy} aria-pressed={row.name === session} onClick={() => { setLoadError(""); setSession(row.name); setOverview(false); }}>
             {row.preview_url && <img loading="lazy" src={mediaUrl(row.preview_url)} alt={`${row.name} 세션 대표 이미지`} />}
-            <strong>{row.name}</strong><span>{row.step_count}개 STEP{row.has_final ? " · 최종 포함" : ""}</span>
+            <strong>{row.name}</strong><span>{loraSessionSummary(row)}</span>
             {rep ? <Badge tone="rose">세션 대표{context.category !== "asset" ? ` · ${rank + 1}순위` : ""}</Badge> : <Badge>세션 대표 미설정</Badge>}
           </button>
-          {context.category === "asset" && rep && <button className="button" disabled={busy || isEntrySession(row.name)} onClick={() => void act(() => loraRequest("lora/manage/update", { ...params, name: context.project.name, representative: JSON.stringify(rep) }), "엔트리 대표로 설정했습니다.")}><Star size={13} />{isEntrySession(row.name) ? "현재 엔트리 대표" : "엔트리 대표로 설정"}</button>}
+          {context.category === "asset" && rep && <button className="button" disabled={busy || isEntrySession(row.name)} onClick={() => void act(() => loraRequest("lora/manage/update", { ...params, name: context.project.name, representative: JSON.stringify({ ...rep, session: row.name }) }), "엔트리 대표로 설정했습니다.")}><Star size={13} />{isEntrySession(row.name) ? "현재 엔트리 대표" : "엔트리 대표로 설정"}</button>}
           {context.category !== "asset" && rep && <div className="internal-lora-actions">
             <button className="icon-button" aria-label={`${row.name} 우선순위 올리기`} disabled={busy || rank <= 0} onClick={() => priority(rank, -1)}><ArrowUp size={15} /></button>
             <button className="icon-button" aria-label={`${row.name} 우선순위 내리기`} disabled={busy || rank < 0 || rank === rankedSessions.length - 1} onClick={() => priority(rank, 1)}><ArrowDown size={15} /></button>
@@ -145,19 +150,27 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
         {loadingSteps ? <p role="status">STEP을 불러오는 중…</p> : <><LossChart steps={steps} />
           <div className="internal-lora-steps">{steps.map(step => {
             const isSessionRepresentative = sessionRepresentative?.safetensors === step.safetensors;
+            const withoutPreviews = !step.previews.length && (context.profile === "moss" || !!step.moss_report);
             return <article className="panel internal-lora-step" key={step.name}>
-              <div className="internal-lora-toolbar"><strong>{step.name}</strong><div className="internal-lora-actions">
+              <div className="internal-lora-toolbar"><strong>{checkpointLabel(step)}</strong><div className="internal-lora-actions">
                 {isEntrySession(session) && entryRepresentative?.safetensors === step.safetensors && <Badge tone="rose">엔트리 대표</Badge>}
-                {isSessionRepresentative && <Badge tone="rose">세션 대표</Badge>}<Badge>Loss {step.avr_loss ?? "—"}</Badge>
+                {isSessionRepresentative && <Badge tone="rose">세션 대표</Badge>}<Badge>Loss {step.avr_loss ?? step.loss?.toPrecision(4) ?? "—"}</Badge>
               </div></div>
-              <div className="internal-lora-images">{step.previews.map((filename: string) => {
+              {step.previews.length > 0 && <div className="internal-lora-images">{step.previews.map((filename: string) => {
                 const isRepresentativeImage = isSessionRepresentative && mediaUrl(sessionRepresentative?.preview || "") === mediaUrl(previewPath(filename));
                 return <div key={filename}><button className="internal-lora-image-open" onClick={() => setZoom(mediaUrl(previewPath(filename)))}><img src={mediaUrl(previewPath(filename))} alt={`${step.name} · ${filename}`} loading="lazy" /></button>
                   <button className="button" disabled={busy || isRepresentativeImage} onClick={() => void act(() => representative(step, filename), "세션 대표 이미지와 LoRA를 지정했습니다.")}><Star size={13} />{isRepresentativeImage ? "현재 세션 대표 이미지" : "세션 대표로 설정"}</button>
                 </div>;
-              })}</div>
+              })}</div>}
+              {withoutPreviews && <span className="field-help">저장된 미리보기 이미지가 없습니다.</span>}
               <div className="internal-lora-toolbar"><span className="field-help">{step.safetensors}</span><div className="internal-lora-actions">
-                <button className="button" disabled={busy} onClick={async () => { try { setToml((await loraRequest(`${root}/trained/toml?${query({ ...params, session, step: step.name })}`)).content); } catch (cause) { setError((cause as Error).message); } }}>TOML</button>
+                {withoutPreviews && <button className="button" disabled={busy || isSessionRepresentative} onClick={() => void act(() => representative(step), "세션 대표 LoRA를 지정했습니다.")}><Star size={13} />세션 대표로 설정</button>}
+                {step.config_format !== null && <button className="button" disabled={busy} onClick={async () => {
+                  try {
+                    const result = await loraRequest(`${root}/trained/toml?${query({ ...params, session, step: step.name })}`);
+                    setTrainingConfig({ content: result.content, format: result.format === "json" ? "JSON" : "TOML" });
+                  } catch (cause) { setError((cause as Error).message); }
+                }}>{step.config_format === "json" ? "학습 설정 (JSON)" : "TOML"}</button>}
                 <button className="button danger" disabled={busy} onClick={() => {
                   if (window.confirm(`“${step.name}”의 LoRA, 학습 설정과 미리보기 이미지를 삭제할까요?${isSessionRepresentative ? "\n현재 세션 대표 STEP입니다." : ""} 이 작업은 되돌릴 수 없습니다.`))
                     void act(() => loraRequest(`${root}/trained/delete`, { ...params, session, step: step.name }), "STEP을 삭제했습니다.");
@@ -169,15 +182,21 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
         </>}
       </>}</div>}
     </div>}
-    {toml !== null && <Modal title="TOML 학습 설정" onClose={() => setToml(null)} className="internal-lora-modal"><pre className="internal-lora-form">{toml}</pre></Modal>}
+    {trainingConfig && <Modal title={`${trainingConfig.format} 학습 설정`} onClose={() => setTrainingConfig(null)} className="internal-lora-modal"><pre className="internal-lora-form">{trainingConfig.content}</pre></Modal>}
     {zoom && <Modal title="학습 미리보기" onClose={() => setZoom("")} className="internal-lora-modal"><img className="internal-lora-zoom" src={zoom} alt="학습 미리보기" /></Modal>}
   </div>;
 }
 
+function checkpointLabel(step: LoraData) {
+  if (typeof step.step !== "number") return step.name;
+  return `${step.is_final ? "최종 · " : ""}${step.step.toLocaleString("ko-KR")} STEP`;
+}
+
 function LossChart({ steps }: { steps: LoraData[] }) {
-  const rows = steps.filter(step => step.avr_loss !== null && step.avr_loss !== undefined && Number.isFinite(Number(step.avr_loss)));
+  const rows = steps.map(step => ({ name: checkpointLabel(step), loss: step.avr_loss ?? step.loss }))
+    .filter(row => row.loss != null && Number.isFinite(Number(row.loss)));
   if (!rows.length) return <p className="field-help">Loss 데이터가 없습니다.</p>;
-  const values = rows.map(row => Number(row.avr_loss)); const min = Math.min(...values); const max = Math.max(...values); const range = max - min || 1;
+  const values = rows.map(row => Number(row.loss)); const min = Math.min(...values); const max = Math.max(...values); const range = max - min || 1;
   const points = values.map((value, index) => `${40 + index / Math.max(1, values.length - 1) * 620},${165 - (value - min) / range * 130}`).join(" ");
-  return <figure className="internal-lora-loss"><figcaption>Loss 추이</figcaption><svg viewBox="0 0 700 210" role="img" aria-label={`Loss 추이: ${rows.map(row => `${row.name}: ${row.avr_loss}`).join(", ")}`}><line x1="40" y1="175" x2="660" y2="175" stroke="currentColor" opacity=".3" /><polyline points={points} fill="none" stroke="var(--rose)" strokeWidth="2" /><text x="40" y="22">최대 {max.toPrecision(4)}</text><text x="40" y="200">{rows[0].name}</text><text x="660" y="200" textAnchor="end">{rows.at(-1)?.name}</text></svg></figure>;
+  return <figure className="internal-lora-loss"><figcaption>Loss 추이</figcaption><svg viewBox="0 0 700 210" role="img" aria-label={`Loss 추이: ${rows.map(row => `${row.name}: ${row.loss}`).join(", ")}`}><line x1="40" y1="175" x2="660" y2="175" stroke="currentColor" opacity=".3" /><polyline points={points} fill="none" stroke="var(--rose)" strokeWidth="2" /><text x="40" y="22">최대 {max.toPrecision(4)}</text><text x="40" y="200">{rows[0].name}</text><text x="660" y="200" textAnchor="end">{rows.at(-1)?.name}</text></svg></figure>;
 }

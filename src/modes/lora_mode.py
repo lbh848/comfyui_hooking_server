@@ -20,6 +20,13 @@ from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
 from modes.lora_preview import training_preview_filename
 from lora_paths import ASSET_LORA_FOLDER, lora_training_session_names
+from lora_training_results import (
+    delete_lora_checkpoint,
+    delete_other_lora_checkpoints,
+    list_lora_checkpoints,
+    lora_session_summary,
+    read_lora_checkpoint_config,
+)
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -377,8 +384,6 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
     sessions = []
     for name in lora_training_session_names(entry_dir):
         path = os.path.join(entry_dir, name)
-        step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
-        has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
 
         # 세션 대표 이미지 정보
         session_rep = session_reps.get(name, "")
@@ -392,8 +397,7 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
 
         sessions.append({
             "name": name,
-            "step_count": step_count,
-            "has_final": has_final,
+            **lora_session_summary(path),
             "representative": session_rep,
             "preview_url": preview_url,
         })
@@ -406,35 +410,7 @@ def list_trained_steps(lora_load_path: str, character: str, entry: str, session:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return []
     session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
-    if not os.path.isdir(session_dir):
-        print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
-        return []
-    steps = []
-    for fname in sorted(os.listdir(session_dir)):
-        if not fname.endswith('.json'):
-            continue
-        if fname.endswith('.metadata.json'):
-            print(f"[LORA_TRAINED] 보조 메타데이터 제외: {os.path.join(session_dir, fname)}")
-            continue
-        json_path = os.path.join(session_dir, fname)
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception as e:
-            print(f"[LORA_TRAINED] JSON 읽기 실패: {json_path} - {e}")
-            continue
-        step_name = os.path.splitext(fname)[0]
-        safetensors = data.get('lora_file', step_name + '.safetensors')
-        previews = data.get('previews', [])
-        avr_loss = data.get('avr_loss', None)
-        steps.append({
-            "name": step_name,
-            "safetensors": safetensors,
-            "previews": previews,
-            "json_file": fname,
-            "avr_loss": avr_loss,
-        })
-    return steps
+    return list_lora_checkpoints(session_dir)
 
 
 def read_toml_file(lora_load_path: str, character: str, entry: str, session: str, step_name: str) -> dict:
@@ -443,18 +419,7 @@ def read_toml_file(lora_load_path: str, character: str, entry: str, session: str
         print("[LORA_TRAINED] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
     session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
-    toml_path = os.path.join(session_dir, step_name + ".toml")
-    if not os.path.isfile(toml_path):
-        print(f"[LORA_TRAINED] TOML 파일 없음: {toml_path}")
-        return {"success": False, "error": "TOML 파일이 없습니다"}
-    try:
-        with open(toml_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return {"success": True, "content": content, "filename": step_name + ".toml"}
-    except Exception as e:
-        print(f"[LORA_TRAINED] TOML 읽기 실패: {toml_path} - {e}")
-        traceback.print_exc()
-        return {"success": False, "error": str(e)}
+    return read_lora_checkpoint_config(session_dir, step_name)
 
 
 def delete_trained_step(lora_load_path: str, character: str, entry: str, session: str, step_name: str) -> dict:
@@ -466,56 +431,7 @@ def delete_trained_step(lora_load_path: str, character: str, entry: str, session
     if not os.path.isdir(session_dir):
         print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
-    json_path = os.path.join(session_dir, step_name + ".json")
-    if not os.path.isfile(json_path):
-        print(f"[LORA_TRAINED] JSON 파일 없음: {json_path}")
-        return {"success": False, "error": "JSON 파일 없음"}
-    # JSON에서 연관 파일 목록 읽기
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"[LORA_TRAINED] JSON 읽기 실패: {json_path} - {e}")
-        return {"success": False, "error": f"JSON 읽기 실패: {e}"}
-    deleted = []
-    errors = []
-    # safetensors
-    st_name = data.get('lora_file', step_name + '.safetensors')
-    for fname in [st_name]:
-        fp = os.path.join(session_dir, fname)
-        if os.path.isfile(fp):
-            try:
-                os.remove(fp)
-                deleted.append(fname)
-            except Exception as e:
-                errors.append(f"{fname}: {e}")
-    # previews
-    for p in data.get('previews', []):
-        fp = os.path.join(session_dir, p)
-        if os.path.isfile(fp):
-            try:
-                os.remove(fp)
-                deleted.append(p)
-            except Exception as e:
-                errors.append(f"{p}: {e}")
-    # toml
-    toml_path = os.path.join(session_dir, step_name + ".toml")
-    if os.path.isfile(toml_path):
-        try:
-            os.remove(toml_path)
-            deleted.append(step_name + ".toml")
-        except Exception as e:
-            errors.append(f"{step_name}.toml: {e}")
-    # json
-    try:
-        os.remove(json_path)
-        deleted.append(step_name + ".json")
-    except Exception as e:
-        errors.append(f"{step_name}.json: {e}")
-    if errors:
-        print(f"[LORA_TRAINED] 삭제 중 일부 실패: {errors}")
-    print(f"[LORA_TRAINED] 삭제 완료: {deleted}")
-    return {"success": True, "deleted": deleted, "errors": errors}
+    return delete_lora_checkpoint(session_dir, step_name)
 
 
 def delete_trained_session(lora_load_path: str, character: str, entry: str, session: str) -> dict:
@@ -566,45 +482,10 @@ def delete_non_rep_steps_in_session(lora_load_path: str, character: str, entry: 
             print(f"[LORA_TRAINED] 세션 대표 파싱 실패(session={session}): {e}")
     print(f"[LORA_TRAINED] 세션 대표 외 제거: session={session}, rep={rep_st or '(없음)'}")
 
-    steps = list_trained_steps(lora_load_path, character, entry, session)
-    # json 기반 step가 가리키는 safetensors 목록
-    step_st_files = {s["safetensors"] for s in steps}
-
-    deleted_count = 0
-    kept = None
-    errors = []
-
-    # 1) json 메타데이터가 있는 step들: 대표가 아닌 것 삭제
-    for s in steps:
-        if rep_st and s["safetensors"] == rep_st:
-            kept = s["safetensors"]
-            continue
-        r = delete_trained_step(lora_load_path, character, entry, session, s["name"])
-        if r.get("success"):
-            deleted_count += 1
-        else:
-            errors.append(f"{s['name']}: {r.get('error', '알 수 없음')}")
-        errors.extend(r.get("errors", []))
-
-    # 2) json 메타데이터 없이 safetensors만 있는 파일(orphan): 대표가 아니면 직접 삭제
-    try:
-        for fname in os.listdir(session_dir):
-            if not fname.endswith(".safetensors"):
-                continue
-            if fname == rep_st:
-                kept = fname
-                continue
-            if fname in step_st_files:
-                continue  # 위 step 루프에서 이미 처리됨
-            fp = os.path.join(session_dir, fname)
-            try:
-                os.remove(fp)
-                deleted_count += 1
-                print(f"[LORA_TRAINED] orphan safetensors 삭제: {fname}")
-            except Exception as e:
-                errors.append(f"{fname}: {e}")
-    except Exception as e:
-        errors.append(f"폴더 순회 실패: {e}")
+    result = delete_other_lora_checkpoints(session_dir, rep_st)
+    deleted_count = len(result["deleted_steps"])
+    kept = result["kept"]
+    errors = result["errors"]
 
     print(f"[LORA_TRAINED] 세션 대표 외 제거 완료: session={session}, 삭제 step={deleted_count}, 남긴 대표={kept}, errors={len(errors)}")
     return {
@@ -1403,31 +1284,16 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
             if lora_load_path:
                 entry_dir = os.path.join(lora_load_path, _safe_dirname(char_name), "Lora", _safe_dirname(name))
                 if os.path.isdir(entry_dir):
-                    for session_name in sorted(os.listdir(entry_dir)):
+                    for session_name in reversed(lora_training_session_names(entry_dir)):
                         session_dir = os.path.join(entry_dir, session_name)
-                        if not os.path.isdir(session_dir):
-                            continue
-                        for fname in sorted(os.listdir(session_dir)):
-                            if fname.endswith('.json'):
-                                json_path = os.path.join(session_dir, fname)
-                                try:
-                                    with open(json_path, 'r', encoding='utf-8') as f:
-                                        jdata = json.load(f)
-                                    safetensors = jdata.get('lora_file', '')
-                                    if safetensors:
-                                        relative_path = os.path.join(
-                                            _safe_dirname(char_name), "Lora",
-                                            _safe_dirname(name), session_name, safetensors
-                                        )
-                                        previews = jdata.get('previews', [])
-                                        entry["lora_files"].append({
-                                            "path": relative_path,
-                                            "session": session_name,
-                                            "safetensors": safetensors,
-                                            "previews": previews,
-                                        })
-                                except Exception as e:
-                                    print(f"[LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
+                        for step in list_lora_checkpoints(session_dir):
+                            safetensors = step["safetensors"]
+                            entry["lora_files"].append({
+                                "path": os.path.join(_safe_dirname(char_name), "Lora", _safe_dirname(name), session_name, safetensors),
+                                "session": session_name,
+                                "safetensors": safetensors,
+                                "previews": step["previews"],
+                            })
             # 수동 업로드된 safetensors도 포함
             manual_dir = _lora_entry_dir(char_name, name)
             if os.path.isdir(manual_dir):
