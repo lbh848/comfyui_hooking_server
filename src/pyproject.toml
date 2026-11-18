@@ -6,6 +6,7 @@ dependencies = [
     "aiohttp",
     "httpx",
     "pillow",
+    "fonttools",
     "pillow-avif-plugin",
     "piexif",
     "websockets",

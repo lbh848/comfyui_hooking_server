@@ -17,13 +17,16 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import threading
 import traceback
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Callable, Iterable, Optional
+from functools import lru_cache
+from typing import Callable, Iterable, NamedTuple, Optional
 
 import numpy as np
+from fontTools.ttLib import TTFont, TTLibError
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 try:
@@ -891,20 +894,66 @@ def _faux_bold_width(size: int, settings: dict) -> int:
     return max(1, int(round(size * (weight - 500) / 400.0 * 0.07)))
 
 
-def _line_bounds(draw, text: str, font, spacing: float, stroke: int, glyphs: dict):
+@lru_cache(maxsize=16)
+def _font_codepoints(path: str, index: int, modified_ns: int) -> frozenset[int]:
+    # Include the modification time because uploaded fonts can be replaced in place.
+    with TTFont(path, fontNumber=index, lazy=True) as face:
+        return frozenset(face.getBestCmap() or {})
+
+
+def _loaded_font_codepoints(font):
+    path = getattr(font, "path", None)
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return None
+    try:
+        return _font_codepoints(path, font.index, os.stat(path).st_mtime_ns)
+    except (OSError, TTLibError) as exc:
+        print(f"[MANGA_TEXT] 폰트 문자 목록을 읽을 수 없음({path}): {exc}")
+        return None
+
+
+class _Glyph(NamedTuple):
+    font: ImageFont.FreeTypeFont
+    faux_bold: int
+    advance: float
+    bounds: tuple
+
+
+def _measure_glyphs(draw, text: str, font, size: int, settings: dict) -> dict[str, _Glyph]:
+    chars = {ch for line in text.splitlines() for ch in line}
+    codepoints = _loaded_font_codepoints(font)
+    missing = {ch for ch in chars if codepoints is not None and ord(ch) not in codepoints}
+    fallback_fonts = {}
+    fallback_id = DEFAULT_MANGA_TEXT_SETTINGS["font_id"]
+    if missing and settings.get("font_id") != fallback_id:
+        fallback = _load_font(size, {**settings, "font_id": fallback_id, "font_path": ""})
+        coverage = _loaded_font_codepoints(fallback)
+        if coverage:
+            fallback_fonts = {ch: fallback for ch in missing if ord(ch) in coverage}
+
+    faux_bold = _faux_bold_width(size, settings)
+    outline = int(settings["outline_width"])
+    glyphs = {}
+    for ch in chars:
+        glyph_font = fallback_fonts.get(ch, font)
+        faux = faux_bold if glyph_font is font else 0
+        glyphs[ch] = _Glyph(
+            glyph_font, faux, draw.textlength(ch, font=glyph_font),
+            draw.textbbox((0, 0), ch, font=glyph_font, anchor="ls", stroke_width=outline + faux),
+        )
+    return glyphs
+
+
+def _line_bounds(text: str, spacing: float, glyphs: dict[str, _Glyph]):
     """실제 렌더와 같은 글자별 advance/잉크 경계로 측정한다(커닝 없음)."""
     cursor = 0.0
     bounds = []
     for char in text:
-        if char not in glyphs:
-            glyphs[char] = (
-                draw.textlength(char, font=font),
-                draw.textbbox((0, 0), char, font=font, anchor="ls", stroke_width=stroke),
-            )
-        advance, (left, top, right, bottom) = glyphs[char]
+        glyph = glyphs[char]
+        left, top, right, bottom = glyph.bounds
         if not char.isspace() and bottom > top:
             bounds.append((cursor + left, top, cursor + right, bottom))
-        cursor += advance + spacing
+        cursor += glyph.advance + spacing
     return _union(bounds) if bounds else [0.0, 0.0, 0.0, 0.0]
 
 
@@ -972,16 +1021,15 @@ def _fit_text(
         if font is None:
             return None
         spacing = float(settings["letter_spacing"]) * size
-        stroke = int(settings["outline_width"]) + _faux_bold_width(size, settings)
-        glyphs = {}
+        glyphs = _measure_glyphs(draw, text, font, size, settings)
 
         def measure(value):
-            left, _top, right, _bottom = _line_bounds(draw, value, font, spacing, stroke, glyphs)
+            left, _top, right, _bottom = _line_bounds(value, spacing, glyphs)
             return right - left
 
         lines = _wrap_text(draw, text, font, max_width / scale, measure)
         line_h = max(1, int(round(size * settings["line_height_ratio"])))
-        bounds = [_line_bounds(draw, line, font, spacing, stroke, glyphs) for line in lines]
+        bounds = [_line_bounds(line, spacing, glyphs) for line in lines]
         visible = [(i, box) for i, box in enumerate(bounds) if box[3] > box[1]]
         widest = max((box[2] - box[0] for box in bounds), default=0.0) * scale
         block_h = (
@@ -1040,19 +1088,19 @@ def _draw_text_block(
 
     spacing = float(settings["letter_spacing"]) * size
     outline = int(settings["outline_width"])
-    faux = _faux_bold_width(size, settings)
-    stroke = outline + faux
     fill = ImageColor.getrgb(settings["text_color"])
     stroke_fill = ImageColor.getrgb(settings["outline_color"])
     pad = 2
 
     probe = Image.new("RGB", (8, 8))
     probe_draw = ImageDraw.Draw(probe)
-    glyphs = {}
-    bounds = [_line_bounds(probe_draw, line, font, spacing, stroke, glyphs) for line in lines]
+    glyphs = _measure_glyphs(probe_draw, text, font, size, settings)
+    bounds = [_line_bounds(line, spacing, glyphs) for line in lines]
     line_widths = [box[2] - box[0] for box in bounds]
     block_w = max(line_widths or [1.0])
     visible = [(i, box) for i, box in enumerate(bounds) if box[3] > box[1]]
+    if not visible:
+        return canvas
     top = min(i * line_h + box[1] for i, box in visible)
     bottom = max(i * line_h + box[3] for i, box in visible)
     block_h = bottom - top
@@ -1071,36 +1119,23 @@ def _draw_text_block(
         baseline = pad + index * line_h - top
         cursor = start_x - bounds[index][0]
         for char in line:
+            glyph = glyphs[char]
             # 바깥 외곽선(색상 지정) → 볼드 보강(글자색) → 일반 글자 순으로 겹쳐 그린다.
             if outline > 0:
                 draw.text(
                     (cursor, baseline),
                     char,
-                    font=font,
+                    font=glyph.font,
                     fill=(*stroke_fill, 255),
-                    stroke_width=outline + faux,
+                    stroke_width=outline + glyph.faux_bold,
                     stroke_fill=(*stroke_fill, 255),
                     anchor="ls",
                 )
-            if faux > 0:
-                draw.text(
-                    (cursor, baseline),
-                    char,
-                    font=font,
-                    fill=(*fill, 255),
-                    stroke_width=faux,
-                    stroke_fill=(*fill, 255),
-                    anchor="ls",
-                )
-            else:
-                draw.text(
-                    (cursor, baseline),
-                    char,
-                    font=font,
-                    fill=(*fill, 255),
-                    anchor="ls",
-                )
-            cursor += glyphs[char][0] + spacing
+            draw.text(
+                (cursor, baseline), char, font=glyph.font, fill=(*fill, 255),
+                stroke_width=glyph.faux_bold, stroke_fill=(*fill, 255), anchor="ls",
+            )
+            cursor += glyph.advance + spacing
 
     ink_box = layer.getbbox()
     if ink_box is None:

@@ -5,7 +5,7 @@
 #   "packaging", "argon2-cffi", "cryptography", "google-auth", "requests",
 #   "psutil", "piexif", "pyyaml", "modal>=1.5.3,<2", "paramiko",
 #   "onnxruntime", "huggingface-hub", "opencv-python-headless",
-#   "rapidocr>=3.9.0",
+#   "rapidocr>=3.9.0", "fonttools",
 # ]
 # ///
 """Run the existing illustration and LoRA handlers on a shared local queue."""
