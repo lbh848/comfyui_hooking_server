@@ -1713,6 +1713,10 @@ class BotMode:
                     return _json_ok(result)
                 elif action == "remove_character":
                     return await self._remove_character(data, body)
+                elif action in {"merge_characters", "remove_characters"}:
+                    from modes.bot_character_merge import manage_characters
+                    result = await asyncio.to_thread(manage_characters, data, body, merge=action == "merge_characters")
+                    return _json_ok(result)
                 elif action == "rename_character":
                     return await self._rename_character(data, body)
                 elif action == "renew_npc_lifetime":
@@ -1848,26 +1852,9 @@ class BotMode:
         return _json_ok({"bots": data["bots"], "added": added, "errors": errors})
 
     async def _remove_character(self, data, body):
-        bot_name = body.get("bot_name", "").strip()
-        char_name = body.get("char_name", "").strip()
-        if not bot_name or not char_name:
-            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
-        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
-        if not bot:
-            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
-        bot["characters"] = [c for c in bot.get("characters", []) if c["name"] != char_name]
-        if str(bot.get("persona_character_name") or "").casefold() == char_name.casefold():
-            bot["persona_character_name"] = ""
-            print(
-                f"[BOT_MODE:PERSONA] 페르소나 캐릭터 삭제로 설정 해제: "
-                f"bot={bot_name!r}, character={char_name!r}"
-            )
-        char_path = os.path.join(BOT_DIR, bot_name, char_name)
-        if os.path.isdir(char_path):
-            shutil.rmtree(char_path)
-        _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 삭제: {bot_name}/{char_name}")
-        return _json_ok({"bots": data["bots"]})
+        from modes.bot_character_merge import manage_characters
+        result = await asyncio.to_thread(manage_characters, data, {**body, "char_names": [body.get("char_name", "")]})
+        return _json_ok(result)
 
     async def _renew_npc_lifetime(self, data, body):
         bot_name = str(body.get("bot_name") or "").strip()

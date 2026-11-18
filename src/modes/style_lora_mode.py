@@ -171,6 +171,12 @@ def _save_data(data: dict):
 
 # ─── 프로젝트 CRUD ─────────────────────────────────────────────
 
+def get_training_profile(project_id: str) -> str:
+    """Resolve the project's profile for caption preparation."""
+    project = _load_data().get("projects", {}).get(_safe_dirname(project_id)) or {}
+    return project.get("profile") or project.get("training_config", {}).get("selected_profile") or "anima"
+
+
 def list_projects() -> list:
     data = _load_data()
     result = []

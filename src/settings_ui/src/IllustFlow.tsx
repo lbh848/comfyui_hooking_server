@@ -189,7 +189,7 @@ const FlowNodeDetails = memo(function FlowNodeDetails({ runId, nodeId, initialNo
 const FlowGraph = memo(function FlowGraph({ flow, onOpen }: { flow: IllustrationFlow; onOpen: (id: string) => void }) {
   const masks = useFlowMaskResults(flow);
   const [sizes, setSizes] = useState<PreviewSizes>({});
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(.8);
   const viewport = useRef<HTMLDivElement>(null);
   const layout = useMemo(() => layoutNodes(flow.nodes, "illustration"), [flow.nodes]);
   useEffect(() => { setSizes({}); viewport.current?.scrollTo(0, 0); }, [flow.id]);

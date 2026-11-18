@@ -18,7 +18,8 @@ export function readCharacterLore(value: unknown, source: string): CharacterLore
     const secondary_keys = loreKeys(entry.secondary_keys ?? entry.secondkey);
     const content = typeof entry.content === "string" ? entry.content : "";
     if (!title && !keys.length && !content) return [];
-    return [{ entry_id: String(entry.id ?? JSON.stringify([title || index, keys, secondary_keys])), source,
+    const entryId = entry.id == null ? "" : String(entry.id);
+    return [{ entry_id: entryId.trim() ? entryId : JSON.stringify([title || index, keys, secondary_keys]), source,
       title: title || keys[0] || `로어북 ${index + 1}`, content, keys, secondary_keys,
       enabled: entry.enabled !== false, constant: entry.constant === true || entry.alwaysActive === true || entry.mode === "constant",
       selective: entry.selective === true, use_regex: entry.use_regex === true || entry.useRegex === true }];

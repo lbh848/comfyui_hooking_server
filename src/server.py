@@ -24252,6 +24252,50 @@ def _recent_session_generated_prompt(backup_name: str) -> dict | None:
     multi_char = info.get("illustration_multi_char")
     if not isinstance(multi_char, dict) or not multi_char.get("enable"):
         multi_char = None
+    elif not moss:
+        from modes import multi_char_mask
+        from modes.illust_prompt_builder import IllustPromptBuilder
+
+        # Backup snapshots contain geometry, not the characters required by
+        # the illustration queue. Rebind the generated tags before rebuilding
+        # the prompt with the current bot, presets, and LoRAs.
+        multi_char = multi_char_mask.normalize_multi_char_snapshot(multi_char)
+        sections = IllustPromptBuilder.parse_sections(raw_positive)
+        names = final.get("character_names") or [
+            name.strip() for name in sections["name"].split(",") if name.strip()
+        ] or multi_char["character_order"]
+        tags = [tag.strip() for tag in sections["char"].split("|")]
+        if len(names) != len(tags):
+            raise ValueError(
+                "저장된 캐릭터 수와 생성 태그 수가 다릅니다: "
+                f"characters={len(names)}, tags={len(tags)}"
+            )
+        generated_by_name = {
+            str(name).strip().casefold(): tag for name, tag in zip(names, tags)
+        }
+        fields = (document.get("fields") or {}) if isinstance(document, dict) else {}
+        control = fields.get("MULTI_CHAR") or {}
+        layout = multi_char["layout"]
+        # These two fields contain the separated scene text. Shared preset
+        # tags and LoRA triggers in the submitted control block are not reused.
+        layout["background_prompt"] = str(control.get("background_prompt", sections["setup"]) or "").strip()
+        layout["composition_prompt"] = str(control.get("composition_prompt", sections["supplement"]) or "").strip()
+        characters = []
+        for region in layout["regions"]:
+            name = region["name"]
+            positive = generated_by_name.get(name.casefold())
+            if positive is None:
+                raise ValueError(f"저장된 영역의 캐릭터 생성 태그를 찾을 수 없습니다: {name}")
+            region["character_prompt"] = positive
+            characters.append({
+                "name": name, "positive": positive,
+                **({"ref": region["ref"]} if "ref" in region else {}),
+            })
+        multi_char["characters"] = characters
+        final = {
+            **copy.deepcopy(final), "raw_positive": raw_positive,
+            "character_names": list(names),
+        }
     visual_states = info.get("illustration_visual_states")
     if not isinstance(visual_states, dict):
         visual_states = final.get("visual_states")
@@ -24262,6 +24306,7 @@ def _recent_session_generated_prompt(backup_name: str) -> dict | None:
         "multi_char": copy.deepcopy(multi_char) if multi_char else None,
         "moss_layout": moss_layout,
         "canvas": moss_canvas,
+        "llm_final_result": copy.deepcopy(final) if final else None,
         "visual_states": (
             copy.deepcopy(visual_states) if isinstance(visual_states, dict) else None),
     }
@@ -24355,6 +24400,7 @@ async def handle_api_redraw_recent_sessions(request: web.Request) -> web.Respons
                         "image_bytes": None,
                         "timestamp": time.time(),
                         "_illustration_runtime_snapshot": runtime,
+                        "_llm_final_result": generated.get("llm_final_result"),
                     }
                     raw_body = {
                         "illustration_gen_method": "최근 세션 다시 그리기",
@@ -26664,97 +26710,9 @@ app.router.add_delete("/api/text_output", handle_api_text_output_clear)
 
 
 # ─── 공지 캐시 시스템 ──────────────────────────────────
-NOTI_CACHE_FILE = os.path.join(data_root(BASE_DIR), "notification_cache.json")
-NOTI_REPO = "lbh848/comfyui_hooking_server_notification"
-_noti_new_items = []  # 새로 발견된 공지 (서버 시작 시 또는 갱신 시)
+from notifications import REFRESH_INTERVAL, register_notifications
 
-
-def _read_noti_cache():
-    if os.path.exists(NOTI_CACHE_FILE):
-        try:
-            with open(NOTI_CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[공지] 캐시 파일 읽기 실패: {e}")
-    return {"items": [], "read": []}
-
-
-def _write_noti_cache(data):
-    try:
-        with open(NOTI_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[공지] 캐시 파일 쓰기 실패: {e}")
-
-
-async def _fetch_github_noti_list():
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://api.github.com/repos/{NOTI_REPO}/contents?t={int(time.time())}"
-            headers = {"Accept": "application/vnd.github.v3+json"}
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    print(f"[공지] GitHub API 실패: {resp.status}")
-                    return None
-                files = await resp.json()
-                return [
-                    {"name": f["name"], "download_url": f["download_url"]}
-                    for f in files
-                    if f.get("name", "").endswith(".md")
-                ]
-    except Exception as e:
-        print(f"[공지] GitHub API 호출 실패: {e}")
-        return None
-
-
-async def refresh_noti_cache():
-    global _noti_new_items
-    cache = _read_noti_cache()
-    old_names = {item["name"] for item in cache.get("items", [])}
-
-    new_items = await _fetch_github_noti_list()
-    if new_items is None:
-        return
-
-    new_names = {item["name"] for item in new_items}
-    added = new_names - old_names
-
-    if added:
-        _noti_new_items = [item for item in new_items if item["name"] in added]
-        print(f"[공지] 새 공지 {len(added)}건 감지: {', '.join(added)}")
-        await notify_frontend("notification_new", {"count": len(added), "items": _noti_new_items})
-    else:
-        _noti_new_items = []
-        print("[공지] 새 공지 없음")
-
-    cache["items"] = new_items
-    _write_noti_cache(cache)
-
-
-async def handle_api_notifications(request: web.Request) -> web.Response:
-    cache = _read_noti_cache()
-    return web.json_response(cache)
-
-
-async def handle_api_notifications_read(request: web.Request) -> web.Response:
-    try:
-        body = await request.json()
-        names = body.get("names", [])
-        if not isinstance(names, list):
-            return web.json_response({"error": "names must be array"}, status=400)
-        cache = _read_noti_cache()
-        read_set = set(cache.get("read", []))
-        read_set.update(names)
-        cache["read"] = list(read_set)
-        _write_noti_cache(cache)
-        return web.json_response({"success": True})
-    except Exception as e:
-        print(f"[공지] 읽음 처리 실패: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-app.router.add_get("/api/notifications", handle_api_notifications)
-app.router.add_post("/api/notifications/read", handle_api_notifications_read)
+refresh_noti_cache = register_notifications(app, BASE_DIR, on_new=notify_frontend)
 
 # ─── 에셋 생성 모드 API 핸들러 ────────────────────────────
 async def handle_api_asset_mode_status(request: web.Request) -> web.Response:
@@ -33331,6 +33289,8 @@ async def handle_api_style_lora_for_picker(request):
 
 
 app.router.add_get("/api/bot_lora/for_picker", handle_api_bot_lora_for_picker)
+from modes.bot_lora_allocation import handle_bot_lora_allocation
+app.router.add_post("/api/bot_lora/allocate", handle_bot_lora_allocation)
 app.router.add_get("/api/instance_lora/for_picker", handle_api_instance_lora_for_picker)
 app.router.add_get("/api/style_lora/for_picker", handle_api_style_lora_for_picker)
 
@@ -33866,6 +33826,34 @@ async def handle_api_bot_lora_bots(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+def _bot_lora_file_change_error():
+    status = queue_manager.get_status()
+    if status["processing"] or status["pending_count"] or any(item["status"] not in ("completed", "failed", "cancelled") for item in status["items"]):
+        return "작업 큐의 작업이 끝난 뒤 학습 자료를 이동하거나 삭제하세요."
+    return ""
+
+
+async def handle_api_bot_lora_restore_link(request):
+    from modes.bot_lora_restore import prepare_restore_link, restore_link
+    try:
+        body = request.query if request.method == "GET" else await request.json()
+        source_bot, target_bot = body.get("source_bot", ""), body.get("target_bot", "")
+        lora_load_path = bot_lora_load_path(load_config())
+        if request.method == "GET":
+            result = prepare_restore_link(source_bot, target_bot, lora_load_path).summary()
+        else:
+            error = _bot_lora_file_change_error()
+            if error:
+                return web.json_response({"success": False, "error": error}, status=409)
+            result = restore_link(source_bot, target_bot, lora_load_path, body.get("revision", ""))
+        return web.json_response(result)
+    except ValueError as exc:
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
+    except Exception as exc:
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
 async def handle_api_bot_lora_projects(request):
     """봇의 학습 프로젝트 목록"""
     try:
@@ -33904,6 +33892,9 @@ async def handle_api_bot_lora_project_delete(request):
     """학습 프로젝트 삭제"""
     try:
         body = await request.json()
+        error = _bot_lora_file_change_error()
+        if error:
+            return web.json_response({"success": False, "error": error}, status=409)
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         if not bot_name or not project_name:
@@ -36189,6 +36180,8 @@ async def handle_api_style_lora_cleanup_non_representative(request):
 
 
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
+app.router.add_get("/api/bot_lora/restore_link", handle_api_bot_lora_restore_link)
+app.router.add_post("/api/bot_lora/restore_link", handle_api_bot_lora_restore_link)
 app.router.add_get("/api/bot_lora/characters/importable", handle_api_bot_lora_characters_importable)
 app.router.add_post("/api/bot_lora/characters/import", handle_api_bot_lora_characters_import)
 app.router.add_post("/api/bot_lora/character/remove", handle_api_bot_lora_character_remove)
@@ -36824,7 +36817,7 @@ async def on_startup(app):
     # 20분 주기 공지 갱신
     async def _noti_refresh_loop():
         while True:
-            await asyncio.sleep(20 * 60)
+            await asyncio.sleep(REFRESH_INTERVAL)
             try:
                 await refresh_noti_cache()
             except Exception as e:

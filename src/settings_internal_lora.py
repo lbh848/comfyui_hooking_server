@@ -149,7 +149,7 @@ class InternalLoraRuntime:
                 headers["Content-Type"] = request.headers.get("Content-Type", "application/json")
             timeout = (aiohttp.ClientTimeout(total=None, sock_connect=30)
                        if external or path in {"/api/bot_mode/character_cards/suggest_metadata",
-                                               "/api/bot_mode/auto_batch",
+                                               "/api/bot_mode/auto_batch", "/api/bot_lora/allocate",
                                                "/api/bot_mode/character_lore_auto_link",
                                                "/api/bot_mode/archive",
                                                "/api/asset_mode/qwen_edit/translate"} else self.session.timeout)

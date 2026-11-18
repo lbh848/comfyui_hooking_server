@@ -238,7 +238,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
         <div className="illust-form illust-visual-guide-list" role="region" aria-label="프로필 선택 기준 결과" tabIndex={0}>
           {visibleLowConfidence.length > 0 && <section className="illust-form illust-visual-guide-low-confidence" aria-label="신뢰도 낮음">
             <div className="illust-actions"><h3>신뢰도 낮음</h3><Badge tone="rose">{visibleLowConfidence.length}개</Badge></div>
-            <p className="field-help">신뢰도가 낮아 자동으로 선택 해제된 제안입니다. 내용을 확인하거나 수정한 뒤 선택해 적용하세요.</p>
+            <p className="field-help">신뢰도가 낮은 제안입니다. 내용을 확인하거나 수정한 뒤 적용하세요.</p>
             {visibleLowConfidence.map(renderTarget)}
           </section>}
           {!visible.length ? <Empty title="검색된 카드가 없습니다">검색어를 바꿔보세요.</Empty> : [...characterGroups].sort(([a], [b]) => Number(generatedCharacterNames.has(a)) - Number(generatedCharacterNames.has(b))).flatMap(([character, cards], groupIndex, groups) => {
@@ -263,7 +263,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
         })}</div>
       </>}
     </div>
-    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준을 갱신합니다. 신뢰도가 낮은 제안은 상단에서 확인·수정한 뒤 선택하세요.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
+    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준을 갱신합니다. 신뢰도가 낮은 제안은 상단에서 확인·수정할 수 있습니다.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
     {preview && <Modal title={`${preview.character} · ${preview.profileLabel}`} onClose={() => setPreview(null)} backgroundable={false} className="illust-character-modal"><img className="illust-asset-preview" src={api.media(preview.imageUrl)} alt={preview.repFilename} /></Modal>}
   </>;
 }

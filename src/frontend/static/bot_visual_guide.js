@@ -42,7 +42,6 @@ globalThis.ComfyVisualGuide = (() => {
             };
             if (JSON.stringify(previous) === JSON.stringify(next)) continue;
             target.suggestion = next;
-            if (next.confidence === 'low') target.selected = false;
             count++;
         }
         return count;

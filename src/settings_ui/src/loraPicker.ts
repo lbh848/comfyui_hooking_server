@@ -26,7 +26,7 @@ export function selectedLora(item: PickerLora, character: boolean): Illustration
   return { ...(character ? { source: "library" } : {}), lora_path: loraPath(item.path),
     [character ? "strength" : "str"]: Number.isFinite(item.weight) ? item.weight : 1,
     BASE: loraBase(item), trigger: defaultLoraTrigger(item),
-    ...(isInternalLora(item) ? { name: item.alias?.trim() || item.name, preview_url: item.thumbnail || "" } : {}) };
+    ...(character && isInternalLora(item) ? { name: item.alias?.trim() || item.name, preview_url: item.thumbnail || "" } : {}) };
 }
 
 export function searchLoras(items: PickerLora[], source: string, query: string, internalSource: InternalLoraFilter = "all"): PickerLora[] {

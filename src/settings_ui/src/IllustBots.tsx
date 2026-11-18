@@ -64,7 +64,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [botName, setBotName] = useState("");
   const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [representativeBatches, setRepresentativeBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
-  const [loraBatchOpen, setLoraBatchOpen] = useState(false);
+  const [loraBatchBots, setLoraBatchBots] = useState<string[]>([]);
   const [loreLinkingBots, setLoreLinkingBots] = useState<string[]>([]);
   const [secondaryBotBatches, setSecondaryBotBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [gallery, setGallery] = useState<{ botName: string; name: string } | null>(null);
@@ -186,7 +186,11 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
         if (existing) existing.restore();
         else setSystemInstructionBots(current => current.includes(bot.name) ? current : [...current, bot.name]);
       }}>커스텀 시스템 지침</button>
-      {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => setLoraBatchOpen(true)}>로라 일괄 적용</button>}
+      {!emotionScope && <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
+        const existing = openModals.find(entry => entry.title === `${bot.name} · 로라 일괄 적용`);
+        if (existing) existing.restore();
+        else setLoraBatchBots(current => current.includes(bot.name) ? current : [...current, bot.name]);
+      }}>로라 일괄 적용</button>}
       {!emotionScope && <button className="button" disabled={distributionBusy} onClick={() => {
         const existing = openModals.find(entry => entry.workshop === api.scope && entry.title === loreLinkingTitle(bot.name));
         if (existing) existing.restore();
@@ -232,7 +236,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     {characterAddOpen && bot && <AddIllustrationCharacter key={bot.name} botName={bot.name} characters={bot.characters} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
     {secondaryBotBatches.map(item => <IllustSecondaryBotBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionBusy || !bots.some(bot => bot.name === item.name)} onClose={() => setSecondaryBotBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {representativeBatches.map(item => <IllustRepresentativeBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionAction.busy} onClose={() => setRepresentativeBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
-    {loraBatchOpen && bot && <IllustLoraBatch key={bot.name} botName={bot.name} inventory={inventory} readOnly={toolsReadOnly} onClose={() => setLoraBatchOpen(false)} onChanged={refreshCharacterStatus} />}
+    {loraBatchBots.map(name => <IllustLoraBatch key={name} botName={name} inventory={inventory} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)} onClose={() => setLoraBatchBots(current => current.filter(value => value !== name))} onChanged={refreshCharacterStatus} />)}
     {loreLinkingBots.map(name => <IllustLoreLinking key={name} botName={name} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)}
       onClose={() => setLoreLinkingBots(current => current.filter(value => value !== name))} onChanged={refreshCharacterStatus} />)}
     {dataPreparationBots.map(name => <IllustDataPreparation key={name} botName={name} characters={bots.find(item => item.name === name)?.characters || []}

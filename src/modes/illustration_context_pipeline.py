@@ -235,6 +235,7 @@ DEFAULT_TOGGLES = {
     "speak_emotion_enabled": False,
     "speak_emotions": "",
     "nsfw": True,
+    "overthinking_prevention_enabled": False,
     "manga_composition_hint_enabled": False,
     "manga_disable_bubbles": False,
     # 감정 삽화 공방 전용: 캐릭터의 NSFW 복장·감정 에셋을 함께 생성한다.
@@ -546,7 +547,7 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     for key in ("outfit_enabled", "time_place_enabled", "npc_generation_enabled", "npc_generation_deferred", "call2_plan_enabled", "call2_parallel_enabled",
                 "call2_detail_parallel_enabled",
                 "single_char_mask_skip_enabled", "profile_context_translate",
-                "nsfw_asset_generation_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles",
+                "nsfw_asset_generation_enabled", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles",
                 "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
     for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):

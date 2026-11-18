@@ -1,0 +1,36 @@
+.notifications-panel .panel-header, .notifications-panel .panel-header h2, .notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.notification-list { list-style: none; padding: 0; margin: 0; }
+.notification-list li + li { border-top: 1px solid var(--line); }
+.notification-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  text-align: left;
+  color: var(--ink);
+}
+.notification-row:hover, .notification-row:focus-visible { background: var(--rose-soft); }
+.notification-row:focus-visible { outline-offset: -3px; }
+.notification-name { display: flex; flex: 1; align-items: baseline; gap: 16px; min-width: 0; }
+.notification-name strong { font-size: 13px; overflow-wrap: anywhere; }
+.notification-date, .notification-row > svg { color: var(--muted); flex-shrink: 0; }
+.notification-date { font-size: 12px; font-variant-numeric: tabular-nums; }
+.notification-status { padding: 12px 18px; color: var(--muted); }
+.modal.notification-dialog { width: min(1060px, calc(100vw - 32px)); }
+.notification-markdown { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.notification-markdown :is(p, ul, ol, blockquote, pre, table) { margin-block: 0 1em; }
+.notification-markdown :is(ul, ol) { padding-inline-start: 1.6em; }
+.notification-markdown img { display: block; max-width: 100%; height: auto; }
+.notification-markdown pre, .notification-markdown table { display: block; overflow-x: auto; max-width: 100%; }
+.notification-markdown pre { padding: 12px; border-radius: 6px; background: var(--lavender); }
+.notification-markdown a { color: var(--rose-dark); text-decoration: underline; }
+@media (max-width: 640px) {
+  .notification-name { flex-direction: column; align-items: stretch; gap: 3px; }
+  .notification-row { padding: 12px; gap: 7px; }
+}

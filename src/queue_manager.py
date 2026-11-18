@@ -1008,10 +1008,10 @@ class QueueManager:
         }
 
     async def cancel_one_click_run(self, run_id: str) -> int:
-        """원클릭 실행이 만든 pending 항목만 취소하고 토큰을 등록한다.
+        """Cancel pending items and LLM gate waiters belonging to one preparation run.
 
-        이미 processing인 항목은 안전하게 완료되도록 두며, 요청과 등록이
-        교차하는 경우 후속 add_item이 같은 토큰을 보고 즉시 취소한다.
+        Let active requests finish. The token also cancels items added after
+        the stop request, while per-item tasks let gate waiters exit immediately.
         """
         normalized = str(run_id or "").strip()
         if not normalized:
@@ -1027,10 +1027,14 @@ class QueueManager:
                 continue
             if (
                 str(params.get("one_click_run_id") or "").strip() == normalized
-                and item.status == "pending"
+                and (item.status == "pending" or item.status == "waiting" and item.type in LLM_TYPES)
             ):
                 item.status = "cancelled"
+                item.error = "삽화 데이터 준비를 안전 중단했습니다"
                 item.completed_at = time.time()
+                execution_task = getattr(item, "_llm_execution_task", None) or getattr(item, "_illustration_execution_task", None)
+                if execution_task is not None:
+                    execution_task.cancel(item.error)
                 self._cleanup_item_resources(item)
                 self._settle_future(item)
                 cancelled += 1
@@ -2003,6 +2007,8 @@ class QueueManager:
             # 게이트 획득 알림을 받아 waiting→processing 으로 전환(idempotent).
             # 컨텍스트 전파로 handler 내부의 gather/병렬 재시도 LLM 호출까지 모두 커버.
             async def _on_gate_acquired(it: QueueItem = item) -> None:
+                if it.status == "cancelled":
+                    raise asyncio.CancelledError(it.error)
                 if it.status == "waiting":
                     it.status = "processing"
                     print(
@@ -2024,6 +2030,10 @@ class QueueManager:
                 item.status = "processing"
                 gate_cb_token = None
         try:
+            # Stop may arrive while the initial queue notification is awaited,
+            # before this item has an execution task to cancel.
+            if item.status == "cancelled":
+                raise asyncio.CancelledError(item.error)
             if (
                 is_gpu
                 and self._comfy_task_key_for_item(item)
@@ -2061,6 +2071,17 @@ class QueueManager:
                 finally:
                     if getattr(item, "_illustration_execution_task", None) is illustration_execution_task:
                         delattr(item, "_illustration_execution_task")
+            elif is_llm:
+                # Cancel the waiting item without cancelling its reusable worker.
+                llm_execution_task = asyncio.create_task(
+                    self._execute_item(item), name=f"llm-item-{item.id}",
+                )
+                item._llm_execution_task = llm_execution_task
+                try:
+                    result = await llm_execution_task
+                finally:
+                    if getattr(item, "_llm_execution_task", None) is llm_execution_task:
+                        delattr(item, "_llm_execution_task")
             else:
                 result = await self._execute_item(item)
             if not cancelled_by_flow:
@@ -2083,7 +2104,7 @@ class QueueManager:
                     print(f"[QUEUE] 처리 완료: id={item.id}")
         except asyncio.CancelledError:
             item.status = "cancelled"
-            item.error = str(getattr(item, "_illustration_cancel_reason", "") or "큐 실행이 취소되었습니다")
+            item.error = str(getattr(item, "_illustration_cancel_reason", "") or item.error or "큐 실행이 취소되었습니다")
             print(f"[QUEUE] 실행 취소: item={item.id}, reason={item.error}")
         except Exception as e:
             item.status = "failed"
@@ -6978,7 +6999,7 @@ class QueueManager:
     async def _handle_style_lora_tag_refine(self, item: QueueItem, params: dict) -> dict:
         """스타일 LoRA(그림체) 태그 정제: 저장된 프롬프트의 positive(또는 original_positive)를
         비전 LLM으로 정제해 positive만 덮어쓴다. original_positive/negative는 보존.
-        instance 정제와 동일 동작, 별도 스타일 템플릿 사용(template_set="style")."""
+        프로젝트 타입에 맞는 정제 템플릿을 사용한다."""
         from modes.instance_lora_mode import run_auto_refine_lora_prompt
         from modes.style_lora_mode import get_image_prompt, save_image_prompt, _safe_dirname
         project = params.get("project", "")
@@ -7065,7 +7086,7 @@ class QueueManager:
 
     async def _handle_style_lora_test_tag_refine(self, item: QueueItem, params: dict) -> dict:
         """스타일 LoRA(그림체) 테스트 이미지 태그 정제: 학습 이미지 정제(_handle_style_lora_tag_refine)와
-        동일한 비전 LLM 프롬프트(template_set="style", 이미지+태그 기반)를 사용하되, 저장은 테스트 전용
+        그림체 전용 비전 LLM 프롬프트를 사용하고 저장은 테스트 전용
         프롬프트 파일({base}_test_prompt.json)에 한다. 학습 캡션 파일({base}_prompt.json)은 미변경."""
         from modes.instance_lora_mode import run_auto_refine_lora_prompt
         from modes.style_lora_mode import get_test_image_prompt, save_test_image_prompt, _safe_dirname
@@ -7111,7 +7132,7 @@ class QueueManager:
                 source_type="style",
                 is_asset=True,
                 template_set="style",
-                style_ctx={"project": project},
+                style_ctx={"project": project, "test": True},
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")

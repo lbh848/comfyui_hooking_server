@@ -7,7 +7,7 @@ import { NegativeBatch, BotTestSetup } from "./InternalLoraExtras";
 import { LoraTabs } from "./InternalLoraPage";
 import { assetRequest } from "./asset";
 import { AssetCharacterFolders, AssetOutfitFolders } from "./AssetGalleryGroups";
-import { isFinishedQueueItem } from "./workQueue";
+import { isFinishedQueueItem, watchCompletedQueueItems } from "./workQueue";
 import { LoraImageFilter } from "./LoraImageFilter";
 import { ProgressiveGallery, imageBatchSize, matchesImageSearch, normalizeImageSearch } from "./ScrollGallery";
 import type { ReactNode } from "react";
@@ -36,6 +36,13 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
   const visible = useMemo(() => images.filter(image => matchesImageSearch(image.filename, normalizedSearch)), [images, normalizedSearch]);
   const galleryScope = `${imagePrefix}?${imageParams}&search=${normalizedSearch}`;
   const stylePageCache = useMemo(() => new Map<string, LoraData[]>(), [detail, imagePrefix, imageParams]);
+  const refreshRef = useRef(refresh); refreshRef.current = refresh;
+  useEffect(() => {
+    if (category !== "style" || test) return;
+    return watchCompletedQueueItems(item => item.type === "tag_analysis" && item.params?.source === "style_lora"
+      && item.params.image?.project === context.project.id,
+    () => { void refreshRef.current(); }, cause => console.error("[LORA] 태그 분석 상태 조회 실패:", cause));
+  }, [category, test, context.project.id]);
   useEffect(() => {
     const names = new Set(visible.map(image => image.filename));
     setSelected(current => current.filter(filename => names.has(filename)));
@@ -113,7 +120,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
       <button className="internal-lora-image-open" aria-label={`${img.filename} 프롬프트 편집`} disabled={busy || loading} onClick={() => setEditing(img)}><img src={imageUrl(context, img, test, shared)} loading="lazy" decoding="async" alt={img.filename} /></button>
       <div className="internal-lora-image-caption">
         <label className="internal-lora-check"><input type="checkbox" aria-label={`${img.filename} 선택`} checked={selectedNames.has(img.filename)} disabled={busy || loading} onChange={e => setSelected(current => e.target.checked ? [...current, img.filename] : current.filter(f => f !== img.filename))} /><span>{img.filename}</span></label>
-        <p>{img.positive || "프롬프트 없음"}</p>
+        <div className="internal-lora-image-prompts"><div><strong>프롬프트</strong><p>{img.positive || "프롬프트 없음"}</p></div><div><strong>부정 프롬프트</strong><p>{img.negative || "부정 프롬프트 없음"}</p></div></div>
         <div className="internal-lora-image-footer">
           {img.width > 0 && img.height > 0 && <small className="internal-lora-image-resolution">{img.width} × {img.height}</small>}
           <button className="button secondary internal-lora-image-edit" aria-label={`${img.filename} 프롬프트 편집`} disabled={busy || loading} onClick={() => setEditing(img)}><Pencil size={14} />프롬프트 편집</button>
@@ -133,11 +140,13 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
     <label className="field scroll-gallery-search">이미지 검색<span className="search-field"><Search size={16} /><input type="search" placeholder="파일 이름 · 띄어쓰기로 여러 검색어" value={search} disabled={busy} onChange={event => { setSearch(event.target.value); setSelected([]); }} /></span></label>
     {!!images.length && <fieldset className="internal-lora-selection-bar" disabled={busy || loading}><legend className="sr-only">이미지 선택 및 일괄 작업</legend>
       <div className="internal-lora-toolbar"><ImageSelection total={visible.length} selected={selected.length} disabled={busy || loading} label={normalizedSearch ? "검색 결과 전체 선택" : "전체 선택"} onChange={checked => setSelected(checked ? visible.map(i => i.filename) : [])} /><button className="button" disabled={!selected.length} onClick={() => setSelected([])}>선택 해제</button></div>
-      <div className="internal-lora-batch-actions"><div className="internal-lora-actions"><button className="button" disabled={busy || !selected.length || category === "bot" && (shared || character?.skip_training)} onClick={() => void refine(images.filter(image => selectedNames.has(image.filename)))}><Sparkles size={14} />선택 LLM 정제</button>
-      {category === "asset" && !test && <button className="button" disabled={busy || !selected.length} onClick={() => void run(async () => { await loraRequest(`${imagePrefix}/analyze`, { ...params, filenames: selected }); setTagRevision(value => value + 1); }, "프롬프트 태깅을 큐에 추가했습니다.")}>선택 태그 분석</button>}
-      {category === "style" && !test && <><button className="button" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("style_lora/analyze", { ...params, filenames: selected }), "태그 분석을 큐에 추가했습니다.")}>선택 태그 분석</button><button className="button" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("style_lora/test_images/add_from_train", { ...params, filenames: selected }), "테스트 이미지에 추가했습니다.")}>테스트 이미지로 복사</button></>}
-      {category === "bot" && test && shared && character && <button className="button" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("bot_lora/char_test_images/copy_from_project", { ...params, filenames: selected }), "캐릭터 테스트 이미지에 복사했습니다.")}>선택 캐릭터로 복사</button>}
-      <button className="button" disabled={busy || !selected.length} onClick={() => setNegativeBatch(true)}>부정 프롬프트 일괄 적용</button>{category === "bot" && test && shared && <button className="button" disabled={busy || !selected.length} onClick={() => setTestSetup(true)}>테스트 이미지 일괄 세팅</button>}</div><button className="button danger" disabled={busy || !selected.length} onClick={() => { if (window.confirm(`선택한 이미지 ${selected.length}개를 이 프로젝트에서 삭제할까요?`)) void run(async () => { if (category === "style" && !test) {
+      <div className="internal-lora-batch-actions"><div className="internal-lora-actions">
+      {category === "asset" && !test && <button className="button secondary" disabled={busy || !selected.length} onClick={() => void run(async () => { await loraRequest(`${imagePrefix}/analyze`, { ...params, filenames: selected }); setTagRevision(value => value + 1); }, "프롬프트 태깅을 큐에 추가했습니다.")}>선택 태그 분석</button>}
+      {category === "style" && !test && <button className="button secondary" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("style_lora/analyze", { ...params, filenames: selected }), "태그 분석을 큐에 추가했습니다.")}>선택 태그 분석</button>}
+      <button className="button secondary" disabled={busy || !selected.length || category === "bot" && (shared || character?.skip_training)} onClick={() => void refine(images.filter(image => selectedNames.has(image.filename)))}><Sparkles size={14} />선택 LLM 정제</button>
+      {category === "style" && !test && <button className="button secondary" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("style_lora/test_images/add_from_train", { ...params, filenames: selected }), "테스트 이미지에 추가했습니다.")}>테스트 이미지로 복사</button>}
+      {category === "bot" && test && shared && character && <button className="button secondary" disabled={busy || !selected.length} onClick={() => void run(() => loraRequest("bot_lora/char_test_images/copy_from_project", { ...params, filenames: selected }), "캐릭터 테스트 이미지에 복사했습니다.")}>선택 캐릭터로 복사</button>}
+      <button className="button secondary" disabled={busy || !selected.length} onClick={() => setNegativeBatch(true)}>부정 프롬프트 일괄 적용</button>{category === "bot" && test && shared && <button className="button secondary" disabled={busy || !selected.length} onClick={() => setTestSetup(true)}>테스트 이미지 일괄 세팅</button>}</div><button className="button danger" disabled={busy || !selected.length} onClick={() => { if (window.confirm(`선택한 이미지 ${selected.length}개를 이 프로젝트에서 삭제할까요?`)) void run(async () => { if (category === "style" && !test) {
         const result = await loraRequest("style_lora/images/delete_bulk", { ...params, filenames: selected });
         if (result.failed?.length) { await refresh(); throw new Error(`${result.failed.length}장의 이미지를 삭제하지 못했습니다.`); }
       } else for (const filename of selected) await loraRequest(`${imagePrefix}/delete`, { ...params, filename });

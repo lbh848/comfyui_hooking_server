@@ -7,6 +7,7 @@ import { IllustrationFeedback } from "./IllustBackups";
 import { query, type IllustrationData } from "./illustration";
 import { useBotApi } from "./BotApiScope";
 import { IllustAutoBatch } from "./IllustAutoBatch";
+import { IllustCharacterMerge } from "./IllustCharacterMerge";
 
 type Mode = "protect" | "push";
 
@@ -34,6 +35,7 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   const [autoBatch, setAutoBatch] = useState<{ characters: IllustrationData[]; indices: string } | null>(null);
   const [view, setView] = useState("manual");
   const [autoBusy, setAutoBusy] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const tabsId = useId();
 
   function openAutoBatch(targets = initialCharacters.current, indices = commonSearch) {
@@ -167,8 +169,8 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
   }
 
   return <>
-    <Modal title={`${botName} · 대표 이미지 일괄 설정`} onClose={onClose} closeDisabled={busy || autoBusy} working={busy || autoBusy} className="illust-rep-batch-modal illust-rep-batch-main-modal">
-      {api.scope === "illust" && <SettingsTabs id={tabsId} className="illust-rep-batch-tabs" label="대표 설정 방식" values={{ manual: "수동 대표 설정", auto: "자동 대표 설정" }} value={view} disabled={busy || autoBusy ? ["manual", "auto"] : []}
+    <Modal title={`${botName} · 대표 이미지 일괄 설정`} onClose={onClose} closeDisabled={busy || autoBusy || mergeBusy} working={busy || autoBusy || mergeBusy} className="illust-rep-batch-modal illust-rep-batch-main-modal">
+      {api.scope === "illust" && <SettingsTabs id={tabsId} className="illust-rep-batch-tabs" label="대표 설정 방식" values={{ manual: "수동 대표 설정", auto: "자동 대표 설정", merge: "머지/삭제" }} value={view} disabled={busy || autoBusy || mergeBusy ? ["manual", "auto", "merge"] : []}
         onChange={value => { if (value === "auto" && !autoBatch) openAutoBatch(); else setView(value); }} />}
       <div className="illust-rep-batch-tab-panel" role={api.scope === "illust" ? "tabpanel" : undefined} id={`${tabsId}-panel-manual`} aria-labelledby={api.scope === "illust" ? `${tabsId}-tab-manual` : undefined} hidden={view !== "manual"}>
       <div className="illust-form">
@@ -239,6 +241,20 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
             const loaded = await loadRow(row);
             setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
           }), 10);
+        }} />
+      </div>}
+      {api.scope === "illust" && <div className="illust-rep-batch-tab-panel" role="tabpanel" id={`${tabsId}-panel-merge`} aria-labelledby={`${tabsId}-tab-merge`} hidden={view !== "merge"}>
+        <IllustCharacterMerge botName={botName} rows={rows} readOnly={readOnly} onBusyChange={setMergeBusy} onChanged={async result => {
+          const removed = new Set<string>(result.removed);
+          initialCharacters.current = result.bots.find((bot: IllustrationData) => bot.name === botName)?.characters || initialCharacters.current.filter(character => !removed.has(character.name));
+          setRows(current => current.filter(row => !removed.has(row.charName)));
+          setAutoBatch(null);
+          const target = rows.find(row => row.charName === result.target_char_name);
+          if (target) {
+            const loaded = await loadRow(target);
+            setRows(current => current.map(row => row.charName === target.charName ? loaded : row));
+          }
+          onChanged();
         }} />
       </div>}
     </Modal>

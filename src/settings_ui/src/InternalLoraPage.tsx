@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Copy, Folder, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Folder, Link2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Badge, Empty, Modal } from "./components";
 import { contextParams, loraProjectLabel, loraProjectPreview, loraRequest, prefix, query, type LoraCategory, type LoraContext, type LoraData, type LoraProject } from "./internalLora";
 import { InternalLoraImages } from "./InternalLoraImages";
@@ -7,6 +7,7 @@ import { InternalLoraTraining } from "./InternalLoraTraining";
 import { InternalLoraProgress } from "./InternalLoraProgress";
 import { InternalLoraResults } from "./InternalLoraResults";
 import { BotLoraProject } from "./BotLoraProject";
+import { BotLoraSourceDialog } from "./BotLoraSourceDialog";
 import { useLoraRefinementRevision } from "./useLoraRefinementRevision";
 import { BotLoraCharacterSelection, botLoraCharacterKey, botLoraCharacterSelection } from "./BotLoraCharacterSelection";
 import "./internal-lora.css";
@@ -27,6 +28,7 @@ export function InternalLoraPage({ category, notify }: { category: LoraCategory;
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<"create" | "duplicate" | null>(null);
+  const [sourceDialog, setSourceDialog] = useState<{ action: "restore" | "delete"; sourceBot: string } | null>(null);
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true); setError("");
     try {
@@ -57,6 +59,10 @@ export function InternalLoraPage({ category, notify }: { category: LoraCategory;
   const ownerLabel = "봇";
   const searchLabel = choosingOwner ? `${ownerLabel} 검색` : "프로젝트 검색";
   const shownSources = sources.filter(source => source.name.toLowerCase().includes(search.toLowerCase()));
+  const sourceGroups = [
+    { connected: true, label: "연결된 봇", sources: shownSources.filter(source => source.source_connected !== false) },
+    { connected: false, label: "연결이 끊긴 봇", sources: shownSources.filter(source => source.source_connected === false) },
+  ];
   const shown = projects.filter(p => [p.name, p.trigger, p.description].filter(Boolean).join(" ").toLowerCase().includes(search.toLowerCase()));
   function selectOwner(name: string) {
     setOwner(name); setSelected(null); setSearch(""); setProjects([]); setError(""); setLoading(true);
@@ -74,20 +80,30 @@ export function InternalLoraPage({ category, notify }: { category: LoraCategory;
       </div>
       {error && <p className="field-error" role="alert">{error}</p>}
       {loading ? <p role="status">{choosingOwner ? `${ownerLabel} 목록을` : "프로젝트를"} 불러오는 중입니다…</p>
-        : choosingOwner ? shownSources.length ? <div className="internal-lora-projects">{shownSources.map(source => <button className="internal-lora-project" key={source.name} onClick={() => selectOwner(source.name)}>
+        : choosingOwner ? shownSources.length ? sourceGroups.filter(group => group.sources.length).map(group => <section className="internal-lora-source-group" key={String(group.connected)} aria-label={group.label}>
+          <h2 className="internal-lora-source-heading">{group.label}<Badge>{group.sources.length}개</Badge></h2>
+          <div className="internal-lora-projects">{group.sources.map(source => <article className="internal-lora-source-card" key={source.name}>
+          <button className="internal-lora-project" onClick={() => selectOwner(source.name)}>
           <span className="internal-lora-project-icon">{loraProjectPreview(category, source as LoraProject) ? <img src={loraProjectPreview(category, source as LoraProject)} alt={`${source.name} 대표 이미지`} loading="lazy" /> : <Folder size={28} />}</span>
-          <Badge>{ownerLabel}</Badge><h2>{source.name}</h2>
-          {category === "bot" && <p>캐릭터 {source.characters?.length || 0}명 · 카드 {source.visual_profile_count ?? source.characters?.length ?? 0}개</p>}
-        </button>)}</div> : !error && <Empty title={search ? "검색 결과가 없습니다" : "봇이 없습니다"}>
+          <Badge>{group.connected ? "연결됨" : "연결 끊김"}</Badge><h2>{source.name}</h2>
+          {group.connected ? <p>캐릭터 {source.characters?.length || 0}명 · 카드 {source.visual_profile_count ?? source.characters?.length ?? 0}개</p> : <p>학습 프로젝트 {source.project_count}개</p>}
+        </button>{!group.connected && <div className="internal-lora-source-actions">
+          <button type="button" className="button secondary" onClick={() => setSourceDialog({ action: "restore", sourceBot: source.name })}><Link2 size={14} />연결 복구</button>
+          <button type="button" className="button danger" onClick={() => setSourceDialog({ action: "delete", sourceBot: source.name })}><Trash2 size={14} />삭제</button>
+        </div>}</article>)}</div></section>) : !error && <Empty title={search ? "검색 결과가 없습니다" : "봇이 없습니다"}>
           {search ? "검색 조건을 변경해 주세요." : "등록된 봇이 여기에 표시됩니다."}
         </Empty>
-        : shown.length ? <div className="internal-lora-projects">{shown.map(p => <button className="internal-lora-project" key={JSON.stringify([p.character, p.bot, p.id, p.name])} onClick={() => setSelected(p)}><span className="internal-lora-project-icon">{loraProjectPreview(category, p) ? <img src={loraProjectPreview(category, p)} alt={`${p.name} 대표 이미지`} loading="lazy" /> : <Folder size={28} />}</span><Badge>{loraProjectLabel(p)}</Badge><h2>{p.name}</h2><p>{p.trigger || p.description || "프로젝트 열기"}</p><small>
+        : shown.length ? <div className="internal-lora-projects">{shown.map(p => <article className="internal-lora-project-card" key={JSON.stringify([p.character, p.bot, p.id, p.name])}>
+          <button type="button" className="internal-lora-project" onClick={() => setSelected(p)}><span className="internal-lora-project-icon">{loraProjectPreview(category, p) ? <img src={loraProjectPreview(category, p)} alt={`${p.name} 대표 이미지`} loading="lazy" /> : <Folder size={28} />}</span><Badge>{loraProjectLabel(p)}</Badge><h2>{p.name}</h2><p>{p.trigger || p.description || "프로젝트 열기"}</p><small>
             {category === "bot" ? `${p.profile_count ?? p.character_count}개 캐릭터 카드` : category === "style" ? <>
               학습 이미지 {p.image_count}개{p.profile && ` · ${projectProfileLabels[p.profile === "moss" ? "moss" : "anima"]}`}
             </> : projectProfileLabels[p.training_config?.profile === "moss" ? "moss" : "anima"]}
-          </small></button>)}</div> : !error && <Empty title="프로젝트가 없습니다">{search ? "검색 조건을 변경해 주세요." : "프로젝트 추가로 LoRA 학습을 준비하세요."}</Empty>}
+          </small></button>
+          {(category === "asset" || category === "bot") && <DeleteProjectButton context={{ category, project: p, profile: "" }} iconOnly notify={notify} onDeleted={() => void refresh()} onError={setError} />}
+        </article>)}</div> : !error && <Empty title="프로젝트가 없습니다">{search ? "검색 조건을 변경해 주세요." : "프로젝트 추가로 LoRA 학습을 준비하세요."}</Empty>}
     </>}
     {(dialog === "create" || dialog === "duplicate") && <ProjectForm category={category} sources={sources} initialOwner={owner} source={dialog === "duplicate" ? selected : null} notify={notify} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); void refresh(); }} />}
+    {sourceDialog && <BotLoraSourceDialog {...sourceDialog} sources={sources} notify={notify} onClose={() => setSourceDialog(null)} onChanged={() => void refresh()} />}
   </div>;
 }
 
@@ -119,9 +135,22 @@ function ProjectForm({ category, sources, initialOwner, source, onClose, onSaved
   </div>{selectingCharacters && actions}</form></Modal>;
 }
 
+function DeleteProjectButton({ context, iconOnly = false, notify, onDeleted, onError }: { context: LoraContext; iconOnly?: boolean; notify: (message: string) => void; onDeleted: () => void; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const { category, project } = context;
+  async function remove() {
+    if (busy || !window.confirm(`“${project.name}” 프로젝트와 학습·테스트 이미지, 학습된 LoRA를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+    setBusy(true); onError("");
+    try { await loraRequest(category === "asset" ? "lora/manage/delete" : `${prefix(category)}/project/delete`, { ...contextParams(context), name: project.name }); notify("프로젝트를 삭제했습니다."); onDeleted(); }
+    catch (err) { onError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <button type="button" className={iconOnly ? "icon-button internal-lora-project-delete" : "button danger"} disabled={busy} aria-busy={busy} aria-label={iconOnly ? `${project.name} 프로젝트 삭제` : undefined} title={iconOnly ? "프로젝트 삭제" : undefined} onClick={() => void remove()}>{iconOnly ? <X size={16} aria-hidden="true" /> : <><Trash2 size={15} />삭제</>}</button>;
+}
+
 function ProjectDetail({ category, project, notify, onBack, onDuplicate }: { category: Exclude<LoraCategory, "bot">; project: LoraProject; notify: (m: string) => void; onBack: () => void; onDuplicate: () => void }) {
   const [detail, setDetail] = useState<LoraData | null>(null); const [error, setError] = useState("");
-  const [view, setView] = useState("training"); const [busy, setBusy] = useState(false);
+  const [view, setView] = useState("training");
   const refinementRevision = useLoraRefinementRevision({ category, project });
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setError("");
@@ -140,12 +169,8 @@ function ProjectDetail({ category, project, notify, onBack, onDuplicate }: { cat
   const styleProfile = project.profile === "moss" || (!project.profile && selectedProfile === "moss") ? "moss" : selectedProfile === "sdxl" ? "sdxl" : "anima";
   const profile = category === "style" ? styleProfile : detail?.training_config?.profile || project.training_config?.profile || "anima";
   const context: LoraContext = { category, project, profile };
-  async function remove() {
-    if (!window.confirm(`“${project.name}” 프로젝트와 학습·테스트 이미지, 학습된 LoRA를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
-    setBusy(true); try { await loraRequest(category === "asset" ? "lora/manage/delete" : `${prefix(category)}/project/delete`, { ...contextParams(context), name: project.name }); notify("프로젝트를 삭제했습니다."); onBack(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
-  }
   return <>
-    <div className="internal-lora-toolbar"><button className="button" onClick={onBack}><ArrowLeft size={15} />프로젝트 목록</button><div className="internal-lora-heading"><h2>{project.name}</h2><span>{loraProjectLabel(project)}</span></div><div className="internal-lora-actions">{category !== "style" && <button className="button" onClick={onDuplicate}><Copy size={15} />복제</button>}<button className="button danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />삭제</button></div></div>
+    <div className="internal-lora-toolbar"><button className="button" onClick={onBack}><ArrowLeft size={15} />프로젝트 목록</button><div className="internal-lora-heading"><h2>{project.name}</h2><span>{loraProjectLabel(project)}</span></div><div className="internal-lora-actions">{category !== "style" && <button className="button" onClick={onDuplicate}><Copy size={15} />복제</button>}<DeleteProjectButton context={context} notify={notify} onDeleted={onBack} onError={setError} /></div></div>
     {error && <p className="field-error" role="alert">{error}</p>}
     <InternalLoraProgress category={category} project={project} />
     <div className="internal-lora-toolbar"><LoraTabs values={{ training: "학습용 이미지", test: "테스트 이미지", config: "학습 설정", results: "학습된 LoRA" }} value={view} onChange={setView} label="프로젝트 관리" /></div>

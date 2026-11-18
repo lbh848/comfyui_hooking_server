@@ -229,6 +229,18 @@ def _emotion_asset_note(batch) -> str:
         "same character appears more than once. Never add an emotions field to the output.")
 
 
+def _apply_overthinking_prevention(detail_system, toggles):
+    if not (toggles or {}).get("overthinking_prevention_enabled"):
+        return detail_system
+    return prompt_join("\n\n", (
+        "Reasoning Discipline: Keep internal thinking brief, high-level, and single-pass. "
+        "Decide the immediate causal outcome, active character motives, and closing beat in one concise outline, "
+        "then write the final response directly—never draft full prose paragraphs in thinking, "
+        "run line-by-line rule checklists, or repeatedly scrap and rewrite candidate scenes.",
+        detail_system,
+    ))
+
+
 def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
                     prior_status=None, prior_time_place=None, mask_inline=False,
                     mask_prompt="", canvas_sizes=None, keyvis_messages=None, registered_names=None,
@@ -255,9 +267,9 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
         messages[-1]["content"] = prompt_sub(r"\n\nReturn TOON[\s\S]*\Z", "", messages[-1]["content"])
         if keyvis_messages:
             keyvis_policy = prompt_sub(r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "", keyvis_messages[0]["content"])
-            messages[0]["content"] = prompt_join("\n\n", (
+            messages[0]["content"] = _apply_overthinking_prevention(prompt_join("\n\n", (
                 "KEY VISUAL STORY AND IDENTITY POLICY (keyvis only; layer output contract below takes precedence)",
-                keyvis_policy, detail_system))
+                keyvis_policy, detail_system)), toggles)
             messages[1:1] = [{**message, "content": prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])}
                              for message in keyvis_messages[1:]]
         messages[-1]["content"] += (
@@ -352,7 +364,7 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             + "Write scenes first, then keyvis. If no scene anchors remain, return scenes: [] and keyvis only."
         )
     messages = [
-        {"role": "system", "content": detail_system},
+        {"role": "system", "content": _apply_overthinking_prevention(detail_system, toggles)},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
          + variable(json.dumps(profile_context_for_prompt({"scenes": prepared}), ensure_ascii=False), "이 호출의 장면·프로필·상태")
          + ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
@@ -714,7 +726,7 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
         # Content policy lives in the system prompt; repeat only the active mode.
         user += "\n\nNSFW mode enabled; follow the source-based content policy above."
     messages = [
-        {"role": "system", "content": detail_system},
+        {"role": "system", "content": _apply_overthinking_prevention(detail_system, toggles)},
         {"role": "user", "content": user},
     ]
     if keyvis_messages:

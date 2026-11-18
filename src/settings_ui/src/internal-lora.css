@@ -29,6 +29,19 @@
 .internal-lora-heading h2 { margin: 0 0 3px; font-size: 18px; overflow-wrap: anywhere; }
 .internal-lora-heading span, .internal-lora-image-caption small { color: var(--muted); font-size: 11px; }
 .internal-lora-projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.internal-lora-project-card { position: relative; display: flex; min-width: 0; }
+.internal-lora-project-card > .internal-lora-project { width: 100%; }
+.internal-lora-project-card:has(.internal-lora-project-delete) > .internal-lora-project { padding-top: 46px; }
+.internal-lora-project-delete { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; color: var(--danger); }
+.internal-lora-source-group { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.internal-lora-source-group + .internal-lora-source-group { border-top: 1px solid var(--line); padding-top: 24px; margin-top: 6px; }
+.internal-lora-source-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 14px; }
+.internal-lora-source-card { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.internal-lora-source-card > .internal-lora-project { flex: 1; width: 100%; border: 0; border-radius: 0; }
+.internal-lora-source-card > .internal-lora-project:focus-visible { outline-offset: -3px; }
+.internal-lora-source-actions { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); padding: 12px; }
+.internal-lora-source-actions > .button { flex: 1 1 auto; }
+.bot-lora-source-projects { margin: 0; padding-left: 22px; max-height: 220px; overflow-y: auto; overflow-wrap: anywhere; }
 .internal-lora-project { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); text-align: left; padding: 22px; min-width: 0; }
 .internal-lora-project:hover { border-color: var(--rose); background: var(--rose-soft); }
 .internal-lora-project-icon { display: flex; align-items: center; justify-content: center; height: 85px; color: var(--rose); background: var(--lavender); border-radius: 7px; margin-bottom: 16px; }
@@ -74,6 +87,9 @@ fieldset.internal-lora-fields { border: 0; margin: 0; padding: 0; min-width: 0; 
 .internal-lora-image-editable { display: flex; flex-direction: column; }
 .internal-lora-image-editable > .internal-lora-image-caption { flex: 1; }
 .internal-lora-image-editable .internal-lora-image-caption p { line-height: 1.5; min-height: 4.5em; overflow-wrap: anywhere; }
+.internal-lora-image-prompts { display: grid; gap: 8px; min-width: 0; }
+.internal-lora-image-prompts strong { display: block; margin-bottom: 3px; font-size: 11px; color: var(--secondary); }
+.internal-lora-image-editable .internal-lora-image-prompts p { display: block; min-height: 0; max-height: 6em; overflow-y: auto; white-space: pre-wrap; }
 .internal-lora-image-footer { display: flex; flex-direction: column; gap: 8px; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
 .internal-lora-image-resolution { display: block; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .internal-lora-image-footer > .button { width: 100%; min-height: 36px; padding: 7px 8px; white-space: normal; word-break: keep-all; box-shadow: 0 1px 2px #3f303a12; }

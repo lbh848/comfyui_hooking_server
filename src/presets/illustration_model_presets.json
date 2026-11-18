@@ -660,11 +660,12 @@
       "workflows": {
         "v3_anima": {
           "fields": {
+            "workflow.sequential_offload": false,
             "workflow.model": "moss_image_sft_8stepdmd_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
-              "steps": 8,
+              "steps": 10,
               "cfg": 1.5,
               "sampler_name": "euler",
               "scheduler": "simple",
@@ -710,6 +711,7 @@
       "workflows": {
         "v3_anima": {
           "fields": {
+            "workflow.sequential_offload": false,
             "workflow.model": "moss_image_sft_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
             "workflow.vae": "flux2-vae_small.safetensors",
@@ -966,6 +968,529 @@
       },
       "id": "ef29c036686d42c9a612bddf4d5a2b61",
       "name": "공방-MOSS-4step-H1"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
+      },
+      "workflows": {
+        "v3": {
+          "fields": {
+            "ILXL_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ANIMA_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_CHECKPOINT": "rinFlanimeIllustrious_v30.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "v3_anima": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.22
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 8,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.8,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.7,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "cf807e298d4442938fd2c2765bd5b9af",
+      "name": "공방-애니스타일2 (8GB)"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
+      },
+      "workflows": {
+        "v3": {
+          "fields": {
+            "ILXL_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ANIMA_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_CHECKPOINT": "rinFlanimeIllustrious_v30.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "v3_anima": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.3
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.15
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.22
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 8,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "dpmpp_2m_sde",
+              "scheduler": "linear_quadratic",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "screenshot_v5-000009.safetensors",
+                  "str": 0.55,
+                  "BASE": "anima",
+                  "trigger": "@screencap_(anime), screenshot from anime TV series"
+                },
+                {
+                  "lora_path": "@ix7.safetensors",
+                  "str": 0.75,
+                  "BASE": "anima",
+                  "trigger": "@ixy, @ix7"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "a034f0001d904a6d8fd01c4734e08f5b",
+      "name": "공방-애니스타일 (8GB)"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_MOSS_4STEP_V1.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "moss"
+      },
+      "workflows": {
+        "v3_anima": {
+          "fields": {
+            "workflow.sequential_offload": true,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "hentai_style_moss.safetensors",
+                  "str": 0.4,
+                  "BASE": "anima",
+                  "trigger": "@sera_hentai"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "3d4b5f4a59fd43e9a0429786cb0b77fc",
+      "name": "공방-MOSS-4step (8GB용, 실험적)"
+    },
+    {
+      "config": {
+        "illustration_workflow_type": "v3_anima",
+        "illustration_workflow_source_paths": {
+          "v3": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA+ILXL_V4.json",
+          "v3_anima": "data/comfy/user/default/workflows/배포_공방_삽화_ANIMA_V4.json"
+        },
+        "chansub_workflow_type": "anima",
+        "illustration_model_family": "anima"
+      },
+      "workflows": {
+        "v3": {
+          "fields": {
+            "ILXL_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.3
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ANIMA_EYE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 20,
+              "cfg": 5.0,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_CHECKPOINT": "rinFlanimeIllustrious_v30.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "v3_anima": {
+          "fields": {
+            "ANIMA_HAND_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
+              "denoise": 0.3
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
+              "denoise": 0.15
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
+              "denoise": 0.22
+            },
+            "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 10,
+              "cfg": 1.2,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "sage_attention": true,
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 6,
+              "cfg": 1,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "NAI4.5.safetensors",
+                  "str": 0.9,
+                  "BASE": "anima",
+                  "trigger": "@NAI4.5, @pottsness, @yoneyama mai"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.5,
+                  "BASE": "anima",
+                  "trigger": "",
+                  "enabled": true
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4-29B.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "0d3ef490a0af42b48024dff77b117dbb",
+      "name": "공방-NAI스타일"
     }
   ]
 }

@@ -24,7 +24,7 @@ const labels: Record<string, string> = {
   single_char_mask_enabled: "1인도 마스크",
   single_char_mask_skip_enabled: "면적 기준으로 1인 마스크 생략", single_char_mask_skip_area_percent: "생략 기준 면적 (%)",
   speak_enabled: "대사 생성", call3_prompt_mode: "대사 출력 방식", speak_language: "대사 언어", speak_emotion_enabled: "대사 감정 지정", speak_emotions: "대사 감정",
-  nsfw: "NSFW 태깅", manga_composition_hint_enabled: "만화 구성 힌트", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "KEYVIS 대표 이미지 생성",
+  nsfw: "NSFW 태깅", overthinking_prevention_enabled: "과추론 방지", manga_composition_hint_enabled: "만화 구성 힌트", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "KEYVIS 대표 이미지 생성",
   character_limit: "이미지당 최대 캐릭터", scene_mode: "장면 수 결정", output_count_min: "최소 일반 장면 수", output_count_max: "최대 일반 장면 수",
   context_history: "이전 대화 참조", focus: "집중 캐릭터", direction: "우선 연출 지시", manga_output_count_min: "최소 만화 페이지 수", manga_output_count_max: "최대 만화 페이지 수",
   manga_scene_mode: "페이지 수 결정", manga_character_limit: "페이지당 최대 캐릭터", manga_focus: "만화 집중 캐릭터", manga_direction: "만화 우선 연출 지시",
@@ -71,7 +71,7 @@ const generationGroups: { id: string; title: string; description: string; sectio
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
       { title: "", keys: ["key_visual", "postprocess_enabled"] },
     ],
@@ -129,10 +129,10 @@ const emotionGenerationGroups = [
     sections: group.sections
       .filter(section => !emotionHiddenSections.has(section.title))
       .map(section => {
-        // NSFW 태깅 바로 아래에 감정 삽화 공방 전용 에셋 생성 토글을 둔다.
+        // Keep the emotion asset toggle after the shared NSFW and reasoning controls.
         const keys = section.keys
           .filter(key => !emotionHiddenKeys.has(key))
-          .flatMap(key => key === "nsfw" ? [key, "nsfw_asset_generation_enabled"] : [key]);
+          .flatMap(key => key === "overthinking_prevention_enabled" ? [key, "nsfw_asset_generation_enabled"] : [key]);
         const dependent = section.dependent?.filter(key => !emotionHiddenKeys.has(key));
         const advanced = section.advanced?.filter(key => !emotionHiddenKeys.has(key));
         return { ...section, keys, dependent: dependent?.length ? dependent : undefined,
@@ -167,6 +167,7 @@ const fieldHelp: Record<string, string> = {
   illustration_output_mode: "원본 에셋 장수는 에셋 선택 탭에서 설정합니다. 만화 삽화 모드는 MOSS 그림 모델에서만 선택할 수 있습니다.",
   moss_dialogue_repair_enabled: "항상 OFF로 고정됩니다. 말풍선 대사를 교정하지 않고 그대로 그립니다.",
   nsfw: "NSFW 및 물리 접촉 지침을 추가합니다. 호환성 지침은 항상 적용됩니다.",
+  overthinking_prevention_enabled: "DETAIL·DETAIL-MOSS·DETAIL-MANGA의 LLM 시스템 프롬프트 맨 앞에 과도한 추론을 줄이는 지침을 추가합니다.",
   manga_composition_hint_enabled: "만화 프롬프트의 기존 컷 구성 지침 아래에 3~5컷 배치 목록을 추가합니다.",
   manga_disable_bubbles: "만화 출력에서 말풍선·텍스트를 제외합니다.",
   nsfw_asset_generation_enabled: "캐릭터의 NSFW 복장·감정 에셋을 생성합니다.",
@@ -401,7 +402,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
     const disabled = postprocessLocked || planLocked || maskLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
       || name === "original_asset_count" && !["original_asset", "both", "manga_both", "composite_both"].includes(toggles!.illustration_output_mode)
       || name === "moss_dialogue_repair_enabled";
-    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "npc_generation_deferred", "manga_disable_bubbles"].includes(name) ? toggles![name] ?? false : toggles![name];
+    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "overthinking_prevention_enabled", "npc_generation_deferred", "manga_disable_bubbles"].includes(name) ? toggles![name] ?? false : toggles![name];
     // Preserve the saved master switch so leaving manga releases this override.
     const value = postprocessLocked || planLocked && name === "call2_plan_enabled" || name === "moss_dialogue_repair_enabled" || maskLocked && ["single_char_mask_enabled", "single_char_mask_skip_enabled"].includes(name) ? false
       : emotionOutputMode && rawValue === "composite_both" ? "composite" : rawValue;

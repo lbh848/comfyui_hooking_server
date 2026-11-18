@@ -408,10 +408,10 @@ async def run_auto_refine_lora_prompt(
       - "training":          char_name + entry + filename → 에셋 LoRA 학습 이미지
       - "instance":          lora_id + filename → 인스턴스 LoRA 이미지 (항상 에셋 템플릿/성별 자동추론)
       - "style":             style_ctx(group, project) + filename → 스타일 LoRA 프로젝트 이미지
-                             (항상 스타일 전용 템플릿 / 성별 자동추론)
+                             (프로젝트 타입에 따른 정제 템플릿 / 성별 자동추론)
 
     template_set: "" (기본, is_asset 기반) | "moss" (MOSS 학습 캡션) | "style" (스타일 LoRA 전용 템플릿).
-                  source_type=="style" 이면 자동으로 "style" 로 강제.
+                  source_type=="style" 이면 프로젝트 타입에 따라 선택.
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
@@ -442,13 +442,13 @@ async def run_auto_refine_lora_prompt(
             if not lora_id or not filename:
                 return {"success": False, "error": "instance 소스는 lora_id, filename 필드가 필요합니다."}
         elif source_type == "style":
-            # 스타일 로라는 항상 스타일 전용 템플릿(성별 자동 추론) 사용
             is_asset = True
-            template_set = "style"
             if not style_ctx or not filename:
                 return {"success": False, "error": "style 소스는 style_ctx(project), filename 필드가 필요합니다."}
             if not style_ctx.get("project"):
                 return {"success": False, "error": "style_ctx 의 project 필드가 필요합니다."}
+            from modes.style_lora_mode import get_training_profile
+            template_set = "moss" if not style_ctx.get("test") and get_training_profile(style_ctx["project"]) == "moss" else "style"
         elif not char_name or not filename:
             return {"success": False, "error": "character, filename 필드가 필요합니다."}
         if source_type == "bot" and not bot_name:

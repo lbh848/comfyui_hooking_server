@@ -104,14 +104,12 @@ def _trained_lora_dir(
     visual_card_id: str = "",
 ) -> str:
     """학습된 LoRA 경로. 새 카드 단위는 ``_visual_profiles/<ID>``에 격리한다."""
-    char_dir = os.path.join(
-        lora_load_path,
-        _safe_dirname(bot_name),
-        "Lora",
-        _safe_dirname(project_name),
-        _safe_dirname(char_name),
-    )
+    char_dir = os.path.join(_trained_project_dir(lora_load_path, bot_name, project_name), _safe_dirname(char_name))
     return _profile_child_dir(char_dir, visual_card_id)
+
+
+def _trained_project_dir(lora_load_path: str, bot_name: str, project_name: str) -> str:
+    return os.path.join(lora_load_path, _safe_dirname(bot_name), "Lora", _safe_dirname(project_name))
 
 
 def _profile_trigger(char_name: str, visual_card_id: str, *, is_primary: bool) -> str:
@@ -506,8 +504,11 @@ def _load_bot_lora_manage() -> dict:
 
 def _save_bot_lora_manage(data: dict):
     try:
-        with open(BOT_LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        from pathlib import Path
+        from configuration import settings_lock
+        from json_store import write_json_atomic
+        with settings_lock(BOT_LORA_MANAGE_FILE):
+            write_json_atomic(Path(BOT_LORA_MANAGE_FILE), data)
         print("[BOT_LORA_MANAGE] 저장 완료")
         return True
     except Exception as e:
@@ -884,7 +885,7 @@ def remove_character_from_project(
 # ─── 봇 목록 ─────────────────────────────────────────────────
 
 def list_bots() -> list:
-    """LoRA 학습 가능한 봇 목록 반환"""
+    """List source bots and retained training projects whose source bot is gone."""
     bot_data = _load_bot_data()
     result = []
     for bot in bot_data.get("bots", []):
@@ -897,11 +898,25 @@ def list_bots() -> list:
             entry["profiles"].append(unit)
         result.append({
             "name": bot.get("name", ""),
+            "source_connected": True,
             "characters": list(chars_by_name.values()),
             "visual_profile_count": sum(
                 len(item["profiles"]) for item in chars_by_name.values()
             ),
         })
+    connected_names = {bot["name"] for bot in result}
+    for bot_name, projects in _load_bot_lora_manage().get("bot_loras", {}).items():
+        if bot_name in connected_names or not isinstance(projects, dict):
+            continue
+        project_count = sum(isinstance(project, dict) for project in projects.values())
+        if project_count:
+            result.append({
+                "name": bot_name,
+                "source_connected": False,
+                "characters": [],
+                "visual_profile_count": 0,
+                "project_count": project_count,
+            })
     return result
 
 
@@ -1094,6 +1109,19 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
         print(f"[BOT_LORA] 프로젝트 삭제 실패 - 이름 누락: bot={bot_name!r}, project={project_name!r}")
         return {"success": False, "error": "봇/프로젝트 이름 누락"}
 
+    from pathlib import Path
+    from lora_paths import validate_lora_storage_name
+    for name in (bot_name, project_name):
+        error = validate_lora_storage_name(name)
+        if error:
+            return {"success": False, "error": error}
+    folders = [(Path(BOT_DIR), Path(_bot_project_dir(bot_name, project_name)))]
+    if lora_load_path:
+        folders.append((Path(lora_load_path), Path(_trained_project_dir(lora_load_path, bot_name, project_name))))
+    for root, folder in folders:
+        if folder.resolve() != folder.absolute() or root.resolve() not in folder.resolve().parents:
+            return {"success": False, "error": "연결된 외부 폴더 또는 허용 범위 밖의 프로젝트는 삭제할 수 없습니다."}
+
     data = _load_bot_lora_manage()
     bot_projects = data.get("bot_loras", {}).get(bot_name, {})
     if project_name not in bot_projects:
@@ -1113,22 +1141,13 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
 
     # 학습된 LoRA 폴더도 삭제
     if lora_load_path:
-        bot_data_raw = _load_bot_data()
-        for b in bot_data_raw.get("bots", []):
-            if b.get("name") == bot_name:
-                for ch in b.get("characters", []):
-                    cn = ch.get("name", "")
-                    if cn:
-                        trained_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, cn)
-                        if os.path.isdir(trained_dir):
-                            try:
-                                shutil.rmtree(trained_dir)
-                                print(f"[BOT_LORA] 학습 폴더 삭제: {trained_dir}")
-                            except Exception as e:
-                                print(f"[BOT_LORA] 학습 폴더 삭제 실패: {trained_dir} - {e}")
-                                traceback.print_exc()
-                                return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
-                break
+        trained_dir = _trained_project_dir(lora_load_path, bot_name, project_name)
+        if os.path.isdir(trained_dir):
+            try:
+                shutil.rmtree(trained_dir)
+            except Exception as e:
+                traceback.print_exc()
+                return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
 
     del bot_projects[project_name]
     if not bot_projects:
@@ -1136,6 +1155,12 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
     if not _save_bot_lora_manage(data):
         print(f"[BOT_LORA] 삭제 후 관리정보 저장 실패: {bot_name}/{project_name}")
         return {"success": False, "error": "파일은 삭제했지만 프로젝트 관리정보 저장에 실패했습니다. 다시 시도하세요."}
+    for _root, folder in folders:
+        for parent in (folder.parent, folder.parent.parent):
+            try:
+                parent.rmdir()
+            except OSError:
+                break
     print(f"[BOT_LORA] 프로젝트 삭제: {bot_name}/{project_name}")
     return {"success": True}
 
@@ -1145,14 +1170,7 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
 def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "") -> dict:
     """프로젝트의 상세 데이터 반환"""
     bot_data = _load_bot_data()
-    bot_info = None
-    for b in bot_data.get("bots", []):
-        if b.get("name") == bot_name:
-            bot_info = b
-            break
-    if not bot_info:
-        print(f"[BOT_LORA] 봇 없음: {bot_name}")
-        return {"success": False, "error": "봇을 찾을 수 없습니다"}
+    bot_info = next((bot for bot in bot_data.get("bots", []) if bot.get("name") == bot_name), {})
 
     manage_data = _load_bot_lora_manage()
     proj_cfg = _get_project_config(manage_data, bot_name, project_name)
@@ -1165,7 +1183,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
     bot_units = {
         (unit["name"], unit["visual_card_id"]): unit
         for unit in _bot_visual_units(bot_data, bot_name)
-    }
+    } if bot_info else {}
     for char_name, visual_card_id, char_cfg in _iter_project_units(proj_cfg):
         if not char_name:
             continue

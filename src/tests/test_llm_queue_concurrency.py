@@ -85,6 +85,47 @@ class LlmQueueConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(peak, 3)
         self.assertTrue(all(item.status == "completed" for item in items))
 
+    async def test_one_click_stop_cancels_gate_waiters_and_finishes_active_refinement(self):
+        started = []
+        ready, release = asyncio.Event(), asyncio.Event()
+
+        async def refine(item):
+            async with self.engine._limit_llm_request(item.params["slot"]):
+                started.append(item.id)
+                if len(started) == 3:
+                    ready.set()
+                await release.wait()
+                return {"success": True}
+
+        self.manager._handle_bot_lb_extra_refine = refine
+        items = [self.queue_module.QueueItem(id=str(i), type="bot_lb_extra_refine", label="test",
+                 params={"slot": "llm2" if i % 2 else "llm3", "one_click_run_id": "preparation"})
+                 for i in range(6)]
+        for item in items:
+            item.completion_future = asyncio.get_running_loop().create_future()
+            item.completion_future.add_done_callback(self.manager._mark_completion_future_observed)
+        self.manager.items.extend(items)
+        await self.manager._ensure_llm_workers()
+        try:
+            await asyncio.wait_for(ready.wait(), 2)
+            active = [item for item in items if item.status == "processing"]
+            waiting = [item for item in items if item.status == "waiting"]
+            self.assertEqual((len(active), len(waiting)), (3, 3))
+            self.assertEqual(await self.manager.cancel_one_click_run("preparation"), 3)
+            results = await asyncio.wait_for(asyncio.gather(
+                *(item.completion_future for item in waiting), return_exceptions=True), 2)
+            self.assertTrue(all(isinstance(result, RuntimeError) for result in results))
+            self.assertTrue(all(item.status == "cancelled" for item in waiting))
+            self.assertTrue(all(not item.completion_future.done() for item in active))
+            self.assertEqual(set(started), {item.id for item in active})
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.gather(
+                *(item.completion_future for item in items), return_exceptions=True), 2)
+        self.assertTrue(all(item.status == "completed" for item in active))
+        self.assertTrue(all(item.status == "cancelled" for item in waiting))
+        self.assertEqual(set(started), {item.id for item in active})
+
     async def test_new_provider_limit_is_used_when_workers_are_refreshed(self):
         before = self.manager._target_llm_workers()
         self.value["draft"]["llmProviders"][0]["maxConcurrency"] = 5

@@ -1,7 +1,7 @@
 import { llmProviders, llms, llmSlotIds, type LlmProvider, type LlmSlot } from "./llm";
 import { llmRouting, isLlmRouting, type LlmRoute } from "./llmRouting";
 export type Page =
-  "install" | "updates" | "migration" | "models" | "loras" | "workflows" | "presets" | "api" | "other-api" | "comfy-runtime" | "work-queue" | "llm-logs" | "program-logs" | "memo";
+  "install" | "updates" | "migration" | "notifications" | "models" | "loras" | "workflows" | "presets" | "api" | "other-api" | "comfy-runtime" | "work-queue" | "llm-logs" | "program-logs" | "memo";
 export type ModelKind =
   "Checkpoint" | "Diffusion" | "VAE" | "Text encoder" | "Upscaler" | "ControlNet" | "CLIP vision" | "Embedding" | "Other";
 export const modelKinds: ModelKind[] = ["Checkpoint", "Diffusion", "VAE", "Text encoder", "Upscaler", "ControlNet", "CLIP vision", "Embedding", "Other"];
@@ -216,6 +216,11 @@ export const pageInfo: Record<
   Page,
   { title: string; description: string; section: string }
 > = {
+  notifications: {
+    title: "알림",
+    description: "Comfy공방의 업데이트와 공지사항을 확인하세요.",
+    section: "소식",
+  },
   "comfy-runtime": {
     title: "Comfy 실행 관리",
     description: "Comfy#1~Comfy#3의 실행 상태와 실행 옵션을 관리하세요.",

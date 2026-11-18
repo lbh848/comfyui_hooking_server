@@ -91,6 +91,21 @@
       }
     },
     {
+      "key": "bot_lora_allocation",
+      "label": "LoRA LLM 배분",
+      "kind": "텍스트/JSON · 캐릭터별",
+      "modality": "text",
+      "group": "illustration_bot_creation",
+      "defaults": {
+        "primary": "llm_sp2",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 0,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
+      }
+    },
+    {
       "key": "bot_name_tag",
       "label": "2차봇 이름 태그 자동 설정",
       "kind": "텍스트/JSON",

@@ -4,6 +4,7 @@ import { ComfyRuntimePage } from "./ComfyRuntimePage";
 import {
   ArrowDownToLine,
   ArrowRight,
+  Bell,
   Box,
   Check,
   ChevronRight,
@@ -40,6 +41,7 @@ import { WorkQueuePage } from "./WorkQueuePage";
 import { LlmLogsPage } from "./LlmLogsPage";
 import { ProgramLogsPage } from "./ProgramLogsPage";
 import { MemoPage } from "./MemoPage";
+import { NotificationsPage, useNotifications } from "./NotificationsPage";
 import { WorkActivityCount } from "./WorkActivityCount";
 import { workNavigation } from "./workNavigation";
 import { ProgramShutdown, WorkshopSwitcher } from "./WorkshopControls";
@@ -56,6 +58,10 @@ const navigation: {
       { id: "updates", icon: RefreshCw, label: "업데이트" },
       { id: "migration", icon: PackageOpen, label: "이사하기" },
     ],
+  },
+  {
+    group: "소식",
+    items: [{ id: "notifications", icon: Bell, label: "알림" }],
   },
   {
     group: "백엔드 관리",
@@ -97,6 +103,7 @@ export default function App() {
     retry,
   } = useSettings();
   const resources = useResources(draft);
+  const notifications = useNotifications(active && ready);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(
@@ -175,6 +182,7 @@ export default function App() {
     install: <InstallPage apiKeys={apiKeys} setApiKeys={setApiKeys} isSaved={isSaved} saveState={saveState} revision={revision} />,
     updates: <UpdatesPage />,
     migration: <MigrationPage />,
+    notifications: <NotificationsPage board={notifications} />,
     "comfy-runtime": <ComfyRuntimePage />,
     models: <ModelsPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,
     loras: <LorasPage {...props} resources={resources} hasCivitaiKey={!!apiKeys[CIVITAI_PROVIDER_ID]?.trim()} />,
@@ -269,6 +277,7 @@ export default function App() {
                   >
                     <Icon size={18} strokeWidth={1.7} />
                     <span>{label}</span>
+                    {id === "notifications" && notifications.unread.length > 0 && <small className="nav-activity-count is-busy" aria-label={`안 읽은 공지 ${notifications.unread.length}건`}>{notifications.unread.length}</small>}
                     {id === "models" && <small>{resources.loading ? "…" : resources.error ? "—" : resources.models.length}</small>}
                     {id === "loras" && <small>{resources.loading ? "…" : resources.error ? "—" : resources.loras.length}</small>}
                     {(id === "work-queue" || id === "llm-logs") && <WorkActivityCount page={id} />}
