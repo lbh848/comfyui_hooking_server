@@ -178,27 +178,22 @@ fieldset.internal-lora-fields { border: 0; margin: 0; padding: 0; min-width: 0; 
 .internal-lora-step { padding: 16px; display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; }
 .internal-lora-step .internal-lora-images { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .internal-lora-preview-footer { padding: 8px; border-top: 1px solid var(--line); }
-.internal-lora-preview-footer > .internal-lora-representative-button { width: 100%; }
-.button.internal-lora-representative-button, .internal-lora-preview-representative {
-  min-height: 44px;
-  padding: 8px;
-  font-size: 13px;
-  font-weight: 650;
-  text-align: center;
-  white-space: normal;
-  word-break: keep-all;
-}
 .internal-lora-preview-representative {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 7px;
+  min-height: 35px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+  word-break: keep-all;
   border: 1px solid var(--rose);
   border-radius: 6px;
   background: var(--rose-soft);
   color: var(--rose-dark);
 }
-.internal-lora-representative-button svg, .internal-lora-preview-representative svg { flex-shrink: 0; }
+.internal-lora-preview-representative svg { flex-shrink: 0; }
 .internal-lora-step .field-help { overflow-wrap: anywhere; min-width: 0; }
 .internal-lora-loss { margin: 16px 0; border: 1px solid var(--line); padding: 14px; border-radius: 7px; }
 .internal-lora-loss svg { display: block; width: 100%; height: auto; max-height: 220px; }

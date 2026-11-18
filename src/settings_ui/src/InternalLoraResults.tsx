@@ -162,16 +162,16 @@ function LoraResultsContent({ context, detail, refresh, notify, initialSession, 
                   <button type="button" className="internal-lora-image-open" onClick={() => setZoom(mediaUrl(previewPath(filename)))}><img src={mediaUrl(previewPath(filename))} alt={`${step.name} · ${filename}`} loading="lazy" /></button>
                   <div className="internal-lora-preview-footer">
                     {isRepresentativeImage
-                      ? <span className="internal-lora-preview-representative"><Check size={16} aria-hidden="true" />현재 세션 대표 이미지</span>
-                      : <button type="button" className="button primary internal-lora-representative-button" disabled={busy} onClick={() => void act(() => representative(step, filename), "세션 대표 이미지와 LoRA를 지정했습니다.")}><Star size={16} aria-hidden="true" />세션 대표로 설정</button>}
+                      ? <span className="internal-lora-preview-representative"><Check size={13} aria-hidden="true" />현재 세션 대표 이미지</span>
+                      : <button type="button" className="button primary" disabled={busy} onClick={() => void act(() => representative(step, filename), "세션 대표 이미지와 LoRA를 지정했습니다.")}><Star size={13} aria-hidden="true" />세션 대표로 설정</button>}
                   </div>
                 </div>;
               })}</div>}
               {withoutPreviews && <span className="field-help">저장된 미리보기 이미지가 없습니다.</span>}
               <div className="internal-lora-toolbar"><span className="field-help">{step.safetensors}</span><div className="internal-lora-actions">
                 {withoutPreviews && (isSessionRepresentative
-                  ? <span className="internal-lora-preview-representative"><Check size={16} aria-hidden="true" />현재 세션 대표 LoRA</span>
-                  : <button type="button" className="button primary internal-lora-representative-button" disabled={busy} onClick={() => void act(() => representative(step), "세션 대표 LoRA를 지정했습니다.")}><Star size={16} aria-hidden="true" />세션 대표로 설정</button>)}
+                  ? <span className="internal-lora-preview-representative"><Check size={13} aria-hidden="true" />현재 세션 대표 LoRA</span>
+                  : <button type="button" className="button primary" disabled={busy} onClick={() => void act(() => representative(step), "세션 대표 LoRA를 지정했습니다.")}><Star size={13} aria-hidden="true" />세션 대표로 설정</button>)}
                 {step.config_format !== null && <button className="button" disabled={busy} onClick={async () => {
                   try {
                     const result = await loraRequest(`${root}/trained/toml?${query({ ...params, session, step: step.name })}`);
