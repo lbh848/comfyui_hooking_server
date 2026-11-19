@@ -716,7 +716,7 @@ DEFAULT_CONFIG = {
         "nsfw_asset_generation_enabled": False,
         "emotion_representative": {},
         "profile_context_translate": True,
-        "profile_resolve_mode": "per_character",
+        "profile_resolve_mode": illustration_context_pipeline.DEFAULT_TOGGLES["profile_resolve_mode"],
         "supplement": True,
         "key_visual": True,
         "keyvis_in_detail_enabled": True,

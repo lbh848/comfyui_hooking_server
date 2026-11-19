@@ -248,7 +248,7 @@ DEFAULT_TOGGLES = {
     # 대표 이미지를 먼저 생성할 때 사용한다. 복장별 지정이 있으면 그쪽이 우선.
     "emotion_representative": {},
     "profile_context_translate": True,
-    "profile_resolve_mode": "per_character",
+    "profile_resolve_mode": "combined",
     "supplement": True,
     "key_visual": True,
     "keyvis_in_detail_enabled": True,
@@ -9888,7 +9888,7 @@ async def _run_profile_resolution(
     visual_profiles: dict[str, dict] | None,
     stream_notify,
     history_ids_sink: list[str] | None = None,
-    profile_resolve_mode: str = "per_character",
+    profile_resolve_mode: str = DEFAULT_TOGGLES["profile_resolve_mode"],
 ) -> tuple[str, dict]:
     """Resolve CURRENT multi-profile characters together or in parallel by character."""
     selected_profiles = _selected_visual_profiles(
