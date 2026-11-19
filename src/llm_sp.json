@@ -7,7 +7,7 @@
   "node_type": "SoyaGemma4Vision_mdsoya",
   "model_name": "Gemma 4 12B Uncensored",
   "quantization": "Q4_K_M",
-  "context_size": 32768,
+  "context_size": 16384,
   "context_size_step": 8192,
   "context_size_max": 262144,
   "reasoning_budgets": [1024, 2048, 4096],
