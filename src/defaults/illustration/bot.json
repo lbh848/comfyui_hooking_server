@@ -98,28 +98,18 @@
               ],
               "outfit_presets": [],
               "skip_lb_extra_batch_refine": false,
-              "image_name_tag": "",
-              "loras": [
-                {
-                  "source": "library",
-                  "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Yuki/_visual_profiles/card_1/20261113-132918/7f9df201-step00000200.safetensors",
-                  "strength": 0.85,
-                  "BASE": "moss",
-                  "trigger": "@Yuki",
-                  "name": "Yuki · 카드 1",
-                  "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Yuki/20261113-132918/7f9df201-step00000200-1.jpg?visual_card_id=card_1"
-                }
-              ],
+              "character_negative": "halo",
+              "use_profile_embedding": false,
+              "face_tags": "long hair, grey hair, (swept bangs:1.2), side part, parted bangs, hair behind ear, fore head, blunt bangs, single hair intake",
+              "eye_tags": "red eyes",
+              "use_image_name_tag": false,
               "rep_images": [
                 "Yuki_default_excited.webp"
               ],
-              "use_image_name_tag": false,
-              "use_profile_embedding": false,
+              "image_name_tag": "",
               "gender_tag": "1girl",
-              "face_tags": "long hair, grey hair, (swept bangs:1.2), side part, parted bangs, hair behind ear, fore head, blunt bangs, single hair intake",
-              "character_negative": "halo",
-              "eye_tags": "red eyes",
-              "absolute_tags": ""
+              "absolute_tags": "",
+              "loras": []
             },
             {
               "id": "card_915961d86f43",
@@ -201,9 +191,19 @@
               ],
               "outfit_presets": [],
               "skip_lb_extra_batch_refine": false,
+              "character_negative": "halo",
+              "use_profile_embedding": true,
+              "face_tags": "long hair, grey hair, (swept bangs:1.2), side part, parted bangs, hair behind ear, fore head, blunt bangs, single hair intake",
+              "eye_tags": "red eyes",
               "eye_prompt": "",
-              "image_name_tag": "",
+              "use_image_name_tag": false,
               "face_loras": [],
+              "rep_images": [
+                "Yuki_bikini_excited.webp"
+              ],
+              "image_name_tag": "",
+              "gender_tag": "1girl",
+              "absolute_tags": "",
               "loras": [
                 {
                   "source": "library",
@@ -214,17 +214,7 @@
                   "name": "Yuki · 카드 2",
                   "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Yuki/20261113-133740/52b2142f-step00000200-1.jpg?visual_card_id=card_915961d86f43"
                 }
-              ],
-              "rep_images": [
-                "Yuki_bikini_excited.webp"
-              ],
-              "use_image_name_tag": false,
-              "use_profile_embedding": true,
-              "gender_tag": "1girl",
-              "face_tags": "long hair, grey hair, (swept bangs:1.2), side part, parted bangs, hair behind ear, fore head, blunt bangs, single hair intake",
-              "character_negative": "halo",
-              "eye_tags": "red eyes",
-              "absolute_tags": ""
+              ]
             }
           ],
           "rep_images": [
@@ -236,17 +226,7 @@
           "character_negative": "halo",
           "image_name_tag": "",
           "use_image_name_tag": false,
-          "loras": [
-            {
-              "source": "library",
-              "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Yuki/_visual_profiles/card_1/20261113-132918/7f9df201-step00000200.safetensors",
-              "strength": 0.85,
-              "BASE": "moss",
-              "trigger": "@Yuki",
-              "name": "Yuki · 카드 1",
-              "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Yuki/20261113-132918/7f9df201-step00000200-1.jpg?visual_card_id=card_1"
-            }
-          ]
+          "loras": []
         },
         {
           "name": "Dale",
@@ -321,41 +301,21 @@
               ],
               "outfit_presets": [],
               "skip_lb_extra_batch_refine": false,
-              "loras": [
-                {
-                  "source": "library",
-                  "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Dale/_visual_profiles/card_1/20261113-134545/91e19f2d-step00000200.safetensors",
-                  "strength": 0.85,
-                  "BASE": "moss",
-                  "trigger": "@Dale",
-                  "name": "Dale · 카드 1",
-                  "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Dale/20261113-134545/91e19f2d-step00000200-1.jpg?visual_card_id=card_1"
-                }
-              ],
+              "use_profile_embedding": false,
+              "face_tags": "white hair, beard, mustache, scar, scar on face, scar across eye, thick eyebrows, wrinkled skin, mature male, old, old man",
+              "eye_tags": "",
               "rep_images": [
                 "Dale_default_indifferent.webp"
               ],
-              "use_profile_embedding": false,
               "gender_tag": "1male",
-              "face_tags": "white hair, beard, mustache, scar, scar on face, scar across eye, thick eyebrows, wrinkled skin, mature male, old, old man",
-              "eye_tags": "",
-              "absolute_tags": ""
+              "absolute_tags": "",
+              "loras": []
             }
           ],
           "absolute_tags": "",
           "eye_tags": "",
           "face_tags": "white hair, beard, mustache, scar, scar on face, scar across eye, thick eyebrows, wrinkled skin, mature male, old, old man",
-          "loras": [
-            {
-              "source": "library",
-              "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Dale/_visual_profiles/card_1/20261113-134545/91e19f2d-step00000200.safetensors",
-              "strength": 0.85,
-              "BASE": "moss",
-              "trigger": "@Dale",
-              "name": "Dale · 카드 1",
-              "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Dale/20261113-134545/91e19f2d-step00000200-1.jpg?visual_card_id=card_1"
-            }
-          ]
+          "loras": []
         },
         {
           "name": "Lune",
@@ -443,27 +403,17 @@
               "outfit_presets": [],
               "skip_lb_extra_batch_refine": false,
               "character_negative": "",
-              "gender_tag": "1girl",
-              "absolute_tags": "",
-              "face_tags": "brown hair, brown fur, cat girl, long hair, messy hair, green eyes, cat whiskers",
-              "loras": [
-                {
-                  "source": "library",
-                  "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Lune/_visual_profiles/card_1/20261113-135352/3d27f9c1-step00000200.safetensors",
-                  "strength": 0.85,
-                  "BASE": "moss",
-                  "trigger": "@Lune",
-                  "name": "Lune · 카드 1",
-                  "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Lune/20261113-135352/3d27f9c1-step00000200-1.jpg?visual_card_id=card_1"
-                }
-              ],
               "use_profile_embedding": false,
+              "face_tags": "brown hair, brown fur, cat girl, long hair, messy hair, green eyes, cat whiskers",
+              "eye_tags": "green eyes, slit pupils",
+              "use_image_name_tag": false,
               "rep_images": [
                 "Lune_default_excited.webp"
               ],
-              "eye_tags": "green eyes, slit pupils",
-              "use_image_name_tag": false,
-              "image_name_tag": ""
+              "image_name_tag": "",
+              "gender_tag": "1girl",
+              "absolute_tags": "",
+              "loras": []
             }
           ],
           "absolute_tags": "",
@@ -472,17 +422,7 @@
           "character_negative": "",
           "image_name_tag": "",
           "use_image_name_tag": false,
-          "loras": [
-            {
-              "source": "library",
-              "lora_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/test2/Lora/moss_test/Lune/_visual_profiles/card_1/20261113-135352/3d27f9c1-step00000200.safetensors",
-              "strength": 0.85,
-              "BASE": "moss",
-              "trigger": "@Lune",
-              "name": "Lune · 카드 1",
-              "preview_url": "/api/setting/internal-lora/bot_lora/trained/preview/test2/moss_test/Lune/20261113-135352/3d27f9c1-step00000200-1.jpg?visual_card_id=card_1"
-            }
-          ]
+          "loras": []
         }
       ],
       "system_prompt": "## Single Identifiable Focus V5\n\n### Goal\nKeep exactly one identifiable named character as the subject. The supplied `characters` roster, the character identity/LoRA owner, and the camera's named focal subject must remain aligned. An anonymous partner may clarify a physical event but must never become a second portrait, take over the camera, or replace the named actor or receiver.\n\nRead the complete narrative and assigned visual beat semantically. Do not use keyword matching, a body-part whitelist, or a fixed action taxonomy. When the focus character's reaction or pose already communicates the selected fact, keep the partner fully off-frame. When physical contact is essential, show only the smallest coherent connected portion that makes the contact and direction readable.\n\n### Subject ownership and named roster\n- The supplied `characters` list is the exact roster of named, identity-managed entries. Emit one `characters[]` item per supplied name and no invented item.\n- Never swap actor and receiver, promote an anonymous participant into `characters[]`, or center a named character's descriptor on another person's face or body.\n- Keep the named subject visually dominant as the owner of the identifiable appearance. Occlusion may hide part of that subject, but the anonymous partner must remain subordinate and incomplete.\n- Keep partner-owned anatomy and actions out of every named character's `positive`. Keep the named subject's visible appearance, pose, expression, and actions in that character's `positive`. Put the anonymous partner's visible fragment and action in `scene`, with one concise spatial/contact relation in `supplement` when needed.\n\n### Count tags\n- Keep an anonymous, unnamed, or unregistered partner outside `characters[]` and give that person no canonical name or appearance profile.\n- An anonymous cropped interaction fragment does not add a second `1girl` or `1boy` count. Do not add `1boy` merely because that fragment is visible.\n- Use the accurate one-person count and solo only if the frame contains one named subject and no part of another person's body. People entirely off-frame do not affect this. A visible anonymous hand or arm excludes solo; keep the existing fragment and two-character count rules.\n- If an anonymous fragment visibly interacts with the named subject, retain only the named subject's count and omit `solo`, `solo focus`, `female focus`, and `male focus`.\n- Count and focus tags belong in `scene`, never in `characters[].positive`.\n\n### Anonymous partner contract\nThe partner fragment must be the smallest action-bearing connected portion needed for the selected fact. It must form exactly one continuous region from exactly one frame edge, remain visibly connected to an implied off-frame body, and meet the named subject at the required contact or overlap. Do not create a detached hand, a floating torso, separated partner limbs, a body that leaves and re-enters the image, or a complete second silhouette.\n\nDo not use a broad torso merely as a stand-in for unclear relationship geometry. A local shoulder, torso, waist, pelvis, or leg region is usable only when that exact connected surface is the necessary contact region and the relation reads within the same crop. If the action needs several separated partner regions, multiple distant contact points, or a reaction face plus remote contact proof, the selector must choose another supported visible instant rather than expanding partner visibility.\n\nAt most one complete or identifiable face is visible, and it belongs to the named subject. Never show a complete or identifiable partner face. This is not a blanket ban on every part of the partner's head: a cropped non-identifying rear or side portion may appear only when it is the smallest connected action-bearing fragment required for the contact, remains subordinate at one frame edge, and ends before a complete facial layout, identifying hairstyle treatment, expression, or portrait emerges. A zero-face contact crop is allowed. If the action cannot remain understandable without identifying the partner's face, select another supported instant.\n\nFor Anima-facing `scene` tags, express the partner fragment once with one familiar region/composition phrase. Do not atomize one connected fragment into several body-part tags or repeat it across fields. Preserve the complete logical wardrobe in `outfit_state`, including cropped or occluded garments, but put only visible or coverage-defining clothing in `positive`.\n\n### Selection and camera agreement\nAt selection time, choose one directly readable visual fact that fits this contract. Preserve the requested image count by using materially different supported poses, reactions, contact changes, or spatial relationships from the same event when necessary; do not fill the count with an interaction that requires a second identifiable subject.\n\nAt expansion time, keep the assigned named roster and primary fact. Center the camera on either the local interaction geometry or the named subject's reaction, whichever the plan assigned. A contact-centered crop contains its action-bearing region and may omit the distant face. A reaction-centered crop does not add a partner fragment merely to restate surrounding story context. Never redirect the camera to the anonymous partner or change the event to rescue an incompatible crop.\n\n### Final consistency check\nBefore output, verify all of the following:\n1. `characters[n]` equals the number of emitted named identity-managed entries, and those entries remain the identity/LoRA and named focal subjects.\n2. The anonymous fragment does not add a second complete-person count or receive a separate profile.\n3. `solo` and person-focus tags are absent whenever another person's body part visibly interacts with the subject.\n4. The partner appears only when the selected fact needs visible contact, as the smallest connected fragment from one edge.\n5. No complete or identifiable partner face, independent partner pose, broad stand-in body, second contact region, or subject/camera takeover appears.\n6. Camera, pose, actor/receiver direction, contact, clothing state, occlusion, and supplement describe the same instant, with the action-bearing region inside the crop.\n7. Fully cropped or naturally occluded identity and wardrobe details remain continuity facts but are not forced into visible `positive` tags.\n8. No weights or negative tags are invented merely to force or suppress the fragment; preserve only Client-supplied weights or negatives.\n\n## Art Style\nThis is a prompt for the art style that will be used by default.\n\n### Background Prompt\nmasterpiece, best quality, amazing quality, very aesthetic, newest, highres, absurdes, very awa",
@@ -532,12 +472,11 @@
         "hrf_size": 1.5,
         "hrf_restore_size": true,
         "anima_hrf_activate": false,
-        "moss_bubble_activate": false,
-        "moss_bubble_scale": 1,
         "img_w": 864,
         "img_h": 864,
         "manga_scale": 0.8,
         "manga_seed": -1,
+        "manga_page_sizes": "1152x1728,1408x1408,1056x1888,1536x1152,1728x1152",
         "anima_fd_activate": false,
         "anima_hd_activate": false,
         "anima_ed_activate": false,
@@ -546,16 +485,20 @@
         "ed_activate": false,
         "face_id_activate": false,
         "face_id_str": 0.55,
-        "snapref_enabled": false,
+        "snapref_enabled": true,
         "snapref_preprocess": "none",
         "snapref_strength": 0.75,
         "snapref_strength_scale": "linear",
         "snapref_fidelity": 1.0,
         "snapref_secondary_reference": "none",
+        "snapref_primary_reference": "",
+        "snapref_detailer_reference": "",
         "snapref_mode": "char",
         "snapref_megapixels": 0.75,
         "seed": -1,
-        "face_lora_upscale_size": ""
+        "face_lora_upscale_size": "",
+        "moss_bubble_activate": false,
+        "moss_bubble_scale": 1
       },
       "character_auto_settings_group": {
         "img_w": 756,
