@@ -204,7 +204,7 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
   // Dual-VAE workflows expose one LoRA area per VAE branch instead of the shared set.
   const loraSets = branchLoraKeys.length >= 2 ? branchLoraKeys : loraKeys.filter(key => key === "STYLE_LORA_DATA");
   const loraList = (key: string): IllustrationData[] => Array.isArray(fields?.[key]?.list) ? fields![key].list : [];
-  const modelPath = (value = "") => value.replaceAll("\\", "/").replace(/^(checkpoints|diffusion_models|unet|loras)\//, "");
+  const modelPath = (value = "") => value.replaceAll("\\", "/").replace(/^(checkpoints|diffusion_models|unet|loras|text_encoders|clip|vae)\//, "");
   const name = scope.labels[profile] || profile;
   return <Panel title={`${name} · 모델·샘플링·LoRA`} aside={<div className="illust-actions"><span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span><button className="button" disabled={dirty || autosave.busy} onClick={resource.reload}><RefreshCw size={14} />다시 불러오기</button></div>}><div className="illust-body">
     {!path ? <Empty title="그림 모델을 선택하세요">그림 모델과 워크플로우를 선택하면 세부 설정을 불러옵니다.</Empty> : !resource.data ? <IllustrationLoading error={resource.error} retry={resource.reload} /> : <form ref={form} noValidate className="illust-form" onSubmit={event => { event.preventDefault(); void autosave.retry(); }}><fieldset className="illust-form">
@@ -217,13 +217,14 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
           <div className="illust-actions"><p className="field-help">설정의 모델 관리에 등록된 모델을 선택합니다.</p><button type="button" className="button" disabled={inventory.loading} onClick={() => void inventory.refresh()}><RefreshCw size={14} />모델 목록 새로고침</button></div>
           <div className="illust-fields">{Object.entries(fields).filter(([, value]) => typeof value === "string").map(([key, value]) => {
             const kind = key === "workflow.clip" ? "Text encoder" : key === "workflow.vae" ? "VAE" : key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion";
+            const label = key === "workflow.clip" && "ANIMA_FIRST_SAMPLER" in fields ? "ANIMA 텍스트 인코더" : modelLabels[key] || key;
             const entries = inventory.models.filter(item => item.path && item.kind === kind);
             const models = [...entries].sort((a, b) => resourceDisplayName(a).localeCompare(resourceDisplayName(b), "ko"));
             const selected = entries.find(item => modelPath(item.path) === modelPath(value));
             const currentName = selected ? resourceDisplayName(selected) : String(value).replaceAll("\\", "/").split("/").pop()?.replace(/\.(safetensors|sft|ckpt|pt|pth|bin|gguf)$/i, "");
             return <div className="illust-model-choice" key={key}>
-              <div className="illust-model-thumbnail"><ResourceThumbnail name={currentName || modelLabels[key] || key} thumbnail={selected?.thumbnail} /></div>
-              <label className="field">{modelLabels[key] || key}<select value={selected?.id || ""} disabled={readOnly || inventory.loading || !!inventory.error} onChange={event => {
+              <div className="illust-model-thumbnail"><ResourceThumbnail name={currentName || label} thumbnail={selected?.thumbnail} /></div>
+              <label className="field">{label}<select value={selected?.id || ""} disabled={readOnly || inventory.loading || !!inventory.error} onChange={event => {
               const model = models.find(item => item.id === event.target.value);
               if (model) update(key, modelPath(model.path));
             }}>
@@ -236,7 +237,7 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
           {"workflow.sequential_offload" in fields && <div className="field">
             <span>모델 순차 오프로딩</span>
             <div className="illust-actions"><Toggle label="모델 순차 오프로딩" checked={fields["workflow.sequential_offload"] === true} onChange={enabled => update("workflow.sequential_offload", enabled)} /><span>{fields["workflow.sequential_offload"] === true ? "켜짐" : "꺼짐"}</span></div>
-            <span className="field-help">8GB 등 VRAM이 부족한 환경에서 선택하세요. 모델과 LoRA는 RAM에 보관하고 VRAM을 순서대로 사용하며, 연산에 필요한 여유 공간을 확보합니다. 기본값은 꺼짐이며 모델 전환 시간이 추가될 수 있습니다.</span>
+            <span className="field-help">8GB 등 VRAM이 부족한 환경에서 선택하세요. 모델과 LoRA는 RAM에 보관하고 VRAM을 순서대로 사용하며, 연산에 필요한 여유 공간을 확보합니다. 모델 전환 시간이 추가될 수 있습니다.</span>
           </div>}
           <div className="illust-actions"><p className="field-help">{sampling.data?.source === "comfyui" ? "연결된 ComfyUI의 샘플러·스케줄러 목록입니다." : "ComfyUI 기본 샘플러·스케줄러 목록입니다. 연결되면 설치된 목록을 불러옵니다."}</p><button type="button" className="button" onClick={sampling.reload}><RefreshCw size={14} />샘플링 목록 새로고침</button></div>
           {groupSamplingStages(fields).map(group => <details className="illust-sampling-group" data-group={group.key} key={group.key} open={group.key === "ANIMA_FIRST_SAMPLER" || group.key === "workflow.sampling"}>

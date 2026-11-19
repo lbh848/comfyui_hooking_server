@@ -499,6 +499,11 @@
     "name": "SoyaCLIPLoaderV2_d5ebdd28_mdsoya",
     "base": "CLIPLoader",
     "display_name": "Load CLIP V2 (Soya JSON)",
+    "model": {
+      "input": "clip_name",
+      "key": "workflow.clip",
+      "fallback_widget": true
+    },
     "json_inputs": {},
     "fixed_inputs": {},
     "output": [

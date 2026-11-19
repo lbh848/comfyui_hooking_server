@@ -53,6 +53,8 @@
               "sage_attention": true
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "STYLE_LORA_DATA": {
               "list": [
                 {
@@ -165,6 +167,8 @@
               "denoise": 0.25
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ILXL_CHECKPOINT": "featherFall_v50f.fp16.safetensors",
             "STYLE_LORA_DATA": {
               "list": [
@@ -248,6 +252,8 @@
               "sage_attention": true
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "STYLE_LORA_DATA": {
               "list": [
                 {
@@ -353,6 +359,8 @@
               "denoise": 0.25
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ILXL_CHECKPOINT": "rinAnim8drawIllustrious_v31.safetensors",
             "STYLE_LORA_DATA": {
               "list": []
@@ -441,6 +449,8 @@
               "denoise": 0.25
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ILXL_CHECKPOINT": "rinAnim8drawIllustrious_v31.safetensors",
             "STYLE_LORA_DATA": {
               "list": []
@@ -488,6 +498,8 @@
               "sage_attention": true
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "STYLE_LORA_DATA": {
               "list": [
                 {

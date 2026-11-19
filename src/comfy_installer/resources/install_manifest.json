@@ -98,7 +98,7 @@
       "name": "comfyui-soya-custom-nodes",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
       "source_type": "git",
-      "ref": "4971d6198e59638f5f82bbe2b48cc440c89ac9ab"
+      "ref": "aeb88479d03993c930d2d31f1cb45e24ef3741eb"
     },
     {
       "name": "ComfyUI-MOSS-Toolkit",
@@ -304,6 +304,14 @@
       "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
       "size": 1192135096,
       "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/text_encoders/qwen_3_06b_base.safetensors"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-text-encoder-int8",
+      "relative_path": "models/text_encoders/qwen_3_06b_base_int8.safetensors",
+      "sha256": "29625182a9012c752313f6928ebfb64e841fc16be2fa2e5a098221d685d1bfdb",
+      "size": 753166240,
+      "url": "https://civitai.com/api/download/models/3178594?fileId=3059144"
     },
     {
       "id": "anima-vae",

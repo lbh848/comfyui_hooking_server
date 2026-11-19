@@ -96,6 +96,9 @@ def _workflow_string_values(value: object, *, include_runtime_fields: bool = Fal
             value = {**value, "fields": {
                 key: nested for key, nested in fields.items() if key not in runtime_fields
             }}
+            controller = value.get("workflow")
+            if isinstance(controller, dict):
+                value["workflow"] = {key: nested for key, nested in controller.items() if key != "clip"}
         for nested in value.values():
             yield from _workflow_string_values(nested, include_runtime_fields=include_runtime_fields)
     elif isinstance(value, list):

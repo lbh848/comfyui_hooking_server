@@ -56,6 +56,8 @@
               "scheduler": "simple"
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -107,6 +109,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 16,
               "cfg": 1,
@@ -211,6 +215,8 @@
               "sage_attention": true
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 6,
               "cfg": 1,
@@ -281,6 +287,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 30,
               "cfg": 5,
@@ -379,6 +387,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -430,6 +440,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
               "cfg": 1,
@@ -534,6 +546,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -585,6 +599,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
               "cfg": 1.2,
@@ -809,6 +825,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -860,6 +878,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
               "cfg": 1.2,
@@ -1028,6 +1048,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -1079,6 +1101,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 8,
               "cfg": 1,
@@ -1183,6 +1207,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -1234,6 +1260,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 8,
               "cfg": 1,
@@ -1395,6 +1423,8 @@
               "spd_sigma": 0.7
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
               "cfg": 5.0,
@@ -1446,6 +1476,8 @@
               "denoise": 0.22
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 10,
               "cfg": 1.2,

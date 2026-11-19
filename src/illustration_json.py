@@ -186,7 +186,11 @@ def workflow_json_settings_nodes(workflow: dict, *, widget_names=None) -> dict:
         inputs = {}
         widgets = [item for item in node.get("inputs", []) if item.get("widget")]
         values = node.get("widgets_values", [])
-        for selector in widget_names if widget_names is not None else ("sampling_key", "model_key", *FIRST_SAMPLER_CONTROLS):
+        selectors = widget_names if widget_names is not None else ("sampling_key", "model_key", *FIRST_SAMPLER_CONTROLS)
+        model = _illustration_v2_specs().get(node["type"], {}).get("model", {})
+        if widget_names is None and model.get("fallback_widget"):
+            selectors = (*selectors, model["input"])
+        for selector in selectors:
             position = next((i for i, item in enumerate(widgets) if item["name"] == selector), None)
             if position is not None:
                 if len(widgets) != len(values):
@@ -507,20 +511,26 @@ def workflow_json_defaults(workflow: dict) -> dict:
     """Read selected sampling settings and model names from the workflow JSON."""
     workflow = workflow_json_settings_nodes(workflow)
     sources = {}
+    model_fallbacks = {}
     for node in workflow.values():
         inputs = node.get("inputs", {}) if isinstance(node, dict) else {}
         prompt_json = inputs.get("prompt_json")
         if not isinstance(prompt_json, list) or len(prompt_json) != 2:
             continue
-        selectors = [(selector, value_type) for selector, value_type in
-                     (("sampling_key", dict), ("model_key", str)) if isinstance(inputs.get(selector), str)]
-        if not selectors:
+        bindings = [(inputs[selector].strip().removeprefix("fields."), value_type)
+                    for selector, value_type in (("sampling_key", dict), ("model_key", str))
+                    if isinstance(inputs.get(selector), str)]
+        model = _illustration_v2_specs().get(node.get("class_type"), {}).get("model", {})
+        fallback = inputs.get(model.get("input")) if model.get("fallback_widget") else None
+        if not bindings and not isinstance(fallback, str):
             continue
         source_id = _prompt_json_source(workflow, str(prompt_json[0]))
         if source_id is None:
             raise ValueError("Workflow JSON prompt source is not reachable")
-        for selector, value_type in selectors:
-            key = inputs[selector].strip().removeprefix("fields.")
+        if isinstance(fallback, str):
+            bindings.append((model["key"], str))
+            model_fallbacks.setdefault(source_id, {})[model["key"]] = fallback
+        for key, value_type in bindings:
             if key.startswith("workflow.detailer."):
                 continue
             selected = sources.setdefault(source_id, {})
@@ -533,10 +543,10 @@ def workflow_json_defaults(workflow: dict) -> dict:
     for source_id, keys in sources.items():
         source = workflow[source_id]["inputs"]["value"]
         payload = json.loads(source)
-        if is_moss_document(payload):
+        if is_moss_document(payload) or "ANIMA_FIRST_SAMPLER" in keys:
             result["workflow.sequential_offload"] = read_prompt_path(payload, "workflow.sequential_offload") is True
         for key, value_type in keys.items():
-            settings = read_prompt_path(payload, key)
+            settings = read_prompt_path(payload, key, model_fallbacks.get(source_id, {}).get(key))
             if not isinstance(settings, value_type) or value_type is str and not settings.strip():
                 raise ValueError(f"Workflow JSON prompt requires {key}")
             if key in result and result[key] != settings:
@@ -650,6 +660,10 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
                     fields.pop(key)
             for key, value in defaults.items():
                 fields.setdefault(key, copy.deepcopy(value))
+        else:
+            for key in ("workflow.clip", "workflow.sequential_offload"):
+                if key in defaults:
+                    fields.setdefault(key, defaults[key])
     validate_workflow_json_settings(fields, defaults)
     result = copy.deepcopy(workflow)
     _apply_basic_sampling_controls(result, fields.get("ANIMA_FIRST_SAMPLER", {}))
@@ -663,7 +677,10 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
         text = node["widgets_values"][0] if ui else node["inputs"]["value"]
         payload = prompt_payload(text)
         if isinstance(payload.get("fields"), dict):
-            payload["fields"].update(copy.deepcopy(fields))
+            for key, value in fields.items():
+                if key.startswith("workflow."):
+                    payload.setdefault("workflow", {})
+                write_prompt_path(payload, key, copy.deepcopy(value))
         else:
             # MOSS controller: write each stored setting at the path its node reads.
             for key, value in fields.items():
@@ -1239,7 +1256,13 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
         if render_target not in {"character", "background"}:
             raise ValueError(f"잘못된 DUAL_VAE 출력 대상: {render_target}")
         fields["RENDER_TARGET"] = render_target
+    moss_workflow = moss_layout is not None or is_moss_prompt_defaults(workflow_defaults)
     for key, defaults in (workflow_defaults or {}).items():
+        if key.startswith("workflow.") and not moss_workflow:
+            payload.setdefault("workflow", {})
+            if read_prompt_path(payload, key) is None:
+                write_prompt_path(payload, key, copy.deepcopy(defaults))
+            continue
         if _is_lora_data_key(key):
             if positive.lstrip().startswith("{"):
                 # An already structured request is a complete saved generation.
@@ -1264,7 +1287,7 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
     assets = payload.setdefault("assets", {})
     for key in ("LORA_DATA", "FACE_LORA_DATA", "STYLE_LORA_DATA", "BG_LORA_DATA"):
         _normalize_payload_paths(fields.get(key, {}), path_fields=frozenset({"lora_path"}), block_name=key)
-    if moss_layout is not None or is_moss_prompt_defaults(workflow_defaults):
+    if moss_workflow:
         # MOSS keeps the layout and controller in one document. When CharRef is
         # enabled, reference pictures and control data travel under
         # workflow.reference plus the shared base64 assets; the moss layout
