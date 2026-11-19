@@ -438,7 +438,10 @@ fieldset.illust-bot-generation-columns { margin: 0; padding: 0; border: 0; }
 .illust-imported-lore { display: grid; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .illust-imported-lore h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0; font-size: 14px; }
 .illust-lore-list { display: grid; gap: 8px; max-height: 460px; overflow-y: auto; }
-.illust-lore-modal { width: min(960px, calc(100vw - 32px)); }
+.modal.illust-lore-modal { width: min(1240px, calc(100vw - 32px)); }
+.illust-lore-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); align-items: start; gap: 16px; }
+.illust-lore-columns .illust-archive-inputs { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+.illust-lore-columns article .illust-actions > strong { overflow-wrap: anywhere; }
 .illust-lore-footer { position: sticky; bottom: 0; padding: 12px 0; background: var(--panel); border-top: 1px solid var(--line); }
 .illust-lore-entry { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .illust-lore-entry summary { cursor: pointer; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }

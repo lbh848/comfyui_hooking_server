@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal } from "./components";
+import { Modal, Panel } from "./components";
 import { useBotApi, useBotResource } from "./BotApiScope";
 import { IllustrationFeedback, IllustrationLoading } from "./IllustBackups";
 import { CharacterArchiveInput } from "./IllustCharacterAdd";
@@ -15,6 +15,44 @@ type CharacterLore = Record<string, CharacterLoreEntry[]>;
 type LoreEdit = { character: string; entry: CharacterLoreEntry; keys: string; secondaryKeys: string };
 
 export const loreLinkingTitle = (botName: string) => `${botName} · 로어북 연결`;
+
+function SavedLoreArchives({ archives, botName }: { archives: BotArchive[]; botName: string }) {
+  const api = useBotApi();
+  const [search, setSearch] = useState("");
+  const term = search.trim().toLowerCase();
+  const results = useMemo(() => archives.flatMap(archive => {
+    const fileMatches = archive.filename.toLowerCase().includes(term);
+    const entries = fileMatches ? archive.lore_entries : archive.lore_entries.filter(entry =>
+      [entry.title, ...entry.keys, ...entry.secondary_keys, entry.content].some(value => value.toLowerCase().includes(term)));
+    return fileMatches || entries.length ? [{ archive, entries }] : [];
+  }), [archives, term]);
+
+  return <>
+    <label className="field">로어북 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)}
+      placeholder="제목, 본문, 활성화키, 파일명" /></label>
+    {!archives.length && <p className="field-help">저장된 원본 파일이 없습니다. 캐릭터 카드나 모듈을 추가하면 로어북을 연결할 수 있습니다.</p>}
+    {!!archives.length && !results.length && <p className="field-help" role="status">검색 결과가 없습니다.</p>}
+    {!!results.length && <div className="illust-lore-list">{results.map(({ archive, entries }) =>
+      <article key={archive.id} className="illust-lore-entry">
+        <div className="illust-actions"><strong>{archive.filename}</strong>
+          <span className="field-help">{archive.kind === "bot" ? "캐릭터 카드" : "모듈"} · {bytes(archive.size)} · 로어북 {term && `${entries.length}/`}{archive.lore_entries.length}개</span>
+          <a className="button secondary small" href={api.media(`/api/bot_mode/archive?${query({ bot_name: botName, id: archive.id })}`)} download={archive.filename}>원본 다운로드</a>
+        </div>
+        {!!entries.length && <details className="illust-lore-content" open={!!term || undefined}><summary>로어북 내용 확인</summary>
+          {entries.map(entry => {
+            const index = term ? entry.content.toLowerCase().indexOf(term) : -1;
+            return <details key={characterLoreId(entry)} className="illust-lore-entry">
+              <summary>{entry.title}{index >= 0 && <span className="field-help">
+                {index > 40 && "…"}{entry.content.slice(Math.max(0, index - 40), index)}<mark>{entry.content.slice(index, index + term.length)}</mark>
+                {entry.content.slice(index + term.length, index + term.length + 60)}{index + term.length + 60 < entry.content.length && "…"}
+              </span>}</summary>
+              <LoreContent entry={entry} />
+            </details>;
+          })}
+        </details>}
+      </article>)}</div>}
+  </>;
+}
 
 export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
   botName: string; readOnly: boolean; onClose: () => void; onChanged: () => void;
@@ -86,26 +124,20 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
       <div className="illust-form">
         <IllustrationFeedback error={resource.error || error} message={message} />
         {!base && <IllustrationLoading error={resource.error} retry={resource.reload} />}
-        {base && <>
-          <section className="illust-form" aria-label="저장된 캐릭터 카드·모듈">
-            <strong>저장된 캐릭터 카드·모듈</strong>
-            {!archives.length && <p className="field-help">저장된 원본 파일이 없습니다. 캐릭터 카드나 모듈을 추가하면 로어북을 연결할 수 있습니다.</p>}
-            <div className="illust-lore-list">{archives.map(archive => <article key={archive.id} className="illust-lore-entry">
-              <div className="illust-actions"><strong>{archive.filename}</strong><span className="field-help">{archive.kind === "bot" ? "캐릭터 카드" : "모듈"} · {bytes(archive.size)} · 로어북 {archive.lore_entries.length}개</span>
-                <a className="button secondary small" href={api.media(`/api/bot_mode/archive?${query({ bot_name: botName, id: archive.id })}`)} download={archive.filename}>원본 다운로드</a></div>
-              {!!archive.lore_entries.length && <details className="illust-lore-content"><summary>로어북 내용 확인</summary>
-                {archive.lore_entries.map(entry => <details key={characterLoreId(entry)} className="illust-lore-entry"><summary>{entry.title}</summary><LoreContent entry={entry} /></details>)}
-              </details>}
-            </article>)}</div>
-            <details className="illust-lore-entry"><summary>캐릭터 카드·모듈 추가</summary>
-              <div className="illust-form illust-lore-content">
-                <div className="illust-archive-inputs"><CharacterArchiveInput kind="bot" files={botFiles} disabled={disabled} onChange={setBotFiles} />
-                  <CharacterArchiveInput kind="module" files={moduleFiles} disabled={disabled} onChange={setModuleFiles} /></div>
-                <div className="illust-actions"><button type="button" className="button secondary" disabled={disabled || !botFiles.length && !moduleFiles.length} onClick={() => void upload()}>원본 파일 저장</button></div>
-              </div>
-            </details>
-          </section>
-          {!!progress && <p className="field-help" role="status">{progress}</p>}
+        {base && <div className="illust-lore-columns">
+          <Panel title="저장된 캐릭터 카드·모듈" className="illust-character-import-group">
+            <div className="illust-form illust-character-import-body">
+              <SavedLoreArchives archives={archives} botName={botName} />
+              <details className="illust-lore-entry"><summary>캐릭터 카드·모듈 추가</summary>
+                <div className="illust-form illust-lore-content">
+                  <div className="illust-archive-inputs"><CharacterArchiveInput kind="bot" files={botFiles} disabled={disabled} onChange={setBotFiles} />
+                    <CharacterArchiveInput kind="module" files={moduleFiles} disabled={disabled} onChange={setModuleFiles} /></div>
+                  <div className="illust-actions"><button type="button" className="button secondary" disabled={disabled || !botFiles.length && !moduleFiles.length} onClick={() => void upload()}>원본 파일 저장</button></div>
+                </div>
+              </details>
+              {!!progress && <p className="field-help" role="status">{progress}</p>}
+            </div>
+          </Panel>
           <CharacterLoreImport title="캐릭터별 로어북 연결" entries={entries} characterNames={names} existingCharacterNames={[]}
             botName={botName} onBusyChange={setBusy} onAutoLink={selected => {
               setMessage(""); setDraft(current => Object.fromEntries(Object.entries(current).map(([name, characterEntries]) => [name,
@@ -114,7 +146,7 @@ export function IllustLoreLinking({ botName, readOnly, onClose, onChanged }: {
             }}
             assignedEntries={draft} assignments={assignments} disabled={disabled} onChange={changeAssignments} onEdit={edit}
             onCreate={character => edit(character, { source: "직접 입력", entry_id: crypto.randomUUID(), title: "", content: "", keys: [], secondary_keys: [], enabled: true, constant: false, selective: false, use_regex: false })} />
-        </>}
+        </div>}
         <div className="illust-actions illust-lore-footer"><button type="button" className="button primary" disabled={disabled || !dirty} onClick={() => void save()}>{busy ? "처리 중…" : `연결 저장${dirty ? ` · ${changed.length}명` : ""}`}</button>
           <button type="button" className="button" disabled={busy} onClick={() => dirty ? setDiscard(true) : onClose()}>닫기</button></div>
       </div>
