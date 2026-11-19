@@ -248,7 +248,7 @@ DEFAULT_TOGGLES = {
     # 프리셋 설정에서 지정한 복장 대표 표정. 새 복장(새 NPC 포함)의
     # 대표 이미지를 먼저 생성할 때 사용한다. 복장별 지정이 있으면 그쪽이 우선.
     "emotion_representative": {},
-    "profile_context_translate": True,
+    "profile_context_translate": False,
     "profile_resolve_mode": "combined",
     "supplement": True,
     "key_visual": True,

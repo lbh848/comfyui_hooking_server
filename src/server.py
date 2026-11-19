@@ -715,7 +715,7 @@ DEFAULT_CONFIG = {
         "manga_disable_bubbles": False,
         "nsfw_asset_generation_enabled": False,
         "emotion_representative": {},
-        "profile_context_translate": True,
+        "profile_context_translate": illustration_context_pipeline.DEFAULT_TOGGLES["profile_context_translate"],
         "profile_resolve_mode": illustration_context_pipeline.DEFAULT_TOGGLES["profile_resolve_mode"],
         "supplement": True,
         "key_visual": True,
