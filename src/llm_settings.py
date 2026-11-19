@@ -56,6 +56,7 @@ def without_migrated_llm_settings(config: dict) -> dict:
     fields = (*SLOT_DEFAULTS, "service", "url", "api_key", "provider_id", "max_concurrency")
     migrated = {f"llm_{field}{suffix}" for field in fields for suffix in SLOT_SUFFIXES}
     migrated.update(f"custom_api_url{suffix}" for suffix in SLOT_SUFFIXES)
+    migrated.update(f"llm_vram_headroom_mib{slot_id[3:]}" for slot_id in LLM_SP_SLOTS)
     migrated.add("llm_routing")
     return {key: value for key, value in config.items() if key not in migrated}
 
@@ -67,7 +68,8 @@ def validate_context_size(context_size: int) -> int:
 
 
 def fixed_sp_slot(slot_id: str = LLM_SP["id"], *, reasoning_budget_tokens: int | None = None,
-                  context_size: int = LLM_SP["context_size"]) -> dict:
+                  context_size: int = LLM_SP["context_size"],
+                  vram_headroom_mib: int = LLM_SP["vram_headroom_mib"]) -> dict:
     profile = LLM_SP_SLOTS[slot_id]
     budget = profile["reasoning_budget_tokens"]
     if profile["thinking_mode"] == "on" and reasoning_budget_tokens not in (None, 0):
@@ -78,8 +80,19 @@ def fixed_sp_slot(slot_id: str = LLM_SP["id"], *, reasoning_budget_tokens: int |
             "model": LLM_SP["workflow_name"], "max_tokens": 8196, "temperature": 1.0,
             "alias": profile["alias"],
             "context_size": validate_context_size(context_size),
+            "vram_headroom_mib": vram_headroom_mib,
             "reasoning_budget_tokens": budget,
             "stream": True, "stream_idle_timeout_seconds": 0.0}
+
+
+def normalize_llm_slot(slot: dict) -> dict:
+    if slot.get("id") not in LLM_SP_SLOTS:
+        return slot
+    return fixed_sp_slot(
+        slot["id"], reasoning_budget_tokens=slot.get("reasoning_budget_tokens"),
+        context_size=slot.get("context_size", LLM_SP["context_size"]),
+        vram_headroom_mib=slot.get("vram_headroom_mib", LLM_SP["vram_headroom_mib"]),
+    )
 
 
 def default_llm_routing() -> dict:
@@ -292,9 +305,7 @@ def migrate_document(value: dict, root: Path) -> dict:
         for task in RETIRED_LLM_ROUTING_TASKS:
             value["draft"]["llmRouting"].pop(task, None)
     if "llms" in value["draft"]:
-        value["draft"]["llms"] = [fixed_sp_slot(slot["id"], reasoning_budget_tokens=slot.get("reasoning_budget_tokens"),
-                                              context_size=slot.get("context_size", LLM_SP["context_size"])) if slot.get("id") in LLM_SP_SLOTS else slot
-                                  for slot in value["draft"]["llms"]]
+        value["draft"]["llms"] = [normalize_llm_slot(slot) for slot in value["draft"]["llms"]]
         value = migrate_provider_urls(migrate_provider_services(value))
         providers = {provider["id"]: provider for provider in value["draft"]["llmProviders"]}
         for slot in value["draft"]["llms"]:
@@ -331,9 +342,7 @@ def runtime_config(document: dict) -> dict:
                 routing[task] = copy.deepcopy(routing[source_task])
         result["llm_routing"] = routing
     for slot in document["draft"]["llms"]:
-        if slot["id"] in LLM_SP_SLOTS:
-            slot = fixed_sp_slot(slot["id"], reasoning_budget_tokens=slot.get("reasoning_budget_tokens"),
-                                 context_size=slot.get("context_size", LLM_SP["context_size"]))
+        slot = normalize_llm_slot(slot)
         suffix = "" if slot["id"] == "llm1" else slot["id"][3:]
         for field, default in SLOT_DEFAULTS.items():
             result[f"llm_{field}{suffix}"] = slot.get(field, default)
@@ -344,6 +353,7 @@ def runtime_config(document: dict) -> dict:
         result[f"llm_api_key{suffix}"] = document["apiKeys"].get(provider["id"], "") if provider else ""
         result[f"llm_max_concurrency{suffix}"] = provider["maxConcurrency"] if provider else 1
         if slot["id"] in LLM_SP_SLOTS:
+            result[f"llm_vram_headroom_mib{suffix}"] = slot["vram_headroom_mib"]
             result[f"llm_service{suffix}"] = LLM_SP["service"]
             result[f"llm_provider_id{suffix}"] = LLM_SP["service"]
     return result

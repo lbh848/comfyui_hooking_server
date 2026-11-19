@@ -9,7 +9,7 @@ Base64 이미지와 지시 프롬프트를 담은 JSON을 받아 텍스트를 �
 - 생성 가속: 같은 저장소의 `mtp-gemma-4-12b-it-uncensored.gguf`를 사용하는 MTP, 최대 2토큰 초안.
 - 컨텍스트: **16,384**, 팩의 최대 응답: **8,196** 토큰, 온도 **1.0**, 추론 모드 활성화(최대 **2,048** 토큰).
   샘플링은 `top_p=0.95`, `top_k=64`, `min_p=0`, 반복 페널티 **1.0**을 사용합니다.
-- 8GB 이상 NVIDIA GPU 대상: `gpu_layers` 자동, 메모리 맞춤 활성화, 여유 VRAM 목표 **2GiB(2,048MiB)**.
+- 8GB 이상 NVIDIA GPU 대상: `gpu_layers` 자동, 메모리 맞춤 활성화. **VRAM 여유 목표 (MiB)**의 기본값은 **2,048**이며 두 로컬 LLM에서 각각 설정할 수 있습니다.
   컨텍스트는 고정하고, 필요한 경우 레이어를 CPU로 오프로드합니다.
 - CPU 오프로드에는 시스템 RAM이 추가로 필요합니다. 다른 GPU 작업의 메모리 점유량에
   따라 실제 배치와 속도는 달라집니다.
@@ -85,7 +85,7 @@ LLM_SP의 응답은 생성되는 동안 `테스트`와 `LLM 로그`에 실시간
 
 응답 후 모델을 유지하고, 각 요청은 이전 메시지나 프롬프트 캐시를 사용하지 않습니다.
 분석 모델을 새로 로드할 때 ComfyUI의 GPU 모델을 먼저 내립니다.
-`context_size`, `max_tokens`, `temperature`, `seed`, `gpu_layers`, `gpu_device`,
+`context_size`, `max_tokens`, `temperature`, `seed`, `gpu_layers`, `gpu_device`, `vram_headroom_mib`,
 `binary_path`, `port`를 노드에서 조절할 수 있습니다.
 
 API 사용 시 설치된 워크플로우를 기존 `/workflow/convert`에 보내 API 형식으로

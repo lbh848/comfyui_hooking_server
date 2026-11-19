@@ -192,6 +192,10 @@ export function LlmPage({ draft, setDraft, apiKeys, setApiKeys, isSaved, revisio
                 </select>
                 <span className="field-help">입력·추론·응답을 포함한 한도입니다. 크게 설정할수록 메모리를 더 사용합니다.</span>
               </label>
+              <NumberField key={`${slot.id}-${slot.vram_headroom_mib ?? llmSp.vram_headroom_mib}`} label="VRAM 여유 목표 (MiB)"
+                value={slot.vram_headroom_mib ?? llmSp.vram_headroom_mib} max={llmSp.vram_headroom_max_mib}
+                onChange={(vram_headroom_mib) => edit({ vram_headroom_mib })}
+                help="모델을 불러올 때 GPU에 남겨 둘 메모리의 목표값입니다. 다음 요청부터 적용됩니다." />
               <label className="field">응답 방식<input readOnly value="스트리밍" /></label>
             </div>
             <p className="field-help">Comfy #1에서 프롬프트에 응답합니다. 이미지는 선택 사항이며 1장까지 추가할 수 있습니다. 응답 후 모델을 유지하고, 같은 Comfy에서 그림 작업을 시작할 때 해제합니다.</p>

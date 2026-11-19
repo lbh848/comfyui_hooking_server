@@ -7,6 +7,8 @@
   "node_type": "SoyaGemma4Vision_mdsoya",
   "model_name": "Gemma 4 12B Uncensored",
   "quantization": "Q4_K_M",
+  "vram_headroom_mib": 2048,
+  "vram_headroom_max_mib": 2147483647,
   "context_size": 12288,
   "context_size_options": [
     8192, 12288, 16384, 24576, 32768, 40960, 49152, 57344, 65536,

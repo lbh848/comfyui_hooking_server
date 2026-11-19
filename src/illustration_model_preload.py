@@ -31,17 +31,14 @@ async def load_local_llm_after_generation(toggles: dict) -> None:
     from llm_settings import LLM_SP, LLM_SP_SLOTS
     from modes import llm_service
 
-    config = llm_service.get_config()
     # CHARACTER-RESOLVE is the next illustration's first LLM call. Match its
     # local slot, especially its context size, so manager.start can reuse it.
     slot_id = llm_service.routing_primary_slot("illustration_character_resolve")
     if slot_id not in LLM_SP_SLOTS:
         slot_id = LLM_SP["id"]
-    context_size = config.get(f"llm_context_size{slot_id[3:]}", LLM_SP["context_size"])
-    logging.getLogger(__name__).info("[특수 전략] 공방-LLM 로드 설정: slot=%s context_size=%s", slot_id, context_size)
-    await run_model_load(analyze([], preload_only=True, slot_id=slot_id,
-        context_size=context_size,
-        reasoning_budget=config.get("llm_reasoning_budget_tokens_sp") or 2048), label="공방-LLM 로드")
+    options = llm_service.local_llm_workflow_options(slot_id)
+    logging.getLogger(__name__).info("[특수 전략] 공방-LLM 로드 설정: %s", options)
+    await run_model_load(analyze([], preload_only=True, **options), label="공방-LLM 로드")
 
 
 def image_model_load_graph(workflow: dict) -> dict:

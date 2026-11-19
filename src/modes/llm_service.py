@@ -57,6 +57,7 @@ _fixed_sp_config = runtime_config({"draft": {"llmProviders": [], "llms": [fixed_
 _fixed_sp_config.pop("llm_reasoning_budget_tokens_sp")  # This setting belongs to the saved reasoning slot.
 for _sp_slot_id in LLM_SP_SLOTS:
     _fixed_sp_config.pop(f"llm_context_size{_sp_slot_id[3:]}")
+    _fixed_sp_config.pop(f"llm_vram_headroom_mib{_sp_slot_id[3:]}")
 _settings_config_ctx: ContextVar[dict | None] = ContextVar("llm_settings_config", default=None)
 
 
@@ -610,6 +611,16 @@ def _base_config_get(key: str, default=None):
     if key in _fixed_sp_config:
         return _fixed_sp_config[key]
     return _shared_settings().get(key, dict.get(_current_config, key, default))
+
+
+def local_llm_workflow_options(slot_id: str) -> dict:
+    suffix = _slot_suffix(slot_id)
+    return {
+        "slot_id": slot_id,
+        "reasoning_budget": _base_config_get("llm_reasoning_budget_tokens_sp") or 2048,
+        "context_size": _base_config_get(f"llm_context_size{suffix}", LLM_SP["context_size"]),
+        "vram_headroom_mib": _base_config_get(f"llm_vram_headroom_mib{suffix}", LLM_SP["vram_headroom_mib"]),
+    }
 
 
 def _slot_config_overrides(slot: str) -> dict:
@@ -3334,10 +3345,8 @@ async def _dispatch_unlimited(messages: list, service: str, model: str) -> str:
     if _llm_slot_ctx.get() in LLM_SP_SLOTS:
         from llm_sp_workflow import analyze
         try:
-            return await analyze(messages, slot_id=_llm_slot_ctx.get(),
-                                 reasoning_budget=_base_config_get("llm_reasoning_budget_tokens_sp") or 2048,
-                                 context_size=_base_config_get(f"llm_context_size{_slot_suffix(_llm_slot_ctx.get())}", LLM_SP["context_size"]),
-                                 metadata=_usage_sink_ctx.get())
+            return await analyze(messages, metadata=_usage_sink_ctx.get(),
+                                 **local_llm_workflow_options(_llm_slot_ctx.get()))
         except (ValueError, RuntimeError, OSError, aiohttp.ClientError) as exc:
             return f"[LLM 실패] {exc}"
     if service == UNCONFIGURED_SERVICE:
@@ -6607,9 +6616,7 @@ async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
 
     if _llm_slot_ctx.get() in LLM_SP_SLOTS:
         from llm_sp_workflow import stream
-        upstream = stream(messages, slot_id=_llm_slot_ctx.get(),
-                          reasoning_budget=_base_config_get("llm_reasoning_budget_tokens_sp") or 2048,
-                          context_size=_base_config_get(f"llm_context_size{_slot_suffix(_llm_slot_ctx.get())}", LLM_SP["context_size"]))
+        upstream = stream(messages, **local_llm_workflow_options(_llm_slot_ctx.get()))
         try:
             async for event in upstream:
                 if event.get("type") == "done":

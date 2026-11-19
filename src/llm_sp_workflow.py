@@ -81,6 +81,7 @@ def build_request(messages: list) -> dict:
 
 async def analyze(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budget: int = 2048,
                   context_size: int = LLM_SP["context_size"],
+                  vram_headroom_mib: int = LLM_SP["vram_headroom_mib"],
                   project_root: Path = SOURCE_DIR, on_event=None, metadata=None, preload_only: bool = False) -> str:
     started = time.monotonic()
     metadata = metadata if metadata is not None else {}
@@ -209,9 +210,10 @@ async def analyze(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budg
                 if not isinstance(graph, dict) or graph.get(node_id, {}).get("class_type") != LLM_SP["node_type"]:
                     raise RuntimeError("Gemma 워크플로우를 API 형식으로 변환하지 못했습니다.")
                 # Attach the JSON/Base64 request only to the execution endpoint.
-                # Keep the installed workflow's node options, including GPU offloading.
+                # The slot owns context, reasoning, and VRAM headroom. Other node options come from the workflow.
                 graph[node_id]["inputs"]["prompt_json"] = json.dumps(payload, ensure_ascii=False)
                 graph[node_id]["inputs"]["context_size"] = context_size
+                graph[node_id]["inputs"]["vram_headroom_mib"] = vram_headroom_mib
                 graph[node_id]["inputs"]["thinking_mode"] = profile["thinking_mode"]
                 graph[node_id]["inputs"]["reasoning_budget"] = str(reasoning_budget)
                 graph[node_id]["inputs"]["preload_only"] = preload_only
@@ -335,6 +337,7 @@ async def analyze(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budg
 
 async def stream(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budget: int = 2048,
                  context_size: int = LLM_SP["context_size"],
+                 vram_headroom_mib: int = LLM_SP["vram_headroom_mib"],
                  project_root: Path = SOURCE_DIR):
     """Keep HTTP deadlines and cancellation in one task while callers consume deltas."""
     events = asyncio.Queue()
@@ -343,7 +346,7 @@ async def stream(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budge
         metadata = {}
         try:
             text = await analyze(messages, slot_id=slot_id, reasoning_budget=reasoning_budget,
-                                 context_size=context_size,
+                                 context_size=context_size, vram_headroom_mib=vram_headroom_mib,
                                  project_root=project_root, on_event=events.put, metadata=metadata)
             await events.put({"type": "done", "text": text, **metadata})
         except Exception as exc:

@@ -115,6 +115,7 @@ class LlmSlot(SettingsValue):
     pdf_image_preserve_system_prompt: bool = True
     max_tokens: Annotated[int, Field(ge=0)] = 0
     context_size: Annotated[int, AfterValidator(validate_context_size)] = LLM_SP["context_size"]
+    vram_headroom_mib: Annotated[int, Field(ge=0, le=LLM_SP["vram_headroom_max_mib"])] = LLM_SP["vram_headroom_mib"]
     stream_idle_timeout_seconds: Annotated[float, Field(ge=0, le=3600)] = 90.0
     reasoning_preset: Literal["gemini", "custom"] = "custom"
     reasoning_effort: Text = ""

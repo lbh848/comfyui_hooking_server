@@ -34,6 +34,7 @@ export interface LlmSlot {
   pdf_image_preserve_system_prompt: boolean;
   max_tokens: number;
   context_size: number;
+  vram_headroom_mib?: number;
   stream_idle_timeout_seconds: number;
   reasoning_preset: "gemini" | "custom";
   reasoning_effort: string;
@@ -68,6 +69,7 @@ export const llms: LlmSlot[] = llmSlotIds.map((id) => ({
   stream: !!llmSpProfile(id), vision_compress: false, gemini_base64: false, pdf_prompt: false,
   pdf_prompt_format: "pdf", ...imagePdfDefaults, max_tokens: llmSpProfile(id) ? 8196 : 0, stream_idle_timeout_seconds: llmSpProfile(id) ? 0 : 90,
   context_size: llmSp.context_size,
+  ...(llmSpProfile(id) ? { vram_headroom_mib: llmSp.vram_headroom_mib } : {}),
   reasoning_preset: "custom", reasoning_effort: "", reasoning_budget_tokens: llmSpProfile(id)?.reasoning_budget_tokens || 0,
   temperature: 1, custom_body: "", custom_headers: "",
 }));
