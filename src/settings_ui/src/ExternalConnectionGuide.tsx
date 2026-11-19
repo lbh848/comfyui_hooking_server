@@ -18,9 +18,9 @@ export function ExternalConnectionGuide({ url }: { url: string }) {
                             </div>
                         </div>
                         <div className="sg-card">
-                            <span className="sg-tag">V5 폴더</span>
-                            <h5>개조 삽화 모듈 및 플러그인 v73</h5>
-                            <p>아래 Proton Drive 주소에 들어간 뒤 <strong>V5 폴더</strong>의 파일을 다운로드해주세요.(플러그인 및 개조삽화모듈)</p>
+                            <span className="sg-tag">Comfy공방 폴더</span>
+                            <h5>개조 삽화 모듈 및 플러그인</h5>
+                            <p>아래 Proton Drive 주소에 들어간 뒤 <strong>Comfy공방 폴더</strong>의 파일을 다운로드해주세요.</p>
                             <a className="sg-link" href="https://drive.proton.me/urls/VCVXPXN18M#pU3alCDwURvh" target="_blank" rel="noopener noreferrer">https://drive.proton.me/urls/VCVXPXN18M#pU3alCDwURvh</a>
                         </div>
                         <div className="sg-card">
@@ -30,11 +30,6 @@ export function ExternalConnectionGuide({ url }: { url: string }) {
                             <a className="sg-link" href="https://arca.live/b/characterai/187530446" target="_blank" rel="noopener noreferrer">라이트보드 백엔드 다운로드</a>
                         </div>
                         <div className="sg-notice">다운로드한 모듈과 플러그인을 RisuAI에 등록한 뒤, 설정에서 모두 켜져 있는지 먼저 확인해주세요.</div>
-                        <div className="sg-card">
-                            <h5>원하는 위치를 포함해 삽화 그리기</h5>
-                            <p>답장의 <strong>삽화 → 지정 삽화 포함해서 그리기</strong>를 누르세요. 제거 패턴이 적용된 현재 답장에서 문장 사이의 <strong>＋ DRAW POINT</strong>를 누르면 그 위치에 마커를 넣을 수 있습니다. 여러 문장 사이를 지정하고, 마커를 다시 눌러 제거할 수 있습니다.</p>
-                            <p><strong>삽화 그리기</strong>를 누르면 지정 위치와 기존 자동 후보를 함께 보고 장면을 선택합니다. <strong>추론부터 다시 생성</strong>은 처음부터 다시 판단하고, <strong>시드만 바꿔서 자동 생성</strong>은 저장된 프롬프트로 다시 그립니다.</p>
-                        </div>
                     </div>
 
                     <div className="sg-section">
