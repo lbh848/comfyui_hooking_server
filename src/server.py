@@ -716,6 +716,7 @@ DEFAULT_CONFIG = {
         "nsfw_asset_generation_enabled": False,
         "emotion_representative": {},
         "profile_context_translate": True,
+        "profile_resolve_mode": "per_character",
         "supplement": True,
         "key_visual": True,
         "keyvis_in_detail_enabled": True,

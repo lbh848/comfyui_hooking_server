@@ -777,9 +777,15 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
     # creation, not whether unregistered participants are identified.
     npc_extension = bool(selection and not profile_inference_enabled)
     if profile_inference_enabled:
+        profile_system = prompt_join("\n\n", [
+            profile_system or "",
+            "Apply the profile rules independently to every name in the target list below. "
+            "Any single-character instructions apply to each character in turn. Return one characters array "
+            "with exactly one timeline per listed name, using that character's own card IDs and tracked state.",
+        ])
         user_content = (
-            "# TARGET CURRENT MULTI-PROFILE CHARACTER\n"
-            + variable(json.dumps(selected_names[0], ensure_ascii=False), "대상 캐릭터")
+            "# TARGET CURRENT MULTI-PROFILE CHARACTERS\n"
+            + variable(json.dumps(selected_names, ensure_ascii=False), "대상 캐릭터")
             + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
             + variable(json.dumps(tracked_state, ensure_ascii=False, indent=2), "이전 프로필 추적 상태")
             + "\n\n# REGISTERED PROFILE CATALOG FOR RESOLVED CURRENT CHARACTERS\n"

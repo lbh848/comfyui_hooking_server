@@ -155,7 +155,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
         stage("profile", "PROFILE-RESOLVE · 프로필 시점 해석", "빈 START·C 시간표에서 초기 프로필과 변경점·근거를 예측하고 서버가 나머지 칸을 이어 채웁니다.",
               ["초기·변경 프로필과 판단 근거", "서버가 채운 프로필 시간표"], [prompt_part("profile_resolve", "프로필 선택 지침", "PROFILE-RESOLVE")],
               builders.resolution_messages(True, names, {}, "_input_", "_input_", "", "_input_", prompts["profile_resolve"], anchors=["C001", "C002"]),
-              condition="여러 프로필이 등록된 캐릭터만 · 캐릭터별 병렬",
+              condition="여러 프로필이 등록된 등장인물만 · " + ("한번에 예측" if toggles["profile_resolve_mode"] == "combined" else "캐릭터별 예측"),
               notes="단일 프로필은 바로 사용합니다. 이전 저장 프로필을 현재 원문의 변화에 맞춰 갱신합니다. 프로필과 근거는 다음 변경점까지 이어받으며 노드 상세에서 표를 확인합니다. 추적 히스토리에 최종 상태·변경 기록을 저장해 다음 대화에 사용합니다. 사용자 페르소나는 자료가 있을 때 포함합니다.")
         if emotion:
             stage("background_card", "배경 카드 예측", "선택된 배경 중 새 카드에만 이미지 프롬프트를 작성합니다.",

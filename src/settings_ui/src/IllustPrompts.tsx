@@ -25,6 +25,7 @@ const labels: Record<string, string> = {
   single_char_mask_skip_enabled: "면적 기준으로 1인 마스크 생략", single_char_mask_skip_area_percent: "생략 기준 면적 (%)",
   speak_enabled: "대사 생성", call3_prompt_mode: "대사 출력 방식", speak_language: "대사 언어", speak_emotion_enabled: "대사 감정 지정", speak_emotions: "대사 감정",
   nsfw: "NSFW 태깅", overthinking_prevention_enabled: "과추론 방지", manga_composition_hint_enabled: "만화 구성 힌트", nsfw_asset_generation_enabled: "NSFW 에셋 생성", profile_context_translate: "프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)", supplement: "SUPPLEMENT", key_visual: "KEYVIS 대표 이미지 생성",
+  profile_resolve_mode: "프로파일 리졸브 모드",
   character_limit: "이미지당 최대 캐릭터", scene_mode: "장면 수 결정", output_count_min: "최소 일반 장면 수", output_count_max: "최대 일반 장면 수",
   context_history: "이전 대화 참조", focus: "집중 캐릭터", direction: "우선 연출 지시", manga_output_count_min: "최소 만화 페이지 수", manga_output_count_max: "최대 만화 페이지 수",
   manga_scene_mode: "페이지 수 결정", manga_character_limit: "페이지당 최대 캐릭터", manga_focus: "만화 집중 캐릭터", manga_direction: "만화 우선 연출 지시",
@@ -35,6 +36,7 @@ for (const [suffix, text] of Object.entries({ enabled: "병렬 처리", max_conc
   labels[`call2_parallel_${suffix}`] = `PLAN ${text}`;
 }
 const choices: Record<string, [string, string][]> = {
+  profile_resolve_mode: [["per_character", "캐릭터별 예측"], ["combined", "한번에 예측"]],
   illustration_output_mode: [["illustration", "일반 삽화"], ["original_asset", "원본 에셋"], ["both", "일반 삽화 + 원본 에셋"], ["manga", "만화 삽화"], ["manga_both", "만화 삽화 + 원본 에셋"]],
   scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]], manga_scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]],
   character_limit: [["1", "1"], ["2", "2"], ["3", "3"]], manga_character_limit: [["1", "1"], ["2", "2"], ["3", "3"]],
@@ -71,7 +73,7 @@ const generationGroups: { id: string; title: string; description: string; sectio
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "profile_resolve_mode", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
       { title: "", keys: ["key_visual", "postprocess_enabled"] },
     ],

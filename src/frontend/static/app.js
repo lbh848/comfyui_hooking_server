@@ -19909,7 +19909,7 @@
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
                 lines.push('1. **CHARACTER-RESOLVE** — CURRENT 본문에서 전체 등장인물과 요청한 삽화 장면을 함께 결정합니다. 과거 문맥·저장 상태는 장면 이해에만 사용하며, 프로필 판정 결과는 받지 않습니다.');
-                lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터를 캐릭터별로 병렬 판정합니다. 각 호출은 한 캐릭터의 START·이후 변환 프로필과 구체적인 판단 reason을 반환합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
+                lines.push('2. **PROFILE-RESOLVE** — 앞 단계에서 확정한 다중 프로필 등장인물의 시작 프로필과 이후 변경 시점·근거를 결정합니다. 프로파일 리졸브 모드에서 캐릭터별 예측을 선택하면 인물마다 한 번씩, 한번에 예측을 선택하면 대상 모두를 한 번에 호출합니다.');
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('5. **OUTFIT** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 PLAN/DETAIL에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
                 lines.push('6. **OUTFIT / TIME & PLACE → 선택적 PLAN → DETAIL** — 앞단에서 선택된 장면에 확정 프로필과 상태 추적 결과를 반영합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
@@ -20807,7 +20807,7 @@
             { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search' },
             { key: 'illustration_character_resolve', label: '삽화·만화 등장인물·장면 선택', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_profile_context_translate', label: '삽화 프로필 영어 컨텍스트 번역', kind: 'JSON · 캐시 미스 시', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 프로파일 리졸브 모드에 따름', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_emotion_resolve', label: '삽화 CURRENT 복장 결정 (EMOTION-RESOLVE)', kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
@@ -54743,6 +54743,7 @@
                     {key: 'genre', label: '장르', type: 'select', placeholder: 'Enter a genre, era, or world setting', help: '장르를 선택하거나 Custom에서 직접 입력하세요. 배경 묘사에 영향을 미칩니다.', options: [{value: '', label: 'Not specified'}, 'Medieval fantasy', 'Modern', 'Modern fantasy', 'Cyberpunk', 'Steampunk', 'Sci-fi / Space', 'Wuxia', 'Eastern fantasy', 'Historical', 'Post-apocalyptic'], onchange: 'onIllustrationContextToggleChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: '켜면 NSFW 및 물리 접촉 지침을 추가하고, 끄면 제외합니다. 호환성 지침은 항상 적용됩니다.'},
                     {key: 'profile_context_translate', label: '프로필 영어 컨텍스트 번역 (PROFILE-CONTEXT-TRANSLATE)', type: 'toggle', help: '켜면 다중 프로필 캐릭터의 등록 문맥을 영어로 미리 번역해 프로필 판정에 사용합니다. 끄면 번역 LLM 호출 없이 원문을 그대로 사용합니다.'},
+                    {key: 'profile_resolve_mode', label: '프로파일 리졸브 모드', type: 'select', options: [{value: 'per_character', label: '캐릭터별 예측'}, {value: 'combined', label: '한번에 예측'}]},
                     {key: 'outfit_enabled', label: 'OUTFIT 복장·헤어 추적', type: 'toggle', help: '켜면 복장·헤어를 미리 추적합니다. 끄면 원문·이전 문맥·프로필을 보고 후속 LLM이 현재 상태를 판단합니다.'},
                     {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소·조명 추적', type: 'toggle', help: '켜면 시간·장소·조명을 미리 추적하고 DETAIL이 해당 조건을 이어받습니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
                     {key: 'npc_generation_enabled', label: '미등록 인물 자동 생성', type: 'toggle', help: '대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다.'},
@@ -54752,7 +54753,7 @@
                 ],
                 callInfo: [
                     {label: '생성 순서', text: '등장인물·장면 선택 → 프로필 결정 → 켜진 상태 추적 단계 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 선택 장면과 상태·원문을 DETAIL로 직접 전달합니다. KEYVIS를 켜면 첫 DETAIL 배치에서 함께 예측합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, POST PROCESS 대사 완료를 기다리지 않습니다.'},
-                    {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 캐릭터별로 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
+                    {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 선택한 모드로 각 인물의 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
                     {label: 'OUTFIT 상태 추적', text: 'ON이면 복장·헤어의 시작 상태와 현재 변화 사건을 추적합니다. OFF이면 호출을 생략하고 후속 LLM이 문맥에서 판단합니다. 상태 추적·장면 계획 히스토리 범위는 채팅 히스토리 탭에서 설정합니다.'},
                     {label: 'TIME & PLACE 상태 추적', text: 'ON이면 캐릭터별 time(넓은 시간대), place(구체적인 공간), lighting(광원과 조명 상태)을 함께 추적합니다. OFF이면 후속 LLM이 원문에서 판단합니다. 각 항목은 변경된 SLOT에서만 출력하며 복장·헤어와 독립적으로 이어받습니다. DETAIL은 이 조명 조건 안에서 구도를 정합니다. 노드 상세에서 시간·장소·조명 시간표를 확인할 수 있습니다.'},
                     {label: 'DETAIL 이미지 묘사', text: '해당 장면의 프로필과 켜진 단계의 분석 결과를 이미지 태그로 확장합니다. 생략한 계획·상태는 원문과 이전 문맥에서 직접 판단합니다. 병렬 처리 여부와 최대 동시 요청 수는 DETAIL 탭에서 PLAN과 독립적으로 설정합니다. 느린 배치 재요청은 PLAN과 DETAIL이 각각 관리합니다.'},

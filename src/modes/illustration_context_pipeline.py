@@ -248,6 +248,7 @@ DEFAULT_TOGGLES = {
     # 대표 이미지를 먼저 생성할 때 사용한다. 복장별 지정이 있으면 그쪽이 우선.
     "emotion_representative": {},
     "profile_context_translate": True,
+    "profile_resolve_mode": "per_character",
     "supplement": True,
     "key_visual": True,
     "keyvis_in_detail_enabled": True,
@@ -550,6 +551,8 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
                 "nsfw_asset_generation_enabled", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles",
                 "local_llm_load_after_generation", "image_model_load_at_detail"):
         out[key] = _bool(out[key])
+    if out["profile_resolve_mode"] not in ("per_character", "combined"):
+        out["profile_resolve_mode"] = DEFAULT_TOGGLES["profile_resolve_mode"]
     for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):
         out[key] = _emotion_preset_rows(out.get(key))
     out["emotion_representative"] = _emotion_representative_value(
@@ -7266,7 +7269,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "character_resolve",
         "CURRENT 등장인물·장면 교정",
     ),
-    "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 캐릭터별 병렬 결정"),
+    "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 등장인물 프로필 결정"),
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
     "EMOTION-RESOLVE": ("emotion_resolve", "CURRENT 장면별 복장 결정"),
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: (
@@ -9867,6 +9870,13 @@ async def _run_character_resolution(
     return parsed["character_output"], parsed
 
 
+def _profile_resolution_groups(selected_profiles: dict, profile_resolve_mode: str) -> list[dict]:
+    """Group eligible CURRENT characters by the number of subjects per LLM request."""
+    if selected_profiles and profile_resolve_mode == "combined":
+        return [selected_profiles]
+    return [{name: profiles} for name, profiles in selected_profiles.items()]
+
+
 async def _run_profile_resolution(
     *,
     profile_system: str,
@@ -9878,8 +9888,9 @@ async def _run_profile_resolution(
     visual_profiles: dict[str, dict] | None,
     stream_notify,
     history_ids_sink: list[str] | None = None,
+    profile_resolve_mode: str = "per_character",
 ) -> tuple[str, dict]:
-    """Resolve each CURRENT multi-profile character in an independent parallel job."""
+    """Resolve CURRENT multi-profile characters together or in parallel by character."""
     selected_profiles = _selected_visual_profiles(
         visual_profiles,
         candidate_names,
@@ -9887,18 +9898,17 @@ async def _run_profile_resolution(
     )
     if not selected_profiles:
         print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] "
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] "
             "판정할 CURRENT 캐릭터가 없어 호출 건너뜀"
         )
         return "", _empty_profile_result()
 
     jobs = [
         {
-            "name": name,
-            "profiles": {name: deepcopy(character_profiles)},
-            "weight": max(1, len(current_segments or {})),
+            "profiles": profiles,
+            "weight": len(profiles) * max(1, len(current_segments or {})),
         }
-        for name, character_profiles in selected_profiles.items()
+        for profiles in _profile_resolution_groups(selected_profiles, profile_resolve_mode)
     ]
 
     async def invoke(
@@ -9910,21 +9920,20 @@ async def _run_profile_resolution(
         _history_id,
         job_stream_notify,
     ):
-        name = str(job.get("name") or "").strip()
+        profiles = job["profiles"]
         raw, parsed = await _run_resolution_stage(
             profile_system=profile_system,
             segmented_current=segmented_current,
             current_context=current_context,
             current_segments=current_segments,
-            candidate_names=[name],
+            candidate_names=list(profiles),
             previous_state=previous_state,
-            visual_profiles=job.get("profiles") or {},
+            visual_profiles=profiles,
             profile_inference_enabled=True,
             stream_notify=job_stream_notify,
             history_ids_sink=history_ids_sink,
         )
         return {
-            "name": name,
             "raw": raw,
             "parsed": parsed,
         }
@@ -9934,8 +9943,8 @@ async def _run_profile_resolution(
     try:
         values = await _run_parallel_pipeline_jobs(
             jobs,
-            group_id="PROFILE_RESOLVE_PARALLEL",
-            group_label="PROFILE-RESOLVE 캐릭터별 병렬 판정",
+            group_id="PROFILE_RESOLVE_COMBINED" if profile_resolve_mode == "combined" else "PROFILE_RESOLVE_PARALLEL",
+            group_label="PROFILE-RESOLVE 한번에 예측" if profile_resolve_mode == "combined" else "PROFILE-RESOLVE 캐릭터별 예측",
             # 실제 API 동시성은 통합 LLM 큐의 슬롯별 게이트가 최종 제한한다.
             # 여기서는 모든 캐릭터 작업을 즉시 큐에 올려 불필요한 직렬화를 만들지 않는다.
             max_concurrency=len(jobs),
@@ -9957,30 +9966,24 @@ async def _run_profile_resolution(
         failed_by_index = dict(group_error.failures)
 
     for index, reason in sorted(failed_by_index.items()):
-        job = jobs[index - 1]
-        name = str(job.get("name") or "").strip()
+        profiles = jobs[index - 1]["profiles"]
         warning = (
-            f"캐릭터별 프로필 판정 최종 실패로 이전 추적 상태 또는 등록 기본 "
-            f"프로필 폴백 적용: character={name}, reason={reason}"
+            f"프로필 판정 최종 실패로 이전 추적 상태 또는 등록 기본 "
+            f"프로필 폴백 적용: characters={list(profiles)}, reason={reason}"
         )
-        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] {warning}")
+        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
         empty_character_result = _materialize_profile_character_records(
-            [{
-                "name": name,
-                "in_history": False,
-                "profile_timeline": [],
-            }],
-            job.get("profiles") or {},
+            [{"name": name, "in_history": False, "profile_timeline": []} for name in profiles],
+            profiles,
             warnings=[warning],
         )
         fallback = _apply_profile_resolution_fallbacks(
             empty_character_result,
-            job.get("profiles") or {},
+            profiles,
             previous_state,
             default_only=False,
         )
         values_by_index[index] = {
-            "name": name,
             "raw": "",
             "parsed": fallback,
         }
@@ -9989,29 +9992,10 @@ async def _run_profile_resolution(
     merged_uncertainties: list[str] = []
     merged_warnings: list[str] = []
     merged_repair_requests: list[dict] = []
-    for index, job in enumerate(jobs, start=1):
-        name = str(job.get("name") or "").strip()
-        value = values_by_index.get(index) or {}
-        parsed = value.get("parsed") or _empty_profile_result()
-        character = next((
-            deepcopy(item)
-            for item in parsed.get("characters") or []
-            if isinstance(item, dict)
-            and str(item.get("name") or "").strip().casefold() == name.casefold()
-        ), None)
-        if character is None:
-            warning = (
-                f"캐릭터별 프로필 결과에 대상 항목이 없어 빈 타임라인 병합: "
-                f"character={name}"
-            )
-            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] {warning}")
-            character = {
-                "name": name,
-                "in_history": False,
-                "profile_timeline": [],
-            }
-            merged_warnings.append(warning)
-        merged_characters.append(character)
+    for index in range(1, len(jobs) + 1):
+        # The resolution stage normalizes one timeline per requested name in input order.
+        parsed = values_by_index[index]["parsed"]
+        merged_characters.extend(parsed["characters"])
         merged_uncertainties.extend(parsed.get("uncertainties") or [])
         merged_warnings.extend(parsed.get("validation_warnings") or [])
         merged_repair_requests.extend(parsed.get("repair_requests") or [])
@@ -10053,7 +10037,7 @@ async def _run_profile_resolution(
         changes.setdefault(event["segment_id"], {})[event["character"]] = cell
     merged["state_table"] = fill_state_table(changes, list(selected_profiles), ["START", *current_segments])
     print(
-        "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] 캐릭터별 병렬 판정 병합 완료: "
+        f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 프로필 판정 완료: mode={profile_resolve_mode}, "
         f"characters={[item.get('name') for item in raw_characters]}, "
         f"failed={sorted(failed_by_index)}"
     )
@@ -10655,6 +10639,7 @@ async def resolve_profiles_before_generation(
         if progress:
             await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
         profile_output, profile_result = await run_stage(_run_profile_resolution,
+            profile_resolve_mode=toggles["profile_resolve_mode"],
             profile_system=prompts.get("profile_resolve", ""),
             segmented_current=segmented_current,
             current_context=current_context,

@@ -531,7 +531,7 @@
     {
       "key": "illustration_profile_resolve",
       "label": "삽화 CURRENT 프로필 결정 (PROFILE-RESOLVE)",
-      "kind": "JSON · 캐릭터별 병렬",
+      "kind": "JSON · 프로파일 리졸브 모드에 따름",
       "modality": "text",
       "group": "illustration_pipeline",
       "defaults": {

@@ -156,9 +156,10 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     cache_card = card("PROFILE-CONTEXT-CACHE", 1,
                       f"등록 문맥 캐시: 적중 {hits} · 미스 {misses}" if translate_enabled else "프로필 영어 컨텍스트 번역 OFF",
                       enabled=translate_enabled and bool(multiple) and not prompt_batch, condition=profile_condition)
-    profile_cards = [card("PROFILE-RESOLVE", 1, f"{name} 프로필 판정", group="profile_resolve",
-                          index=index, count=len(multiple), condition=profile_condition)
-                     for index, name in enumerate(multiple, 1)] if multiple and not prompt_batch else []
+    profile_groups = pipeline._profile_resolution_groups(multiple, toggles["profile_resolve_mode"]) if not prompt_batch else []
+    profile_cards = [card("PROFILE-RESOLVE", 1, f"{', '.join(group)} 프로필 판정", group="profile_resolve",
+                          index=index, count=len(profile_groups), condition=profile_condition)
+                     for index, group in enumerate(profile_groups, 1)]
     if not profile_cards:
         card("PROFILE-RESOLVE", 1,
              "완성 프롬프트 입력에서는 프로필 판정 생략" if prompt_batch else
@@ -224,9 +225,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             context = [job(cache_card, context, output="캐시 적중·번역 결과 기록")]
             return args[0]
         if operation is pipeline._run_profile_resolution:
-            context = [job(profile_cards[index], context,
-                           input=f"{name} 프로필 후보", output=f"{name} 확정 프로필")
-                       for index, name in enumerate(kwargs["candidate_names"])]
+            context = [job(node, context,
+                           input=f"{', '.join(group)} 프로필 후보", output=f"{', '.join(group)} 확정 프로필")
+                       for node, group in zip(profile_cards, profile_groups)]
             result = pipeline._materialize_profile_character_records(
                 [{"name": name, "in_history": False, "profile_timeline": []} for name in kwargs["candidate_names"]],
                 kwargs["visual_profiles"],
