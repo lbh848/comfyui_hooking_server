@@ -7,9 +7,13 @@
   "node_type": "SoyaGemma4Vision_mdsoya",
   "model_name": "Gemma 4 12B Uncensored",
   "quantization": "Q4_K_M",
-  "context_size": 16384,
-  "context_size_step": 8192,
-  "context_size_max": 262144,
+  "context_size": 12288,
+  "context_size_options": [
+    8192, 12288, 16384, 24576, 32768, 40960, 49152, 57344, 65536,
+    73728, 81920, 90112, 98304, 106496, 114688, 122880, 131072,
+    139264, 147456, 155648, 163840, 172032, 180224, 188416, 196608,
+    204800, 212992, 221184, 229376, 237568, 245760, 253952, 262144
+  ],
   "reasoning_budgets": [1024, 2048, 4096],
   "slots": [
     {"id": "llm_sp", "label": "공방-로컬 LLM (추론)", "alias": "공방-로컬 LLM (추론)", "thinking_mode": "on", "reasoning_budget_tokens": 2048},

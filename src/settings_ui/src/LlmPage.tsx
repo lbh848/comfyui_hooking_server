@@ -186,10 +186,9 @@ export function LlmPage({ draft, setDraft, apiKeys, setApiKeys, isSaved, revisio
               <label className="field">양자화<input readOnly value={llmSp.quantization} /></label>
               <label className="field">컨텍스트
                 <select value={slot.context_size ?? llmSp.context_size} onChange={(event) => edit({ context_size: Number(event.target.value) })}>
-                  {Array.from({ length: llmSp.context_size_max / llmSp.context_size_step }, (_, index) => {
-                    const context_size = (index + 1) * llmSp.context_size_step;
-                    return <option key={context_size} value={context_size}>{context_size / 1024}K{context_size === llmSp.context_size ? " (기본값)" : ""}</option>;
-                  })}
+                  {llmSp.context_size_options.map((contextSize) => (
+                    <option key={contextSize} value={contextSize}>{contextSize / 1024}K{contextSize === llmSp.context_size ? " (기본값)" : ""}</option>
+                  ))}
                 </select>
                 <span className="field-help">입력·추론·응답을 포함한 한도입니다. 크게 설정할수록 메모리를 더 사용합니다.</span>
               </label>

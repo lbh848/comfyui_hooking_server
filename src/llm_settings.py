@@ -61,10 +61,8 @@ def without_migrated_llm_settings(config: dict) -> dict:
 
 
 def validate_context_size(context_size: int) -> int:
-    if (type(context_size) is not int
-            or not LLM_SP["context_size_step"] <= context_size <= LLM_SP["context_size_max"]
-            or context_size % LLM_SP["context_size_step"]):
-        raise ValueError("컨텍스트는 8K부터 256K까지 8K 단위로 설정하세요.")
+    if type(context_size) is not int or context_size not in LLM_SP["context_size_options"]:
+        raise ValueError("공방-로컬 LLM의 컨텍스트 목록에서 값을 선택하세요.")
     return context_size
 
 
