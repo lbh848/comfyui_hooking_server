@@ -10185,14 +10185,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                     _discard_deferred_illustration_prompt(child_id, "NPC 대표 이미지 카드 전달")
 
             async def prepare_npc_character(root):
-                if illustration_provider_snapshot == "chansub":
-                    return
-                from settings_illustration_prepare import _call
-                result = await _call(data_patcher.handle_data_patch,
-                                     {"bot_name": active_bot, "char_name": root["name"]})
-                if not result.get("visual_targets"):
-                    raise RuntimeError(f"NPC 참조 데이터 준비 대상이 없습니다: {root['name']}")
-                print(f"[NPC] {root['name']}: 대표 이미지 준비 완료 · FACE는 대표 생성의 마스크 추적 결과 사용")
+                from settings_illustration_prepare import prepare_npc_representative
+                await prepare_npc_representative(data_patcher, illustration_provider_snapshot, active_bot, root["name"])
 
             profile_output, profile_result = (
                 await illustration_context_pipeline.resolve_profiles_before_generation(

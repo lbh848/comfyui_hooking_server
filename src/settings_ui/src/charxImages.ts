@@ -68,7 +68,7 @@ export async function collectCharxImages(source: FileList | DataTransfer | Itera
     if (!/\.charx$/i.test(archive.name)) { skipped++; continue; }
     try {
       if (archive.size > maxTotalSize) throw new Error("CHARX 파일은 1GB 이하로 선택하세요.");
-      onProgress?.(`${archive.name} · 이미지 목록 읽는 중…`);
+      onProgress?.(`${archive.name} · ${metadataOnly ? "로어북" : "이미지 목록"} 읽는 중…`);
       const data = charxZipData(new Uint8Array(await archive.arrayBuffer()));
       const metadata = await readZip(data, entry => {
         if (entry.name !== "card.json") return false;

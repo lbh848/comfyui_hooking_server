@@ -54,6 +54,15 @@ async def _call(handler, body=None, query=None):
     return result
 
 
+async def prepare_npc_representative(data_patcher, provider, bot_name, char_name):
+    if provider == "chansub":
+        return
+    result = await _call(data_patcher.handle_data_patch, {"bot_name": bot_name, "char_name": char_name})
+    if not result.get("visual_targets"):
+        raise RuntimeError(f"NPC 참조 데이터 준비 대상이 없습니다: {char_name}")
+    print(f"[NPC] {char_name}: 대표 이미지 준비 완료 · FACE는 대표 생성의 마스크 추적 결과 사용")
+
+
 def register_data_preparation(server, *, memory_cleanup=None):
     from modes.bot_mode import (
         _load_patch_settings, _load_tag_filter_profiles, bot_scope, bot_visual_artifact_dir,

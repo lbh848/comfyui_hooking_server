@@ -13,6 +13,7 @@ import { CharacterLoreImport } from "./IllustCharacterLore";
 import type { ImportedGlobalNote } from "./charxImages";
 import { analyzeCbsSyntax } from "./cbsSyntax";
 import { saveBotArchives } from "./botArchives";
+import { LoreNpcImport } from "./IllustLoreNpcImport";
 
 type CharacterAddFormProps = { botName: string; onClose: () => void; onAdded: () => void; busy: boolean; onBusyChange: (busy: boolean) => void };
 
@@ -201,6 +202,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
     setResult(null); setPreflightId(""); setRules(current => current.map((rule, i) => i === index ? { ...rule, ...values } : rule));
   }
   function clearSelection() {
+    setRevision(value => value + 1);
     setFiles([]); setEntries([]); setSelectionError(""); setSelectionStatus(""); setError(""); setResult(null); setPreflightId("");
     setExcludedCount(0);
     setLoreEntries([]); setLoreOverrides({});
@@ -305,16 +307,18 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
       <fieldset className="illust-form" disabled={busy || collecting}>
         <Panel title="파일 선택" className="illust-character-import-group">
         <div className="illust-form illust-character-import-body">
-        <SettingsTabs label="파일 선택 방식" values={{ charx: "CHARX 파일 선택", image: "이미지 파일 선택" }} value={sourceMode} onChange={value => { if (!busy && !collecting) { clearSelection(); setSourceMode(value); } }} />
-        {sourceMode === "charx" ? <>
+        <SettingsTabs label="파일 선택 방식" values={{ charx: "CHARX 파일 선택", lore: "CHARX 파일 선택-(이미지 없음)", image: "이미지 파일 선택" }} value={sourceMode} onChange={value => { if (!busy && !collecting) { clearSelection(); setSourceMode(value); } }} />
+        {sourceMode !== "image" ? <>
           <div className="illust-archive-inputs">
             <CharacterArchiveInput kind="bot" files={botFiles} disabled={busy || collecting} onChange={next => { setBotFiles(next); clearSelection(); }} />
             <CharacterArchiveInput kind="module" files={moduleFiles} disabled={busy || collecting} onChange={next => { setModuleFiles(next); clearSelection(); }} />
           </div>
+          {sourceMode === "lore" ? <p className="field-help">로어북에서 인물을 찾습니다. 생성할 인물을 선택하면 NPC 카드와 대표 이미지를 만들고 수명을 잠급니다.</p> : <>
           <p className="field-help">봇과 모듈의 이미지·로어북을 합쳐 가져옵니다. CHARX의 글로벌 노트 덮어쓰기는 에셋·프로필 출력 지침으로 가져올 수 있습니다. 아래 추출 규칙과 가져올 내용을 확인한 뒤 저장하세요. 아이콘·오디오·스크립트는 제외합니다.</p>
           <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || collecting || !botFiles.length && !moduleFiles.length} onClick={() => void chooseFiles()}>
             <RefreshCw size={14} />{collecting ? "분석 중…" : "합쳐서 분석"}
           </button><span className="field-help">봇 {botFiles.length}개 · 모듈 {moduleFiles.length}개</span></div>
+          </>}
         </> : <>
         <button type="button" className={`illust-batch-dropzone${dragging ? " dragging" : ""}`} onClick={() => fileInput.current?.click()}
           onDragOver={event => { event.preventDefault(); if (!busy && !collecting) setDragging(true); }} onDragLeave={() => setDragging(false)}
@@ -328,7 +332,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
         <IllustrationFeedback error={selectionError} />
         </div>
         </Panel>
-        <Panel title="캐릭터명 추출 규칙" className="illust-character-import-group">
+        {sourceMode !== "lore" && <Panel title="캐릭터명 추출 규칙" className="illust-character-import-group">
         <div className="illust-form illust-character-import-body">
           {rules.map((rule, index) => <div className="illust-batch-rule" key={index}>
             <label className="field">규칙 {index + 1}<select value={rule.action} onChange={event => updateRule(index, { action: event.target.value as BotBatchRule["action"] })}>
@@ -342,8 +346,10 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
           {rules.some(rule => rule.action === "split_by") && <p className="field-help">순번은 0부터 시작합니다. -1은 마지막 항목, 1:3은 첫 번째부터 세 번째 항목입니다.</p>}
           <div className="illust-actions"><button type="button" className="button secondary" onClick={() => { setResult(null); setPreflightId(""); setRules(current => [...current, { action: "split_by", separator: "_", take: 0 }]); }}><Plus size={14} />규칙 추가</button></div>
         </div>
-        </Panel>
+        </Panel>}
       </fieldset>
+      {sourceMode === "lore" ? <LoreNpcImport key={revision} botName={botName} botFiles={botFiles} moduleFiles={moduleFiles}
+        existingNames={existingNames} busy={busy} onBusyChange={onBusyChange} onAdded={onAdded} onClose={onClose} /> : <>
       <Panel title="추출 결과 미리보기" aside={<span className="badge">이미지 {entries.length.toLocaleString()}장</span>} className="illust-character-import-group">
         <div className="illust-form illust-character-import-body">
         <IllustrationFeedback error={validationError} />
@@ -394,5 +400,6 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
         {!!files.length && !comparing && <button type="button" className="button secondary" disabled={busy || collecting} onClick={() => { setResult(null); setPreflightId(""); setRevision(value => value + 1); }}><RefreshCw size={14} />다시 비교</button>}
         <button type="button" className="button" disabled={busy} onClick={onClose}>{result ? "닫기" : "취소"}</button>
       </div>
+      </>}
     </div>;
 }

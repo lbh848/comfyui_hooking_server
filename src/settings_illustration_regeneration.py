@@ -51,6 +51,83 @@ def _emotion_activity(server, bot_name):
     }
 
 
+async def _wait_character_item(server, item, run):
+    if run is not None:
+        run["item_id"] = item.id
+    try:
+        result = await asyncio.shield(item.completion_future)
+        if item.status != "completed" or isinstance(result, dict) and (result.get("error") or result.get("success") is False):
+            raise RuntimeError(item.error or "작업을 완료하지 못했습니다.")
+        return result
+    except asyncio.CancelledError:
+        if not item.completion_future.done():
+            await server.queue_manager.cancel_item(item.id)
+        raise
+    except Exception:
+        if item.status == "cancelled":
+            raise asyncio.CancelledError()
+        raise
+
+
+async def render_character_image(server, root, render_bot, snapshot, *, npc_generated, label, run=None):
+    prompt_id = f"character-image-{uuid.uuid4().hex}"
+    try:
+        toggles = {**snapshot["illustration_context_toggles"], "positive_note": "", "negative_note": ""}
+        # 감정 삽화의 NPC 대표 이미지를 다시 만들 때도 프리셋 설정의
+        # 복장 대표 표정 태그를 유지해 자유 포즈로 돌아가지 않게 한다.
+        emotion_tags = (
+            pipeline.npc_representative_emotion_tags(
+                toggles, str(snapshot.get("workshop") or "illustration"))
+            if npc_generated else [])
+        descriptor = character_image_descriptor(root, emotion_tags=emotion_tags)
+        positive, negative = pipeline.build_raw_prompt(
+            descriptor, "", pipeline.load_prompt_files(snapshot.get("workshop")), toggles,
+        )
+        provider = snapshot["provider"]
+        workflow_type = snapshot["illustration_workflow_type"]
+        prompt_format = workflow_profiles.illustration_prompt_format(workflow_type, "comfy" if provider == "hybrid" else provider)
+        prompt_data = {
+            "positive": {"class_type": "STRING", "_meta": {"title": "긍정프롬프트"}, "inputs": {"value": positive}},
+            "negative": {"class_type": "STRING", "_meta": {"title": "부정프롬프트"}, "inputs": {"value": negative}},
+        }
+        snapshot = {**snapshot, "generation_mode": "character_auto", "npc_render_bot": render_bot}
+        server.prompts[prompt_id] = {
+            "status": "running", "prompt": prompt_data, "client_id": "", "extra_data": {},
+            "outputs": {}, "filename": None, "save_node_id": None, "image_bytes": None,
+            "timestamp": time.time(), "_illustration_runtime_snapshot": snapshot,
+        }
+        # MOSS uses the NPC card values as a summary-only layout, so the
+        # representative needs no regional bbox/tracking path.
+        moss_npc = bool(npc_generated
+                        and toggles.get("illustration_model_family") == "moss")
+        params = {"prompt_id": prompt_id, "prompt_data": prompt_data, "provider": provider,
+                  # 큐 실행 시점에도 감정 삽화 봇 저장소/그리기 설정을 쓰도록
+                  # 작업에 워크숍 식별자를 함께 보관한다.
+                  "workshop": str(snapshot.get("workshop") or "illustration"),
+                  "illustration_flow_skip": True,
+                  "raw_body": {"illustration_provider": provider, "illustration_prompt_format": prompt_format,
+                               "illustration_defer_postprocess": True,
+                               **({"illustration_npc_representative": True}
+                                  if npc_generated else {})}}
+        if npc_generated and not moss_npc:
+            params["npc_tracking_root"] = deepcopy(root)
+        if provider == "hybrid":
+            params["hybrid_prompt_formats"] = {value: workflow_profiles.illustration_prompt_format(workflow_type, value)
+                                                for value in ("comfy", "chansub")}
+        item = await server.queue_manager.add_item("illustration", label, params, priority=0)
+        await _wait_character_item(server, item, run)
+        entry = server.prompts.get(prompt_id, {})
+        pixels = entry.get("_deferred_image_bytes")
+        if not pixels:
+            raise RuntimeError(entry.get("error") or "생성한 대표 이미지가 없습니다.")
+        prompt = descriptor["characters"][0]["positive"]
+        info = (entry.get("_deferred_finalize") or {}).get("conversion_info") or {}
+        return {"image_bytes": pixels, "face_positions": deepcopy(info.get("face_positions") or []),
+                "prompt": prompt, "negative": negative}
+    finally:
+        server._discard_deferred_illustration_prompt(prompt_id, label)
+
+
 def register_character_image_regeneration(server):
     runs = {}
     tasks = {}
@@ -80,77 +157,14 @@ def register_character_image_regeneration(server):
         render_bot["characters"] = [render_root]
         return image_path, prompt_path, metadata, render_root, render_bot
 
-    async def wait_item(run, item):
-        run["item_id"] = item.id
-        try:
-            result = await asyncio.shield(item.completion_future)
-            if item.status != "completed" or isinstance(result, dict) and (result.get("error") or result.get("success") is False):
-                raise RuntimeError(item.error or "작업을 완료하지 못했습니다.")
-            return result
-        except asyncio.CancelledError:
-            if not item.completion_future.done():
-                await server.queue_manager.cancel_item(item.id)
-            raise
-        except Exception:
-            if item.status == "cancelled":
-                raise asyncio.CancelledError()
-            raise
-
     async def regenerate(run, prepared, snapshot):
         image_path, prompt_path, metadata, root, render_bot = prepared
-        prompt_id = f"character-regenerate-{uuid.uuid4().hex}"
-        temporary = image_path.with_name(f".{prompt_id}.tmp")
+        temporary = image_path.with_name(f".character-regenerate-{uuid.uuid4().hex}.tmp")
         try:
             original_version = image_path.stat().st_mtime_ns
-            toggles = {**snapshot["illustration_context_toggles"], "positive_note": "", "negative_note": ""}
-            # 감정 삽화의 NPC 대표 이미지를 다시 만들 때도 프리셋 설정의
-            # 복장 대표 표정 태그를 유지해 자유 포즈로 돌아가지 않게 한다.
-            emotion_tags = (
-                pipeline.npc_representative_emotion_tags(
-                    toggles, str(snapshot.get("workshop") or "illustration"))
-                if root.get("npc_generated") else [])
-            descriptor = character_image_descriptor(root, emotion_tags=emotion_tags)
-            positive, negative = pipeline.build_raw_prompt(
-                descriptor, "", pipeline.load_prompt_files(snapshot.get("workshop")), toggles,
-            )
-            provider = snapshot["provider"]
-            workflow_type = snapshot["illustration_workflow_type"]
-            prompt_format = workflow_profiles.illustration_prompt_format(workflow_type, "comfy" if provider == "hybrid" else provider)
-            prompt_data = {
-                "positive": {"class_type": "STRING", "_meta": {"title": "긍정프롬프트"}, "inputs": {"value": positive}},
-                "negative": {"class_type": "STRING", "_meta": {"title": "부정프롬프트"}, "inputs": {"value": negative}},
-            }
-            snapshot.update(generation_mode="character_auto", npc_render_bot=render_bot)
-            server.prompts[prompt_id] = {
-                "status": "running", "prompt": prompt_data, "client_id": "", "extra_data": {},
-                "outputs": {}, "filename": None, "save_node_id": None, "image_bytes": None,
-                "timestamp": time.time(), "_illustration_runtime_snapshot": snapshot,
-            }
-            # MOSS uses the NPC card values as a summary-only layout, so the
-            # representative needs no regional bbox/tracking path.
-            moss_npc = bool(root.get("npc_generated")
-                            and toggles.get("illustration_model_family") == "moss")
-            params = {"prompt_id": prompt_id, "prompt_data": prompt_data, "provider": provider,
-                      # 큐 실행 시점에도 감정 삽화 봇 저장소/그리기 설정을 쓰도록
-                      # 작업에 워크숍 식별자를 함께 보관한다.
-                      "workshop": str(snapshot.get("workshop") or "illustration"),
-                      "illustration_flow_skip": True,
-                      "raw_body": {"illustration_provider": provider, "illustration_prompt_format": prompt_format,
-                                   "illustration_defer_postprocess": True,
-                                   **({"illustration_npc_representative": True}
-                                      if root.get("npc_generated") else {})}}
-            if root.get("npc_generated") and not moss_npc:
-                params["npc_tracking_root"] = deepcopy(root)
-            if provider == "hybrid":
-                params["hybrid_prompt_formats"] = {value: workflow_profiles.illustration_prompt_format(workflow_type, value)
-                                                    for value in ("comfy", "chansub")}
-            item = await server.queue_manager.add_item("illustration", f"캐릭터 이미지 재생성 · {run['char_name']}", params, priority=0)
-            await wait_item(run, item)
-            entry = server.prompts.get(prompt_id, {})
-            pixels = entry.get("_deferred_image_bytes")
-            if not pixels:
-                raise RuntimeError(entry.get("error") or "재생성한 이미지가 없습니다.")
-            prompt = descriptor["characters"][0]["positive"]
+            rendered = await render_character_image(server, root, render_bot, snapshot,
+                npc_generated=bool(root.get("npc_generated")), label=f"캐릭터 이미지 재생성 · {root['name']}", run=run)
+            pixels, prompt, negative = rendered["image_bytes"], rendered["prompt"], rendered["negative"]
             png_info = PngImagePlugin.PngInfo()
             png_info.add_text("prompt", prompt)
             with Image.open(io.BytesIO(pixels)) as image:
@@ -171,11 +185,10 @@ def register_character_image_regeneration(server):
                 result = await _call(server.data_patcher.handle_data_patch,
                                      {"bot_name": run["bot_name"], "char_name": run["char_name"]})
                 if root.get("npc_generated"):
-                    info = (entry.get("_deferred_finalize") or {}).get("conversion_info") or {}
                     save_tracked_face(
                         directory=storage.bot_visual_artifact_dir(run["bot_name"], run["char_name"], run["visual_card_id"]),
                         source_directory=image_path.parent, source_filename=image_path.name,
-                        character_name=run["char_name"], face_positions=info.get("face_positions") or [],
+                        character_name=run["char_name"], face_positions=rendered["face_positions"],
                         settings=storage._load_patch_settings(run["bot_name"]),
                     )
                     data = storage._load_bot_data()
@@ -188,6 +201,7 @@ def register_character_image_regeneration(server):
                     return
             from comfy_installer.spatial_face_workflow import uses_spatial_faces
             from illustration_model_presets import read_workflow
+            workflow_type = snapshot["illustration_workflow_type"]
             profile = workflow_profiles.illustration_local_profile(workflow_type)
             source = (snapshot.get("illustration_model_preset") or {}).get("config", {}).get("illustration_workflow_source_paths", {}).get(profile)
             workflow, _ = read_workflow(source or server.get_comfy_workflow_source_path(workflow_type))
@@ -204,7 +218,7 @@ def register_character_image_regeneration(server):
                     "bot_name": run["bot_name"], "char_name": run["char_name"],
                     **{key: visual_target[key] for key in ("visual_card_id", "visual_card_label", "visual_card_index")},
                 }, priority=0)
-                await wait_item(run, item)
+                await _wait_character_item(server, item, run)
             run.update(status="completed", message="이미지 교체와 FACE-IPAdapter 처리를 완료했습니다.")
         except asyncio.CancelledError:
             run.update(status="cancelled", message="", error="이미지는 교체되었지만 FACE-IPAdapter 처리가 중단되었습니다." if run["image_replaced"] else "재생성이 중단되었습니다.")
@@ -214,7 +228,6 @@ def register_character_image_regeneration(server):
         finally:
             tasks.pop((run["bot_name"], run["char_name"]), None)
             temporary.unlink(missing_ok=True)
-            server._discard_deferred_illustration_prompt(prompt_id, "캐릭터 이미지 재생성 종료")
 
     async def handle(request):
         if request.method == "GET":

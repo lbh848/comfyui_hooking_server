@@ -201,6 +201,8 @@ def main() -> None:
         register_emotion_profile_outfit_generation,
     )
     register_character_image_regeneration(server)
+    from settings_illustration_lore_npcs import register_lore_npcs
+    register_lore_npcs(server)
     register_emotion_outfit_regeneration(server)
     register_emotion_image_regeneration(server)
     register_emotion_bulk_generation(server)

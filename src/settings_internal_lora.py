@@ -151,6 +151,7 @@ class InternalLoraRuntime:
                        if external or path in {"/api/bot_mode/character_cards/suggest_metadata",
                                                "/api/bot_mode/auto_batch", "/api/bot_lora/allocate",
                                                "/api/bot_mode/character_lore_auto_link",
+                                               "/api/bot_mode/lore_npcs/analyze", "/api/bot_mode/lore_npcs/create",
                                                "/api/bot_mode/archive",
                                                "/api/asset_mode/qwen_edit/translate"} else self.session.timeout)
             async with self.session.request(request.method, self.url + path, params=request.query,

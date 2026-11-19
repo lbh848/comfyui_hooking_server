@@ -331,7 +331,7 @@ async def _handle_bot_distribution_write(request: web.Request, body, handler):
                     distribution.require_unlocked(request.headers.get("X-Bot-Distribution-Token", ""))
             # Suggestions do not write bot data. Release the write lock while the
             # LLM runs so its cancellation request can reach the queue immediately.
-            if request.path not in {"/api/bot_mode/suggest_name_tag", "/api/bot_mode/character_lore_auto_link", "/api/bot_mode/auto_batch", "/api/bot_mode/character_cards/suggest_metadata", "/api/bot_mode/character_cards/suggest_metadata/cancel"}:
+            if request.path not in {"/api/bot_mode/suggest_name_tag", "/api/bot_mode/character_lore_auto_link", "/api/bot_mode/lore_npcs/analyze", "/api/bot_mode/auto_batch", "/api/bot_mode/character_cards/suggest_metadata", "/api/bot_mode/character_cards/suggest_metadata/cancel"}:
                 response = await handler(request)
                 result = json.loads(response.body) if isinstance(response, web.Response) and response.content_type == "application/json" else {}
                 if response.status < 400 and not result.get("error") and result.get("success") is not False:

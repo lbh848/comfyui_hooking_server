@@ -7,6 +7,77 @@ from pathlib import Path
 CHARACTER_LORE_AUTO_LINK_TASK = "character_lore_auto_link"
 
 
+async def analyze_lore_npcs(entries, bot):
+    from modes.illustration_npc import parse_candidates
+    from modes.llm_prompt_edit import parse_llm_json
+    from modes.llm_service import callLLMTask, create_llm_execution_context
+
+    entries = normalize_character_lore(entries)
+    if not entries:
+        raise ValueError("분석할 로어북이 없습니다.")
+    prompt = (Path(__file__).resolve().parents[1] / "prompts" / "character_lore_npcs.txt").read_text(encoding="utf-8")
+    roster = {character["name"]: list(dict.fromkeys(
+        alias for card in character.get("visual_cards", []) for alias in card.get("aliases", [])
+    )) for character in bot.get("characters", [])}
+    candidates = {}
+    # Keep source references stable even when a long entry spans multiple calls.
+    batches = [[]]
+    size = 0
+    for index, entry in enumerate(entries):
+        anchor = f"C{index + 1:03d}"
+        content = format_character_lore([entry])
+        for offset in range(0, len(content), 16000):
+            part = {"anchor": anchor, "title": entry["title"], "text": content[offset:offset + 16000]}
+            part_size = len(json.dumps(part, ensure_ascii=False))
+            if batches[-1] and size + part_size > 20000:
+                batches.append([])
+                size = 0
+            batches[-1].append(part)
+            size += part_size
+
+    for number, batch in enumerate(batches, 1):
+        anchors = {part["anchor"] for part in batch}
+
+        def parse(raw):
+            result = parse_llm_json(raw)
+            return parse_candidates(result.get("candidates") if isinstance(result, dict) else None, [], anchors)
+
+        def validate(raw):
+            try:
+                parse(raw)
+                return True, ""
+            except (ValueError, TypeError) as exc:
+                return False, str(exc)
+
+        task = "character_lore_npcs"
+        context = create_llm_execution_context(task, call_name="로어북 인물 분석", json_mode=True,
+            metadata={"bot_name": bot["name"], "batch": number, "batch_count": len(batches)})
+        raw = await callLLMTask(task, [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps({"roster": roster, "entries": batch}, ensure_ascii=False)},
+        ], json_mode=True, result_validator=validate, execution_context=context)
+        for candidate in parse(raw):
+            name = candidate["name"]
+            current = candidates.setdefault(name.casefold(), {
+                "name": name, "aliases": [], "descriptions": [], "entry_indexes": [],
+            })
+            indexes = [int(anchor[1:]) - 1 for anchor in candidate["anchors"]]
+            for index in indexes:
+                entry = entries[index]
+                evidence = "\n".join([entry["title"], *entry["keys"], *entry["secondary_keys"], entry["content"]]).casefold()
+                for alias in candidate["aliases"]:
+                    if alias.casefold() in evidence and alias not in current["aliases"]:
+                        current["aliases"].append(alias)
+                if index not in current["entry_indexes"]:
+                    current["entry_indexes"].append(index)
+            if candidate["description"] not in current["descriptions"]:
+                current["descriptions"].append(candidate["description"])
+            roster[current["name"]] = list(dict.fromkeys([*roster.get(current["name"], []), *current["aliases"]]))
+    for candidate in candidates.values():
+        candidate["description"] = "\n".join(candidate.pop("descriptions"))
+    return list(candidates.values())
+
+
 async def auto_link_character_lore(body):
     """Suggest links for the current editor without changing stored lore."""
     from modes.llm_prompt_edit import parse_llm_json

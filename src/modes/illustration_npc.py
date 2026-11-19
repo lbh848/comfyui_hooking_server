@@ -269,7 +269,7 @@ async def advance_lifetimes(manager, bot_name: str, used_names: list[str], flow_
 async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                          segmented, toggles, stream_notify, render_image,
                          on_profiles_ready=None, prepare_character=None,
-                         render_gate=None, workshop: str = "illustration"):
+                         render_gate=None, workshop: str = "illustration", lore_by_character=None):
     storage = import_module("modes.bot_mode")
     from modes import illustration_context_pipeline as pipeline
     from modes import illustration_prompt_builders as builders
@@ -361,6 +361,8 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                     store_visual_cards(root, [card])
                     root.update(npc_generated=True, npc_idle_calls=0,
                                 npc_face_source="representative_mask_tracking")
+                    if lore_by_character and root["name"] in lore_by_character:
+                        root.update(npc_lifetime_locked=True, imported_lore=lore_by_character[root["name"]])
                     latest_bot.setdefault("characters", []).append(root)
                     portable, _ = sync_primary_cards_to_portable_data(latest_bot, _portable(storage, bot_name))
                     storage._save_lb_extra(bot_name, portable)
