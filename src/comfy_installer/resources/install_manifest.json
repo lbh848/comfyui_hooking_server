@@ -63,7 +63,7 @@
       "name": "comfyui-instant-lora_v_soya",
       "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
       "source_type": "git",
-      "ref": "d992cc649f9633dae1624edf5cad9887b4c7952a"
+      "tracking_branch": "main"
     },
     {
       "name": "comfyui-kjnodes",
@@ -98,7 +98,7 @@
       "name": "comfyui-soya-custom-nodes",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
       "source_type": "git",
-      "ref": "a746bf696c783ce7de0c3ab8f8c5b2e543c766df"
+      "tracking_branch": "main"
     },
     {
       "name": "ComfyUI-MOSS-Toolkit",
