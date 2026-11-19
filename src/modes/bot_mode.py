@@ -1603,15 +1603,24 @@ async def _generate_visual_profile_appearance_context(
     }
 
 
+def _npc_lifetime_data(character: dict) -> dict:
+    if character.get("npc_generated") is not True:
+        return {}
+    from modes.illustration_npc import get_npc_lifetime
+    return {
+        "npc_generated": True,
+        "npc_lifetime": get_npc_lifetime(),
+        "npc_idle_calls": int(character.get("npc_idle_calls", 0)),
+        "npc_lifetime_locked": character.get("npc_lifetime_locked") is True,
+    }
+
+
 def _character_card_data(root_character: dict, extra_character: dict | None) -> dict:
     character, source = effective_character_profiles(
         str(root_character.get("name") or ""), root_character, extra_character,
     )
     character["imported_lore"] = deepcopy(root_character.get("imported_lore", []))
-    if root_character.get("npc_generated") is True:
-        from modes.illustration_npc import get_npc_lifetime
-        character.update(npc_generated=True, npc_idle_calls=int(root_character.get("npc_idle_calls", 0)),
-                         npc_lifetime=get_npc_lifetime())
+    character.update(_npc_lifetime_data(root_character))
     return {"character": character, "source": source, "max_cards": MAX_VISUAL_CARDS}
 
 
@@ -1719,8 +1728,8 @@ class BotMode:
                     return _json_ok(result)
                 elif action == "rename_character":
                     return await self._rename_character(data, body)
-                elif action == "renew_npc_lifetime":
-                    return await self._renew_npc_lifetime(data, body)
+                elif action in {"renew_npc_lifetime", "set_npc_lifetime_lock"}:
+                    return self._update_npc_lifetime(data, body)
                 elif action == "set_lb_extra_batch_lock":
                     return await self._set_lb_extra_batch_lock(data, body)
                 elif action == "toggle_rep_image":
@@ -1856,7 +1865,7 @@ class BotMode:
         result = await asyncio.to_thread(manage_characters, data, {**body, "char_names": [body.get("char_name", "")]})
         return _json_ok(result)
 
-    async def _renew_npc_lifetime(self, data, body):
+    def _update_npc_lifetime(self, data, body):
         bot_name = str(body.get("bot_name") or "").strip()
         char_name = str(body.get("char_name") or "").strip()
         if not bot_name or not char_name:
@@ -1869,13 +1878,21 @@ class BotMode:
         if character is None:
             return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
         if character.get("npc_generated") is not True:
-            return _json_error("생성된 캐릭터만 수명을 갱신할 수 있습니다.")
-        from modes.illustration_npc import get_npc_lifetime
-        npc_lifetime = get_npc_lifetime()
-        character["npc_idle_calls"] = 0
+            return _json_error("생성된 캐릭터만 수명을 변경할 수 있습니다.")
+        if body["action"] == "set_npc_lifetime_lock":
+            locked = body.get("npc_lifetime_locked")
+            if not isinstance(locked, bool):
+                return _json_error("수명 잠금 여부가 필요합니다.")
+            character["npc_lifetime_locked"] = locked
+            action_label = "수명 잠금" if locked else "수명 잠금 해제"
+        else:
+            character["npc_idle_calls"] = 0
+            action_label = "수명 갱신"
+        lifetime = _npc_lifetime_data(character)
         _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 수명 갱신: {bot_scope()}/{bot_name}/{character['name']} → {npc_lifetime}회")
-        return _json_ok({"npc_idle_calls": 0, "npc_lifetime": npc_lifetime})
+        remaining = max(0, lifetime["npc_lifetime"] - lifetime["npc_idle_calls"])
+        print(f"[BOT_MODE] 캐릭터 {action_label}: {bot_scope()}/{bot_name}/{character['name']} → {remaining}회")
+        return _json_ok(lifetime)
 
     async def _set_lb_extra_batch_lock(self, data, body):
         bot_name = str(body.get("bot_name") or "").strip()
@@ -4597,6 +4614,7 @@ class BotMode:
                     # NPC 는 수명 만료 시 자동 삭제되므로 일반 캐릭터로 가져온다.
                     copied_char.pop("npc_generated", None)
                     copied_char.pop("npc_idle_calls", None)
+                    copied_char.pop("npc_lifetime_locked", None)
                     dest_bot.setdefault("characters", []).append(copied_char)
 
                     filtered_extra = [
@@ -5515,10 +5533,7 @@ class BotMode:
                         saved_character = cards_to_character_profiles(canonical_name, stored_cards)
                         saved_character["imported_lore"] = deepcopy(root_character.get("imported_lore", []))
                         saved_character["lb_extra_batch_locked"] = bool(root_character.get("lb_extra_batch_locked", False))
-                        if root_character.get("npc_generated") is True:
-                            from modes.illustration_npc import get_npc_lifetime
-                            saved_character.update(npc_generated=True, npc_idle_calls=int(root_character.get("npc_idle_calls", 0)),
-                                                   npc_lifetime=get_npc_lifetime())
+                        saved_character.update(_npc_lifetime_data(root_character))
                         saved_characters.append(saved_character)
                     except VisualProfileValidationError as exc:
                         print(f"[CHARACTER_CARD:API] 카드 저장 건너뜀: bot={bot_name!r}, character={canonical_name!r}, error={exc}")

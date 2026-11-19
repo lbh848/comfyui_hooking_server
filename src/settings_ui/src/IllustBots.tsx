@@ -305,7 +305,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const action = useIllustrationAction(); const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction(); const renameAction = useIllustrationAction();
   const outfitTagAction = useIllustrationAction();
   const outfitFolderAction = useIllustrationAction();
-  const renewNpcLifetimeAction = useIllustrationAction();
+  const npcLifetimeAction = useIllustrationAction();
   // Remember the tags the cover prompt was made with, so saving the editor first
   // does not make the regeneration compare the new tags against themselves.
   const outfitTagsSeed = useRef<{ outfit: string; tags: string[] }>({ outfit: "", tags: [] });
@@ -328,17 +328,27 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const regeneration = useCharacterImageRegeneration(botName, characterName, !!images.data?.images.some((item: IllustrationData) => item.generated), () => {
     images.reload(); onReload?.();
   });
-  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || renewNpcLifetimeAction.busy || faceCropBusy;
-  const renewNpcLifetime = () => {
+  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || npcLifetimeAction.busy || faceCropBusy;
+  const updateNpcLifetime = (locked?: boolean) => {
     if (readOnly || busy || !draft?.npc_generated) return;
-    void renewNpcLifetimeAction.run(async () => {
-      const result = await api.request("bot_mode/action", { action: "renew_npc_lifetime", bot_name: botName, char_name: characterName });
-      const changes = { npc_idle_calls: result.npc_idle_calls, npc_lifetime: result.npc_lifetime };
-      setDraft(current => current && ({ ...current, ...changes }));
-      setBase(current => current && ({ ...current, ...changes }));
+    const change = locked === undefined ? { action: "renew_npc_lifetime" } : { action: "set_npc_lifetime_lock", npc_lifetime_locked: locked };
+    const message = locked === undefined ? "캐릭터 수명을 갱신했습니다." : locked ? "수명을 잠갔습니다." : "수명 잠금을 해제했습니다.";
+    void npcLifetimeAction.run(async () => {
+      const lifetime = await api.request("bot_mode/action", { ...change, bot_name: botName, char_name: characterName });
+      setDraft(current => current && ({ ...current, ...lifetime }));
+      setBase(current => current && ({ ...current, ...lifetime }));
       onReload?.();
-    }, "캐릭터 수명을 갱신했습니다.");
+    }, message);
   };
+  const npcLifetimeLocked = draft?.npc_lifetime_locked === true;
+  const npcLifetimeControls = draft?.npc_generated ? <>
+    <button type="button" className="button secondary small" disabled={readOnly || busy} onClick={() => updateNpcLifetime()}
+      title="남은 수명을 설정된 최대 횟수로 갱신합니다" aria-label={`${characterName} 수명 갱신`}><RefreshCw size={13} aria-hidden="true" />수명 갱신</button>
+    <button type="button" className={`button small ${npcLifetimeLocked ? "primary" : "secondary"}`} disabled={readOnly || busy}
+      aria-label={`${characterName} 수명 잠금`} aria-pressed={npcLifetimeLocked} title={npcLifetimeLocked ? "수명 잠금 해제" : "남은 수명 잠금"}
+      onClick={() => updateNpcLifetime(!npcLifetimeLocked)}>{npcLifetimeLocked ? <LockKeyhole size={14} aria-hidden="true" /> : <LockKeyholeOpen size={14} aria-hidden="true" />}</button>
+    <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회{npcLifetimeLocked && " · 잠김"}</Badge>
+  </> : null;
   const canRename = allowRename && draft?.npc_generated === true && !readOnly && !busy;
   const openRename = () => { setRenameName(characterName); setRenameOpen(true); };
   const submitRename = () => {
@@ -616,7 +626,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
       </div>
       <header className="illust-character-heading">
-        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{draft.npc_generated && <><button type="button" className="button secondary small" disabled={readOnly || busy} onClick={renewNpcLifetime} title="남은 수명을 설정된 최대 횟수로 갱신합니다" aria-label={`${characterName} 수명 갱신`}><RefreshCw size={13} aria-hidden="true" />{renewNpcLifetimeAction.busy ? "갱신 중…" : "수명 갱신"}</button><Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회</Badge></>}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
+        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{npcLifetimeControls}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
         <div className="illust-actions">
           {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
           <button type="button" className="button secondary" onClick={() => setDetail("tags")}>캐릭터 태그 편집</button>
@@ -624,7 +634,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
           {onPersona && <label className="illust-check"><input type="checkbox" checked={persona} disabled={readOnly || busy || personaBusy} onChange={event => onPersona(event.target.checked)} />페르소나</label>}
         </div>
       </header>
-      <IllustrationFeedback error={renewNpcLifetimeAction.error} message={renewNpcLifetimeAction.message} />
+      <IllustrationFeedback {...npcLifetimeAction} />
       <div hidden={showGallery}>
         <fieldset className="illust-card-metadata" disabled={busy || readOnly}>
           <div className="illust-form"><label className="field">카드 이름<input required value={card.label} onChange={event => update({ label: event.target.value })} /></label><label className="field">작중 별칭<textarea rows={3} value={(card.aliases || []).join("\n")} placeholder="한 줄에 별칭 하나" onChange={event => update({ aliases: event.target.value.split("\n") })} /></label></div>
@@ -689,11 +699,10 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       }, "이미지를 삭제했습니다.")}>삭제 확인</button></div></Modal>}
     </form>;
   const content = <>
-    {summaryMode && <IllustrationFeedback error={renewNpcLifetimeAction.error} message={renewNpcLifetimeAction.message} />}
+    {summaryMode && <IllustrationFeedback {...npcLifetimeAction} />}
     {summaryMode && draft && card ? <IllustCharacterSummary
-      characterName={characterName} card={card} render={render} index={index} count={draft.profiles.length} isDefault={card.id === draft.default_visual_profile_id} npc={draft.npc_generated ? draft : undefined}
+      characterName={characterName} card={card} render={render} index={index} count={draft.profiles.length} isDefault={card.id === draft.default_visual_profile_id} npcLifetimeControls={npcLifetimeControls}
       onRename={canRename ? openRename : undefined}
-      onRenewNpcLifetime={renewNpcLifetime} renewNpcLifetimeBusy={renewNpcLifetimeAction.busy}
       references={references} imagesLoaded={!!images.data} imagesError={images.error} hasFace={!!face} saved={!!savedCard}
       patch={savedCard?.id === base?.profiles[0]?.id ? patchStatus : patchStatus?.cards?.[card.id]} patchLoading={patchLoading} patchError={patchError}
       readOnly={readOnly} persona={persona} dirty={dirty} busy={busy} onChangeProfile={changeProfile} onPreview={setPreview}

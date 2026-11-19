@@ -242,7 +242,7 @@ async def advance_lifetimes(manager, bot_name: str, used_names: list[str], flow_
         used = {name.casefold() for name in used_names}
         expired = []
         for character in bot.get("characters", []):
-            if character.get("npc_generated") is not True:
+            if character.get("npc_generated") is not True or character.get("npc_lifetime_locked") is True:
                 continue
             idle = 0 if character["name"].casefold() in used else int(character.get("npc_idle_calls", 0)) + 1
             character["npc_idle_calls"] = idle
