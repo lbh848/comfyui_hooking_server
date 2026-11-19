@@ -98,7 +98,7 @@
       "name": "comfyui-soya-custom-nodes",
       "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
       "source_type": "git",
-      "ref": "bcf2c51ee124547e042779ff47dedc31ce3c513b"
+      "ref": "a746bf696c783ce7de0c3ab8f8c5b2e543c766df"
     },
     {
       "name": "ComfyUI-MOSS-Toolkit",
