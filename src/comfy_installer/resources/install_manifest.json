@@ -395,6 +395,14 @@
     },
     {
       "auth": "civitai",
+      "id": "nai4-5-style",
+      "relative_path": "models/loras/NAI4.5.safetensors",
+      "sha256": "0558c70e36520c555264dc3993186c348d46c7cee596b13fce18836008c46561",
+      "size": 200842304,
+      "url": "https://civitai.com/api/download/models/3430807"
+    },
+    {
+      "auth": "civitai",
       "id": "small-head-anima",
       "relative_path": "models/loras/small_head_anima.safetensors",
       "sha256": "c783d043848b9bd85db6545243b13e490070f0ea357b304d3c3fdca21e061917",
