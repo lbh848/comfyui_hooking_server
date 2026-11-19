@@ -153,7 +153,7 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
           </div>
           <textarea id={instructionId} rows={12} spellCheck={false} readOnly={locked} value={draft.text} onChange={event => setDraft({ ...draft, text: event.target.value })} />
         </div>
-        <label className="field">장르<select value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); else if (draft.genre === "secondary_bot") setDraft({ ...draft, genre: "" }); }}>
+        <label className="field">장르<select className="illust-genre-select" value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); else if (draft.genre === "secondary_bot") setDraft({ ...draft, genre: "" }); }}>
           {genres.map(genre => <option key={genre} value={genre}>{genre === "secondary_bot" ? "2차봇" : genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
         </select></label>
         {draft.genre === "secondary_bot" && <>

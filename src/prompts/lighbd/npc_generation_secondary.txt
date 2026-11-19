@@ -1,0 +1,5 @@
+Use the Source work to identify the genre and setting for these NPCs. For each NPC, check whether the name, aliases and events in the supplied narrative identify an established character from that specific work. Respect explicit changes to the character in the narrative.
+
+Each NPC has its own list of Danbooru character name tags in NAME TAG CANDIDATES. The list contains search results, including possible namesakes from other works. A similar name, role, outfit or appearance alone does not establish identity. Choose the base character tag unless the narrative specifically identifies a listed variant.
+
+Add an integer name_tag_id to each character in the requested JSON. Use the ID from that NPC's list only when both the character and the work match confidently. Use 0 for original or unnamed characters, ambiguous identities, characters from another work, or a missing match. Write physical descriptions in appearance as usual. The application adds the selected dictionary tag to appearance, so keep character name tags and standalone work tags out of the generated descriptions.

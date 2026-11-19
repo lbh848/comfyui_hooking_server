@@ -1541,6 +1541,9 @@ fieldset.illust-form:not(.illust-body) { padding: 0; }
 }
 .illust-preset-picker { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
 .illust-preset-picker > .field { flex: 1 1 240px; }
+.illust-genre-select option { font-weight: normal; }
+.illust-genre-select option[value="secondary_bot"],
+.illust-genre-select:has(option[value="secondary_bot"]:checked) { font-weight: 700; }
 .illust-local-status { display: flex; align-items: center; gap: 9px; }
 .illust-save-status { color: var(--green); font-size: 10px; white-space: nowrap; }
 .illust-save-status[data-state="loading"], .illust-save-status[data-state="pending"] { color: var(--muted); }

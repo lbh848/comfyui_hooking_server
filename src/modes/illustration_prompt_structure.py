@@ -193,11 +193,15 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
               builders.time_place_messages(prompts, names, {}, "_input_", "_input_", slots=[0, 1], slotted="_input_", segment_slots={"C001": 0}, toggles=toggles),
               condition="TIME & PLACE 설정 ON",
               notes="OFF이면 후속 LLM이 원문·이전 문맥에서 시간·장소·조명을 판단합니다. OUTFIT과 병렬입니다. time은 넓은 시간대, place는 구체적인 공간, lighting은 그 공간에 도달하는 광원과 조명 상태를 설명합니다. 각 항목은 변경된 SLOT에서만 출력하고 서버가 이전 값을 이어받습니다. 후속 단계는 이 조명 조건 안에서 구도를 정합니다. 근거가 없으면 unknown이며 복장·헤어를 출력하지 않습니다. TIME & PLACE 노드 상세에서 채워진 표를 봅니다.")
+        npc_parts = [prompt_part("npc_generation_moss" if moss else "npc_generation",
+                                 "MOSS NPC 캐릭터 카드 생성 지침" if moss else "NPC 캐릭터 카드 생성 지침",
+                                 "NPC 생성 노드"), *genre_parts]
+        if toggles.get("genre") == "secondary_bot":
+            npc_parts.append(prompt_part("npc_generation_secondary", "2차봇 원작 캐릭터 이름 태그 지침", "NPC 생성 노드",
+                                         rendered=prompts.get("npc_generation_secondary", ""), condition="장르가 2차봇일 때 포함"))
         stage("npc_generation", "NPC 생성 노드", "미등록 등장인물의 성별·외모·복장·얼굴·눈과 대표 이미지를 생성하고 캐릭터 카드로 등록합니다.",
               ["성별 드롭다운 선택값·외모·복장·얼굴·눈 태그", "대표 이미지·등록된 캐릭터 카드"],
-              [prompt_part("npc_generation_moss" if moss else "npc_generation",
-                           "MOSS NPC 캐릭터 카드 생성 지침" if moss else "NPC 캐릭터 카드 생성 지침",
-                           "NPC 생성 노드"), *genre_parts],
+              npc_parts,
               builders.npc_generation_messages(prompts, [{"name": "_input_", "aliases": ["_input_"], "description": "_input_", "anchors": ["C001"]}], "_input_", "_input_", toggles),
               condition="NPC 생성 노드 ON · 미등록 등장인물이 있을 때",
               notes=f"대화에 등장한 미등록 인물의 외모와 복장을 정합니다. 이 작업은 STEP 2에서 OUTFIT·TIME & PLACE와 함께 진행합니다. 그리기 설정 > 캐릭터 자동 생성 및 복장 이미지 생성 모드로 대표 이미지를 만들고 삽화용 봇 설정 > 캐릭터에 등록합니다. 얼굴 이미지(FACE)는 그 대표 이미지를 생성할 때 추적한 얼굴 영역을 잘라 저장합니다. 같은 봇에서 삽화를 {toggles['npc_lifetime']}회 연속 생성하는 동안 등장하지 않으면 삭제하고, 다시 등장하면 수명이 초기화됩니다. 수명은 생성 설정 > 파이프라인 > NPC 생성에서 변경할 수 있습니다.")

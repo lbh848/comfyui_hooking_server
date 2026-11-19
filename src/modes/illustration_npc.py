@@ -55,8 +55,12 @@ def character_image_descriptor(root: dict, *, emotion_tags=None) -> dict:
     card = root["visual_cards"][0]
     animal = card["gender_tag"] == "animal"
     camera = "solo, full body, animal focus, no humans, looking at viewer" if animal else "solo, cowboy shot, looking at viewer"
+    appearance = tag_values(card["appearance"])
+    name = root["name"]
+    if all(tag.casefold() != name.casefold() for tag in appearance):
+        appearance.insert(0, name)
     tags = [
-        card["gender_tag"], root["name"], *tag_values(card["appearance"]),
+        card["gender_tag"], *appearance,
         *tag_values(card["default_outfit"]), card.get("face_tags", ""), card.get("eye_tags", ""),
         *(emotion_tags or []),
     ]
@@ -150,7 +154,21 @@ def parse_candidates(value, registered_names, segments, *, repair=False) -> list
     return result
 
 
-def parse_cards(value, candidates, *, salvage=False) -> list[dict]:
+def _find_name_tag_candidates(candidates, work_title):
+    from modes.bot_name_tags import find_candidates, load_dictionary
+
+    try:
+        _, entries = load_dictionary()
+    except (OSError, ValueError) as exc:
+        print(f"[ILLUST_CONTEXT:NPC] 단부루 이름 태그 사전을 읽지 못했습니다: {exc}")
+        return {}
+    return {
+        candidate["name"]: find_candidates(entries, [candidate["name"], *candidate["aliases"]], work_title)
+        for candidate in candidates
+    }
+
+
+def parse_cards(value, candidates, *, salvage=False, name_tag_candidates=None) -> list[dict]:
     if not isinstance(value, dict) or not isinstance(value.get("characters"), list):
         raise ValueError("NPC generation requires a characters array")
     expected = {candidate["name"]: candidate for candidate in candidates}
@@ -170,6 +188,11 @@ def parse_cards(value, candidates, *, salvage=False) -> list[dict]:
             for key in ("appearance", "default_outfit", "face_tags", "eye_tags"):
                 tags = normalize_tag_entries(entry.get(key), field=f"NPC.{key}")
                 card[key] = ", ".join(tag_values(tags)) if key in ("face_tags", "eye_tags") else tags
+            name_tag_id = entry.get("name_tag_id")
+            if name_tag_candidates and type(name_tag_id) is int and name_tag_id > 0:
+                match = next((item for item in name_tag_candidates.get(name, []) if item["id"] == name_tag_id), None)
+                if match:
+                    card["appearance"] = normalize_tag_entries([match["tag"], *card["appearance"]])
             root = {"name": name}
             store_visual_cards(root, [card])
         except (ValueError, TypeError) as exc:
@@ -267,17 +290,24 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
         created = []
         roots = []
         if pending:
-            messages = builders.npc_generation_messages(prompts, pending, past_text, segmented, toggles)
+            name_tag_candidates = None
+            if toggles.get("genre") == "secondary_bot":
+                name_tag_candidates = await asyncio.to_thread(
+                    _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
+            messages = builders.npc_generation_messages(prompts, pending, past_text, segmented, toggles,
+                                                        name_tag_candidates=name_tag_candidates)
             def validate(response):
                 try:
-                    parse_cards(pipeline._json_object_from_text(response), pending, salvage=True)
+                    parse_cards(pipeline._json_object_from_text(response), pending, salvage=True,
+                                name_tag_candidates=name_tag_candidates)
                     return True, ""
                 except (ValueError, TypeError) as exc:
                     return False, str(exc)
             output = await pipeline._call_pipeline_llm(
                 "NPC 생성 노드", pipeline._normalize_messages(messages), stream_notify,
                 result_validator=validate, json_mode=True)
-            roots = parse_cards(pipeline._json_object_from_text(output), pending, salvage=True)
+            roots = parse_cards(pipeline._json_object_from_text(output), pending, salvage=True,
+                                name_tag_candidates=name_tag_candidates)
         # Prediction is enough for downstream LLMs. Registration still waits
         # for the representative image and its normal rendering assets.
         predicted = {**existing, **{root["name"].casefold(): root for root in roots}}

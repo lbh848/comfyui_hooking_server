@@ -1046,25 +1046,29 @@ def emotion_asset_messages(asset_system, asset_rows, emotion_options):
     ]
 
 
-def npc_generation_messages(prompts, candidates, past_text, segmented, toggles):
+def npc_generation_messages(prompts, candidates, past_text, segmented, toggles, *, name_tag_candidates=None):
     from modes.illustration_npc import NPC_GENDER_TAGS
     moss = (toggles or {}).get("illustration_model_family") == "moss"
     # MOSS uses its own card instruction so the existing ANIMA prompt is not
     # touched. Older installs without the file fall back to the shared prompt.
     instructions = (prompts.get("npc_generation_moss") if moss else "") or prompts.get("npc_generation", "")
+    secondary_bot = toggles.get("genre") == "secondary_bot"
     return [
-        {"role": "system", "content": prompt_join("\n\n", [
+        {"role": "system", "content": prompt_join("\n\n", filter(None, [
             instructions,
             role_context("", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""),
                          genre_work_title=toggles.get("genre_work_title", ""),
                          genre_secondary_prompt=prompts.get("genre_secondary", "")),
-        ])},
-        {"role": "user", "content": prompt_join("\n\n", [
+            prompts.get("npc_generation_secondary") if secondary_bot else "",
+        ]))},
+        {"role": "user", "content": prompt_join("\n\n", filter(None, [
             "# NPC CANDIDATES\n" + variable(json.dumps(candidates, ensure_ascii=False), "미등록 등장인물"),
+            "# NAME TAG CANDIDATES BY NPC\n" + variable(json.dumps(name_tag_candidates or {}, ensure_ascii=False),
+                                                      "NPC별 단부루 이름 태그 후보") if secondary_bot else "",
             "# GENDER DROPDOWN VALUES\n" + json.dumps(NPC_GENDER_TAGS),
             "# EARLIER CONTEXT\n" + variable(past_text, "이전 문맥"),
             "# CURRENT CONTEXT SEGMENTS\n" + variable(segmented, "현재 원문"),
-        ])},
+        ]))},
     ]
 
 def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):

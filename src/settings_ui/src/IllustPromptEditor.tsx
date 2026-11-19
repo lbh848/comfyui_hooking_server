@@ -37,6 +37,7 @@ const promptGroups: PromptGroup[] = [
   { id: "npc_generation", title: "NPC 생성 노드", description: "대화에 등장한 미등록 인물의 외모와 복장을 정해 캐릭터 카드와 대표 이미지를 만듭니다. ANIMA는 공용 지침을, MOSS는 bbox 없이 요약 캡션으로 그리는 MOSS 전용 지침을 사용합니다. 자동 삭제까지의 미사용 횟수는 생성 설정 > 파이프라인 > NPC 생성에서 정합니다.", fields: [
     { key: "npc_generation", label: "NPC 캐릭터 카드 생성 지침 (ANIMA)" },
     { key: "npc_generation_moss", label: "NPC 캐릭터 카드 생성 지침 (MOSS · bbox 없음)" },
+    { key: "npc_generation_secondary", label: "2차봇 원작 캐릭터 이름 태그 지침" },
   ] },
   { id: "plan", title: "PLAN", description: "선택된 장면의 구도·동작·접촉을 계획합니다. 공용 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_plan", label: "선택 장면 구체화 지침" },

@@ -116,6 +116,7 @@ PROMPT_FILES = {
     # MOSS 전용 NPC 카드 지침. 기존 ANIMA 지침은 그대로 두고, MOSS 대표
     # 이미지가 bbox 없이 하나의 요약 캡션으로 그려지는 계약만 추가한다.
     "npc_generation_moss": "npc_generation_moss.txt",
+    "npc_generation_secondary": "npc_generation_secondary.txt",
     "genre": "genre.txt",
     "genre_secondary": "genre_secondary.txt",
     "character_resolve": "character.txt",
