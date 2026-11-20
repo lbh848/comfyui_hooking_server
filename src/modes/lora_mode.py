@@ -578,7 +578,8 @@ def save_uploaded_image(character: str, entry: str, filename: str, file_data: by
         return {"success": False, "error": "이미지 파일을 읽을 수 없습니다."}
     directory = _test_dir(character, entry) if test else _training_dir(character, entry)
     os.makedirs(directory, exist_ok=True)
-    name = f"{_safe_dirname(stem).lstrip('_') or 'image'}_{uuid.uuid4().hex[:12]}{extension.lower()}"
+    stem = _safe_dirname(stem).replace("..", "_").lstrip("_") or "image"
+    name = f"{stem}_{uuid.uuid4().hex[:12]}{extension.lower()}"
     path = os.path.join(directory, name)
     prompt_path = os.path.splitext(path)[0] + "_prompt.json"
     created = []

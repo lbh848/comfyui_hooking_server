@@ -24,7 +24,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
   const { category, character } = context;
   const [images, setImages] = useState<LoraData[]>([]); const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [editing, setEditing] = useState<LoraData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState("");
   const [tagging, setTagging] = useState<LoraData[]>([]); const [tagRevision, setTagRevision] = useState(0);
   const [picker, setPicker] = useState(false); const [shared, setShared] = useState(!character); const [filtering, setFiltering] = useState(false); const [negativeBatch, setNegativeBatch] = useState(false); const [testSetup, setTestSetup] = useState(false);
   const params = contextParams(context);
@@ -74,7 +74,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [category, imagePrefix, imageParams, tagRevision, test]);
   const load = useCallback(async (signal?: AbortSignal) => {
-    setError(""); setLoading(true);
+    setLoadError(""); setLoading(true);
     try {
       let rows: LoraData[];
       if (category === "asset") rows = (await loraRequest(`${imagePrefix}?${imageParams}`, undefined, signal)).images;
@@ -91,7 +91,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
         const filenames = new Set(rows.map(image => image.filename));
         setSelected(current => current.filter(filename => filenames.has(filename)));
       }
-    } catch (e) { if (!signal?.aborted) setError((e as Error).message); } finally { if (!signal?.aborted) setLoading(false); }
+    } catch (e) { if (!signal?.aborted) setLoadError((e as Error).message); } finally { if (!signal?.aborted) setLoading(false); }
   }, [detail, character, shared, test, category, context.profile, imagePrefix, imageParams]);
   useEffect(() => { setSelected([]); }, [imagePrefix, imageParams, context.profile]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
@@ -105,10 +105,14 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
       files.forEach(file => form.append("files", file));
       const path = category === "asset" ? `${imagePrefix}/upload` : "style_lora/images/upload";
       const result = await loraRequest(`${path}?${query(params)}`, form);
-      const failures = (result.results || []).filter((row: LoraData) => row.success === false);
-      if (result.results?.some((row: LoraData) => row.success)) notify("이미지를 업로드했습니다.");
+      const errors = (result.results || []).filter((row: LoraData) => row.success === false).map((row: LoraData) => row.error);
+      if (category === "asset" && !test && result.tagging?.count) {
+        notify(`이미지를 업로드하고 ${result.tagging.count}장의 프롬프트 태깅을 큐에 추가했습니다.`);
+        setTagRevision(value => value + 1);
+      } else if (result.results?.some((row: LoraData) => row.success)) notify("이미지를 업로드했습니다.");
+      if (result.tagging_error) errors.push(`이미지는 업로드했지만 태깅을 시작하지 못했습니다: ${result.tagging_error}. 선택 태그 분석으로 다시 실행하세요.`);
       await refresh();
-      if (failures.length) setError(failures.map((row: LoraData) => row.error).join("\n"));
+      if (errors.length) setError(errors.join("\n"));
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function refine(targets: LoraData[]) {
@@ -132,7 +136,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
   return <div className="internal-lora-section">
     {category === "bot" && test && character && <LoraTabs values={{ character: "캐릭터 테스트 이미지", shared: "공통 테스트 이미지" }} value={shared ? "shared" : "character"} onChange={v => { setShared(v === "shared"); setSelected([]); }} label="테스트 이미지 구분" />}
     <div className="internal-lora-toolbar"><div className="internal-lora-actions"><strong>{test ? "테스트 이미지" : "학습용 이미지"}</strong><Badge>{images.length}장</Badge></div><div className="internal-lora-actions">
-      <button className="button" disabled={busy || loading} onClick={() => { void refresh(); }}><RefreshCw size={14} />새로고침</button>
+      <button className="button" disabled={busy || loading} onClick={() => { setError(""); void refresh(); }}><RefreshCw size={14} />새로고침</button>
       {(category === "asset" || category === "style" && !test) && <label className="button"><Upload size={14} />파일 업로드<input className="sr-only" aria-label={`${test ? "테스트" : "학습용"} 이미지 파일 업로드`} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={busy} onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; if (files.length) void upload(files); }} /></label>}
       <button className="button primary" disabled={busy || category === "bot" && !shared && !character} onClick={() => setPicker(true)}><Plus size={14} />이미지 추가</button>
       {category === "style" && !test && <button className="button" disabled={busy || loading || !images.length} onClick={() => setFiltering(true)}>이미지 필터링</button>}
@@ -153,7 +157,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
       setSelected([]); }, "선택한 이미지를 삭제했습니다."); }}><Trash2 size={14} />선택 삭제</button>
       </div>
     </fieldset>}
-    {error && <p className="field-error" role="alert">{error}</p>}
+    {(error || loadError) && <p className="field-error" role="alert">{error || loadError}</p>}
     {!!tagging.length && <p role="status" className={tagging.some(item => item.status === "failed") ? "field-error" : "field-help"}>프롬프트 태깅 · 완료 {tagging.filter(item => item.status === "completed").length} / {tagging.length}장
       {tagging.some(item => !isFinishedQueueItem(item)) && " · 진행 중"}{tagging.some(item => item.status === "failed") && ` · 실패 ${tagging.filter(item => item.status === "failed").length}장 (작업 큐에서 원인을 확인하고 선택 태그 분석으로 다시 실행하세요.)`}
       {tagging.some(item => item.status === "cancelled") && ` · 취소 ${tagging.filter(item => item.status === "cancelled").length}장`}</p>}
@@ -162,7 +166,7 @@ export function InternalLoraImages({ context, detail, test, refresh, notify }: {
       ? <StyleImageBatch context={context} test={test} search={normalizedSearch} offset={offset} cache={stylePageCache} onLoaded={rows => setEditing(current => current && (rows.find(image => image.filename === current.filename) || current))}>{renderImages}</StyleImageBatch>
       : renderImages(batch)}</ProgressiveGallery>
     {!!images.length && !visible.length && <Empty title="검색 결과가 없습니다">다른 파일 이름으로 검색하세요.</Empty>}
-    {!images.length && !error && !loading && <Empty title={`${test ? "테스트" : "학습용"} 이미지가 없습니다`}>{category === "asset" ? "파일 업로드 또는 이미지 추가로 사용할 이미지를 준비하세요." : "이미지 추가로 사용할 이미지를 선택하세요."}</Empty>}
+    {!images.length && !error && !loadError && !loading && <Empty title={`${test ? "테스트" : "학습용"} 이미지가 없습니다`}>{category === "asset" ? "파일 업로드 또는 이미지 추가로 사용할 이미지를 준비하세요." : "이미지 추가로 사용할 이미지를 선택하세요."}</Empty>}
     {editing && <ImageEditor context={context} image={category === "style" ? editing : images.find(image => image.filename === editing.filename) || editing} test={test} shared={shared} onRefined={refresh} onClose={() => setEditing(null)} onSave={async prompt => {
       const path = category === "style" ? `style_lora/${test ? "test_images/" : ""}prompt` : `${imagePrefix}/prompt`;
       await loraRequest(path, { ...params, filename: editing.filename, ...(category === "style" ? { prompt } : prompt) }); notify("프롬프트를 저장했습니다."); setEditing(null); await refresh();

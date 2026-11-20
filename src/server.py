@@ -32810,31 +32810,36 @@ async def handle_api_lora_training_list(request):
 
 
 async def handle_api_lora_images_upload(request):
-    """Upload training or test images without an asset character."""
+    """Save uploaded project images and enqueue tagging for training images."""
     try:
         from modes.lora_mode import save_uploaded_image
         character = request.query.get("character", "")
         entry = request.query.get("entry", "")
+        test = request.path.endswith("/test_images/upload")
         reader = await request.multipart()
         results = []
         async for part in reader:
             if part.name != "files" or not part.filename:
                 continue
-            result = save_uploaded_image(
-                character, entry, part.filename, await part.read(),
-                test=request.path.endswith("/test_images/upload"),
-            )
-            results.append(result)
+            results.append(save_uploaded_image(character, entry, part.filename, await part.read(), test=test))
         if not results:
             return web.json_response({"success": False, "error": "이미지 파일을 선택하세요."}, status=400)
-        return web.json_response({"success": True, "results": results})
+        result = {"success": True, "results": results}
+        if not test:
+            filenames = [row["filename"] for row in results if row["success"]]
+            if filenames:
+                try:
+                    result["tagging"] = await _enqueue_lora_image_tagging(character, entry, filenames)
+                except Exception as exc:
+                    result["tagging_error"] = str(exc)
+        return web.json_response(result)
     except Exception as e:
         print(f"[LORA] 이미지 업로드 실패: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def _enqueue_lora_image_tagging(character, entry, filenames):
-    """Tag training copies using the existing image analysis queue."""
+    """Tag training images using the existing image analysis queue."""
     from modes.lora_mode import get_training_image_path
     items = []
     batch_label = f"LoRA 프롬프트 태깅: {entry} · 학습용"
