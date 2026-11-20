@@ -61,12 +61,16 @@ export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
   const [state, setState] = useState<"idle" | "requesting" | "accepted" | "completed">("idle");
   const [error, setError] = useState("");
   const [unsavedChanges, setUnsavedChanges] = useState<UnsavedChange[]>([]);
+  const [blockedByEditor, setBlockedByEditor] = useState(false);
+  const forceShutdown = unsavedChanges.length > 0 || blockedByEditor;
   const submitting = useRef(false);
 
   function close() {
     setManuallyOpened(false);
     onDismissUpdate?.();
     setError("");
+    setUnsavedChanges([]);
+    setBlockedByEditor(false);
   }
 
   useEffect(() => {
@@ -118,16 +122,19 @@ export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
     return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
   }, [state]);
 
-  async function shutdown() {
+  async function shutdown(force: boolean) {
     if (submitting.current) return;
-    const pending = collectUnsavedChanges();
-    setUnsavedChanges(pending);
-    // Reuse every page's existing unsaved-change guard, including open editors.
-    const leaving = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(leaving);
-    if (pending.length || leaving.defaultPrevented) {
-      setError(pending.length ? "" : "열려 있는 편집 화면에서 저장 상태를 확인한 뒤 다시 종료해 주세요.");
-      return;
+    if (!force) {
+      const pending = collectUnsavedChanges();
+      setUnsavedChanges(pending);
+      // Check open editors again in case edits arrived after the checklist refresh.
+      const leaving = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(leaving);
+      if (pending.length || leaving.defaultPrevented) {
+        setBlockedByEditor(!pending.length && leaving.defaultPrevented);
+        setError("");
+        return;
+      }
     }
     submitting.current = true;
     setState("requesting"); setError("");
@@ -168,7 +175,6 @@ export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
         </>}
         {state === "idle" && unsavedChanges.length > 0 && <section className="program-shutdown-unsaved" aria-label="저장 확인이 필요한 항목">
           <h4>저장 확인이 필요한 항목 · {unsavedChanges.length}개</h4>
-          <p>아래 항목을 확인하고 저장을 마친 뒤 다시 종료해 주세요.</p>
           <ul>{unsavedChanges.map(item => <li key={item.id}>
             <div><small>{item.location}</small><strong>{item.label}</strong><span className="badge rose">{item.status}</span>
               {item.detail && <p>{item.detail}</p>}</div>
@@ -177,13 +183,14 @@ export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
             }}>확인하러 가기</button>
           </li>)}</ul>
         </section>}
+        {state === "idle" && forceShutdown && <p>강제 종료하면 저장하지 않은 변경 사항이 사라질 수 있습니다.</p>}
         {error && <p className="program-shutdown-error" role="alert">{error}</p>}
       </div>
       {(state === "idle" || state === "requesting") && <div className="modal-actions">
         <button type="button" className="button secondary" disabled={state === "requesting"} onClick={close}>취소</button>
-        <button type="button" className="button danger" disabled={state === "requesting"} onClick={() => void shutdown()}>
+        <button type="button" className="button danger" disabled={state === "requesting"} onClick={() => void shutdown(forceShutdown)}>
           {state === "requesting" ? <LoaderCircle size={15} className="spin" /> : <Power size={15} />}
-          {state === "requesting" ? "종료 요청 중…" : "종료하기"}
+          {state === "requesting" ? "종료 요청 중…" : forceShutdown ? "강제 종료" : "종료하기"}
         </button>
       </div>}
     </Modal>}
