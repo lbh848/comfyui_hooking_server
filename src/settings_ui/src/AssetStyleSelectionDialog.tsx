@@ -19,7 +19,7 @@ export function AssetStyleSelectionDialog({ presets, models, disabled }: {
     if (key === "style_lora_list" && Array.isArray(value) && value.length) return value.map((item: AssetRecord, index) =>
       `${index + 1}. ${item.lora_path || "LoRA"}\n계열: ${item.BASE === "sdxl" ? "ILXL / SDXL" : item.BASE || "ANIMA"} · 강도: ${item.strength ?? item.str ?? 1}\n트리거: ${item.trigger || "없음"}`
     ).join("\n\n");
-    return displayStyleValue(value);
+    return displayStyleValue(value, key);
   }
   return <Modal title={restoring ? "그림체 저장값 복원" : "그림체 프리셋 변경"} className="asset-style-switch-modal"
     backgroundable={false} onClose={presets.cancelSelection}>

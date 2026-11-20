@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "../../frontend/static/asset_prompt.js";
 import type { AssetRecord } from "../../frontend/static/asset_prompt";
 import { assetReferenceSettings } from "./referenceSettings";
+import type { MaskBox } from "./assetMaskRequest";
 export type { AssetRecord };
 export const assetWorkflowTypes = { anima_only: "ANIMA", anima_ilxl: "ANIMA+ILXL" };
 export const assetWorkflowPaths: Record<string, string> = { anima_only: "anima_only_asset_workflow_source_path", anima_ilxl: "anima_asset_workflow_source_path" };
@@ -32,7 +33,7 @@ export function copyAssetSettings(slot: AssetRecord, section: AssetSettingsSecti
 }
 // Model selection is shared by the workroom and batches, never stored in a style.
 const assetStyleValueKeys = ["img_w", "img_h", "seed", "hrf_anima", "hrf_sdxl", "hrf_size", "hrf_restore_size",
-  "mask_area_limit_enabled", "mask_width_percent", "mask_height_percent",
+  "mask_area_limit_enabled", "mask_box",
   "anima_fd_enabled", "anima_hd_enabled", "anima_ed_enabled", "sdxl_fd_enabled", "sdxl_hd_enabled", "sdxl_ed_enabled", "style_lora_enabled", "style_lora_list"];
 export function copyAssetStyleSettings(defaults: AssetRecord, slot: AssetRecord) {
   return { defaults: copyAssetSettings(defaults, "style"), values: {
@@ -163,14 +164,16 @@ export function useAssetResource(path: string | null, interval = 0) {
 }
 
 export function newAssetSlot(value: AssetRecord = {}): AssetRecord {
-  value = { ...value, ...assetReferenceSettings(value) };
+  value = { ...value, ...assetReferenceSettings(value), mask_box: assetStyleMaskBox(value) };
+  delete value.mask_width_percent;
+  delete value.mask_height_percent;
   delete value.composition_preset;
   delete value.raw_composition_tags;
   ComfyAssetPrompt.migrateBatchChainFields(value);
   return {
     character: "", appearance: "", outfit: "", expression: "", background_preset: "",
     img_w: 700, img_h: 1024, seed: -1, hrf_size: 2, hrf_restore_size: true,
-    mask_area_limit_enabled: false, mask_width_percent: 80, mask_height_percent: 80,
+    mask_area_limit_enabled: false,
     face_crop_top: 2.5, face_crop_bottom: 1, snapref_strength: 0, snapref_mode: "char", snapref_megapixels: 1,
     ref_strength: 0.55, style_ref_strength: 0.55, lora_list: [], face_lora_list: [], style_lora_list: [],
     ref_images: [], style_ref_images: [], snapref_images: [], snapref_face_images: [], snapref_secondary_images: [], ...value,
@@ -240,10 +243,18 @@ export async function buildRegionalAssetRequest(slots: AssetRecord[], regions: A
   return { ...prepared[0].job, prompt_json: document, snapref_enabled: references.length > 0, snapref_images: [], regional_references: references };
 }
 
+export function assetStyleMaskBox(slot: AssetRecord): MaskBox {
+  if (slot.mask_box) {
+    const { x, y, width, height } = slot.mask_box;
+    return { x, y, width, height };
+  }
+  const widthPercent = slot.mask_width_percent ?? 80, heightPercent = slot.mask_height_percent ?? 80;
+  return { x: (100 - widthPercent) / 200, y: (100 - heightPercent) / 200, width: widthPercent / 100, height: heightPercent / 100 };
+}
+
 export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
   if (slot.mask_area_limit_enabled) {
-    const width = slot.mask_width_percent / 100, height = slot.mask_height_percent / 100;
-    const region = { name: "asset_mode", character: slot.character, x: (1 - width) / 2, y: (1 - height) / 2, width, height };
+    const region = { name: "asset_mode", character: slot.character, ...assetStyleMaskBox(slot) };
     return buildRegionalAssetRequest([slot], [region], "", tags, selection, styles);
   }
   const prepared = prepareAssetSlot(slot, tags, selection, styles);

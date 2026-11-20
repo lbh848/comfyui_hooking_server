@@ -31,7 +31,7 @@ STYLE_NUMBER_RANGES = {
     "mask_width_percent": (1, 100), "mask_height_percent": (1, 100),
 }
 STYLE_STRING_KEYS = STYLE_TAG_KEYS | {"asset_model_preset_id", "asset_workflow_type"}
-STYLE_KEYS = STYLE_STRING_KEYS | STYLE_RAW_KEYS | STYLE_BOOLEAN_KEYS | STYLE_NUMBER_RANGES.keys() | {"style_lora_list"}
+STYLE_KEYS = STYLE_STRING_KEYS | STYLE_RAW_KEYS | STYLE_BOOLEAN_KEYS | STYLE_NUMBER_RANGES.keys() | {"style_lora_list", "mask_box"}
 
 
 class StylePresetConflict(ValueError):
@@ -58,6 +58,11 @@ def validate_style_settings(settings):
                          and (key == "hrf_size" or value == int(value)))
             elif key == "style_lora_list":
                 valid = isinstance(value, list) and all(isinstance(item, dict) for item in value)
+            elif key == "mask_box":
+                valid = (isinstance(value, dict) and set(value) == {"x", "y", "width", "height"}
+                         and all(type(n) in (int, float) and 0 <= n <= 1 for n in value.values())
+                         and value["width"] > 0 and value["height"] > 0
+                         and value["x"] + value["width"] <= 1 + 1e-9 and value["y"] + value["height"] <= 1 + 1e-9)
             if not valid:
                 raise ValueError(f"그림체 설정 값을 확인하세요: {key}")
         if "asset_workflow_type" in slot and slot["asset_workflow_type"] not in {"anima_only", "anima_ilxl"}:

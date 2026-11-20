@@ -3,7 +3,7 @@ import { applyAssetStyleSettings, assetCapabilities, assetModelPreset, assetPres
 export const assetStyleLabels: Record<string, string> = {
   ...Object.fromEntries(assetPresetFields.filter(field => field[5] === "style").flatMap(([key, label, , raw]) => [[key, `${label} 프리셋`], [raw, `${label} 태그`]])),
   img_w: "이미지 너비", img_h: "이미지 높이", seed: "시드",
-  mask_area_limit_enabled: "마스크 영역 제한", mask_width_percent: "마스크 너비 (%)", mask_height_percent: "마스크 높이 (%)",
+  mask_area_limit_enabled: "마스크 영역 제한", mask_box: "마스크 위치와 크기",
   hrf_anima: "ANIMA 고해상도 보정", hrf_sdxl: "ILXL 고해상도 보정", hrf_size: "확대 배율", hrf_restore_size: "원본 크기 복원",
   anima_fd_enabled: "ANIMA 얼굴 보정", anima_hd_enabled: "ANIMA 손 보정", anima_ed_enabled: "ANIMA 눈 보정",
   sdxl_fd_enabled: "ILXL 얼굴 보정", sdxl_hd_enabled: "ILXL 손 보정", sdxl_ed_enabled: "ILXL 눈 보정",
@@ -35,8 +35,13 @@ export function compareAssetStyleSwitchEdits(draft: AssetRecord, selected: Asset
   return compareAssetStyleSettings(baseline, draft, tags);
 }
 
-export function displayStyleValue(value: unknown): string {
+export function displayStyleValue(value: unknown, key?: string): string {
   if (value == null || value === "" || Array.isArray(value) && !value.length) return "없음";
+  if (key === "mask_box" && typeof value === "object") {
+    const box = value as AssetRecord;
+    const percent = (n: number) => `${Math.round(n * 10000) / 100}%`;
+    return `왼쪽 ${percent(box.x)} · 위 ${percent(box.y)} · 너비 ${percent(box.width)} · 높이 ${percent(box.height)}`;
+  }
   if (typeof value === "boolean") return value ? "사용" : "사용 안 함";
   if (Array.isArray(value) && value.every(item => typeof item === "string")) return value.join(", ") || "없음";
   return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);

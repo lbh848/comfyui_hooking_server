@@ -18,7 +18,7 @@ export function AssetStyleMaker({ slot, defaults, tags, presets, disabled, onCha
   const selection = useIllustrationModelSelection();
   function displayField(key: string, value: unknown) {
     if (key === "asset_model_preset_id") return selection.data?.presets.find((preset: AssetRecord) => preset.id === value)?.name || (value ? "찾을 수 없는 그림 모델" : "현재 활성화된 그림 모델");
-    return displayStyleValue(value);
+    return displayStyleValue(value, key);
   }
   const rows = presets.selected ? compareAssetStyleGeneration(defaults, slot, presets.selected, tags, selection.data) : [];
   const changed = rows.filter(row => row.changed);

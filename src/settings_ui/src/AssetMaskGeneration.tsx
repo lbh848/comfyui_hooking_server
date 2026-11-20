@@ -1,13 +1,12 @@
-import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { Modal } from "./components";
 import { AssetForm } from "./AssetForm";
 import { AssetGroupedOptions } from "./AssetScopeControls";
 import { assetRequest, loadAssetCharacterSettings, type AssetRecord } from "./asset";
-import { assetMaskPlacements, boxBetween, buildAssetMaskRequest, type MaskBox, type MaskRegion } from "./assetMaskRequest";
+import { assetMaskPlacements, buildAssetMaskRequest, type MaskRegion } from "./assetMaskRequest";
+import { AssetMaskCanvas, maskRegionColors } from "./AssetMaskCanvas";
 import type { Resources } from "./useResources";
-
-const colors = ["#df5570", "#46a66d", "#5e83d4"];
 
 export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, onClose, onQueued }: {
   slot: AssetRecord; tags: AssetRecord; count: number; inventory: Resources; reloadTags: () => void;
@@ -22,17 +21,12 @@ export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, 
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const submitting = useRef(false);
-  const drag = useRef<{ id: string; pointerId: number; start: { x: number; y: number }; before: MaskBox | null } | null>(null);
   const current = regions[selected];
-  const regionStyle = { "--region-color": colors[selected] } as CSSProperties;
+  const regionStyle = { "--region-color": maskRegionColors[selected] } as CSSProperties;
   const width = Number(slot.img_w), height = Number(slot.img_h);
   const validSize = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
   function update(id: string, patch: Partial<MaskRegion>) {
     setRegions(previous => previous.map(region => region.id === id ? { ...region, ...patch } : region)); setPreview(null);
-  }
-  function point(event: PointerEvent<SVGSVGElement>) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return { x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)) };
   }
   async function submit(previewOnly: boolean) {
     if (submitting.current) return;
@@ -59,7 +53,7 @@ export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, 
           <header className="asset-region-group-heading"><h3>1. 캐릭터와 영역</h3><span className="asset-region-scope">마스크별</span></header>
           <div className="asset-region-group-body">
             <p className="field-help">편집할 영역과 캐릭터를 선택한 뒤, 캔버스에 사각형을 그리세요. 최대 3명까지 배치할 수 있습니다.</p>
-            <div className="asset-actions asset-region-selector" role="group" aria-label="캐릭터 영역 선택">{regions.map((region, index) => <button type="button" key={region.id} className="button" style={{ "--region-color": colors[index] } as CSSProperties} title={`영역 ${index + 1} · ${region.slot.character || "캐릭터 미선택"}`} aria-pressed={index === selected} disabled={busy} onClick={() => setSelected(index)}><i aria-hidden="true" /><span>{index + 1}. {region.slot.character || "캐릭터 선택"}</span></button>)}
+            <div className="asset-actions asset-region-selector" role="group" aria-label="캐릭터 영역 선택">{regions.map((region, index) => <button type="button" key={region.id} className="button" style={{ "--region-color": maskRegionColors[index] } as CSSProperties} title={`영역 ${index + 1} · ${region.slot.character || "캐릭터 미선택"}`} aria-pressed={index === selected} disabled={busy} onClick={() => setSelected(index)}><i aria-hidden="true" /><span>{index + 1}. {region.slot.character || "캐릭터 선택"}</span></button>)}
               <button type="button" className="button" disabled={busy || regions.length === 3} onClick={() => { setRegions(previous => [...previous, { id: crypto.randomUUID(), slot: { ...structuredClone(slot), ...loadAssetCharacterSettings("", tags).values, character: "" }, box: null }]); setSelected(regions.length); setPreview(null); }}><Plus size={14} />영역 추가</button>
             </div>
             <label className="field">영역 {selected + 1} 캐릭터<select disabled={busy} value={current.slot.character || ""} onChange={event => update(current.id, { slot: { ...current.slot, ...loadAssetCharacterSettings(event.target.value, tags).values, character: event.target.value } })}><option value="">캐릭터 선택</option><AssetGroupedOptions items={Object.keys(tags.characters || {}).map(name => ({ id: name, name, scope: tags.preset_scopes?.characters?.[name] }))} /></select></label>
@@ -99,24 +93,9 @@ export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, 
       <div className="asset-region-drawing">
         <header className="asset-region-canvas-heading"><h3>마스크 배치</h3><span className="asset-region-current" style={regionStyle}><i aria-hidden="true" />영역 {selected + 1} 편집 중</span></header>
         <div className="asset-region-stage">
-          {validSize && <svg className="asset-region-canvas" viewBox={`0 0 ${width} ${height}`} style={{ aspectRatio: `${width} / ${height}`, width: `min(100cqw, ${100 * width / height}cqh)` }} role="img" aria-label="캐릭터 사각형 영역 그리기"
-            onPointerDown={event => {
-              if (busy || event.button !== 0 || drag.current) return;
-              event.preventDefault(); drag.current = { id: current.id, pointerId: event.pointerId, start: point(event), before: current.box };
-              event.currentTarget.setPointerCapture(event.pointerId);
-            }} onPointerMove={event => { if (drag.current?.pointerId === event.pointerId) update(drag.current.id, { box: boxBetween(drag.current.start, point(event)) }); }}
-            onPointerUp={event => {
-              if (drag.current?.pointerId !== event.pointerId) return;
-              const box = boxBetween(drag.current.start, point(event));
-              update(drag.current.id, { box: box.width * width >= 1 && box.height * height >= 1 ? box : drag.current.before });
-              drag.current = null; event.currentTarget.releasePointerCapture(event.pointerId);
-            }} onLostPointerCapture={() => { if (drag.current) update(drag.current.id, { box: drag.current.before }); drag.current = null; }}>
-            <rect width={width} height={height} fill="var(--panel, #fffdfb)" />
-            {regions.map((region, index) => region.box && <g key={region.id} style={{ pointerEvents: "none" }}>
-              <rect x={region.box.x * width} y={region.box.y * height} width={region.box.width * width} height={region.box.height * height} fill={colors[index]} fillOpacity={.22} stroke={colors[index]} strokeWidth={index === selected ? 3 : 1.5} vectorEffect="non-scaling-stroke" />
-              <text x={region.box.x * width + 8} y={region.box.y * height + 28} fontSize={Math.max(width / 30, 16)} fill={colors[index]}>{index + 1}. {region.slot.character || "캐릭터 선택"}</text>
-            </g>)}
-          </svg>}
+          {validSize && <AssetMaskCanvas width={width} height={height} disabled={busy} selected={selected} label="캐릭터 사각형 영역 그리기"
+            regions={regions.map((region, index) => ({ id: region.id, box: region.box, label: `${index + 1}. ${region.slot.character || "캐릭터 선택"}` }))}
+            onDraw={(id, box) => update(id, { box })} />}
         </div>
         <p className="field-help">{width} × {height} · 선택한 영역을 다시 드래그하면 위치와 크기가 바뀝니다.</p>
       </div>

@@ -136,14 +136,19 @@
             "simple background",
             "white background"
           ],
-          "asset_model_preset_id": "3155236a262743808ba449a275800b36",
-          "asset_workflow_type": "anima_only",
           "img_w": 700,
           "img_h": 1024,
           "seed": -1,
           "hrf_anima": false,
           "hrf_size": 2,
           "hrf_restore_size": true,
+          "mask_area_limit_enabled": true,
+          "mask_box": {
+            "x": 0.12142857142857143,
+            "y": 0.1181640625,
+            "width": 0.77,
+            "height": 0.8818359375
+          },
           "style_lora_list": []
         }
       }
@@ -509,14 +514,19 @@
           "raw_background_tags": [
             "(transparent background:1.2)"
           ],
-          "asset_model_preset_id": "asset-anima",
-          "asset_workflow_type": "anima_only",
           "img_w": 700,
           "img_h": 1024,
           "seed": -1,
           "hrf_anima": false,
           "hrf_size": 2,
           "hrf_restore_size": true,
+          "mask_area_limit_enabled": true,
+          "mask_box": {
+            "x": 0.10571428571428572,
+            "y": 0.1044921875,
+            "width": 0.797142857142857,
+            "height": 0.8955078125
+          },
           "style_lora_list": []
         }
       }

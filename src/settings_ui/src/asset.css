@@ -351,6 +351,11 @@
 .asset-region-current { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 .asset-region-stage { flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; }
 .asset-region-canvas { display: block; height: auto; border: 1px solid var(--line); touch-action: none; cursor: crosshair; }
+.asset-region-canvas:focus-visible { outline: 2px solid var(--rose-dark); outline-offset: 2px; }
+.asset-region-canvas[aria-disabled="true"] { cursor: default; }
+.asset-style-mask { display: grid; gap: 8px; margin: 12px 0; }
+.asset-style-mask .field-help { margin: 0; }
+.asset-style-mask .asset-region-stage { height: min(36dvh, 300px); min-width: 0; border-radius: 6px; background: var(--lavender); padding: 8px; }
 .asset-region-fields { grid-area: fields; display: grid; align-content: start; gap: 16px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 2px 6px 8px 2px; }
 .asset-region-group { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
 .asset-region-group-heading { padding: 12px 14px; border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; background: var(--lavender); }
