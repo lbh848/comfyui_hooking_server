@@ -8,7 +8,7 @@ from pathlib import Path
 CHARACTER_LORE_AUTO_LINK_TASK = "character_lore_auto_link"
 
 
-def _parse_lore_npc_candidates(raw, anchors):
+def _parse_lore_npc_candidates(raw, anchors, *, secondary_bot):
     from modes.illustration_npc import lore_npc_card, parse_candidate
     from modes.llm_prompt_edit import parse_llm_json
 
@@ -45,7 +45,7 @@ def _parse_lore_npc_candidates(raw, anchors):
                 references = [references]
             candidate = parse_candidate({**row, "name": storage_name, "aliases": aliases, "description": description,
                                          "anchors": references}, anchors, repair=True)
-            candidate["card"] = lore_npc_card(candidate, fields)
+            candidate["card"] = lore_npc_card(candidate, fields, secondary_bot=secondary_bot)
             candidates.append(candidate)
         except ValueError as exc:
             label = name.strip() if isinstance(name, str) and name.strip() else f"{index}번째 후보"
@@ -91,7 +91,11 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
     if not entries:
         raise ValueError("분석할 로어북이 없습니다.")
     batches = _lore_npc_batches(entries, batch_chars)
-    prompt = (Path(__file__).resolve().parents[1] / "prompts" / "lore_npc_generation.txt").read_text(encoding="utf-8")
+    prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
+    prompt = (prompt_dir / "lore_npc_generation.txt").read_text(encoding="utf-8")
+    secondary_bot = (toggles or {}).get("genre") == "secondary_bot"
+    if secondary_bot:
+        prompt += "\n" + (prompt_dir / "lore_npc_generation_secondary.txt").read_text(encoding="utf-8")
     instructions = npc_card_instructions(load_prompt_files(workshop), toggles or {})
     roster = {character["name"]: list(dict.fromkeys(
         alias for card in character.get("visual_cards", []) for alias in card.get("aliases", [])
@@ -117,7 +121,7 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
 
         def validate(raw):
             try:
-                parsed, row_issues = _parse_lore_npc_candidates(raw, anchors)
+                parsed, row_issues = _parse_lore_npc_candidates(raw, anchors, secondary_bot=secondary_bot)
             except (ValueError, TypeError) as exc:
                 parsed, row_issues = [], [str(exc)]
             batch_candidates[:] = parsed

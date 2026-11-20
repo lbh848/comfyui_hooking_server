@@ -56,7 +56,7 @@ def character_image_descriptor(root: dict, *, emotion_tags=None) -> dict:
     animal = card["gender_tag"] == "animal"
     camera = "solo, full body, animal focus, no humans, looking at viewer" if animal else "solo, cowboy shot, looking at viewer"
     appearance = tag_values(card["appearance"])
-    name = root["name"]
+    name = (card.get("image_name_tag") if card.get("use_image_name_tag") else "") or root["name"]
     if all(tag.casefold() != name.casefold() for tag in appearance):
         appearance.insert(0, name)
     tags = [
@@ -214,17 +214,29 @@ def parse_cards(value, candidates, *, salvage=False, name_tag_candidates=None) -
     return [result[name] for name in expected if name in result]
 
 
-def lore_npc_card(candidate, fields):
-    """Keep only visual fields accepted by the NPC renderer and card store."""
+def _lore_npc_root(candidate, fields, *, secondary_bot=False):
     if not isinstance(fields, dict):
         raise ValueError(f"{candidate['name']}의 외형 카드가 없습니다.")
     root, = parse_cards({"characters": [{**fields, "name": candidate["name"]}]}, [candidate])
     card = root["visual_cards"][0]
     if not card["appearance"]:
         raise ValueError(f"{candidate['name']}의 외모 태그가 없습니다.")
-    return {**{key: card[key] for key in ("gender_tag", "visual_context")},
-            **{key: tag_values(card[key]) for key in ("appearance", "default_outfit", "face_tags", "eye_tags")},
-            "name_tag": fields.get("name_tag") if isinstance(fields.get("name_tag"), str) else ""}
+    name_tag = fields.get("name_tag")
+    if secondary_bot and isinstance(name_tag, str) and name_tag:
+        card.update(image_name_tag=name_tag, use_image_name_tag=True)
+        card["appearance"] = normalize_tag_entries([name_tag, *card["appearance"]])
+        store_visual_cards(root, [card])
+    return root
+
+
+def lore_npc_card(candidate, fields, *, secondary_bot):
+    """Return the proposed visual fields for review before registration."""
+    card = _lore_npc_root(candidate, fields)["visual_cards"][0]
+    prepared = {**{key: card[key] for key in ("gender_tag", "visual_context")},
+                **{key: tag_values(card[key]) for key in ("appearance", "default_outfit", "face_tags", "eye_tags")}}
+    if secondary_bot:
+        prepared["name_tag"] = fields.get("name_tag", "")
+    return prepared
 
 
 def _portable(bot_mode_module, bot_name):
@@ -308,22 +320,15 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
         output = ""
         created = []
         roots = []
-        name_tag_candidates = None
-        if pending and toggles.get("genre") == "secondary_bot":
-            name_tag_candidates = await asyncio.to_thread(
-                _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
+        secondary_bot = toggles.get("genre") == "secondary_bot"
         if pending and prepared_cards is not None:
-            cards = []
-            for candidate in pending:
-                name = candidate["name"]
-                card = lore_npc_card(candidate, prepared_cards.get(name))
-                # The combined call proposes a tag before the names are known.
-                # Resolve it against this character's actual dictionary results.
-                matches = (name_tag_candidates or {}).get(name, [])
-                name_tag_id = next((item["id"] for item in matches if item["tag"] == card["name_tag"]), 0)
-                cards.append({**card, "name": name, "name_tag_id": name_tag_id})
-            roots = parse_cards({"characters": cards}, pending, name_tag_candidates=name_tag_candidates)
+            roots = [_lore_npc_root(candidate, prepared_cards.get(candidate["name"]), secondary_bot=secondary_bot)
+                     for candidate in pending]
         elif pending:
+            name_tag_candidates = None
+            if secondary_bot:
+                name_tag_candidates = await asyncio.to_thread(
+                    _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
             messages = builders.npc_generation_messages(prompts, pending, past_text, segmented, toggles,
                                                         name_tag_candidates=name_tag_candidates)
             def validate(response):
