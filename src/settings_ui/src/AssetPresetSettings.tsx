@@ -41,7 +41,7 @@ export function AssetPresetSettings({ section, slot, defaults, tags, onChange, o
     }><div className="asset-panel-body">
       <AssetForm {...formProps} field="character" slot={slot} mode="values" onChange={onChange}
         disabled={disabled || characterSettings.busy} characterReadOnly={characterSettings.locked} builtinUnlockToken={characterSettings.unlockToken}
-        beforeCharacterChange={characterSettings.retry} onCharacterSelect={characterSettings.selectCharacter} onBusyChange={setSwitchingCharacter} />
+        beforeCharacterChange={characterSettings.beforeCharacterChange} onCharacterSelect={characterSettings.selectCharacter} onBusyChange={setSwitchingCharacter} />
       <AssetScopeControls scope={characterSettings.scope} unlocked={characterSettings.unlocked} disabled={disabled || characterSettings.busy || switchingCharacter} onAction={characterSettings.scopeAction} />
       {(characterSettings.error || characterSettings.inputError) && <div className="settings-feedback error" role="alert">
         {characterSettings.error || characterSettings.inputError}

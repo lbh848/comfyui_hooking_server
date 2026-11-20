@@ -19,7 +19,7 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
   slot: AssetRecord; tags: AssetRecord; onChange: (patch: AssetRecord) => void; reloadTags: () => void; inventory: Resources; disabled?: boolean;
   section?: AssetSettingsSection; mode?: "values" | "presets" | "combined" | "inline"; defaults?: AssetRecord; field?: string;
   onApplyDefaults?: (patch: AssetRecord) => void;
-  beforeCharacterChange?: () => Promise<boolean>; onCharacterSelect?: (name: string, tags: AssetRecord, keepValues?: boolean) => void;
+  beforeCharacterChange?: (nextCharacter?: string) => Promise<boolean>; onCharacterSelect?: (name: string, tags: AssetRecord, keepValues?: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
   stylePresets?: AssetRecord[];
   characterReadOnly?: boolean; builtinUnlockToken?: string; showReferenceOptions?: boolean; showPresetSelectors?: boolean; showTagEditors?: boolean;
@@ -49,7 +49,7 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
   async function selectCharacter(name: string) {
     setBusy(true); setError("");
     try {
-      if (beforeCharacterChange && !await beforeCharacterChange()) return;
+      if (beforeCharacterChange && !await beforeCharacterChange(name)) return;
       applyCharacter(name, await assetRequest("asset_mode/tags"));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "캐릭터를 불러오지 못했습니다."); }
     finally { setBusy(false); }

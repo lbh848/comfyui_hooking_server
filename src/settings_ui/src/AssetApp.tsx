@@ -113,7 +113,7 @@ function AssetAppContent() {
       if (section === "character") {
         stylePresets.select(id);
       } else {
-        if (!await characterSettings.retry()) throw new Error("캐릭터 적용값을 저장한 뒤 다시 시도하세요.");
+        if (!await characterSettings.beforeCharacterChange(id)) throw new Error("캐릭터 적용값을 저장한 뒤 다시 시도하세요.");
         const catalog = await assetRequest("asset_mode/tags");
         if (id && !catalog.characters?.[id]) throw new Error("캐릭터를 찾을 수 없습니다. 목록을 새로고침하세요.");
         characterSettings.selectCharacter(id, catalog);

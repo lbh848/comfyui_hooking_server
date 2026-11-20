@@ -20,6 +20,7 @@ export function useAssetCharacterSettings(draft: AssetRecord, setDraft: Dispatch
   const savedValue = useMemo(() => tags.data?.characters?.[name]
     ? JSON.stringify([name, loadAssetCharacterSettings(name, tags.data)]) : null, [name, tags.data]);
   const dirty = !!name && !!draft.characterSettingsDirty && value !== savedValue;
+  const characterMissing = !!tags.data && !!name && !tags.data.characters?.[name];
   useEffect(() => {
     if (!tags.data || loaded.current === name) return;
     loaded.current = name;
@@ -31,7 +32,7 @@ export function useAssetCharacterSettings(draft: AssetRecord, setDraft: Dispatch
   const autosave = useWorkflowAutosave({ label: `${name} · 캐릭터 설정`, page: "character", value, dirty,
     interval: 10_000,
     paused: !tags.data || locked,
-    validation: tags.data && name && !tags.data.characters?.[name] ? "캐릭터를 다시 선택하세요." : "",
+    validation: characterMissing ? "캐릭터를 다시 선택하세요." : "",
     save: async () => {
       await assetRequest("asset_mode/tags", { action: "update_character", name, settings, builtin_unlock_token: unlockToken });
       tags.setData(previous => previous && ({ ...previous, characters: { ...previous.characters,
@@ -48,6 +49,10 @@ export function useAssetCharacterSettings(draft: AssetRecord, setDraft: Dispatch
     setDraft(previous => previous.slot === draft.slot && previous.defaults === draft.defaults
       ? { ...previous, characterSettingsDirty: false } : previous);
   }, [autosave.busy, draft.characterSettingsDirty, draft.slot, draft.defaults, value, savedValue, setDraft]);
+  async function beforeCharacterChange(nextCharacter?: string) {
+    if (characterMissing && nextCharacter !== undefined && nextCharacter !== name) return true;
+    return autosave.retry();
+  }
   function selectCharacter(character: string, catalog: AssetRecord, keepValues = false) {
     loaded.current = character;
     tags.setData(catalog);
@@ -67,7 +72,7 @@ export function useAssetCharacterSettings(draft: AssetRecord, setDraft: Dispatch
   }
   async function selectGallery(character: string, combination: AssetGalleryCombination | null) {
     if (!character) return;
-    if (!await autosave.retry()) throw new Error("캐릭터 적용값을 저장한 뒤 다시 시도하세요.");
+    if (!await beforeCharacterChange(character)) throw new Error("캐릭터 적용값을 저장한 뒤 다시 시도하세요.");
     const catalog = await assetRequest("asset_mode/tags");
     if (!catalog.characters?.[character]) throw new Error("캐릭터를 찾을 수 없습니다. 목록을 새로고침하세요.");
     loaded.current = character;
@@ -111,5 +116,5 @@ export function useAssetCharacterSettings(draft: AssetRecord, setDraft: Dispatch
   // Autosave accepts newer edits while a request is in flight. Only scope/lock
   // changes block typing; disabling a focused field during autosave blurs it.
   return { ...autosave, busy: autosave.busy || scopeBusy, scopeBusy, error: scopeError || autosave.error,
-    selectCharacter, selectGallery, changeSettings, applySavedSettings, selected: !!name, scope: name ? scope : undefined, locked, unlocked: !!unlockToken, unlockToken, scopeAction };
+    beforeCharacterChange, selectCharacter, selectGallery, changeSettings, applySavedSettings, selected: !!name, scope: name ? scope : undefined, locked, unlocked: !!unlockToken, unlockToken, scopeAction };
 }
