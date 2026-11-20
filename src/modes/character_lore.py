@@ -44,8 +44,8 @@ def _parse_lore_npc_candidates(raw, anchors):
             candidate["card"] = lore_npc_card(candidate, row.get("card", row))
             candidates.append(candidate)
         except ValueError as exc:
-            label = name.strip() if isinstance(name, str) and name.strip() else None
-            issues.append((label, str(exc) if label else f"{index}번째 후보 · {exc}"))
+            label = name.strip() if isinstance(name, str) and name.strip() else f"{index}번째 후보"
+            issues.append(f"{label} · {exc}")
     return candidates, issues
 
 
@@ -99,7 +99,6 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
     for number, batch in enumerate(batches, 1):
         anchors = {part["anchor"] for part in batch}
         batch_candidates = []
-        rejected = {}
         issues = []
         batch_text = "\n".join(part["text"] for part in batch).casefold()
         previous_cards = {item["name"]: item["card"] for item in candidates.values()
@@ -116,25 +115,15 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
             try:
                 parsed, row_issues = _parse_lore_npc_candidates(raw, anchors)
             except (ValueError, TypeError) as exc:
-                parsed, row_issues = [], [(None, str(exc))]
-            # Keep grounded rows even if another attempt or the fallback fails.
-            batch_candidates.extend(parsed)
-            issues.clear()
-            for label, reason in row_issues:
-                if label:
-                    rejected["_".join(label.split()).casefold()] = f"{label} · {reason}"
-                else:
-                    issues.append(reason)
-            for candidate in parsed:
-                for identifier in [candidate["name"], *candidate["aliases"]]:
-                    rejected.pop("_".join(identifier.split()).casefold(), None)
-            if not rejected and not issues:
+                parsed, row_issues = [], [str(exc)]
+            batch_candidates[:] = parsed
+            issues[:] = row_issues
+            if parsed or not issues:
                 return True, ""
             retry_messages[:] = [*messages, {"role": "user", "content":
-                "Correct the previous response. Return the complete characters array. For each individual include "
-                "all visual card fields, a valid gender, a romanized name, a grounded description and an exact supplied anchor. "
-                "Recheck the following unresolved rows against the source: " + json.dumps(list(rejected), ensure_ascii=False)}]
-            return False, next(iter(rejected.values()), None) or issues[0]
+                "Return a JSON object with a characters array. For each character include a romanized name, "
+                "a grounded description, an exact supplied anchor, a valid gender_tag and the visual card fields."}]
+            return False, issues[0]
 
         context = create_llm_execution_context("lore_npc_generation",
             call_name=f"로어북 기반 NPC 생성 · {number}/{len(batches)}묶음", json_mode=True,
@@ -143,9 +132,7 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
         try:
             result = await call_logged_llm_task(context, messages, result_validator=validate, retry_messages=retry_messages)
             cancelled = isinstance(result.raw_response, ManualCancelledText)
-            if result.accepted and not cancelled:
-                issues.clear()
-            elif not cancelled:
+            if not result.accepted and not cancelled:
                 reason = result.reason or str(result.exception or "응답이 비어 있습니다.")
                 if reason not in issues:
                     issues.append(reason)
@@ -153,7 +140,7 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
             cancelled = True
         except Exception as exc:
             issues.append(str(exc) or type(exc).__name__)
-        issues = list(dict.fromkeys([*rejected.values(), *issues]))
+        issues = list(dict.fromkeys(issues))
         if issues:
             first = entries[int(batch[0]["anchor"][1:]) - 1]
             warnings.append({"batch": number, "source": first["source"], "title": first["title"], "issues": issues})
