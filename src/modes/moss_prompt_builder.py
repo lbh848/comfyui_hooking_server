@@ -544,20 +544,30 @@ def apply_character_image_name_tags(moss: dict, characters: list,
 
     rendered = copy.deepcopy(moss)
     card_names = [card["name"] for card in cards]
-    for item in rendered.get("items") or []:
-        if not isinstance(item, dict) or _text(item.get("label")).lower() != "character":
+    items = rendered.get("items")
+    native_layout = isinstance(items, list)
+    entries = items if native_layout else rendered.get("regions") or []
+    caption_key = "caption" if native_layout else "character_prompt"
+    for item in entries:
+        if not isinstance(item, dict):
             continue
+        if native_layout and _text(item.get("label")).lower() != "character":
+            continue
+        caption = _text(item.get(caption_key))
+        if not native_layout:
+            caption = caption or _text(item.get("positive"))
+            if not caption:
+                continue
         name = _text(item.get("name")).strip('\"“”').strip()
         matched = IllustPromptBuilder.detect_characters_from_name(
             name, card_names, character_aliases)
         if len(matched) != 1:
             continue
-        caption = _text(item.get("caption"))
         # Panel ownership must stay at the start until the final builder turns
         # it into spatial prose. A character can occur in several panel items.
         marker = re.match(r"\s*PANEL\s+\d+\.\s*", caption, re.IGNORECASE)
         prefix = caption[:marker.end()] if marker else ""
-        item["caption"] = prefix + IllustPromptBuilder._apply_assigned_character_identity_tags(
+        item[caption_key] = prefix + IllustPromptBuilder._apply_assigned_character_identity_tags(
             [caption[len(prefix):]], {0: name}, {name: matched[0]}, cards)[0]
     return rendered
 
