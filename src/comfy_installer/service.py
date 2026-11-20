@@ -106,7 +106,7 @@ from .runtime_state import (
 )
 from .source_installer import install_comfy_source, update_comfy_source
 from .system_probe import probe_system
-from .updater import update_hooking_server_main
+from .updater import update_hooking_server
 from .workflow_library import (
     WorkflowSelection,
     WorkflowLibraryError,
@@ -160,7 +160,7 @@ _UPDATE_REQUIRED_MODEL_IDS = ("moss-i2i-swap-text-v4",)
 _UPDATE_PHASES = (
     ("transaction_cleanup", "오래된 업데이트 가상환경 백업 정리"),
     ("config_backup", "settings.json 업데이트 전 백업"),
-    ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
+    ("hooking_server", "후킹 서버 수동 업데이트"),
     ("manifest", "새 설치 매니페스트 로드"),
     ("inventory", "실제 Comfy/Python/노드 설치 상태 조사"),
     ("runtime_pause", "실행 중인 관리 Comfy 안전 정지"),
@@ -3012,7 +3012,7 @@ class ComfyInstallerService:
             )
 
             self._set_phase("hooking_server")
-            hooking_result = update_hooking_server_main(
+            hooking_result = update_hooking_server(
                 project_root=self.project_root,
                 config_path=self.config_path,
                 backup_dir=self.config_backup_dir,
@@ -3444,7 +3444,7 @@ class ComfyInstallerService:
             )
 
             self._set_phase("hooking_server")
-            hooking_result = update_hooking_server_main(
+            hooking_result = update_hooking_server(
                 project_root=self.project_root,
                 config_path=self.config_path,
                 backup_dir=update_config_backup_dir,

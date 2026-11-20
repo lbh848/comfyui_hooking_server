@@ -8,7 +8,7 @@ Original-project fixes retained here:
 * d8a57d4: keep workflow generation tests separate from ordinary updates.
 
 Distribution presets and bundled workflows now follow application releases.
-The panel has one main channel, permanent conflict backups, and separate actions
+The panel follows the installed application branch and has permanent conflict backups and separate actions
 for the three Soya repositories and the application's pinned Comfy runtime.
 """
 from __future__ import annotations
@@ -30,9 +30,9 @@ from .runtime_state import (
     collect_custom_node_state, desired_python_signature, load_runtime_receipt,
 )
 from .updater import (
-    HOOKING_BRANCH, HOOKING_REPOSITORY, _normalize_repository, _run_git_capture,
+    HOOKING_REPOSITORY, _normalize_repository, _run_git_capture,
     _prepare_untracked_quarantine, _restore_untracked_quarantine,
-    update_hooking_server_main,
+    fetch_hooking_commit, hooking_update_branch, update_hooking_server,
 )
 from .workflow_library import (
     basic_workflow_item_ids, install_managed_workflows, unpack_to_library,
@@ -72,6 +72,10 @@ class WorkshopUpdates:
     def _save(self) -> None:
         write_json_atomic(self.state_path, self.checked)
 
+    def _checked_for_branch(self, branch: str) -> dict:
+        # Checks saved before branch selection always came from origin/main.
+        return self.checked if self.checked.get("branch", "main") == branch else {}
+
     def backup_status(self) -> dict:
         # Never traverse a user-created junction outside this installation.
         if self.backup_root.is_symlink() or self.backup_root.is_junction() or self.backup_root.resolve() != self.root / "data" / "update_backup":
@@ -80,21 +84,22 @@ class WorkshopUpdates:
 
     def status(self) -> dict:
         current = self._head(self.root)
-        target = self.checked.get("application")
+        checked = self._checked_for_branch(self._git(self.root, "branch", "--show-current")) if self.checked and current else {}
+        target = checked.get("application")
         ahead = behind = 0
         if target and current:
             ahead, behind = map(int, self._git(self.root, "rev-list", "--left-right", "--count", f"{current}...{target}").split())
         manifest = load_install_manifest(self.service.manifest.source_path)
-        desired = self.checked.get("comfy", manifest.comfy)
+        desired = checked.get("comfy", manifest.comfy)
         nodes = []
         for name in SOYA_NODE_NAMES:
             node = next(node for node in manifest.custom_nodes if node["name"] == name)
             head = self._head(self.service.comfy_root / "custom_nodes" / name)
-            node_target = self.checked.get("nodes", {}).get(name)
+            node_target = checked.get("nodes", {}).get(name)
             nodes.append({"name": name, "current": head, "target": node_target,
                           "required_ref": node.get("ref"), "update_needed": bool(node_target and head != node_target)})
         comfy_head = self._head(self.service.comfy_root)
-        desired_data = self.checked.get("manifest", manifest.data)
+        desired_data = checked.get("manifest", manifest.data)
         desired_manifest = InstallManifest(manifest.source_path, desired_data, manifest.sha256)
         changes = []
         if comfy_head and comfy_head != desired["ref"]:
@@ -121,10 +126,10 @@ class WorkshopUpdates:
                     break
         restart_required = bool(current and self.service._startup_project_head and current != self.service._startup_project_head)
         return {
-            "checked_at": self.checked.get("checked_at"), "job": self.service.status(),
+            "checked_at": checked.get("checked_at"), "job": self.service.status(),
             "application": {"current": current, "target": target, "ahead": ahead, "behind": behind,
-                            "update_needed": bool(behind or self.checked.get("workflows_pending")),
-                            "commits": self.checked.get("commits", []), "restart_required": restart_required},
+                            "update_needed": bool(behind or checked.get("workflows_pending")),
+                            "commits": checked.get("commits", []), "restart_required": restart_required},
             "nodes": nodes,
             "comfy": {"current": comfy_head, "version": desired["version"], "target": desired["ref"],
                       "required_version": manifest.comfy["version"], "required_ref": manifest.comfy["ref"],
@@ -147,10 +152,10 @@ class WorkshopUpdates:
             if self.service._thread is not None and self.service._thread.is_alive():
                 raise ValueError("이미 설치 또는 업데이트 작업이 진행 중입니다.")
             if action != "fetch":
-                if not self.checked.get("checked_at"):
+                state = self.status()
+                if not state["checked_at"]:
                     raise ValueError("먼저 커밋 가져오기를 실행하세요.")
                 self.service._require_comfy_not_in_use()
-                state = self.status()
                 if state["application"]["restart_required"]:
                     raise ValueError("공방을 다시 실행한 뒤 업데이트를 계속하세요.")
                 if action != "application":
@@ -170,8 +175,8 @@ class WorkshopUpdates:
 
     def _fetch(self) -> dict:
         self._verify_origin(self.root, HOOKING_REPOSITORY)
-        run_command(["git", "fetch", "origin", HOOKING_BRANCH], cwd=self.root, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
-        target = self._git(self.root, "rev-parse", f"origin/{HOOKING_BRANCH}")
+        branch = hooking_update_branch(self.root)
+        target = fetch_hooking_commit(self.root, branch, cancel_event=self.service._cancel, log=self.service._log)
         self.cache_root.mkdir(parents=True, exist_ok=True)
         manifest_path = self.cache_root / "install_manifest.json"
         manifest_path.write_bytes(_run_git_capture(self.root, "show", f"{target}:src/comfy_installer/resources/install_manifest.json"))
@@ -190,9 +195,9 @@ class WorkshopUpdates:
             run_command(["git", "fetch", "origin", node.get("tracking_branch", "main")], cwd=path, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
             nodes[name] = self._git(path, "rev-parse", "FETCH_HEAD")
         commits = self._git(self.root, "log", "-20", "--format=%h%x09%s", f"HEAD..{target}").splitlines()
-        self.checked = {"checked_at": _now(), "application": target, "comfy": manifest.comfy, "manifest": manifest.data,
+        self.checked = {"checked_at": _now(), "branch": branch, "application": target, "comfy": manifest.comfy, "manifest": manifest.data,
                         "nodes": nodes, "commits": commits,
-                        "workflows_pending": self.checked.get("workflows_pending", False)}
+                        "workflows_pending": self._checked_for_branch(branch).get("workflows_pending", False)}
         self._save()
         return {"message": "커밋을 가져왔습니다."}
 
@@ -203,10 +208,10 @@ class WorkshopUpdates:
         state = self.status()["application"]
         result = {"changed": False, "restart_required": False}
         if state["behind"]:
-            result = update_hooking_server_main(
+            result = update_hooking_server(
                 project_root=self.service.project_root, config_path=self.service.config_path,
                 backup_dir=self.backup_root / "config", cancel_event=self.service._cancel,
-                log=self.service._log, target_ref=target,
+                log=self.service._log, target_ref=target, target_branch=self.checked.get("branch", "main"),
             )
             # The newly fetched release can require a newer pack reader. Resume
             # the bundled-workflow phase after the new application has started.
