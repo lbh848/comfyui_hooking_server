@@ -26,7 +26,11 @@ def _parse_lore_npc_candidates(raw, anchors):
         try:
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("인물 이름이 없습니다.")
-            if not isinstance(row.get("description"), str) or not row["description"].strip():
+            fields = row.get("card", row)
+            description = row.get("description")
+            if description is None and isinstance(fields, dict):
+                description = fields.get("visual_context")
+            if not isinstance(description, str) or not description.strip():
                 raise ValueError("인물 설명이 없습니다.")
             storage_name = "_".join(name.split())
             aliases = row.get("aliases", [])
@@ -39,9 +43,9 @@ def _parse_lore_npc_candidates(raw, anchors):
             references = row.get("anchors")
             if type(references) is int:
                 references = [references]
-            candidate = parse_candidate({**row, "name": storage_name, "aliases": aliases,
+            candidate = parse_candidate({**row, "name": storage_name, "aliases": aliases, "description": description,
                                          "anchors": references}, anchors, repair=True)
-            candidate["card"] = lore_npc_card(candidate, row.get("card", row))
+            candidate["card"] = lore_npc_card(candidate, fields)
             candidates.append(candidate)
         except ValueError as exc:
             label = name.strip() if isinstance(name, str) and name.strip() else f"{index}번째 후보"

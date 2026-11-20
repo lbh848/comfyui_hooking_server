@@ -1084,23 +1084,34 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     return decoded
 
 
-def _decode_lore_npc_aliases(value: str | list, *, path: str | None = None):
-    """Drop only unreadable marked aliases. Names and card fields use strict decoding."""
-    single = isinstance(value, str)
-    restored = []
-    changed = False
-    for index, alias in enumerate([value] if single else value):
-        if isinstance(alias, str) and alias.startswith("base64:"):
-            changed = True
-            try:
-                alias = _decode_gemini_scene_document(alias)
-            except ValueError as exc:
+def _decode_lore_npc_field(value, field, *, path=None):
+    if field == "aliases" and isinstance(value, (list, str)):
+        single = isinstance(value, str)
+        aliases = []
+        for index, alias in enumerate([value] if single else value):
+            location = f"{path}[{index}]" if path is not None and not single else path
+            restored = _decode_lore_npc_field(alias, "", path=location)
+            if restored is not None or alias is None:
+                aliases.append(restored)
+        return aliases[0] if single and aliases else aliases
+    if not isinstance(value, str) or not value.startswith("base64:"):
+        return value
+    try:
+        return _decode_gemini_scene_document(value)
+    except ValueError as exc:
+        # Keep the intact words in free text. A damaged name, tag or number
+        # must never be turned into a different value by joining its fragments.
+        if isinstance(exc, UnicodeDecodeError) and field in ("description", "visual_context"):
+            words = exc.object.decode("utf-8", errors="surrogateescape").split()
+            words = ["…" if re.search(r"[\udc80-\udcff]", word) else word for word in words]
+            recovered = " ".join(words)
+            if any(char.isalnum() for char in recovered):
                 if path is not None:
-                    location = path if single else f"{path}[{index}]"
-                    _record_response_diagnostic(f"복원할 수 없는 NPC 별칭 제외: {location}: {exc}")
-                continue
-        restored.append(alias)
-    return (restored[0] if single and restored else restored), changed
+                    _record_response_diagnostic(f"NPC 설명 일부 복원 (손상된 단어는 …로 표시): {path}: {exc}")
+                return recovered
+        if path is not None:
+            _record_response_diagnostic(f"복원할 수 없는 NPC 값 제외: {path}: {exc}")
+        return None
 
 
 def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) -> str | None:
@@ -1170,7 +1181,7 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                 fragment = raw[index + 1:]
                 if is_key or not (fragment.startswith("base64:") or "base64:".startswith(fragment)):
                     parts.append(raw[index:])
-                elif fragment.startswith("base64:"):
+                elif fragment.startswith("base64:") and not lore_npcs:
                     # A quartet can end in the middle of a UTF-8 character.
                     # Keep that suffix buffered instead of emitting U+FFFD.
                     payload = fragment[7:].replace(r"\/", "/")
@@ -1181,22 +1192,23 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                         )
                         parts.append(json.dumps(decoded, ensure_ascii=False)[:-1])
                 break
-            if lore_npcs and is_key and value == "aliases" and (separator := re.match(r"\s*:\s*", raw[end:])):
-                # A streamed prefix of a corrupt alias cannot be taken back.
-                # Hold this optional field until it can be decoded as a unit.
+            if (lore_npcs and is_key and value in ("aliases", "description", "visual_context")
+                    and (separator := re.match(r"\s*:\s*", raw[end:]))):
+                # Wait for the complete value before exposing words that a
+                # later byte may invalidate, even across stream chunks.
                 value_start = end + separator.end()
                 if value_start == len(raw) or raw[value_start] in '["':
                     parts.append(raw[index:value_start])
                     try:
-                        aliases, index = decoder.raw_decode(raw, value_start)
+                        field_value, index = decoder.raw_decode(raw, value_start)
                     except json.JSONDecodeError:
                         break
-                    aliases, modified = _decode_lore_npc_aliases(aliases)
-                    parts.append(json.dumps(aliases, ensure_ascii=False) if modified else raw[value_start:index])
+                    restored = _decode_lore_npc_field(field_value, value)
+                    parts.append(json.dumps(restored, ensure_ascii=False) if restored != field_value else raw[value_start:index])
                     previous = '"'
                     continue
             if not is_key and value.startswith("base64:"):
-                decoded = _decode_gemini_scene_document(value)
+                decoded = _decode_lore_npc_field(value, "") if lore_npcs else _decode_gemini_scene_document(value)
                 parts.append(json.dumps(decoded, ensure_ascii=False))
             else:
                 parts.append(raw[index:end])
@@ -1362,14 +1374,14 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
 
     changed = False
 
-    def restore(item, path, *, alias_field=False):
+    def restore(item, path, *, field=""):
         nonlocal changed
-        if lore_npcs and alias_field and isinstance(item, (str, list)):
-            aliases, modified = _decode_lore_npc_aliases(item, path=path)
-            changed |= modified
-            return aliases
+        if lore_npcs and (isinstance(item, str) or field == "aliases" and isinstance(item, list)):
+            restored = _decode_lore_npc_field(item, field, path=path)
+            changed |= restored != item
+            return restored
         if isinstance(item, dict):
-            return {key: restore(child, f"{path}[{key!r}]", alias_field=key == "aliases")
+            return {key: restore(child, f"{path}[{key!r}]", field=key)
                     for key, child in item.items()}
         if isinstance(item, list):
             return [restore(child, f"{path}[{index}]") for index, child in enumerate(item)]
