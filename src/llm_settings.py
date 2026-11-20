@@ -99,6 +99,14 @@ def default_llm_routing() -> dict:
     return {task["key"]: copy.deepcopy(task["defaults"]) for task in LLM_ROUTING_CATALOG["tasks"]}
 
 
+def _migrate_lore_npc_route(routing: dict) -> dict:
+    routing = dict(routing)
+    if "character_lore_npcs" in routing:
+        previous = routing.pop("character_lore_npcs")
+        routing.setdefault("lore_npc_generation", previous)
+    return routing
+
+
 def import_llm_routing(config: dict) -> dict:
     """Import route settings without connecting them to the request engine."""
     routing = default_llm_routing()
@@ -107,7 +115,7 @@ def import_llm_routing(config: dict) -> dict:
     source = config.get("llm_routing", {})
     if not isinstance(source, dict):
         raise ValueError("LLM routing must be an object")
-    for key, entry in source.items():
+    for key, entry in _migrate_lore_npc_route(source).items():
         if key in RETIRED_LLM_ROUTING_TASKS:
             continue
         if not isinstance(entry, dict):
@@ -300,7 +308,7 @@ def migrate_document(value: dict, root: Path) -> dict:
     if "llmRouting" not in value["draft"]:
         value["draft"]["llmRouting"] = import_llm_routing(read_object(root / "config.json"))
     elif isinstance(value["draft"]["llmRouting"], dict):
-        value["draft"]["llmRouting"] = {**default_llm_routing(), **value["draft"]["llmRouting"]}
+        value["draft"]["llmRouting"] = {**default_llm_routing(), **_migrate_lore_npc_route(value["draft"]["llmRouting"])}
     if isinstance(value["draft"].get("llmRouting"), dict):
         for task in RETIRED_LLM_ROUTING_TASKS:
             value["draft"]["llmRouting"].pop(task, None)

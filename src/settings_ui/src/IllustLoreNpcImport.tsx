@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, Search, Square } from "lucide-react";
+import { Plus, Sparkles, Square } from "lucide-react";
 import { Panel } from "./components";
 import { useBotApi } from "./BotApiScope";
 import { IllustrationFeedback } from "./IllustBackups";
@@ -8,7 +8,8 @@ import { readCharacterArchives } from "./characterArchiveReader";
 import type { CharacterLoreEntry } from "./characterLore";
 import { saveBotArchives } from "./botArchives";
 
-type LoreNpc = { name: string; aliases: string[]; description: string; entry_indexes: number[] };
+type LoreNpcCard = { gender_tag: string; appearance: string[]; default_outfit: string[]; face_tags: string[]; eye_tags: string[]; visual_context: string };
+type LoreNpc = { name: string; aliases: string[]; description: string; entry_indexes: number[]; card: LoreNpcCard };
 type AnalysisWarning = { batch: number; source: string; title: string; issues: string[] };
 type Operation = { controller: AbortController; requestId: string };
 
@@ -41,7 +42,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
   function finish() {
     active.current = null; setStopping(false); onBusyChange(false);
   }
-  async function request(operation: Operation, action: "analyze" | "create", body: Record<string, unknown>) {
+  async function request(operation: Operation, action: "generate" | "register", body: Record<string, unknown>) {
     operation.controller.signal.throwIfAborted();
     operation.requestId = crypto.randomUUID();
     try {
@@ -69,7 +70,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
     }
   }
 
-  async function analyze() {
+  async function generateLoreNpcCards() {
     if (busy || active.current) return;
     const operation = begin();
     setProgress("로어북을 읽는 중…");
@@ -77,8 +78,8 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       const archive = await readCharacterArchives(botFiles, moduleFiles, operation.controller.signal, setProgress, true);
       setEntries(archive.loreEntries);
       if (!archive.loreEntries.length) throw new Error("선택한 파일에 분석할 로어북이 없습니다.");
-      setProgress(`로어북 ${archive.loreEntries.length}개에서 인물을 찾는 중…`);
-      const data = await request(operation, "analyze", { entries: archive.loreEntries, batch_chars: batchChars });
+      setProgress(`로어북 ${archive.loreEntries.length}개에서 인물과 외형 카드를 생성하는 중…`);
+      const data = await request(operation, "generate", { entries: archive.loreEntries, batch_chars: batchChars });
       const found: LoreNpc[] = data.candidates;
       const issues: AnalysisWarning[] = data.warnings || [];
       setWarnings(issues);
@@ -97,15 +98,15 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       setCandidates(visible);
       setSelected(visible.filter(({ name }) => !registered.has(name.toLowerCase()) &&
         (!previous.has(name.toLowerCase()) || selected.includes(previous.get(name.toLowerCase())!.name))).map(({ name }) => name));
-      const heading = interrupted ? "분석 중지" : issues.length ? "분석 결과 확인 필요" : "분석 완료";
+      const heading = interrupted ? "카드 생성 중지" : issues.length ? "카드 생성 결과 확인 필요" : "외형 카드 생성 완료";
       setProgress(`${heading} · 로어북 ${archive.loreEntries.length}개 · ${data.processed_batches ?? 0}/${data.batch_count ?? 0}묶음 처리 · 이번에 찾은 인물 ${found.length}명`);
     } catch (err) {
-      setProgress(operation.controller.signal.aborted ? "분석을 중지했습니다." : "");
+      setProgress(operation.controller.signal.aborted ? "카드 생성을 중지했습니다." : "");
       if (!operation.controller.signal.aborted) setError(err instanceof Error ? err.message : String(err));
     } finally { finish(); }
   }
 
-  async function create() {
+  async function registerLoreNpcs() {
     if (busy || active.current || !pending.length) return;
     const operation = begin();
     let failed = 0;
@@ -116,10 +117,10 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       }
       for (const [index, candidate] of pending.entries()) {
         if (operation.controller.signal.aborted) break;
-        setProgress(`${index + 1}/${pending.length} · ${candidate.name} NPC 카드와 대표 이미지 생성 중…`);
+        setProgress(`${index + 1}/${pending.length} · ${candidate.name} 대표 이미지 생성 및 NPC 등록 중…`);
         try {
-          const result = await request(operation, "create", {
-            candidate: { name: candidate.name, aliases: candidate.aliases, description: candidate.description },
+          const result = await request(operation, "register", {
+            candidate: { name: candidate.name, aliases: candidate.aliases, description: candidate.description, card: candidate.card },
             entries: candidate.entry_indexes.map(index => entries[index]),
           });
           if (result.cancelled) { operation.controller.abort(); break; }
@@ -131,16 +132,16 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
           setCreateErrors(previous => new Map(previous).set(candidate.name, err instanceof Error ? err.message : String(err)));
         }
       }
-      setProgress(operation.controller.signal.aborted ? "NPC 생성을 중지했습니다." : failed ? `NPC ${failed}명 생성 실패 · 선택한 인물을 다시 생성할 수 있습니다.` : "선택한 인물의 처리를 마쳤습니다.");
+      setProgress(operation.controller.signal.aborted ? "NPC 등록을 중지했습니다." : failed ? `NPC ${failed}명 등록 실패 · 선택한 인물을 다시 등록할 수 있습니다.` : "선택한 인물의 등록을 마쳤습니다.");
     } catch (err) {
-      setProgress(operation.controller.signal.aborted ? "NPC 생성을 중지했습니다." : "");
+      setProgress(operation.controller.signal.aborted ? "NPC 등록을 중지했습니다." : "");
       if (!operation.controller.signal.aborted) setError(err instanceof Error ? err.message : String(err));
     } finally { finish(); onAdded(); }
   }
 
   return <>
     <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || !botFiles.length && !moduleFiles.length}
-      onClick={() => void analyze()}><Search size={14} />로어북 인물 분석</button>
+      onClick={() => void generateLoreNpcCards()}><Sparkles size={14} />로어북 기반 NPC 생성</button>
       <label className="field">한 번에 분석할 글자 수<select value={batchChars} disabled={busy} onChange={event => onBatchCharsChange(Number(event.target.value))}>
         {[5000, 10000, 20000, 40000, 80000].map(size => <option key={size} value={size}>{size.toLocaleString()}자</option>)}
       </select></label>
@@ -152,7 +153,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       {warnings.map(item => <div key={item.batch}><strong>{item.batch}번째 묶음 · {item.source} · {item.title}부터</strong>
         <ul>{item.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>)}
     </details>}
-    {!!candidates.length && <Panel title="생성할 NPC" className="illust-character-import-group">
+    {!!candidates.length && <Panel title="등록할 NPC" className="illust-character-import-group">
       <div className="illust-form illust-character-import-body">
         {candidates.map(candidate => {
           const { name } = candidate;
@@ -163,6 +164,11 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
               <strong>{name}</strong>{status && <span>{status}</span>}</label>
             {candidate.aliases.length > 0 && <p className="field-help">{candidate.aliases.join(" · ")}</p>}
             <p className="illust-lore-text">{candidate.description}</p>
+            <details><summary>외형 카드</summary>
+              <p>{[candidate.card.gender_tag, ...candidate.card.appearance, ...candidate.card.default_outfit,
+                ...candidate.card.face_tags, ...candidate.card.eye_tags].join(", ")}</p>
+              {candidate.card.visual_context && <p>{candidate.card.visual_context}</p>}
+            </details>
             {!status && createErrors.has(name) && <IllustrationFeedback error={createErrors.get(name)} />}
             <CharacterImportedLore entries={candidate.entry_indexes.map(index => entries[index])} />
           </div>;
@@ -170,8 +176,8 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       </div>
     </Panel>}
     <div className="illust-actions">
-      <button type="button" className="button primary" disabled={busy || !pending.length} onClick={() => void create()}>
-        <Plus size={14} />선택한 NPC {pending.length}명 생성</button>
+      <button type="button" className="button primary" disabled={busy || !pending.length} onClick={() => void registerLoreNpcs()}>
+        <Plus size={14} />선택한 NPC {pending.length}명 등록</button>
       <button type="button" className="button" disabled={busy} onClick={onClose}>{results.size ? "닫기" : "취소"}</button>
     </div>
   </>;

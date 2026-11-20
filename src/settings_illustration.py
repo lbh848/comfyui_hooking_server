@@ -42,6 +42,7 @@ READ_PATHS = {
 }
 WRITE_PATHS = {
     "bot_mode/lore_npcs/analyze", "bot_mode/lore_npcs/create", "illustration/lore_npcs/cancel",
+    "bot_mode/lore_npcs/generate", "bot_mode/lore_npcs/register",
     "bot_mode/character_lore_auto_link",
     "bot_mode/archive",
     "bot_mode/suggest_name_tag",

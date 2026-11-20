@@ -214,6 +214,19 @@ def parse_cards(value, candidates, *, salvage=False, name_tag_candidates=None) -
     return [result[name] for name in expected if name in result]
 
 
+def lore_npc_card(candidate, fields):
+    """Keep only visual fields accepted by the NPC renderer and card store."""
+    if not isinstance(fields, dict):
+        raise ValueError(f"{candidate['name']}의 외형 카드가 없습니다.")
+    root, = parse_cards({"characters": [{**fields, "name": candidate["name"]}]}, [candidate])
+    card = root["visual_cards"][0]
+    if not card["appearance"]:
+        raise ValueError(f"{candidate['name']}의 외모 태그가 없습니다.")
+    return {**{key: card[key] for key in ("gender_tag", "visual_context")},
+            **{key: tag_values(card[key]) for key in ("appearance", "default_outfit", "face_tags", "eye_tags")},
+            "name_tag": fields.get("name_tag") if isinstance(fields.get("name_tag"), str) else ""}
+
+
 def _portable(bot_mode_module, bot_name):
     value = bot_mode_module._load_lb_extra(bot_name) or []
     return value.get("edited") or [] if isinstance(value, dict) else value
@@ -274,7 +287,8 @@ async def advance_lifetimes(manager, bot_name: str, used_names: list[str], flow_
 async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                          segmented, toggles, stream_notify, render_image,
                          on_profiles_ready=None, prepare_character=None,
-                         render_gate=None, workshop: str = "illustration", lore_by_character=None):
+                         render_gate=None, workshop: str = "illustration", lore_by_character=None,
+                         prepared_cards=None):
     storage = import_module("modes.bot_mode")
     from modes import illustration_context_pipeline as pipeline
     from modes import illustration_prompt_builders as builders
@@ -294,11 +308,22 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
         output = ""
         created = []
         roots = []
-        if pending:
-            name_tag_candidates = None
-            if toggles.get("genre") == "secondary_bot":
-                name_tag_candidates = await asyncio.to_thread(
-                    _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
+        name_tag_candidates = None
+        if pending and toggles.get("genre") == "secondary_bot":
+            name_tag_candidates = await asyncio.to_thread(
+                _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
+        if pending and prepared_cards is not None:
+            cards = []
+            for candidate in pending:
+                name = candidate["name"]
+                card = lore_npc_card(candidate, prepared_cards.get(name))
+                # The combined call proposes a tag before the names are known.
+                # Resolve it against this character's actual dictionary results.
+                matches = (name_tag_candidates or {}).get(name, [])
+                name_tag_id = next((item["id"] for item in matches if item["tag"] == card["name_tag"]), 0)
+                cards.append({**card, "name": name, "name_tag_id": name_tag_id})
+            roots = parse_cards({"characters": cards}, pending, name_tag_candidates=name_tag_candidates)
+        elif pending:
             messages = builders.npc_generation_messages(prompts, pending, past_text, segmented, toggles,
                                                         name_tag_candidates=name_tag_candidates)
             def validate(response):

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 export type LlmStats = {
   prompt_tokens?: number | null; completion_tokens?: number | null;
+  pdf_tokens_before?: number | null;
   elapsed?: number | null; tps?: number | null; ttft?: number | null;
   tokens_estimated?: boolean;
   reasoning_tokens_estimated?: boolean;

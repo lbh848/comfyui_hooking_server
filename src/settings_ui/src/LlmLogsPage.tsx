@@ -16,7 +16,9 @@ const modelLabel = (entry: { llm_alias?: string; model?: string; service?: strin
 
 function Stats({ stats }: { stats: LlmStats }) {
   return <div className="llm-log-stats">
-    <span>입력 <b>{number(stats.prompt_tokens)}</b></span><span>출력(생각 포함) <b>{number(stats.completion_tokens)}</b> 토큰</span>
+    <span>입력 <b>{number(stats.prompt_tokens)}</b> 토큰</span>
+    {stats.pdf_tokens_before != null && <span>PDF 변환 전 입력 <b>{number(stats.pdf_tokens_before)}</b> 토큰</span>}
+    <span>출력(생각 포함) <b>{number(stats.completion_tokens)}</b> 토큰</span>
     <span title={stats.reasoning_tokens_estimated ? "수신한 생각 텍스트로 추정한 토큰 수입니다." : undefined}>그중 생각 <b>{stats.reasoning_tokens_estimated ? "약 " : ""}{number(stats.reasoning_tokens)}</b> 토큰</span>
     <span>경과 <b>{number(stats.elapsed, 1)}</b>초</span><span title="생각 토큰과 답변 토큰을 합한 전체 생성 토큰 수 ÷ 경과 시간"><b>{number(stats.tps, 1)}</b> 토큰/초 (생각 포함)</span>
     <span>첫 응답 <b>{number(stats.ttft, 2)}</b>초</span>

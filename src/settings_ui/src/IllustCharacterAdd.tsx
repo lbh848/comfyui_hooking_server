@@ -334,7 +334,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
             <CharacterArchiveInput kind="bot" files={botFiles} disabled={busy || collecting} onChange={next => { setBotFiles(next); clearSelection(); }} />
             <CharacterArchiveInput kind="module" files={moduleFiles} disabled={busy || collecting} onChange={next => { setModuleFiles(next); clearSelection(); }} />
           </div>
-          {sourceMode === "lore" ? <p className="field-help">로어북에서 인물을 찾습니다. 생성할 인물을 선택하면 NPC 카드와 대표 이미지를 만들고 수명을 잠급니다.</p> : <>
+          {sourceMode === "lore" ? <p className="field-help">로어북에서 인물을 찾아 외형 카드를 만듭니다. 등록할 인물을 선택하면 대표 이미지를 생성하고 수명을 잠급니다.</p> : <>
           <p className="field-help">봇과 모듈의 이미지·로어북을 합쳐 가져옵니다. CHARX의 글로벌 노트 덮어쓰기는 에셋·프로필 출력 지침으로 가져올 수 있습니다. 아래 추출 규칙과 가져올 내용을 확인한 뒤 저장하세요. 아이콘·오디오·스크립트는 제외합니다.</p>
           <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || collecting || !botFiles.length && !moduleFiles.length} onClick={() => void chooseFiles()}>
             <RefreshCw size={14} />{collecting ? "분석 중…" : "합쳐서 분석"}

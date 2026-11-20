@@ -9,7 +9,7 @@ CHARACTER_LORE_AUTO_LINK_TASK = "character_lore_auto_link"
 
 
 def _parse_lore_npc_candidates(raw, anchors):
-    from modes.illustration_npc import parse_candidate
+    from modes.illustration_npc import lore_npc_card, parse_candidate
     from modes.llm_prompt_edit import parse_llm_json
 
     result = parse_llm_json(raw, repair_closing_brackets=True)
@@ -39,8 +39,10 @@ def _parse_lore_npc_candidates(raw, anchors):
             references = row.get("anchors")
             if type(references) is int:
                 references = [references]
-            candidates.append(parse_candidate({**row, "name": storage_name, "aliases": aliases,
-                                               "anchors": references}, anchors, repair=True))
+            candidate = parse_candidate({**row, "name": storage_name, "aliases": aliases,
+                                         "anchors": references}, anchors, repair=True)
+            candidate["card"] = lore_npc_card(candidate, row.get("card", row))
+            candidates.append(candidate)
         except ValueError as exc:
             label = name.strip() if isinstance(name, str) and name.strip() else None
             issues.append((label, str(exc) if label else f"{index}번째 후보 · {exc}"))
@@ -74,14 +76,19 @@ def _lore_npc_batches(entries, batch_chars):
     return batches
 
 
-async def analyze_lore_npcs(entries, bot, *, batch_chars=20000):
-    from modes.llm_service import ManualCancelledText, callLLMTaskResult, create_llm_execution_context
+async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=None, workshop="illustration"):
+    from modes.illustration_context_pipeline import load_prompt_files
+    from modes.illustration_npc import NPC_GENDER_TAGS
+    from modes.illustration_prompt_builders import npc_card_instructions
+    from modes.lighbd_service import call_logged_llm_task
+    from modes.llm_service import ManualCancelledText, create_llm_execution_context
 
     entries = normalize_character_lore(entries)
     if not entries:
         raise ValueError("분석할 로어북이 없습니다.")
     batches = _lore_npc_batches(entries, batch_chars)
-    prompt = (Path(__file__).resolve().parents[1] / "prompts" / "character_lore_npcs.txt").read_text(encoding="utf-8")
+    prompt = (Path(__file__).resolve().parents[1] / "prompts" / "lore_npc_generation.txt").read_text(encoding="utf-8")
+    instructions = npc_card_instructions(load_prompt_files(workshop), toggles or {})
     roster = {character["name"]: list(dict.fromkeys(
         alias for card in character.get("visual_cards", []) for alias in card.get("aliases", [])
     )) for character in bot.get("characters", [])}
@@ -94,9 +101,14 @@ async def analyze_lore_npcs(entries, bot, *, batch_chars=20000):
         batch_candidates = []
         rejected = {}
         issues = []
+        batch_text = "\n".join(part["text"] for part in batch).casefold()
+        previous_cards = {item["name"]: item["card"] for item in candidates.values()
+                          if any(name.replace("_", " ").casefold() in batch_text
+                                 for name in [item["name"], *item["aliases"]])}
         messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": json.dumps({"roster": roster, "entries": batch}, ensure_ascii=False)},
+            {"role": "system", "content": f"{instructions}\n\n{prompt}"},
+            {"role": "user", "content": json.dumps({"gender_values": NPC_GENDER_TAGS, "roster": roster,
+                "previous_cards": previous_cards, "entries": batch}, ensure_ascii=False)},
         ]
         retry_messages = list(messages)
 
@@ -119,17 +131,17 @@ async def analyze_lore_npcs(entries, bot, *, batch_chars=20000):
             if not rejected and not issues:
                 return True, ""
             retry_messages[:] = [*messages, {"role": "user", "content":
-                "Correct the previous response. Return the complete candidates array. For each individual use "
-                "a romanized storage name, a source-grounded description and at least one exact supplied anchor. "
+                "Correct the previous response. Return the complete characters array. For each individual include "
+                "all visual card fields, a valid gender, a romanized name, a grounded description and an exact supplied anchor. "
                 "Recheck the following unresolved rows against the source: " + json.dumps(list(rejected), ensure_ascii=False)}]
             return False, next(iter(rejected.values()), None) or issues[0]
 
-        task = "character_lore_npcs"
-        context = create_llm_execution_context(task, call_name="로어북 인물 분석", json_mode=True,
-            metadata={"bot_name": bot["name"], "batch": number, "batch_count": len(batches)})
+        context = create_llm_execution_context("lore_npc_generation",
+            call_name=f"로어북 기반 NPC 생성 · {number}/{len(batches)}묶음", json_mode=True,
+            metadata={"bot_name": bot["name"], "batch": number, "batch_count": len(batches),
+                      "batch_chars": batch_chars, "entry_count": len(anchors)})
         try:
-            result = await callLLMTaskResult(task, messages, json_mode=True, result_validator=validate,
-                                             execution_context=context, retry_messages=retry_messages)
+            result = await call_logged_llm_task(context, messages, result_validator=validate, retry_messages=retry_messages)
             cancelled = isinstance(result.raw_response, ManualCancelledText)
             if result.accepted and not cancelled:
                 issues.clear()
@@ -150,6 +162,7 @@ async def analyze_lore_npcs(entries, bot, *, batch_chars=20000):
             current = candidates.setdefault(name.casefold(), {
                 "name": name, "aliases": [], "descriptions": [], "entry_indexes": [],
             })
+            current["card"] = candidate["card"]
             indexes = [int(anchor[1:]) - 1 for anchor in candidate["anchors"]]
             for index in indexes:
                 entry = entries[index]

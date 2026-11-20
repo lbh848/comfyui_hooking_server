@@ -138,6 +138,23 @@ class NpcGenerationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(again["created"], [])
             self.assertEqual(llm.await_count, 1)
 
+    async def test_registers_prepared_lore_card_without_calling_the_npc_llm(self):
+        lore = {"source": "story.charx", "entry_id": "5", "content": "The porter carries a key."}
+        render = AsyncMock(return_value={"image_bytes": self.pixels, "face_positions": []})
+        fields = self.response["characters"][0]
+        with patch.object(self.pipeline, "_call_pipeline_llm", new_callable=AsyncMock) as llm:
+            result = await self.npc.generate_cards(manager=self.manager, bot_name="Story", candidates=self.candidates,
+                prompts={}, past_text="", segmented="", toggles={}, stream_notify=None, render_image=render,
+                prepared_cards={"Porter": fields}, lore_by_character={"Porter": [lore]})
+            llm.assert_not_awaited()
+        render.assert_awaited_once()
+        self.assertEqual(result["created"], ["Porter"])
+        root = self.root()
+        self.assertTrue(root["npc_lifetime_locked"])
+        self.assertEqual(root["imported_lore"], [lore])
+        self.assertEqual(root["visual_cards"][0]["visual_context"], fields["visual_context"])
+        self.assertTrue(root["visual_cards"][0]["rep_images"])
+
     async def test_rename_generated_character_moves_directory_and_portable_entry(self):
         data = self.read()
         data["bots"][0]["characters"].append({"name": "Porter", "npc_generated": True, "npc_idle_calls": 0})

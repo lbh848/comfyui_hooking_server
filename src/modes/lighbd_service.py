@@ -18,6 +18,7 @@ import asyncio
 import datetime
 import hashlib
 import traceback
+from copy import deepcopy
 
 import yaml
 
@@ -365,6 +366,59 @@ def _log_lighbd_history(record: dict, *, history_path=None) -> None:
     except Exception as e:
         print(f"[LIGHBD] history 쓰기 실패: {e}")
         traceback.print_exc()
+
+
+async def call_logged_llm_task(context, messages, *, result_validator, retry_messages):
+    """Keep each routed attempt's original text available in the LLM log detail."""
+    from modes import llm_service
+
+    usage = {}
+    attempt = None
+    started = 0.0
+
+    def finish(status, raw="", reason=""):
+        nonlocal attempt
+        if attempt is None:
+            return
+        elapsed = time.monotonic() - started
+        if status == "ok":
+            llm_service._fill_usage_sink_fallback(usage, raw, attempt["input"])
+        _log_lighbd_history({**attempt, **usage, "elapsed": elapsed, "status": status,
+                             "output": str(raw or ""), "error": reason})
+        attempt = None
+
+    def observe(event):
+        nonlocal attempt, started
+        if event["type"] == "attempt_start":
+            usage.clear()
+            started = time.monotonic()
+            slot = event["slot"]
+            suffix = llm_service._slot_suffix(slot)
+            attempt = {
+                **context.metadata, "call_name": context.call_name, "task_key": context.task_key,
+                "history_id": event["attempt_id"], "execution_id": context.execution_id,
+                "parent_execution_id": context.parent_execution_id, "phase": event["phase"],
+                "attempt": event["attempt"], "total_attempts": event["total_attempts"],
+                "llm_slot": slot, "service": llm_service._base_config_get(f"llm_service{suffix}", "openai"),
+                "model": llm_service._base_config_get(f"llm_model{suffix}", ""),
+                "input": deepcopy(retry_messages),
+            }
+        elif event["type"] in {"attempt_success", "attempt_failure"}:
+            raw = event["raw_response"]
+            cancelled = isinstance(raw, llm_service.ManualCancelledText)
+            finish("cancelled" if cancelled else "ok" if event["accepted"] else "error",
+                   raw, event["reason"] or event["error"])
+
+    try:
+        return await llm_service.callLLMTaskResult(context.task_key, messages, json_mode=context.json_mode,
+            result_validator=result_validator, retry_messages=retry_messages, metadata_sink=usage,
+            execution_context=context, execution_observer=observe)
+    except asyncio.CancelledError:
+        finish("cancelled")
+        raise
+    except Exception as exc:
+        finish("error", reason=str(exc))
+        raise
 
 
 def _log_manual_parallel_race(event: dict) -> None:

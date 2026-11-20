@@ -76,8 +76,8 @@
   ],
   "tasks": [
     {
-      "key": "character_lore_npcs",
-      "label": "로어북 인물 분석",
+      "key": "lore_npc_generation",
+      "label": "로어북 기반 NPC 생성",
       "kind": "텍스트/JSON",
       "modality": "text",
       "group": "illustration_bot_creation",
