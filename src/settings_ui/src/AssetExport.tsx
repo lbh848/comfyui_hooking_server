@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight, Download, Eye, RefreshCw, Save, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight, Download, Eye, RefreshCw, Save, Sparkles, SquaresIntersect } from "lucide-react";
 import { Empty, Modal, Panel } from "./components";
 import { AssetExportCharacters } from "./AssetExportCharacters";
 import { assetMedia, assetRequest, assetResponse, useAssetResource, type AssetRecord } from "./asset";
@@ -34,12 +34,12 @@ function ExportIssues({ issues, warning = false }: { issues: AssetExportIssue[];
   </div>;
 }
 
-function ExportSelection({ label, items, selected, disabled, onChange, onRefresh }: {
-  label: string; items: string[]; selected: string[]; disabled: boolean; onChange: (value: string[]) => void; onRefresh?: () => void;
+function ExportSelection({ label, items, selected, disabled, onChange, actions }: {
+  label: string; items: string[]; selected: string[]; disabled: boolean; onChange: (value: string[]) => void; actions?: ReactNode;
 }) {
   const [search, setSearch] = useState("");
   const visible = items.filter(item => item.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
-  return <Panel title={<span className="asset-actions">내보낼 {label}{onRefresh && <button type="button" className="icon-button" disabled={disabled} aria-label={`${label} 목록 새로고침`} title={`${label} 목록 새로고침`} onClick={onRefresh}><RefreshCw size={15} /></button>}</span>} aside={<span className="badge">{selected.length} / {items.length} 선택</span>}>
+  return <Panel title={<span className="asset-actions">내보낼 {label}{actions}</span>} aside={<span className="badge">{selected.length} / {items.length} 선택</span>}>
     <div className="asset-export-body">
       <div className="asset-export-toolbar"><label className="field">{label} 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <div className="asset-actions"><button className="button" disabled={disabled || !items.length} onClick={() => onChange([...items])}>전체 선택</button><button className="button" disabled={disabled || !selected.length} onClick={() => onChange([])}>전체 해제</button></div>
@@ -260,6 +260,18 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     });
     setValidation(null); setBatchValidation(null);
   }
+  function selectCommonExpressions() {
+    if (!batchReady || writing.current) return;
+    const catalogs = selectedCharacters.map(name => new Set<string>(drafts[name].info.expressions));
+    const expressions = [...catalogs[0]].filter(expression => catalogs.every(catalog => catalog.has(expression)));
+    setDrafts(previous => {
+      const next = { ...previous };
+      for (const name of selectedCharacters) next[name] = { ...previous[name], expressions };
+      return next;
+    });
+    setValidation(null); setBatchValidation(null); setError(""); setValidationError("");
+    notify(expressions.length ? `선택한 캐릭터의 공통 표정 ${expressions.length}개를 선택했습니다.` : "선택한 캐릭터 모두에게 있는 표정이 없습니다.");
+  }
   const missingSelection = !entry?.outfits.length || !entry?.expressions.length;
   const nextDisabled = !!busy || (step === 0 ? !batchReady : step === 1 ? !entry?.expressions.length : step === 2 ? !entry?.outfits.length : !entry);
 
@@ -294,7 +306,10 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     </section>}
     {step > 0 && step < 4 && character && !entry && !loadError && <p role="status">이름 치환 규칙을 불러오는 중…</p>}
     {entry && <>
-      {step === 1 && <ExportSelection key={`${character}-expression`} label="표정" items={entry.info.expressions} selected={entry.expressions} disabled={!!busy} onChange={expressions => update({ expressions })} onRefresh={() => void run("표정 목록을 불러오는 중…", refreshExpressions)} />}
+      {step === 1 && <ExportSelection key={`${character}-expression`} label="표정" items={entry.info.expressions} selected={entry.expressions} disabled={!!busy} onChange={expressions => update({ expressions })} actions={<>
+        <button type="button" className="icon-button" disabled={!!busy} aria-label="표정 목록 새로고침" title="표정 목록 새로고침" onClick={() => void run("표정 목록을 불러오는 중…", refreshExpressions)}><RefreshCw size={15} aria-hidden="true" /></button>
+        <button type="button" className="icon-button" disabled={!!busy || !batchReady} aria-label="공통 표정 선택" title="공통 표정 선택" onClick={selectCommonExpressions}><SquaresIntersect size={15} aria-hidden="true" /></button>
+      </>} />}
       {step === 2 && <ExportSelection key={`${character}-outfit`} label="복장" items={entry.info.outfits} selected={entry.outfits} disabled={!!busy} onChange={outfits => update({ outfits })} />}
       {step === 3 && <>
         <div className="asset-export-summary"><Panel title="파일명 구성 미리보기"><div className="asset-export-body asset-export-pattern">
