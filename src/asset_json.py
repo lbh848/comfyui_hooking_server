@@ -115,10 +115,12 @@ def prepare_asset_mask_document(document: dict) -> dict:
         raise ValueError("사각형 영역 좌표를 확인하세요.")
     # Render at a bounded resolution; the sampler resizes masks to its latent size.
     scale = 1024 / max(dimensions)
+    # V2 keeps the supplied rectangle fixed. V3/V4 extend upward and V5 tracks faces.
+    render_version = 2 if len(names) == 1 and multi.get("mask_area_limit_enabled") else MASK_RENDER_VERSION
     layout = validate_multi_char_layout({
         "regions": [{key: region.get(key) for key in ("name", "x", "y", "width", "height")} for region in source["regions"]],
         "mask_width": round(dimensions[0] * scale), "mask_height": round(dimensions[1] * scale),
-        "mask_render_version": MASK_RENDER_VERSION,
+        "mask_render_version": render_version,
     }, names)
     order = layout["character_order"]
     positions = [names.index(name) for name in order]
@@ -126,7 +128,7 @@ def prepare_asset_mask_document(document: dict) -> dict:
         multi["char_composition_list"] = [placements[index].strip() for index in positions]
     multi.update(char_name_list=order, char_inform=[multi["char_inform"][index] for index in positions],
                  char_trigger_list=[groups[index] for index in positions], layout=layout,
-                 mask_render_version=MASK_RENDER_VERSION, mask_fingerprint=layout_fingerprint(layout))
+                 mask_render_version=render_version, mask_fingerprint=layout_fingerprint(layout))
     fields["CHAR_LIST"] = order
     mask = render_region_mask(layout)
     if any(mask.getchannel(channel).getbbox() is None for channel in "RGB"[:len(names)]):

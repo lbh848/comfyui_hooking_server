@@ -291,33 +291,39 @@ globalThis.ComfyAssetPrompt = (() => {
             const document = structuredClone(documents[0].document);
             const fields = document.fields;
             const parts = slots.map(slot => _resolveAssetPromptSlotTags(slot, assetTags));
+            const styleMask = slots.length === 1 && slots[0].mask_area_limit_enabled;
             const clean = values => values.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim());
             const unique = values => [...new Set(clean(values))];
             const background = clean(parts[0].backgroundTags).join(', ');
             const characterText = part => clean([...part.cTags, ...part.appTags, ...part.exprTags, ...part.outfitTags]).join(', ');
             const inform = parts.map(characterText);
             const regionalText = parts.map(part => part.naturalLanguage.trim());
+            if (styleMask && !inform[0] && !regionalText[0]) inform[0] = 'character';
             if (inform.some((value, index) => !value && !regionalText[index])) throw new Error('각 영역의 외모·복장·표정 또는 자연어를 입력하세요.');
             const names = layout.regions.map(region => region.name);
-            const styleTriggers = filterAssetLorasForCapabilities(slots[0].style_lora_enabled ? slots[0].style_lora_list : [], getAssetWorkflowCapabilities(slots[0].asset_workflow_type))
-                .filter(item => (item.BASE || 'anima') === 'anima').map(item => item.trigger);
+            const styleTriggers = unique(filterAssetLorasForCapabilities(slots[0].style_lora_enabled ? slots[0].style_lora_list : [], getAssetWorkflowCapabilities(slots[0].asset_workflow_type))
+                .filter(item => (item.BASE || 'anima') === 'anima').map(item => item.trigger));
             const triggers = slots.map(slot => unique([...filterAssetLorasForCapabilities(slot.lora_enabled ? slot.lora_list : [], getAssetWorkflowCapabilities(slot.asset_workflow_type))
                 .filter(item => (item.BASE || 'anima') === 'anima').map(item => item.trigger), ...styleTriggers]));
             const shared = unique([...parts[0].animaArtistTags, ...parts[0].animaQTags, background]);
             fields.CHAR_LIST = names;
             fields.MULTI_CHAR = { enable: true, char_num: names.length, char_name_list: names, char_inform: inform,
                 character_labels: Object.fromEntries(names.map((name, index) => [name, slots[index].character])),
-                char_trigger_list: triggers, background_trigger_list: unique(styleTriggers),
-                background_prompt: background, composition_prompt: composition, char_composition_list: regionalText,
+                char_trigger_list: triggers, background_trigger_list: styleTriggers,
+                ...(styleMask ? { mask_area_limit_enabled: true } : {}),
+                background_prompt: styleMask && !shared.length && !styleTriggers.length ? 'background' : background,
+                composition_prompt: composition, char_composition_list: regionalText,
                 shared_tag: { before_char: shared, after_char: [] }, layout: structuredClone(layout) };
             // Character appearance/wardrobe stays local. Only style and background are shared.
-            fields.ANIMA_CONTENT = clean([...unique(styleTriggers), ...parts[0].animaArtistTags, background,
-                composition, ...inform.map((value, index) => clean([...triggers[index], value]).join(', '))]).join(', ');
-            fields.NEGATIVE_ANIMA = unique([...parts[0].animaNTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
-            fields.NEGATIVE_SDXL = unique([...parts[0].nTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
-            if (getAssetWorkflowCapabilities(slots[0].asset_workflow_type).dual) {
-                fields.SDXL_CONTENT = unique([...parts[0].artistTags, ...parts[0].qTags, background,
-                    composition, ...parts.map((part, index) => clean([part.sdxlLoraTriggerWords, inform[index]]).join(', '))]).join(', ');
+            if (!styleMask) {
+                fields.ANIMA_CONTENT = clean([...styleTriggers, ...parts[0].animaArtistTags, background,
+                    composition, ...inform.map((value, index) => clean([...triggers[index], value]).join(', '))]).join(', ');
+                fields.NEGATIVE_ANIMA = unique([...parts[0].animaNTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
+                fields.NEGATIVE_SDXL = unique([...parts[0].nTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
+                if (getAssetWorkflowCapabilities(slots[0].asset_workflow_type).dual) {
+                    fields.SDXL_CONTENT = unique([...parts[0].artistTags, ...parts[0].qTags, background,
+                        composition, ...parts.map((part, index) => clean([part.sdxlLoraTriggerWords, inform[index]]).join(', '))]).join(', ');
+                }
             }
             for (const [dataKey, activeKey] of [['LORA_DATA', 'LORA_ACTIVATE'], ['FACE_LORA_DATA', 'FACE_LORA_ACTIVATE'], ['CHAR_FACE_TAG_INFORM', null]]) {
                 fields[dataKey] = { list: documents.flatMap((value, index) =>

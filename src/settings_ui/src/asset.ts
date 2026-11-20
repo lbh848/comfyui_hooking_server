@@ -32,6 +32,7 @@ export function copyAssetSettings(slot: AssetRecord, section: AssetSettingsSecti
 }
 // Model selection is shared by the workroom and batches, never stored in a style.
 const assetStyleValueKeys = ["img_w", "img_h", "seed", "hrf_anima", "hrf_sdxl", "hrf_size", "hrf_restore_size",
+  "mask_area_limit_enabled", "mask_width_percent", "mask_height_percent",
   "anima_fd_enabled", "anima_hd_enabled", "anima_ed_enabled", "sdxl_fd_enabled", "sdxl_hd_enabled", "sdxl_ed_enabled", "style_lora_enabled", "style_lora_list"];
 export function copyAssetStyleSettings(defaults: AssetRecord, slot: AssetRecord) {
   return { defaults: copyAssetSettings(defaults, "style"), values: {
@@ -169,6 +170,7 @@ export function newAssetSlot(value: AssetRecord = {}): AssetRecord {
   return {
     character: "", appearance: "", outfit: "", expression: "", background_preset: "",
     img_w: 700, img_h: 1024, seed: -1, hrf_size: 2, hrf_restore_size: true,
+    mask_area_limit_enabled: false, mask_width_percent: 80, mask_height_percent: 80,
     face_crop_top: 2.5, face_crop_bottom: 1, snapref_strength: 0, snapref_mode: "char", snapref_megapixels: 1,
     ref_strength: 0.55, style_ref_strength: 0.55, lora_list: [], face_lora_list: [], style_lora_list: [],
     ref_images: [], style_ref_images: [], snapref_images: [], snapref_face_images: [], snapref_secondary_images: [], ...value,
@@ -199,7 +201,7 @@ export function assetModelPreset(slot: AssetRecord, selection: AssetRecord | nul
   return selection?.presets?.find((item: AssetRecord) => item.id === (slot.asset_model_preset_id || selection.active_id));
 }
 
-export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
+function prepareAssetSlot(slot: AssetRecord, tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
   const style = requireAssetStylePreset(slot, styles);
   const preset = assetModelPreset(slot, selection);
   if (!preset) throw new Error("그림 모델 프리셋을 선택하세요.");
@@ -211,12 +213,10 @@ export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, se
   const referencing = resolved.snapref_enabled && slot.snapref_strength > 0;
   if (referencing && !slot.snapref_images?.length && !(slot.snapref_secondary_reference === "face_only" && slot.snapref_face_images?.length))
     throw new Error(slot.snapref_secondary_reference === "face_only" ? "Ref 이미지가 켜져 있지만 얼굴 이미지와 대표 이미지가 모두 없습니다." : "Ref 이미지가 켜져 있지만 대표 이미지가 없습니다.");
-  const prompt = await ComfyAssetPrompt.buildAssetPromptData(resolved, tags, id => assetRequest(`pose_mode/poses/${encodeURIComponent(id)}`));
-  if (!prompt) throw new Error("프롬프트를 만들지 못했습니다.");
   const references = (key: string, enabled: boolean) => enabled ? (slot[`${key}_images`] || []).map((image: AssetRecord) => ({ filename: image.name || image.filename, local_path: image.local_path })) : [];
-  return {
+  const job = {
     character: slot.character, ...assetOutputLabels(slot),
-    asset_style_preset_id: style.id, asset_model_preset_id: preset.id, asset_workflow_type: capabilities.type, prompt_json: prompt.document,
+    asset_style_preset_id: style.id, asset_model_preset_id: preset.id, asset_workflow_type: capabilities.type,
     face_id_enabled: false,
     reference_images: references("ref", false),
     style_ref_enabled: false,
@@ -227,4 +227,27 @@ export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, se
     snapref_secondary_images: references("snapref_secondary", capabilities.anima && !!slot.snapref_enabled).slice(0, 1),
     snapref_dir: "", ...assetReferenceSettings(slot),
   };
+  return { slot: resolved, job };
+}
+
+export async function buildRegionalAssetRequest(slots: AssetRecord[], regions: AssetRecord[], composition: string,
+  tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
+  const prepared = slots.map(slot => prepareAssetSlot(slot, tags, selection, styles));
+  const layout = { composition_prompt: composition, regions };
+  const document = await ComfyAssetPrompt.buildAssetMaskPromptData(prepared.map(item => item.slot), tags, layout);
+  const references = prepared.flatMap(({ job }, index) => job.snapref_enabled ? [{ CHAR: regions[index].name,
+    images: job.snapref_images, face_images: job.snapref_face_images, secondary_images: job.snapref_secondary_images }] : []);
+  return { ...prepared[0].job, prompt_json: document, snapref_enabled: references.length > 0, snapref_images: [], regional_references: references };
+}
+
+export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
+  if (slot.mask_area_limit_enabled) {
+    const width = slot.mask_width_percent / 100, height = slot.mask_height_percent / 100;
+    const region = { name: "asset_mode", character: slot.character, x: (1 - width) / 2, y: (1 - height) / 2, width, height };
+    return buildRegionalAssetRequest([slot], [region], "", tags, selection, styles);
+  }
+  const prepared = prepareAssetSlot(slot, tags, selection, styles);
+  const prompt = await ComfyAssetPrompt.buildAssetPromptData(prepared.slot, tags, id => assetRequest(`pose_mode/poses/${encodeURIComponent(id)}`));
+  if (!prompt) throw new Error("프롬프트를 만들지 못했습니다.");
+  return { ...prepared.job, prompt_json: prompt.document };
 }

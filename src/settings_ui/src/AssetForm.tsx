@@ -157,7 +157,17 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
       {shows("generation") && <details open><summary>생성 옵션</summary><div className="asset-fields">
         {number("img_w", "이미지 너비", 64, 8192, 8)}{number("img_h", "이미지 높이", 64, 8192, 8)}
         {capabilities.seed && number("seed", "시드 (-1: 랜덤)", -1, Number.MAX_SAFE_INTEGER)}
-      </div><div className="asset-fields">{capabilities.anima && toggle("hrf_anima", "ANIMA 고해상도 보정")}{capabilities.ilxl && toggle("hrf_sdxl", "ILXL 고해상도 보정")}</div>
+      </div>
+        {toggle("mask_area_limit_enabled", "마스크 영역 제한")}
+        {slot.mask_area_limit_enabled && <>
+          <div className="asset-fields">{([["mask_width_percent", "마스크 너비"], ["mask_height_percent", "마스크 높이"]] as const).map(([key, label]) =>
+            <label className="field" key={key}>{label} · {slot[key]}%
+              <input type="range" aria-label={label} aria-valuetext={`${slot[key]}%`} min={1} max={100} step={1} value={slot[key]}
+                onChange={event => onChange({ [key]: Number(event.target.value) })} />
+            </label>)}</div>
+          <p className="field-help">이미지 중앙에 캐릭터 영역을 배치합니다. 너비를 줄이면 좌우에, 높이를 줄이면 위아래에 배경 여백이 늘어납니다.</p>
+        </>}
+        <div className="asset-fields">{capabilities.anima && toggle("hrf_anima", "ANIMA 고해상도 보정")}{capabilities.ilxl && toggle("hrf_sdxl", "ILXL 고해상도 보정")}</div>
         {(slot.hrf_anima || slot.hrf_sdxl) && <div className="asset-fields">{number("hrf_size", "확대 배율", 1, 8, 0.1)}{toggle("hrf_restore_size", "원본 크기 복원")}</div>}
         <div className="asset-fields">{[...(capabilities.anima ? ["anima"] : []), ...(capabilities.ilxl ? ["sdxl"] : [])].map(prefix => <div className="asset-options" key={prefix}><strong>{prefix === "anima" ? "ANIMA" : "ILXL"} 디테일러</strong>{toggle(`${prefix}_fd_enabled`, "얼굴 보정")}{toggle(`${prefix}_hd_enabled`, "손 보정")}{toggle(`${prefix}_ed_enabled`, "눈 보정")}</div>)}</div>
       </details>}

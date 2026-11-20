@@ -23,11 +23,12 @@ STYLE_RAW_KEYS = {"raw_background_tags"} | {
     for prefix in ("", "anima_") for kind in ("artist", "quality", "negative")
 }
 STYLE_BOOLEAN_KEYS = {
-    "hrf_anima", "hrf_sdxl", "hrf_restore_size", "style_lora_enabled",
+    "hrf_anima", "hrf_sdxl", "hrf_restore_size", "style_lora_enabled", "mask_area_limit_enabled",
     *(f"{model}_{part}_enabled" for model in ("anima", "sdxl") for part in ("fd", "hd", "ed")),
 }
 STYLE_NUMBER_RANGES = {
     "img_w": (64, 8192), "img_h": (64, 8192), "seed": (-1, 9007199254740991), "hrf_size": (1, 8),
+    "mask_width_percent": (1, 100), "mask_height_percent": (1, 100),
 }
 STYLE_STRING_KEYS = STYLE_TAG_KEYS | {"asset_model_preset_id", "asset_workflow_type"}
 STYLE_KEYS = STYLE_STRING_KEYS | STYLE_RAW_KEYS | STYLE_BOOLEAN_KEYS | STYLE_NUMBER_RANGES.keys() | {"style_lora_list"}

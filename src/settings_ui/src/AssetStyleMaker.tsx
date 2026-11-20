@@ -2,17 +2,13 @@ import { useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Badge, Empty, Panel } from "./components";
 import { assetPresetFields, type AssetRecord } from "./asset";
-import { compareAssetStyleGeneration, displayStyleValue, restoreAssetStyleGeneration } from "./assetStyleComparison";
+import { assetStyleLabels, compareAssetStyleGeneration, displayStyleValue, restoreAssetStyleGeneration } from "./assetStyleComparison";
 import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 import type { useAssetStylePresets } from "./useAssetStylePresets";
 
 const labels: Record<string, string> = {
+  ...assetStyleLabels, asset_model_preset_id: "그림 모델",
   ...Object.fromEntries(assetPresetFields.filter(field => field[5] === "style").map(([, label, , raw]) => [raw, label])),
-  asset_model_preset_id: "그림 모델", img_w: "이미지 너비", img_h: "이미지 높이", seed: "시드",
-  hrf_anima: "ANIMA 고해상도 보정", hrf_sdxl: "ILXL 고해상도 보정", hrf_size: "확대 배율", hrf_restore_size: "원본 크기 복원",
-  anima_fd_enabled: "ANIMA 얼굴 보정", anima_hd_enabled: "ANIMA 손 보정", anima_ed_enabled: "ANIMA 눈 보정",
-  sdxl_fd_enabled: "ILXL 얼굴 보정", sdxl_hd_enabled: "ILXL 손 보정", sdxl_ed_enabled: "ILXL 눈 보정",
-  style_lora_enabled: "스타일 LoRA 사용", style_lora_list: "스타일 LoRA",
 };
 export function AssetStyleMaker({ slot, defaults, tags, presets, disabled, onChange }: {
   slot: AssetRecord; defaults: AssetRecord; tags: AssetRecord; presets: ReturnType<typeof useAssetStylePresets>; disabled: boolean;

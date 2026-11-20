@@ -270,6 +270,12 @@ def generation_job(template, values):
     fields = job["prompt_json"]["fields"]
     tags = [tag for key in ("appearance", "expression", "composition", "outfit")
             for tag in values.get(f"raw_{key}_tags", [])]
+    multi = fields.get("MULTI_CHAR", {})
+    if multi.get("mask_area_limit_enabled"):
+        character_tags = ", ".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip())
+        natural_language = values.get("natural_language", "")
+        multi["char_inform"] = [character_tags or ("" if natural_language else "character")]
+        multi["char_composition_list"] = [natural_language]
     for field in ("ANIMA_CONTENT", "SDXL_CONTENT"):
         if field not in fields:
             continue
