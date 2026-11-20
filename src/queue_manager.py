@@ -1338,6 +1338,7 @@ class QueueManager:
         return True
 
     def _item_status_dict(self, item: QueueItem) -> dict:
+        snapshot = item
         if item.type in {"illustration", "illustration_llm_build"}:
             # Status polling and WebSocket updates need identifiers/progress,
             # not the workflow, chat or embedded reference images. Filter before
@@ -1345,9 +1346,16 @@ class QueueManager:
             snapshot = copy.copy(item)
             snapshot.params = {key: value for key, value in item.params.items()
                                if key not in {"prompt_data", "raw_body", "payload"}}
-            data = snapshot.to_dict()
-        else:
-            data = item.to_dict()
+        elif item.type == "asset_generation":
+            # The batch screen only reads the slot ID from the generation body.
+            # Keep embedded images, prompts and the model snapshot on the queued job.
+            snapshot = copy.copy(item)
+            snapshot.params = {key: value for key, value in item.params.items()
+                               if key not in {"body", "presets", "asset_model_preset"}}
+            body = item.params.get("body")
+            if isinstance(body, dict) and "asset_chain_slot_id" in body:
+                snapshot.params["body"] = {"asset_chain_slot_id": body["asset_chain_slot_id"]}
+        data = snapshot.to_dict()
         execution_area, provider = self._item_execution_area(item)
         data["execution_area"] = execution_area
         data["provider"] = provider
