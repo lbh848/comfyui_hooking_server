@@ -34,12 +34,12 @@ function ExportIssues({ issues, warning = false }: { issues: AssetExportIssue[];
   </div>;
 }
 
-function ExportSelection({ label, items, selected, disabled, onChange }: {
-  label: string; items: string[]; selected: string[]; disabled: boolean; onChange: (value: string[]) => void;
+function ExportSelection({ label, items, selected, disabled, onChange, onRefresh }: {
+  label: string; items: string[]; selected: string[]; disabled: boolean; onChange: (value: string[]) => void; onRefresh?: () => void;
 }) {
   const [search, setSearch] = useState("");
   const visible = items.filter(item => item.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
-  return <Panel title={`내보낼 ${label}`} aside={<span className="badge">{selected.length} / {items.length} 선택</span>}>
+  return <Panel title={<span className="asset-actions">내보낼 {label}{onRefresh && <button type="button" className="icon-button" disabled={disabled} aria-label={`${label} 목록 새로고침`} title={`${label} 목록 새로고침`} onClick={onRefresh}><RefreshCw size={15} /></button>}</span>} aside={<span className="badge">{selected.length} / {items.length} 선택</span>}>
     <div className="asset-export-body">
       <div className="asset-export-toolbar"><label className="field">{label} 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <div className="asset-actions"><button className="button" disabled={disabled || !items.length} onClick={() => onChange([...items])}>전체 선택</button><button className="button" disabled={disabled || !selected.length} onClick={() => onChange([])}>전체 해제</button></div>
@@ -250,6 +250,16 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     characters.reload(); setError(""); setLoadError(""); setValidation(null); setBatchValidation(null); setLoadRevision(value => value + 1);
     setDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([, draft]) => JSON.stringify(draft.mapping) !== draft.saved)));
   }
+  async function refreshExpressions() {
+    const info = await assetRequest(`asset_mode/name_mapping/${encodeURIComponent(character)}`);
+    setDrafts(previous => {
+      const draft = previous[character];
+      if (!draft) return previous;
+      const expressions: string[] = info.expressions;
+      return { ...previous, [character]: { ...draft, info: { ...draft.info, expressions }, expressions: expressions.filter(expression => draft.expressions.includes(expression) || !draft.info.expressions.includes(expression)) } };
+    });
+    setValidation(null); setBatchValidation(null);
+  }
   const missingSelection = !entry?.outfits.length || !entry?.expressions.length;
   const nextDisabled = !!busy || (step === 0 ? !batchReady : step === 1 ? !entry?.expressions.length : step === 2 ? !entry?.outfits.length : !entry);
 
@@ -284,7 +294,7 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     </section>}
     {step > 0 && step < 4 && character && !entry && !loadError && <p role="status">이름 치환 규칙을 불러오는 중…</p>}
     {entry && <>
-      {step === 1 && <ExportSelection key={`${character}-expression`} label="표정" items={entry.info.expressions} selected={entry.expressions} disabled={!!busy} onChange={expressions => update({ expressions })} />}
+      {step === 1 && <ExportSelection key={`${character}-expression`} label="표정" items={entry.info.expressions} selected={entry.expressions} disabled={!!busy} onChange={expressions => update({ expressions })} onRefresh={() => void run("표정 목록을 불러오는 중…", refreshExpressions)} />}
       {step === 2 && <ExportSelection key={`${character}-outfit`} label="복장" items={entry.info.outfits} selected={entry.outfits} disabled={!!busy} onChange={outfits => update({ outfits })} />}
       {step === 3 && <>
         <div className="asset-export-summary"><Panel title="파일명 구성 미리보기"><div className="asset-export-body asset-export-pattern">
