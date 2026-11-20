@@ -7,10 +7,29 @@ from pathlib import Path
 CHARACTER_LORE_AUTO_LINK_TASK = "character_lore_auto_link"
 
 
-async def analyze_lore_npcs(entries, bot):
+def _parse_lore_npc_candidates(raw, anchors):
     from modes.illustration_npc import parse_candidates
     from modes.llm_prompt_edit import parse_llm_json
-    from modes.llm_service import callLLMTask, create_llm_execution_context
+
+    result = parse_llm_json(raw)
+    rows = result.get("candidates") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("LLM 응답에서 인물 목록(candidates)을 읽을 수 없습니다.")
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            continue
+        name = row["name"].strip()
+        storage_name = "_".join(name.split())
+        if storage_name != name:
+            row["name"] = storage_name
+            aliases = row.setdefault("aliases", [])
+            if isinstance(aliases, list) and name not in aliases:
+                aliases.append(name)
+    return parse_candidates(rows, [], anchors)
+
+
+async def analyze_lore_npcs(entries, bot):
+    from modes.llm_service import callLLMTaskResult, create_llm_execution_context
 
     entries = normalize_character_lore(entries)
     if not entries:
@@ -37,14 +56,12 @@ async def analyze_lore_npcs(entries, bot):
 
     for number, batch in enumerate(batches, 1):
         anchors = {part["anchor"] for part in batch}
-
-        def parse(raw):
-            result = parse_llm_json(raw)
-            return parse_candidates(result.get("candidates") if isinstance(result, dict) else None, [], anchors)
+        batch_candidates = None
 
         def validate(raw):
+            nonlocal batch_candidates
             try:
-                parse(raw)
+                batch_candidates = _parse_lore_npc_candidates(raw, anchors)
                 return True, ""
             except (ValueError, TypeError) as exc:
                 return False, str(exc)
@@ -52,11 +69,14 @@ async def analyze_lore_npcs(entries, bot):
         task = "character_lore_npcs"
         context = create_llm_execution_context(task, call_name="로어북 인물 분석", json_mode=True,
             metadata={"bot_name": bot["name"], "batch": number, "batch_count": len(batches)})
-        raw = await callLLMTask(task, [
+        result = await callLLMTaskResult(task, [
             {"role": "system", "content": prompt},
             {"role": "user", "content": json.dumps({"roster": roster, "entries": batch}, ensure_ascii=False)},
         ], json_mode=True, result_validator=validate, execution_context=context)
-        for candidate in parse(raw):
+        if not result.accepted or batch_candidates is None:
+            reason = result.reason or str(result.exception or result.text or "응답이 비어 있습니다.")
+            raise ValueError(f"로어북 인물 분석 {number}/{len(batches)}번째 묶음에서 실패했습니다. {reason}")
+        for candidate in batch_candidates:
             name = candidate["name"]
             current = candidates.setdefault(name.casefold(), {
                 "name": name, "aliases": [], "descriptions": [], "entry_indexes": [],
