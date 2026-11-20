@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDownToLine, GitCommitHorizontal, RefreshCw, Square, Trash2 } from "lucide-react";
-import { Badge, Modal, Panel } from "./components";
+import { Badge, Modal, Panel, SettingsTabs } from "./components";
 import "./updates.css";
 
 type Component = { current: string | null; target: string | null; update_needed: boolean };
@@ -12,10 +12,11 @@ type UpdateStatus = {
   comfy: Component & { version: string; required_version: string; required_ref: string; changes: string[] };
   backup: { bytes: number; path: string };
   job: { state: string; operation: string | null; finished_at: string | null; phase_label: string; error: string | null; cancel_requested: boolean;
-    logs: { seq: number; message: string; level: string }[]; result?: { message?: string; restart_required?: boolean; workflow_pending?: boolean } };
+    logs: { seq: number; message: string; level: string }[]; result?: { message?: string; changed?: boolean; restart_required?: boolean; workflow_pending?: boolean } };
 };
-type Action = "fetch" | "application" | "soya" | "comfy" | "missing-models" | "cancel" | "clear-backups";
+type Action = "sequential" | "fetch" | "application" | "soya" | "comfy" | "missing-models" | "cancel" | "clear-backups";
 const updateLabels: Record<string, string> = {
+  panel_sequential: "순차적 업데이트",
   panel_application: "공방 업데이트", panel_soya: "Soya 커스텀 노드 업데이트", panel_comfy: "Comfy 업데이트",
 };
 
@@ -38,6 +39,7 @@ function bytes(size: number) {
 }
 
 export function UpdatesPage({ onUpdating, onUpdated }: { onUpdating: (running: boolean) => void; onUpdated: (message: string) => void }) {
+  const [tab, setTab] = useState("sequential");
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
   const [error, setError] = useState("");
@@ -69,15 +71,23 @@ export function UpdatesPage({ onUpdating, onUpdated }: { onUpdating: (running: b
     onUpdating(Boolean((pending && updateLabels[`panel_${pending}`]) || (running && updateLabel)));
   }, [pending, running, updateLabel, onUpdating]);
   useEffect(() => {
+    if (job?.operation === "panel_sequential" &&
+      (job.state === "failed" || job.state === "cancelled" || (job.state === "succeeded" && !job.result?.restart_required))) {
+      localStorage.removeItem("comfy-resume-update");
+    }
     if (!updateLabel || job?.state !== "succeeded" || !job.finished_at) return;
+    if (job.operation === "panel_sequential" && job.result?.changed === false) return;
     const completion = `${job.operation}/${job.finished_at}`;
     if (sessionStorage.getItem("comfy-update-shutdown") === completion) return;
     sessionStorage.setItem("comfy-update-shutdown", completion);
-    const next = job.result?.workflow_pending
-      ? " 다시 실행한 뒤 ‘업데이트’에서 ‘공방 업데이트’를 한 번 더 눌러 내장 워크플로우 적용을 마치세요."
-      : "";
+    if (job.operation === "panel_sequential" && job.result?.restart_required) {
+      localStorage.setItem("comfy-resume-update", "1");
+      onUpdated("새 공방 프로그램을 적용하려면 ‘종료하기’를 누른 뒤 Comfy공방.exe를 다시 실행하세요. 남은 업데이트는 자동으로 이어집니다.");
+      return;
+    }
+    const next = job.result?.workflow_pending ? " ‘개별적 업데이트’ 탭에서 ‘공방 업데이트’를 한 번 더 눌러 내장 워크플로우를 적용하세요." : "";
     onUpdated(`${updateLabel} 적용을 위해 ‘종료하기’를 누른 뒤 Comfy공방.exe를 다시 실행해 주세요.${next}`);
-  }, [updateLabel, job?.state, job?.operation, job?.finished_at, job?.result?.workflow_pending, onUpdated]);
+  }, [updateLabel, job?.state, job?.operation, job?.finished_at, job?.result?.workflow_pending, job?.result?.restart_required, job?.result?.changed, onUpdated]);
   const busy = !!pending || running;
   const available = !!status && !busy && !connectionError;
   const fetched = !!status?.checked_at;
@@ -100,7 +110,25 @@ export function UpdatesPage({ onUpdating, onUpdated }: { onUpdating: (running: b
   }
   const actionLabel = (action: Action, label: string) => pending === action ? "요청 중…" : running && job?.operation === `panel_${action}` ? "진행 중…" : label;
   return <div className="stack updates-page">
+    <SettingsTabs id="update-mode" label="업데이트 방식" values={{ sequential: "순차적 업데이트", individual: "개별적 업데이트" }}
+      value={tab} onChange={setTab} />
     {(error || connectionError) && <p className="field-error" role="alert">{error || connectionError}</p>}
+    <div role="tabpanel" id="update-mode-panel-sequential" aria-labelledby="update-mode-tab-sequential" hidden={tab !== "sequential"}>
+      <Panel title="순차적 업데이트">
+        <div className="panel-body form-stack">
+          <div className="updates-action-row">
+            <p>새 커밋을 확인하고 공방과 내장 워크플로우, Soya 커스텀 노드, Comfy 순서로 업데이트한 뒤 누락된 기본 모델을 받습니다.</p>
+            <button type="button" className="button primary" disabled={!available} onClick={() => void act("sequential")}>
+              <ArrowDownToLine size={15} />{actionLabel("sequential", "순차적 업데이트")}
+            </button>
+          </div>
+          <p className="field-help">업데이트가 필요한 항목만 적용합니다. 공방이나 노드를 적용하기 전에 실행 중인 Comfy가 자동으로 종료됩니다.</p>
+          {job?.operation === "panel_sequential" && job.state === "succeeded" && <p role="status">{job.result?.message}</p>}
+        </div>
+      </Panel>
+    </div>
+    <div role="tabpanel" id="update-mode-panel-individual" aria-labelledby="update-mode-tab-individual" hidden={tab !== "individual"}>
+    <div className="stack">
     <Panel title="1. 커밋 가져오기" aside={<GitCommitHorizontal size={17} />}>
       <div className="panel-body form-stack">
         <div className="updates-action-row">
@@ -161,6 +189,7 @@ export function UpdatesPage({ onUpdating, onUpdated }: { onUpdating: (running: b
       </div>
     </Panel>
     {fetched && application?.update_needed && <p className="field-help">공방 업데이트 후 Soya 커스텀 노드와 Comfy를 업데이트하세요.</p>}
+    </div></div>
     {ownJob && job && <section className="install-console" aria-label="업데이트 콘솔">
       <div className="updates-action-row updates-console-heading"><strong>{running ? job.phase_label || "업데이트 진행 중…" : ({ succeeded: "완료", failed: "업데이트 실패", cancelled: "중단됨" }[job.state] || "업데이트")}</strong>{running && <button className="button secondary" disabled={!!pending || job.cancel_requested} onClick={() => void act("cancel")}><Square size={14} />{job.cancel_requested ? "중단 중…" : "작업 중단"}</button>}</div>
       <div className="install-console-output" role="log" aria-label="업데이트 로그" tabIndex={0} ref={logOutput} onScroll={event => { const el = event.currentTarget; followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>{job.logs.map(entry => <div key={entry.seq} className={entry.level === "error" ? "install-console-error" : undefined}>{entry.message}</div>)}</div>

@@ -1871,15 +1871,19 @@ class ComfyInstallerService:
             kwargs={"models": models, "civitai_key": civitai_key},
         )
 
+    def _install_missing_models(self, models: list[dict], civitai_key: str) -> list[dict]:
+        from .model_installer import missing_models
+        self._set_phase("models")
+        remaining = missing_models(models=models, comfy_root=self.comfy_root)
+        results = install_models(models=remaining, comfy_root=self.comfy_root, downloader=self.downloader,
+                                 civitai_key=civitai_key, cancel_event=self._cancel, log=self._log, progress=self._set_progress)
+        if self._cancel.is_set():
+            raise InstallerServiceError("모델 설치를 중단했습니다.")
+        return results
+
     def _run_missing_models(self, *, models: list[dict], civitai_key: str) -> None:
         try:
-            self._set_phase("models")
-            from .model_installer import missing_models
-            remaining = missing_models(models=models, comfy_root=self.comfy_root)
-            results = install_models(models=remaining, comfy_root=self.comfy_root, downloader=self.downloader,
-                                     civitai_key=civitai_key, cancel_event=self._cancel, log=self._log, progress=self._set_progress)
-            if self._cancel.is_set():
-                raise InstallerServiceError("모델 설치를 중단했습니다.")
+            results = self._install_missing_models(models, civitai_key)
             self._set_phase("complete")
             with self._lock:
                 self._state.update(state="succeeded", finished_at=_now_iso(),
@@ -3275,6 +3279,16 @@ class ComfyInstallerService:
                 process.stop()
 
     def _run_update(self, *, install_mode: str, component: str | None = None, manifest_override: InstallManifest | None = None) -> None:
+        result = self._apply_update(install_mode=install_mode, component=component, manifest_override=manifest_override)
+        if result is not None:
+            self._finish_update(result)
+
+    def _finish_update(self, result: dict) -> None:
+        with self._lock:
+            self._state.update(state="succeeded", finished_at=_now_iso(), error=None, result=result,
+                               progress={"event": "complete", "current": 1, "total": 1})
+
+    def _apply_update(self, *, install_mode: str, component: str | None = None, manifest_override: InstallManifest | None = None) -> dict | None:
         process: ComfyProcess | None = None
         transaction: dict[str, Any] | None = None
         transaction_cleanup: dict[str, Any] | None = None
@@ -3487,25 +3501,11 @@ class ComfyInstallerService:
                 }
                 result_path = self._write_result(result)
                 result["result_path"] = str(result_path)
-                with self._lock:
-                    self._state.update(
-                        {
-                            "state": "succeeded",
-                            "finished_at": _now_iso(),
-                            "progress": {
-                                "event": "complete",
-                                "current": 1,
-                                "total": 1,
-                            },
-                            "error": None,
-                            "result": result,
-                        }
-                    )
                 self._log(
                     "[완료] 업데이터 부트스트랩 성공. 재시작 후 두 번째 "
                     f"업데이트가 필요합니다: {result_path}"
                 )
-                return
+                return result
 
             self._set_phase("manifest")
             new_manifest = manifest_override or load_install_manifest(self.manifest.source_path)
@@ -3595,22 +3595,8 @@ class ComfyInstallerService:
                 }
                 result_path = self._write_result(result)
                 result["result_path"] = str(result_path)
-                with self._lock:
-                    self._state.update(
-                        {
-                            "state": "succeeded",
-                            "finished_at": _now_iso(),
-                            "progress": {
-                                "event": "complete",
-                                "current": 1,
-                                "total": 1,
-                            },
-                            "error": None,
-                            "result": result,
-                        }
-                    )
                 self._log(f"[완료] Comfy 런타임이 이미 검증된 최신 상태입니다: {result_path}")
-                return
+                return result
 
             workflow_paths = collect_workflow_bindings(
                 self.config_path,
@@ -3913,24 +3899,11 @@ class ComfyInstallerService:
             }
             result_path = self._write_result(result)
             result["result_path"] = str(result_path)
-            with self._lock:
-                self._state.update(
-                    {
-                        "state": "succeeded",
-                        "finished_at": _now_iso(),
-                        "progress": {
-                            "event": "complete",
-                            "current": 1,
-                            "total": 1,
-                        },
-                        "error": None,
-                        "result": result,
-                    }
-                )
             self._log(
                 "[완료] Comfy 업데이트 성공. 워크플로우 E2E는 별도 "
                 f"검사 버튼에서 선택 실행할 수 있습니다: {result_path}"
             )
+            return result
         except (ComfyE2ECancelled, DownloadCancelled, CommandCancelled) as exc:
             self._log(f"[중단] {exc}", "warning")
             try:

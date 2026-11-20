@@ -8,8 +8,8 @@ Original-project fixes retained here:
 * d8a57d4: keep workflow generation tests separate from ordinary updates.
 
 Distribution presets and bundled workflows now follow application releases.
-The panel follows the installed application branch and has permanent conflict backups and separate actions
-for the three Soya repositories and the application's pinned Comfy runtime.
+The sequential and individual actions share the installed branch, conflict backups,
+and update routines for the Soya repositories and the application's pinned Comfy runtime.
 """
 from __future__ import annotations
 
@@ -44,6 +44,15 @@ SOYA_NODE_NAMES = (
     "comfyui-instant-lora_v_soya", "comfyui-soya-custom-nodes",
     "comfyui-workflow-to-api-converter-endpoint",
 )
+UPDATE_CHECK = Path("update_cache") / "checked.json"
+
+
+def read_update_check(project_root: Path) -> dict:
+    path = data_root(project_root) / UPDATE_CHECK
+    checked = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if not isinstance(checked, dict):
+        raise ValueError("저장된 업데이트 확인 정보를 읽을 수 없습니다.")
+    return checked
 
 
 def _now() -> str:
@@ -56,9 +65,9 @@ class WorkshopUpdates:
         self.stop_comfy = stop_comfy
         self.root = install_root(service.project_root)
         self.backup_root = data_root(self.root) / "update_backup"
-        self.cache_root = data_root(self.root) / "update_cache"
-        self.state_path = self.cache_root / "checked.json"
-        self.checked = json.loads(self.state_path.read_text(encoding="utf-8")) if self.state_path.is_file() else {}
+        self.state_path = data_root(self.root) / UPDATE_CHECK
+        self.cache_root = self.state_path.parent
+        self.checked = read_update_check(self.root)
 
     @staticmethod
     def _head(path: Path) -> str | None:
@@ -168,29 +177,38 @@ class WorkshopUpdates:
         self.service.start_missing_models(models=missing, civitai_key=civitai_key, operation="panel_missing-models")
         return self.status()
 
-    def start(self, action: str, *, workflow_key: str = "") -> dict:
+    def _validate_action(self, action: str, state: dict, workflow_key: str) -> None:
+        if not state["checked_at"]:
+            raise ValueError("먼저 커밋 가져오기를 실행하세요.")
+        if state["application"]["restart_required"]:
+            raise ValueError("공방을 다시 실행한 뒤 업데이트를 계속하세요.")
+        if action != "application":
+            if state["application"]["update_needed"]:
+                raise ValueError("공방 업데이트를 먼저 실행하세요.")
+            if not uv_python_path(self.service.comfy_root / ".venv").is_file():
+                raise ValueError("내장 ComfyUI를 먼저 설치하세요.")
+        elif self.service.comfy_root.is_dir() and not workflow_key:
+            raise ValueError("초기 설치에 사용할 암호키를 입력하고 저장하세요.")
+        if action == "application" and state["application"]["ahead"] and state["application"]["behind"]:
+            raise ValueError("로컬과 원격의 커밋 이력이 갈라져 있습니다. 저장소 이력을 확인하세요.")
+
+    def start(self, action: str, *, workflow_key: str = "", civitai_key: str = "", resume: bool = False) -> dict:
         from .service import _UPDATE_PHASES
         with self.service._lock:
             if self.service._thread is not None and self.service._thread.is_alive():
                 raise ValueError("이미 설치 또는 업데이트 작업이 진행 중입니다.")
-            if action != "fetch":
-                state = self.status()
-                if not state["checked_at"]:
-                    raise ValueError("먼저 커밋 가져오기를 실행하세요.")
-                if state["application"]["restart_required"]:
-                    raise ValueError("공방을 다시 실행한 뒤 업데이트를 계속하세요.")
-                if action != "application":
-                    if state["application"]["update_needed"]:
-                        raise ValueError("공방 업데이트를 먼저 실행하세요.")
-                    if not uv_python_path(self.service.comfy_root / ".venv").is_file():
-                        raise ValueError("내장 ComfyUI를 먼저 설치하세요.")
-                elif self.service.comfy_root.is_dir() and not workflow_key:
-                    raise ValueError("초기 설치에 사용할 암호키를 입력하고 저장하세요.")
-                if action == "application" and state["application"]["ahead"] and state["application"]["behind"]:
-                    raise ValueError("로컬과 원격의 커밋 이력이 갈라져 있습니다. 저장소 이력을 확인하세요.")
+            if action not in {"fetch", "sequential"}:
+                self._validate_action(action, self.status(), workflow_key)
+            base_phases = (("fetch", "커밋 가져오기"), ("application", "공방과 내장 워크플로우 업데이트"))
+            if action == "sequential":
+                phases = (*base_phases, *_UPDATE_PHASES[:-1], ("models", "누락 모델 다운로드"), _UPDATE_PHASES[-1])
+            elif action in {"comfy", "soya"}:
+                phases = _UPDATE_PHASES
+            else:
+                phases = tuple(phase for phase in base_phases if phase[0] == action)
             self.service._start_operation(
-                operation=f"panel_{action}", phases=_UPDATE_PHASES if action in {"soya", "comfy"} else ((action, {"fetch": "커밋 가져오기", "application": "공방과 내장 워크플로우 업데이트"}[action]),),
-                target=self._run, kwargs={"action": action, "workflow_key": workflow_key},
+                operation=f"panel_{action}", phases=phases, target=self._run,
+                kwargs={"action": action, "workflow_key": workflow_key, "civitai_key": civitai_key, "resume": resume},
             )
         return self.status()
 
@@ -216,9 +234,11 @@ class WorkshopUpdates:
             run_command(["git", "fetch", "origin", node.get("tracking_branch", "main")], cwd=path, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
             nodes[name] = self._git(path, "rev-parse", "FETCH_HEAD")
         commits = self._git(self.root, "log", "-20", "--format=%h%x09%s", f"HEAD..{target}").splitlines()
+        previous = self._checked_for_branch(branch)
         self.checked = {"checked_at": _now(), "branch": branch, "application": target, "comfy": manifest.comfy, "manifest": manifest.data,
                         "nodes": nodes, "commits": commits,
-                        "workflows_pending": self._checked_for_branch(branch).get("workflows_pending", False)}
+                        "workflows_pending": previous.get("workflows_pending", False),
+                        "resume_sequential": previous.get("resume_sequential", False)}
         self._save()
         return {"message": "커밋을 가져왔습니다."}
 
@@ -271,59 +291,125 @@ class WorkshopUpdates:
         self._save()
         return {**result, "message": "공방 업데이트를 완료했습니다.", "workflow": True}
 
-    def _run(self, *, action: str, workflow_key: str) -> None:
+    def _update_runtime(self, action: str) -> dict | None:
         quarantines = []
         try:
-            if action != "fetch":
-                self.service._log("업데이트를 준비합니다. 공방에서 실행한 Comfy를 종료합니다.")
-                self.stop_comfy()
-                if self.service._cancel.is_set():
-                    raise ValueError("업데이트를 중단했습니다.")
-                self.service._require_comfy_not_in_use()
-            if action in {"fetch", "application"}:
-                self.service._set_phase(action)
-            if action == "fetch":
-                result = self._fetch()
-            elif action == "application":
-                result = self._update_application(workflow_key)
-            else:
-                manifest = load_install_manifest(self.service.manifest.source_path)
-                data = copy.deepcopy(manifest.data)
-                for node in data["custom_nodes"]:
-                    if node["name"] in SOYA_NODE_NAMES:
-                        node.pop("tracking_branch", None)
-                        node["ref"] = (self.checked["nodes"][node["name"]] if action == "soya"
-                                       else self._head(self.service.comfy_root / "custom_nodes" / node["name"]) or node.get("ref") or self.checked["nodes"][node["name"]])
-                if action == "soya":
-                    data["comfy"]["ref"] = self._head(self.service.comfy_root)
-                active = InstallManifest(manifest.source_path, data, hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest())
-                paths = ([self.service.comfy_root] if action == "comfy" else []) + [
-                    self.service.comfy_root / "custom_nodes" / node["name"] for node in data["custom_nodes"]
-                    if node["source_type"] == "git" and ((node["name"] in SOYA_NODE_NAMES) == (action == "soya"))
-                ]
-                for path in paths:
-                    if (path / ".git").is_dir():
-                        node = next((node for node in data["custom_nodes"] if node["name"] == path.name), None)
-                        target = node["ref"] if node is not None else data["comfy"]["ref"]
-                        repository = node["repository"] if node is not None else data["comfy"]["repository"]
-                        self._verify_origin(path, repository)
-                        if self._head(path) != target:
-                            run_command(["git", "fetch", "origin", target], cwd=path, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
-                        quarantines.append((path, _prepare_untracked_quarantine(path, log=self.service._log, backup_root=self.backup_root / "untracked" / path.name, target_ref=target)))
-                self.service._run_update(install_mode=self.service._installed_install_mode(), component=action, manifest_override=active)
-                return
-            with self.service._lock:
-                self.service._state.update(state="succeeded", finished_at=_now(), result=result, error=None)
-            self.service._log(result["message"])
-        except Exception as exc:
-            self.service._log(str(exc), "error")
-            with self.service._lock:
-                self.service._state.update(state="cancelled" if self.service._cancel.is_set() else "failed", finished_at=_now(), error=str(exc))
+            manifest = load_install_manifest(self.service.manifest.source_path)
+            data = copy.deepcopy(manifest.data)
+            for node in data["custom_nodes"]:
+                if node["name"] in SOYA_NODE_NAMES:
+                    node.pop("tracking_branch", None)
+                    node["ref"] = (self.checked["nodes"][node["name"]] if action == "soya"
+                                   else self._head(self.service.comfy_root / "custom_nodes" / node["name"]) or node.get("ref") or self.checked["nodes"][node["name"]])
+            if action == "soya":
+                data["comfy"]["ref"] = self._head(self.service.comfy_root)
+            active = InstallManifest(manifest.source_path, data, hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest())
+            paths = ([self.service.comfy_root] if action == "comfy" else []) + [
+                self.service.comfy_root / "custom_nodes" / node["name"] for node in data["custom_nodes"]
+                if node["source_type"] == "git" and ((node["name"] in SOYA_NODE_NAMES) == (action == "soya"))
+            ]
+            for path in paths:
+                if (path / ".git").is_dir():
+                    node = next((node for node in data["custom_nodes"] if node["name"] == path.name), None)
+                    target = node["ref"] if node is not None else data["comfy"]["ref"]
+                    repository = node["repository"] if node is not None else data["comfy"]["repository"]
+                    self._verify_origin(path, repository)
+                    if self._head(path) != target:
+                        run_command(["git", "fetch", "origin", target], cwd=path, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
+                    quarantines.append((path, _prepare_untracked_quarantine(path, log=self.service._log, backup_root=self.backup_root / "untracked" / path.name, target_ref=target)))
+            return self.service._apply_update(install_mode=self.service._installed_install_mode(), component=action, manifest_override=active)
         finally:
+            restore_errors = []
             for path, quarantine in reversed(quarantines):
                 try:
                     _restore_untracked_quarantine(path, quarantine, log=self.service._log, keep_conflicts=True)
                 except Exception as exc:
                     self.service._log(str(exc), "error")
-                    with self.service._lock:
-                        self.service._state.update(state="failed", error=str(exc))
+                    restore_errors.append(str(exc))
+            if restore_errors:
+                raise RuntimeError("\n".join(restore_errors))
+
+    def _check_cancelled(self) -> None:
+        if self.service._cancel.is_set():
+            raise ValueError("업데이트를 중단했습니다.")
+
+    def _stop_comfy(self) -> None:
+        self.service._log("업데이트를 준비합니다. 공방에서 실행한 Comfy를 종료합니다.")
+        self.stop_comfy()
+        self._check_cancelled()
+        self.service._require_comfy_not_in_use()
+
+    def _run_sequential(self, workflow_key: str, civitai_key: str, resume: bool) -> dict | None:
+        if resume:
+            self.checked.pop("resume_sequential", None)
+            self._save()
+            self.service._log("재실행 전 가져온 버전으로 순차적 업데이트를 계속합니다.")
+        else:
+            self.service._set_phase("fetch")
+            self._fetch()
+        self._check_cancelled()
+        state = self.status()
+        application = state["application"]
+        if not state["checked_at"]:
+            raise ValueError("업데이트 대상 브랜치가 변경되었습니다. 순차적 업데이트를 다시 실행하세요.")
+        if application["restart_required"]:
+            return self._wait_for_restart()
+        change_application = application["update_needed"]
+        installed = state["missing_models"] is not None
+        change_nodes = installed and any(node["update_needed"] for node in state["nodes"])
+        change_comfy = installed and state["comfy"]["update_needed"]
+        if change_application:
+            self._validate_action("application", state, workflow_key)
+        if change_application or change_nodes or change_comfy:
+            self._stop_comfy()
+        if change_application:
+            self.service._set_phase("application")
+            result = self._update_application(workflow_key)
+            if result.get("restart_required"):
+                return self._wait_for_restart()
+        for action, needed, label in (("soya", change_nodes, "Soya 커스텀 노드"), ("comfy", change_comfy, "Comfy")):
+            self._check_cancelled()
+            if needed:
+                self.service._log(f"{label} 업데이트를 시작합니다.")
+                if self._update_runtime(action) is None:
+                    return None  # The installer recorded the failure and its rollback result.
+        self._check_cancelled()
+        if state["missing_models"]:
+            manifest = load_install_manifest(self.service.manifest.source_path)
+            models = self._missing_default_models(manifest)
+            if models is None:
+                raise ValueError("누락 모델을 설치할 내장 ComfyUI를 찾을 수 없습니다.")
+            self.service._install_missing_models(models, civitai_key)
+        if not installed:
+            self.service._log("내장 ComfyUI가 설치되지 않아 런타임과 모델 업데이트를 건너뜁니다.")
+        changed = bool(change_application or change_nodes or change_comfy or state["missing_models"])
+        return {"message": "순차적 업데이트를 완료했습니다." if changed else "업데이트할 항목이 없습니다.",
+                "changed": changed}
+
+    def _wait_for_restart(self) -> dict:
+        self.checked["resume_sequential"] = True
+        self._save()
+        return {"message": "공방을 다시 실행하면 남은 업데이트를 자동으로 계속합니다.", "restart_required": True}
+
+    def _run(self, *, action: str, workflow_key: str, civitai_key: str, resume: bool) -> None:
+        try:
+            if action == "sequential":
+                result = self._run_sequential(workflow_key, civitai_key, resume)
+            elif action == "fetch":
+                self.service._set_phase(action)
+                result = self._fetch()
+            else:
+                self._stop_comfy()
+                if action == "application":
+                    self.service._set_phase(action)
+                    result = self._update_application(workflow_key)
+                else:
+                    result = self._update_runtime(action)
+            if result is not None:
+                if result.get("message"):
+                    self.service._log(result["message"])
+                self.service._finish_update(result)
+        except Exception as exc:
+            self.service._log(str(exc), "error")
+            with self.service._lock:
+                self.service._state.update(state="cancelled" if self.service._cancel.is_set() else "failed", finished_at=_now(), error=str(exc))

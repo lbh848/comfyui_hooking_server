@@ -230,6 +230,21 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
 
     runtime_startup: asyncio.Task | None = None
 
+    async def get_update_panel():
+        nonlocal installer, update_panel
+        from comfy_installer.panel_updates import WorkshopUpdates
+        from comfy_installer.service import ComfyInstallerService
+        if installer is None:
+            installer = await asyncio.to_thread(ComfyInstallerService, project_root=project_root)
+        if update_panel is None:
+            update_panel = WorkshopUpdates(installer, stop_comfy=runtime.manager.stop_all)
+        return update_panel
+
+    async def update_keys():
+        async with store_lock:
+            settings_value, _ = await asyncio.to_thread(store.read)
+        return (settings_value or {}).get("apiKeys", {})
+
     async def stop_runtime() -> None:
         if runtime_startup is not None:
             await runtime_startup
@@ -241,6 +256,16 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
         nonlocal runtime_startup
         async def autostart():
             async with installer_lock:
+                try:
+                    from comfy_installer.panel_updates import read_update_check
+                    if (await asyncio.to_thread(read_update_check, project_root)).get("resume_sequential"):
+                        panel = await get_update_panel()
+                        keys = await update_keys()
+                        await asyncio.to_thread(panel.start, "sequential", resume=True,
+                                                workflow_key=keys.get("workflow-key", ""), civitai_key=keys.get("other-civitai", ""))
+                        return
+                except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                    print(f"[업데이트] 순차적 업데이트 재개 실패: {exc}")
                 try:
                     await asyncio.to_thread(runtime.autostart)
                 except (OSError, ValueError, ComfyRuntimeError) as exc:
@@ -719,20 +744,15 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
             return web.json_response({"error": "설치 파일을 준비할 수 없습니다. 파일과 폴더 권한을 확인하세요."}, status=500, headers=headers)
 
     async def updates(request: web.Request) -> web.Response:
-        nonlocal installer, update_panel
         headers = {"Cache-Control": "no-store"}
         if request.headers.get("X-Comfy-Settings") != "1":
             return web.json_response({"error": "허용되지 않은 업데이트 요청입니다."}, status=403, headers=headers)
-        from comfy_installer.service import ComfyInstallerService, InstallerServiceError
-        from comfy_installer.panel_updates import WorkshopUpdates
+        from comfy_installer.service import InstallerServiceError
         from comfy_installer.operations import CommandError
         from comfy_installer.manifest import ManifestError
         try:
             async with installer_lock:
-                if installer is None:
-                    installer = await asyncio.to_thread(ComfyInstallerService, project_root=project_root)
-                if update_panel is None:
-                    update_panel = WorkshopUpdates(installer, stop_comfy=runtime.manager.stop_all)
+                update_panel = await get_update_panel()
                 if request.method == "GET":
                     result = await asyncio.to_thread(update_panel.status)
                 else:
@@ -747,13 +767,12 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                             await asyncio.to_thread(installer.cancel)
                             result = await asyncio.to_thread(update_panel.status)
                         else:
-                            async with store_lock:
-                                settings_value, _ = await asyncio.to_thread(store.read)
-                            keys = (settings_value or {}).get("apiKeys", {})
+                            keys = await update_keys()
                             if action == "missing-models":
                                 result = await asyncio.to_thread(update_panel.start_missing_models, keys.get("other-civitai", ""))
                             else:
-                                result = await asyncio.to_thread(update_panel.start, action, workflow_key=keys.get("workflow-key", ""))
+                                result = await asyncio.to_thread(update_panel.start, action, workflow_key=keys.get("workflow-key", ""),
+                                                                 civitai_key=keys.get("other-civitai", ""))
             return web.json_response(result, headers=headers)
         except (InstallerServiceError, CommandError, ManifestError, ValueError, OSError, RuntimeError) as exc:
             return web.json_response({"error": str(exc)}, status=409, headers=headers)
@@ -892,7 +911,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_post("/api/setting/install", install)
     app.router.add_post("/api/setting/install/cancel", install)
     app.router.add_get("/api/setting/updates", updates)
-    app.router.add_post("/api/setting/updates/{action:fetch|application|soya|comfy|missing-models|cancel|clear-backups}", updates)
+    app.router.add_post("/api/setting/updates/{action:sequential|fetch|application|soya|comfy|missing-models|cancel|clear-backups}", updates)
     app.on_cleanup.append(stop_installer)
     from settings_shutdown import register_program_shutdown
 

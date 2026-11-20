@@ -161,7 +161,7 @@ export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
           <h3>Comfy 공방을 종료하고 있습니다.</h3>
           <p>실행 중인 서버와 관리 중인 Comfy를 정리합니다.<br />정리가 끝나면 종료 완료 안내가 표시됩니다.</p>
         </div> : <>
-          <h3>{updateMessage ? "업데이트를 마쳤습니다." : "Comfy 공방을 종료할까요?"}</h3>
+          <h3>{updateMessage ? "공방을 다시 실행해 주세요." : "Comfy 공방을 종료할까요?"}</h3>
           {updateMessage && <p>{updateMessage}</p>}
           <p>실행 중인 생성·학습·다운로드 작업이 중단되고,<br />공방에서 실행한 Comfy와 작업 서버도 함께 종료됩니다.</p>
           <p className="muted">열려 있는 다른 공방 화면의 작업도 중단됩니다.</p>

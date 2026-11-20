@@ -87,6 +87,9 @@ function currentPage(hash: string): Page {
 export default function App() {
   const { active, hash, navigate: navigatePage } = useWorkshopScreen();
   const page = currentPage(hash);
+  useEffect(() => {
+    if (active && !hash && localStorage.getItem("comfy-resume-update")) navigatePage("updates");
+  }, [active, hash, navigatePage]);
   const { entries: modals } = useModalWorkspace();
   const hasBackgroundModals = modals.some(modal => modal.backgrounded);
   const {
