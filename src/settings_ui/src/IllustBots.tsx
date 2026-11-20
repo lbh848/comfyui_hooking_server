@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import "../../frontend/static/bot_visual_guide.js";
 import { useUnsavedChanges } from "./unsavedChanges";
 import { ArrowLeft, ChevronRight, Copy, Crop, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
@@ -33,7 +34,6 @@ import { useBotApi } from "./BotApiScope";
 const botToolLabels = { generation: "그리기 설정", rules: "매칭 기반 규칙", extra: "캐릭터 태그 일괄 관리" };
 const OUTFIT_SLIDE_MS = 420; // matches the carousel transition in illust.css
 const OUTFIT_SETTLE_MS = 220; // matches the carousel height transition in illust.css
-const genderTags = ["1girl", "1boy", "1male", "animal", "1girl, furry", "1boy, furry", "futanari", "monster", "monster girl"];
 
 export function AddIllustrationBot({ onClose, onAdded }: { onClose: () => void; onAdded: (name: string) => void }) {
   const api = useBotApi();
@@ -629,7 +629,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         <div className="illust-actions">
           {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
           <button type="button" className="button secondary" onClick={() => setDetail("tags")}>캐릭터 태그 편집</button>
-          <label className="field illust-gender-field"><span className="sr-only">{characterName} 성별 태그</span><select required aria-label={`${characterName} 성별 태그`} value={render.gender_tag || "1girl"} disabled={readOnly || busy} onChange={event => updateRender({ gender_tag: event.target.value })}>{[...new Set([...genderTags, render.gender_tag].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="field illust-gender-field"><span className="sr-only">{characterName} 성별 태그</span><select required aria-label={`${characterName} 성별 태그`} value={render.gender_tag || "1girl"} disabled={readOnly || busy} onChange={event => updateRender({ gender_tag: event.target.value })}>{[...new Set([...ComfyVisualGuide.genderTags, render.gender_tag].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
           {onPersona && <label className="illust-check"><input type="checkbox" checked={persona} disabled={readOnly || busy || personaBusy} onChange={event => onPersona(event.target.checked)} />페르소나</label>}
         </div>
       </header>

@@ -1,5 +1,6 @@
 // Shared rules from the original profile metadata editor. Persistence stays in the bot API.
 globalThis.ComfyVisualGuide = (() => {
+    const genderTags = ['1girl', '1boy', '1male', 'animal', '1girl, furry', '1boy, furry', 'futanari', 'monster', 'monster girl'];
     function identity(character, profileId) {
         return `${String(character || '').toLocaleLowerCase()}\u0000${String(profileId || '')}`;
     }
@@ -16,6 +17,7 @@ globalThis.ComfyVisualGuide = (() => {
             profileIndex, repFilename,
             imageUrl: repFilename ? `/api/bot_mode/image/${encodeURIComponent(botName)}/${encodeURIComponent(character)}/${encodeURIComponent(repFilename)}` : '',
             currentAliases: Array.isArray(profile.aliases) ? [...profile.aliases] : [],
+            currentGenderTag: String(profile.render_overrides?.gender_tag || '1girl'),
             currentGuide: String(profile.selection_guide || '').trim(), currentVisualContext: String(profile.visual_context || '').trim(),
             selected: false, focused: identity(character, profile.id) === focusIdentity, suggestion: null,
         };
@@ -35,7 +37,7 @@ globalThis.ComfyVisualGuide = (() => {
             const previous = target.suggestion;
             const next = {
                 aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : previous?.aliases || [],
-                ...Object.fromEntries(['selection_guide', 'selection_guide_english', 'evidence', 'visual_context', 'visual_context_english',
+                ...Object.fromEntries(['gender_tag', 'selection_guide', 'selection_guide_english', 'evidence', 'visual_context', 'visual_context_english',
                     'visual_context_status', 'visual_context_error', 'visual_context_image'].map(key => [key,
                     key in suggestion ? String(suggestion[key] || '') : previous?.[key] || ''])),
                 confidence: ['high', 'medium', 'low'].includes(suggestion.confidence) ? suggestion.confidence : previous?.confidence || 'low',
@@ -49,6 +51,7 @@ globalThis.ComfyVisualGuide = (() => {
     function metadataItems(targets) {
         return targets.map(target => ({
             character: target.character, profile_id: target.profileId, aliases: target.suggestion.aliases || [],
+            gender_tag: target.suggestion.gender_tag,
             selection_guide: String(target.suggestion.selection_guide || '').trim(),
             selection_guide_english: String(target.suggestion.selection_guide_english || '').trim(),
             ...(target.suggestion.visual_context_status === 'ok' ? {
@@ -57,5 +60,5 @@ globalThis.ComfyVisualGuide = (() => {
             } : {}),
         }));
     }
-    return { identity, missing, target, matches, merge, metadataItems };
+    return { genderTags, identity, missing, target, matches, merge, metadataItems };
 })();

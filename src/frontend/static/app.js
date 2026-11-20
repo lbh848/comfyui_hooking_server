@@ -42116,6 +42116,12 @@
                     <label style="display:block;font-size:.69rem;color:var(--text2);margin-bottom:8px">작중 별칭
                         <input class="visual-guide-field" data-vg-aliases="${index}" value="${escAttr((suggestion.aliases || []).join(', '))}" placeholder="쉼표로 구분" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">
                     </label>
+                    <label style="display:block;font-size:.69rem;color:var(--text2);margin-bottom:8px">성별 태그
+                        <select class="visual-guide-field" data-vg-gender-tag="${index}" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">
+                            <option value="" disabled>성별 태그 선택</option>
+                            ${ComfyVisualGuide.genderTags.map(tag => `<option ${tag === suggestion.gender_tag ? 'selected' : ''}>${tag}</option>`).join('')}
+                        </select>
+                    </label>
                     <label style="display:block;font-size:.69rem;color:var(--text2)">자연어 선택 기준
                         <textarea class="visual-guide-field" data-vg-guide="${index}" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">${escHtml(suggestion.selection_guide || '')}</textarea>
                     </label>
@@ -42131,7 +42137,7 @@
                             <div style="margin-top:3px;font-size:.76rem;color:var(--accent)">[${target.profileIndex + 1}] ${escHtml(target.profileLabel)}</div>
                             <div style="margin-top:5px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">ID · ${escHtml(target.profileId)}</div>
                             <div style="margin-top:3px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">파일 · ${escHtml(target.repFilename || '대표 이미지 없음')}</div>
-                            <div class="visual-guide-current"><b>현재 별칭</b> · ${escHtml(currentAliases)}\n<b>현재 기준</b> · ${escHtml(currentGuide)}\n<b>현재 외형 참고</b> · ${escHtml(currentVisualContext)}</div>
+                            <div class="visual-guide-current"><b>현재 별칭</b> · ${escHtml(currentAliases)}\n<b>현재 성별 태그</b> · ${escHtml(target.currentGenderTag)}\n<b>현재 기준</b> · ${escHtml(currentGuide)}\n<b>현재 외형 참고</b> · ${escHtml(currentVisualContext)}</div>
                         </div>
                         <div class="visual-guide-suggestion">${suggestionHtml}</div>
                     </article>`;
@@ -42166,6 +42172,12 @@
                         return;
                     }
                     target.suggestion.selection_guide = event.currentTarget.value;
+                });
+            });
+            list.querySelectorAll('[data-vg-gender-tag]').forEach(select => {
+                select.addEventListener('change', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgGenderTag)];
+                    if (target?.suggestion) target.suggestion.gender_tag = event.currentTarget.value;
                 });
             });
             list.querySelectorAll('[data-vg-visual-context]').forEach(input => {
@@ -42396,6 +42408,11 @@
                 showToast(`${emptyGuide.character} [${emptyGuide.profileIndex + 1}]의 선택 기준이 비어 있습니다.`, 'error');
                 return;
             }
+            const missingGenderTag = selected.find(target => !ComfyVisualGuide.genderTags.includes(target.suggestion.gender_tag));
+            if (missingGenderTag) {
+                showToast(`${missingGenderTag.character} [${missingGenderTag.profileIndex + 1}]의 성별 태그를 선택하세요.`, 'error');
+                return;
+            }
             const overwrite = true;
             state.busy = true;
             _renderVisualGuideRows();
@@ -42597,7 +42614,7 @@
                             style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
-                            ${['1girl','1boy','1male','animal','1girl, furry','1boy, furry','futanari','monster','monster girl'].map(g =>
+                            ${ComfyVisualGuide.genderTags.map(g =>
                                 `<option value="${g}" ${char.gender_tag === g ? 'selected' : ''}>${g}</option>`
                             ).join('')}
                         </select>

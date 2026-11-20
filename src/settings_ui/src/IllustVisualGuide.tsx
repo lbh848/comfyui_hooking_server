@@ -174,6 +174,8 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
     if (readOnly || busy || !ready.length) return;
     const empty = ready.find(target => !target.suggestion!.selection_guide.trim());
     if (empty) { setError(`${empty.character} · ${empty.profileLabel}의 자연어 선택 기준을 입력하세요.`); return; }
+    const missingGenderTag = ready.find(target => !ComfyVisualGuide.genderTags.includes(target.suggestion!.gender_tag));
+    if (missingGenderTag) { setError(`${missingGenderTag.character} · ${missingGenderTag.profileLabel}의 성별 태그를 선택하세요.`); return; }
     setError("");
     void applyAction.run(async () => {
       const items = ComfyVisualGuide.metadataItems(ready);
@@ -181,7 +183,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
       const applied = new Map(items.map(item => [ComfyVisualGuide.identity(item.character, item.profile_id), item]));
       setTargets(current => current.map(target => {
         const item = applied.get(target.identity);
-        return item ? { ...target, currentAliases: item.aliases, currentGuide: item.selection_guide,
+        return item ? { ...target, currentAliases: item.aliases, currentGenderTag: item.gender_tag, currentGuide: item.selection_guide,
           currentVisualContext: item.visual_context ?? target.currentVisualContext, suggestion: null } : target;
       }));
       setMessage(`선택 제안을 적용했습니다. 변경 ${result.applied || 0}개 · 유지 ${result.skipped || 0}개`);
@@ -198,12 +200,16 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
     return <article className="illust-visual-guide-row" data-selected={target.selected} key={target.identity}>
       <div className="illust-form"><label className="illust-check illust-visual-guide-card-select"><input type="checkbox" aria-label={`${target.character} ${target.profileLabel} 선택`} checked={target.selected} disabled={readOnly || busy} onChange={event => selectCards([target], event.target.checked)} /><strong>{target.character} · [{target.profileIndex + 1}] {target.profileLabel}</strong><span className="illust-visual-guide-card-selection">{target.selected ? "선택됨" : "선택 안 됨"}</span></label>
         <div className="illust-visual-guide-current">{target.imageUrl ? <button className="illust-image-button" aria-label={`${target.character} ${target.profileLabel} 대표 이미지 확대`} onClick={() => setPreview(target)}><img className="illust-profile-thumb" src={api.media(target.imageUrl)} alt={`${target.character} ${target.profileLabel}`} /></button> : <span className="field-help">대표 이미지 없음</span>}
-          <div><p className="field-help">{target.repFilename}</p><p><strong>현재 별칭</strong> · {target.currentAliases.join(", ") || "비어 있음"}</p><p><strong>현재 기준</strong> · {target.currentGuide || "비어 있음"}</p><p><strong>현재 외형 참고</strong> · {target.currentVisualContext || "비어 있음"}</p></div>
+          <div><p className="field-help">{target.repFilename}</p><p><strong>현재 별칭</strong> · {target.currentAliases.join(", ") || "비어 있음"}</p><p><strong>현재 성별 태그</strong> · {target.currentGenderTag}</p><p><strong>현재 기준</strong> · {target.currentGuide || "비어 있음"}</p><p><strong>현재 외형 참고</strong> · {target.currentVisualContext || "비어 있음"}</p></div>
         </div>
       </div>
       {target.suggestion ? <fieldset className="illust-form" disabled={readOnly || busy}>
         <div className="illust-actions"><strong>LLM 제안</strong><Badge tone={isLowConfidence ? "rose" : "neutral"}>신뢰도 {({ high: "높음", medium: "보통", low: "낮음" } as Record<string, string>)[target.suggestion.confidence]}</Badge></div>
         <label className="field">작중 별칭<input value={target.suggestion.aliases.join(", ")} onChange={event => edit(target, { aliases: event.target.value.split(/,\s*/) })} placeholder="쉼표로 구분" /></label>
+        <label className="field">성별 태그<select value={target.suggestion.gender_tag || ""} onChange={event => edit(target, { gender_tag: event.target.value })}>
+          <option value="" disabled>성별 태그 선택</option>
+          {ComfyVisualGuide.genderTags.map(tag => <option key={tag}>{tag}</option>)}
+        </select></label>
         <label className="field">자연어 선택 기준<textarea rows={5} maxLength={4000} value={target.suggestion.selection_guide} onChange={event => edit(target, { selection_guide: event.target.value })} /></label>
         <p className="field-help">판단 근거 · {target.suggestion.evidence || "근거 설명 없음"}</p>
         {target.suggestion.visual_context_status === "ok" ? <label className="field">대표 이미지 외형 참고<textarea rows={4} maxLength={1200} value={target.suggestion.visual_context} onChange={event => edit(target, { visual_context: event.target.value })} /></label> : target.suggestion.visual_context_status === "skipped" ? <p className="field-help">이미지 분석 사용 안 함 · 기존 외형 참고 유지</p> : target.suggestion.visual_context_status ? <p className="field-error">대표 이미지 외형 분석 실패 · {target.suggestion.visual_context_error || "대표 이미지를 확인하세요."}</p> : generating && analyzeImages && targetIds.includes(target.identity) && <p className="field-help">선택 기준 작성 완료 · 대표 이미지 외형 분석 대기 중</p>}
@@ -217,7 +223,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
   return <>
     <div className="illust-form illust-visual-guide-content">
       <p className="field-help">{!canGenerate ? "출력 지침 탭에서 지침을 입력한 뒤 자동 작성을 실행하세요." : instructionDirty ? `현재 입력한 지침 ${instructionLength.toLocaleString()}자를 저장한 뒤 자동 작성을 실행합니다.` : `현재 봇에 저장된 에셋·프로필 출력 지침 ${instructionLength.toLocaleString()}자를 사용합니다.`}</p>
-      <p className="field-help">캐릭터별로 가져온 로어북의 활성화 키를 작중 별칭의 근거로, 본문을 프로필 구분과 선택 조건의 근거로 함께 참고합니다.</p>
+      <p className="field-help">가져온 로어북의 활성화 키는 작중 별칭에, 본문은 프로필 선택 기준과 성별 태그에 참고합니다.</p>
       {!resource.data ? <IllustrationLoading error={resource.error} retry={resource.reload} /> : !targets.length ? <Empty title="자동 작성할 캐릭터 카드가 없습니다">봇에 캐릭터를 추가한 뒤 자동 작성을 실행하세요.</Empty> : <>
         <div className="illust-inline-form illust-visual-guide-toolbar">
           <label className="field">캐릭터·카드·파일명 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
@@ -231,7 +237,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
           </div>
           {generating && <button className="button danger" disabled={!itemId || cancelRequested || cancelAction.busy} onClick={() => void cancelAction.run(async () => { await api.request("bot_mode/character_cards/suggest_metadata/cancel", { item_id: itemId }); setCancelRequested(true); }, "중단을 요청했습니다.")}>중단</button>}
         </div>
-        <p className="field-help">{analyzeImages ? "선택 기준 작성 후 대표 이미지를 분석해 외형 참고도 작성합니다." : "이미지 분석 없이 별칭과 선택 기준만 작성합니다. 기존 외형 참고는 유지됩니다."}</p>
+        <p className="field-help">{analyzeImages ? "선택 기준 작성 후 대표 이미지를 분석해 외형 참고도 작성합니다." : "이미지 분석 없이 별칭·선택 기준·성별 태그를 작성합니다."}</p>
         {generating && <p className="field-help" role="status">{progressText}</p>}
         <IllustrationFeedback error={error || applyAction.error || cancelAction.error} message={message} />
         {lowConfidence.length > 0 && <p className="field-help illust-visual-guide-low-confidence-summary" role="status">신뢰도 낮음 {lowConfidence.length}개 · 선택 {selectedLowConfidence}개</p>}
@@ -263,7 +269,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
         })}</div>
       </>}
     </div>
-    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준을 갱신합니다. 신뢰도가 낮은 제안은 상단에서 확인·수정할 수 있습니다.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
+    <div className="illust-actions illust-dialog-actions illust-visual-guide-footer"><p className="field-help">선택한 제안으로 카드의 별칭·선택 기준·성별 태그를 갱신합니다. 신뢰도가 낮은 제안은 상단에서 확인·수정할 수 있습니다.</p><button className="button primary" disabled={readOnly || busy || !ready.length} onClick={apply}>{applyAction.busy ? "적용 중…" : `선택 제안 ${ready.length}개 적용`}</button></div>
     {preview && <Modal title={`${preview.character} · ${preview.profileLabel}`} onClose={() => setPreview(null)} backgroundable={false} className="illust-character-modal"><img className="illust-asset-preview" src={api.media(preview.imageUrl)} alt={preview.repFilename} /></Modal>}
   </>;
 }

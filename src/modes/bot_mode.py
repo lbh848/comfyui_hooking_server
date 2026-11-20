@@ -937,7 +937,7 @@ def _build_visual_guide_messages(
             f"Default outfit evidence: {_visual_guide_tag_text(profile.get('default_outfit'))}",
         ]))
 
-    system_message = """Write aliases and selection guides for the requested character cards.
+    system_message = """Write aliases, selection guides, and gender tags for the requested character cards.
 
 Another model will use these guides to choose ONE registered card from the current conversation and the character's previously saved active card and state. It also receives separate appearance references, but no lorebook, source document, filenames, evidence, or confidence. Card IDs and display labels do not explain the cards. Your job is to give that model enough information to distinguish the available cards. Include only facts that affect that choice.
 
@@ -957,7 +957,10 @@ If only ONE card is registered, identify the character and cover all their suppo
 Include confirmed personal names, surname and given-name variants, nicknames and titles, preserving the source languages and spelling. Read activation keys with their lore entry: share personal identity names across applicable cards, but assign form-specific titles and their unique short names only to matching forms, including a special form on the first card. Keep individual surname/given-name keys even when a full name is included.
 Exclude generic retrieval topics, shared category or gemstone fragments, regex, other people's names, outfit/state command suffixes, filenames, image commands and markup. Do not invent translations or nicknames. Deduplicate; use at most 32 aliases of at most 160 characters each.
 
-4. Keep review information separate from selection conditions.
+4. Choose exactly one allowed gender_tag for the character as depicted on each requested card.
+Read the linked lorebook first. Use character-wide facts for cards that share them and form-specific facts for cards that depict a different form. When lore is missing or inconclusive, use the available source document and card evidence to choose the best-fitting tag. Briefly explain the basis for the choice in evidence.
+
+5. Keep review information separate from selection conditions.
 selection_guide must work without consulting any other document. Put source citations, missing information, and uncertainty only in evidence. Missing background or an unexplained reason for an outfit is not itself a selection problem. evidence should briefly identify the source facts supporting the choice and any unresolved distinction that could change it.
 confidence rates whether the proposed guide lets the reader choose the correct card, not merely whether a filename matched. Use high when the mapping and choice-changing conditions are supported and clear; medium when the supported rule is usable but a relevant detail is inferred; low when an uncertain mapping or unresolved condition could select a different card. Never fill a gap with an invented condition, regardless of confidence.
 Write Korean selection_guide and evidence. Keep each guide within 4000 characters. Be concise by omitting irrelevant biography and decoration, while retaining facts that change the selection.
@@ -965,7 +968,7 @@ Write Korean selection_guide and evidence. Keep each guide within 4000 character
 Before returning, compare the guides using only the conversation and saved state that their reader will have. Check that each rule explains the needed distinction, retains its decisive source conditions, and adds no unsupported requirement. Check aliases against the character's identity keys and the card's form.
 Return strict JSON only, exactly one item per requested target_key and no comparison-only items:
 Copy each target_key exactly from its requested Target section, not from Profile internal id.
-{"suggestions":[{"target_key":"0","evidence":"source facts that establish this card's state and distinguish it from peers","selection_guide":"Korean prose","aliases":["confirmed personal name","confirmed in-story title"],"confidence":"high|medium|low"}]}"""
+{"suggestions":[{"target_key":"0","evidence":"source facts that establish this card's state and distinguish it from peers","selection_guide":"Korean prose","aliases":["confirmed personal name","confirmed in-story title"],"gender_tag":"one allowed value","confidence":"high|medium|low"}]}"""
     if output_language == "en":
         system_message = system_message.replace("Write Korean selection_guide", "Write English selection_guide").replace('"selection_guide":"Korean prose"', '"selection_guide":"English prose"')
 
@@ -986,7 +989,8 @@ Copy each target_key exactly from its requested Target section, not from Profile
         "===== CHARACTER LOREBOOK START =====\n"
         + (lore_text or "(no imported lorebook for this character)")
         + "\n===== CHARACTER LOREBOOK END =====\n\n"
-        "Return new aliases and selection guides only for the TARGET cards above. "
+        f"Allowed gender_tag values: {', '.join(json.dumps(tag) for tag in BOT_GENDER_TAGS)}.\n"
+        "Return new aliases, selection guides, and gender tags only for the TARGET cards above. "
         "Do not return comparison-only cards.\n\n"
         + "\n\n===== AUTHOR ACTIVATION KEYS TO REVIEW FOR ALIASES =====\n"
         + json.dumps([{
@@ -1093,11 +1097,13 @@ def _normalize_visual_guide_llm_result(
             confidence = "low"
 
         target = expected[target_key]
+        gender_tag = raw.get("gender_tag")
         normalized_by_key[target_key] = {
             "character": target["character"],
             "profile_id": str(target["profile"].get("id") or ""),
             "aliases": clean_aliases,
             "selection_guide": selection_guide,
+            "gender_tag": gender_tag if gender_tag in BOT_GENDER_TAGS else None,
             "evidence": evidence,
             "confidence": confidence,
         }
@@ -5573,7 +5579,7 @@ class BotMode:
             return _json_error(str(e), 500)
 
     async def handle_suggest_character_card_metadata(self, request):
-        """Suggest aliases and natural selection guides without modifying bot.json."""
+        """Suggest aliases, selection guides, and gender tags without modifying bot.json."""
         try:
             body = await request.json()
             bot_name = str(body.get("bot_name") or "").strip()
@@ -6883,6 +6889,9 @@ class BotMode:
                 character = str(raw.get("character") or "").strip()
                 profile_id = str(raw.get("profile_id") or "").strip()
                 selection_guide = str(raw.get("selection_guide") or "").strip()
+                gender_tag = raw.get("gender_tag")
+                if gender_tag is not None and gender_tag not in BOT_GENDER_TAGS:
+                    return _json_error(f"items[{index}]의 성별 태그를 확인하세요.")
                 visual_context = None
                 if "visual_context" in raw:
                     raw_visual_context = raw.get("visual_context")
@@ -6972,6 +6981,7 @@ class BotMode:
                     "profile_id": profile_id,
                     "aliases": clean_aliases,
                     "selection_guide": selection_guide,
+                    "gender_tag": gender_tag,
                     "visual_context": visual_context,
                     "selection_guide_english": str(raw.get("selection_guide_english") or "").strip(),
                     "visual_context_english": str(raw.get("visual_context_english") or "").strip(),
@@ -7054,6 +7064,12 @@ class BotMode:
                     if overwrite or not str(profile.get("selection_guide") or "").strip():
                         if str(profile.get("selection_guide") or "").strip() != item["selection_guide"]:
                             profile["selection_guide"] = item["selection_guide"]
+                            target_changed = True
+                    if item["gender_tag"] is not None:
+                        render_overrides = profile["render_overrides"]
+                        current_gender_tag = render_overrides.get("gender_tag")
+                        if (overwrite or not current_gender_tag) and current_gender_tag != item["gender_tag"]:
+                            render_overrides["gender_tag"] = item["gender_tag"]
                             target_changed = True
                     if item["visual_context"] is not None and (
                         overwrite or not str(profile.get("visual_context") or "").strip()
