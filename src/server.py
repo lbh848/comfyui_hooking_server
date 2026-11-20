@@ -6369,11 +6369,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 # rules before handing the layout to that builder.
                 moss_layout = raw_body.get("illustration_moss_layout")
                 if isinstance(moss_layout, dict):
-                    from modes.moss_prompt_builder import apply_character_image_name_tags
+                    from modes.moss_prompt_builder import apply_character_card_names
                     moss_layout, applied_moss_rules = (
                         _apply_moss_prompt_word_rules(moss_layout, scene_word_rules)
                     )
-                    raw_body["illustration_moss_layout"] = apply_character_image_name_tags(
+                    raw_body["illustration_moss_layout"] = apply_character_card_names(
                         moss_layout, characters_for_parse, character_aliases)
                     if applied_moss_rules:
                         print(

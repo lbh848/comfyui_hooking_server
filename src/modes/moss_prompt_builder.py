@@ -524,26 +524,23 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
     }
 
 
-def apply_character_image_name_tags(moss: dict, characters: list,
-                                    character_aliases: dict[str, str] | None = None) -> dict:
-    """Apply enabled card name tags to MOSS character captions, keeping identity keys."""
+def apply_character_card_names(moss: dict, characters: list,
+                               character_aliases: dict[str, str] | None = None) -> dict:
+    """Match boxes to card names and apply enabled image name tags to captions."""
     from modes.illust_prompt_builder import IllustPromptBuilder
 
     # DETAIL owns appearance and clothing. Reuse ANIMA's name replacement and
     # deduplication without injecting the card's absolute appearance tags.
-    cards = [
-        {**character, "name": _text(character.get("name")), "absolute_tags": ""}
+    cards = {
+        name: {**character, "name": name, "absolute_tags": ""}
         for character in characters or []
-        if isinstance(character, dict)
-        and _text(character.get("name"))
-        and character.get("use_image_name_tag") is True
-        and _text(character.get("image_name_tag"))
-    ]
+        if isinstance(character, dict) and (name := _text(character.get("name")))
+    }
     if not cards:
         return moss
 
     rendered = copy.deepcopy(moss)
-    card_names = [card["name"] for card in cards]
+    card_names = list(cards)
     items = rendered.get("items")
     native_layout = isinstance(items, list)
     entries = items if native_layout else rendered.get("regions") or []
@@ -563,13 +560,52 @@ def apply_character_image_name_tags(moss: dict, characters: list,
             name, card_names, character_aliases)
         if len(matched) != 1:
             continue
+        card_name = matched[0]
+        card = cards[card_name]
+        item["name"] = card_name
+        if card.get("use_image_name_tag") is not True or not _text(card.get("image_name_tag")):
+            continue
         # Panel ownership must stay at the start until the final builder turns
         # it into spatial prose. A character can occur in several panel items.
         marker = re.match(r"\s*PANEL\s+\d+\.\s*", caption, re.IGNORECASE)
         prefix = caption[:marker.end()] if marker else ""
         item[caption_key] = prefix + IllustPromptBuilder._apply_assigned_character_identity_tags(
-            [caption[len(prefix):]], {0: name}, {name: matched[0]}, cards)[0]
+            [caption[len(prefix):]], {0: name}, {name: card_name}, [card])[0]
     return rendered
+
+
+def add_character_lora_triggers(moss: dict, loras: dict) -> None:
+    """Add the loaded MOSS character LoRA triggers to each matching caption."""
+    items = moss.get("items", [])
+    if not items or _text(loras.get("filter")) not in {"", "moss"}:
+        return
+    from modes.illust_prompt_builder import IllustPromptBuilder
+
+    triggers_by_character: dict[str, dict[str, str]] = {}
+    for lora in loras.get("list", []):
+        if lora.get("BASE") != "moss":
+            continue
+        name = _text(lora.get("CHAR")).casefold()
+        trigger = _text(lora.get("trigger"))
+        if not name or not trigger or not float(lora.get("str", 1.0)):
+            continue
+        triggers = triggers_by_character.setdefault(name, {})
+        for tag in IllustPromptBuilder._split_top_level_tags(trigger):
+            triggers.setdefault(IllustPromptBuilder._top_level_tag_core(tag), tag)
+
+    for item in items:
+        if item.get("label") != "character":
+            continue
+        name = _text(item.get("name")).casefold()
+        triggers = triggers_by_character.get(name)
+        if not triggers:
+            continue
+        caption = item["caption"]
+        present = {IllustPromptBuilder._top_level_tag_core(tag)
+                   for tag in IllustPromptBuilder._split_top_level_tags(caption)}
+        missing = [tag for key, tag in triggers.items() if key not in present]
+        if missing:
+            item["caption"] = ", ".join(filter(None, [*missing, caption]))
 
 
 def _moss_render_panel_captions(moss: dict) -> dict:

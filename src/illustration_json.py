@@ -1145,8 +1145,8 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
                    dialogue_repair: dict | None = None) -> str:
     """Emit ``{"moss": ..., "workflow": ...}`` for a MOSS workflow."""
     from modes.moss_prompt_builder import (
-        MossNpcPromptBuilder, MossPromptBuilder, build_controller, build_moss_layout,
-        merge_lora_lists,
+        MossNpcPromptBuilder, MossPromptBuilder, add_character_lora_triggers,
+        build_controller, build_moss_layout, merge_lora_lists,
     )
     assets = assets if isinstance(assets, dict) else {}
 
@@ -1200,6 +1200,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         sequential_offload=fields.get("workflow.sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
     rebuilt = MossPromptBuilder.build(moss, controller)
+    add_character_lora_triggers(rebuilt["moss"], controller["loras"])
     # The in-graph repair node reads this control block. Keep it even when the
     # toggle is off: the node sees enabled=false and passes the document through.
     if isinstance(dialogue_repair, dict) and str(dialogue_repair.get("source") or "").strip():

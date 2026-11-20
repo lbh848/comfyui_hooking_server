@@ -881,6 +881,8 @@ class IllustPromptBuilder:
             for lora in char_data.get("loras_solo", char_data.get("loras", [])) or []:
                 trigger = lora.get("trigger", char_name)
                 base = lora.get("BASE", "anima")
+                if base == "moss" and lora.get("enabled") is False:
+                    continue
                 lora_path = self._resolve_lora_path(lora)
                 strength = lora.get("strength", 0.8)
 
@@ -894,6 +896,7 @@ class IllustPromptBuilder:
                         "str": strength,
                         "BASE": base,
                         "CHAR": char_name,
+                        **({"trigger": trigger} if base == "moss" else {}),
                     })
                 elif base == "sdxl":
                     if trigger not in sdxl_triggers:
