@@ -11,10 +11,13 @@ type UpdateStatus = {
   missing_models: { path: string; size: number }[] | null;
   comfy: Component & { version: string; required_version: string; required_ref: string; changes: string[] };
   backup: { bytes: number; path: string };
-  job: { state: string; operation: string | null; phase_label: string; error: string | null; cancel_requested: boolean;
-    logs: { seq: number; message: string; level: string }[]; result?: { message?: string; restart_required?: boolean } };
+  job: { state: string; operation: string | null; finished_at: string | null; phase_label: string; error: string | null; cancel_requested: boolean;
+    logs: { seq: number; message: string; level: string }[]; result?: { message?: string; restart_required?: boolean; workflow_pending?: boolean } };
 };
 type Action = "fetch" | "application" | "soya" | "comfy" | "missing-models" | "cancel" | "clear-backups";
+const updateLabels: Record<string, string> = {
+  panel_application: "공방 업데이트", panel_soya: "Soya 커스텀 노드 업데이트", panel_comfy: "Comfy 업데이트",
+};
 
 async function requestUpdates(action?: Action): Promise<UpdateStatus> {
   const response = await fetch(`/api/setting/updates${action ? `/${action}` : ""}`, {
@@ -34,7 +37,7 @@ function bytes(size: number) {
   return `${(size / 1024 ** unit).toLocaleString("ko-KR", { maximumFractionDigits: 1 })} ${["B", "KB", "MB", "GB", "TB"][unit]}`;
 }
 
-export function UpdatesPage() {
+export function UpdatesPage({ onUpdating, onUpdated }: { onUpdating: (running: boolean) => void; onUpdated: (message: string) => void }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
   const [error, setError] = useState("");
@@ -61,6 +64,20 @@ export function UpdatesPage() {
   }, [pending]);
   const job = status?.job;
   const running = job?.state === "running";
+  const updateLabel = updateLabels[job?.operation ?? ""];
+  useEffect(() => {
+    onUpdating(Boolean((pending && updateLabels[`panel_${pending}`]) || (running && updateLabel)));
+  }, [pending, running, updateLabel, onUpdating]);
+  useEffect(() => {
+    if (!updateLabel || job?.state !== "succeeded" || !job.finished_at) return;
+    const completion = `${job.operation}/${job.finished_at}`;
+    if (sessionStorage.getItem("comfy-update-shutdown") === completion) return;
+    sessionStorage.setItem("comfy-update-shutdown", completion);
+    const next = job.result?.workflow_pending
+      ? " 다시 실행한 뒤 ‘업데이트’에서 ‘공방 업데이트’를 한 번 더 눌러 내장 워크플로우 적용을 마치세요."
+      : "";
+    onUpdated(`${updateLabel} 적용을 위해 ‘종료하기’를 누른 뒤 Comfy공방.exe를 다시 실행해 주세요.${next}`);
+  }, [updateLabel, job?.state, job?.operation, job?.finished_at, job?.result?.workflow_pending, onUpdated]);
   const busy = !!pending || running;
   const available = !!status && !busy && !connectionError;
   const fetched = !!status?.checked_at;
@@ -96,6 +113,7 @@ export function UpdatesPage() {
     </Panel>
     <Panel title="2. 공방 업데이트">
       <div className="panel-body form-stack">
+        <p className="field-help">공방, Soya 커스텀 노드 또는 Comfy 업데이트를 시작하면 공방에서 실행한 Comfy가 자동으로 종료됩니다.</p>
         <div className="updates-action-row">
           <div><p>공방 프로그램 · 내장 워크플로우 · 배포 프리셋</p><p className="field-help">현재 <code>{short(application?.current)}</code>{application?.target && <> · 가져온 커밋 <code>{short(application.target)}</code></>}</p></div>
           <button className="button primary" disabled={!available || !fetched || !application?.update_needed || application.restart_required || !!(application.ahead && application.behind)} onClick={() => void act("application")}><ArrowDownToLine size={15} />{actionLabel("application", "공방 업데이트")}</button>

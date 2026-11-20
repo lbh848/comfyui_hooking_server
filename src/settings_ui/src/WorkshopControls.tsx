@@ -53,12 +53,21 @@ export function WorkshopSwitcher({ current, onOpen }: { current: Workshop; onOpe
   </div>;
 }
 
-export function ProgramShutdown({ onOpen }: { onOpen: () => void }) {
-  const [open, setOpen] = useState(false);
+export function ProgramShutdown({ onOpen, updateMessage, onDismissUpdate }: {
+  onOpen: () => void; updateMessage?: string; onDismissUpdate?: () => void;
+}) {
+  const [manuallyOpened, setManuallyOpened] = useState(false);
+  const open = manuallyOpened || !!updateMessage;
   const [state, setState] = useState<"idle" | "requesting" | "accepted" | "completed">("idle");
   const [error, setError] = useState("");
   const [unsavedChanges, setUnsavedChanges] = useState<UnsavedChange[]>([]);
   const submitting = useRef(false);
+
+  function close() {
+    setManuallyOpened(false);
+    onDismissUpdate?.();
+    setError("");
+  }
 
   useEffect(() => {
     if (!open || state !== "idle") return;
@@ -140,19 +149,20 @@ export function ProgramShutdown({ onOpen }: { onOpen: () => void }) {
 
   return <>
     <button type="button" className="program-shutdown-button" aria-label="프로그램 종료" title="프로그램 종료"
-      onClick={() => { onOpen(); setError(""); setOpen(true); }}><Power size={16} /><span>프로그램 종료</span></button>
+      onClick={() => { onOpen(); setError(""); setManuallyOpened(true); }}><Power size={16} /><span>프로그램 종료</span></button>
     {open && <Modal title={state === "completed" ? "프로그램 종료 완료" : state === "accepted" ? "프로그램 종료 중" : "프로그램 종료"}
-      backgroundable={false} closeDisabled={state !== "idle"} onClose={() => setOpen(false)} className="program-shutdown-dialog">
+      backgroundable={false} closeDisabled={state !== "idle"} onClose={close} className="program-shutdown-dialog">
       <div className="program-shutdown-content">
         <span className="program-shutdown-symbol">{state === "completed" ? <Check size={25} /> : <Power size={25} />}</span>
         {state === "completed" ? <div role="status">
           <h3>이제 끄셔도 됩니다.</h3>
-          <p>Comfy 공방이 종료되었습니다.<br />이 브라우저 탭을 닫아 주세요.</p>
+          <p>Comfy 공방이 종료되었습니다.<br />{updateMessage ? "Comfy공방.exe를 다시 실행해 주세요." : "이 브라우저 탭을 닫아 주세요."}</p>
         </div> : state === "accepted" ? <div role="status">
           <h3>Comfy 공방을 종료하고 있습니다.</h3>
           <p>실행 중인 서버와 관리 중인 Comfy를 정리합니다.<br />정리가 끝나면 종료 완료 안내가 표시됩니다.</p>
         </div> : <>
-          <h3>Comfy 공방을 종료할까요?</h3>
+          <h3>{updateMessage ? "업데이트를 마쳤습니다." : "Comfy 공방을 종료할까요?"}</h3>
+          {updateMessage && <p>{updateMessage}</p>}
           <p>실행 중인 생성·학습·다운로드 작업이 중단되고,<br />공방에서 실행한 Comfy와 작업 서버도 함께 종료됩니다.</p>
           <p className="muted">열려 있는 다른 공방 화면의 작업도 중단됩니다.</p>
         </>}
@@ -163,14 +173,14 @@ export function ProgramShutdown({ onOpen }: { onOpen: () => void }) {
             <div><small>{item.location}</small><strong>{item.label}</strong><span className="badge rose">{item.status}</span>
               {item.detail && <p>{item.detail}</p>}</div>
             <button type="button" className="button secondary" aria-label={`${item.label} 확인하러 가기`} onClick={() => {
-              setOpen(false); setError(""); item.review();
+              close(); item.review();
             }}>확인하러 가기</button>
           </li>)}</ul>
         </section>}
         {error && <p className="program-shutdown-error" role="alert">{error}</p>}
       </div>
       {(state === "idle" || state === "requesting") && <div className="modal-actions">
-        <button type="button" className="button secondary" disabled={state === "requesting"} onClick={() => setOpen(false)}>취소</button>
+        <button type="button" className="button secondary" disabled={state === "requesting"} onClick={close}>취소</button>
         <button type="button" className="button danger" disabled={state === "requesting"} onClick={() => void shutdown()}>
           {state === "requesting" ? <LoaderCircle size={15} className="spin" /> : <Power size={15} />}
           {state === "requesting" ? "종료 요청 중…" : "종료하기"}

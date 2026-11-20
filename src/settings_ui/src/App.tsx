@@ -106,6 +106,8 @@ export default function App() {
   const notifications = useNotifications(active && ready);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateShutdownMessage, setUpdateShutdownMessage] = useState("");
   const [isMobile, setIsMobile] = useState(
     () => window.matchMedia("(max-width: 760px)").matches,
   );
@@ -180,7 +182,7 @@ export default function App() {
   };
   const pageContent: Record<Page, ReactNode> = {
     install: <InstallPage apiKeys={apiKeys} setApiKeys={setApiKeys} isSaved={isSaved} saveState={saveState} revision={revision} />,
-    updates: <UpdatesPage />,
+    updates: <UpdatesPage onUpdating={setUpdating} onUpdated={setUpdateShutdownMessage} />,
     migration: <MigrationPage />,
     notifications: <NotificationsPage board={notifications} />,
     "comfy-runtime": <ComfyRuntimePage />,
@@ -246,7 +248,8 @@ export default function App() {
             <span />
             로컬 전용
           </span>
-          <ProgramShutdown onOpen={() => setMenuOpen(false)} />
+          <ProgramShutdown onOpen={() => setMenuOpen(false)} updateMessage={updateShutdownMessage}
+            onDismissUpdate={() => setUpdateShutdownMessage("")} />
         </div>
       </header>
       {isMobile && menuOpen && (
@@ -341,7 +344,8 @@ export default function App() {
           )}
           {!ready && !error && <p role="status">설정을 불러오는 중…</p>}
           {ready && (Object.keys(pageContent) as Page[]).map(id => (
-            <ModalPage key={id} page={id} pageTitle={pageInfo[id].title} active={page === id} onNavigate={navigate}>
+            <ModalPage key={id} page={id} pageTitle={pageInfo[id].title} active={page === id} onNavigate={navigate}
+              keepMounted={id === "updates" && updating}>
               {pageContent[id]}
             </ModalPage>
           ))}

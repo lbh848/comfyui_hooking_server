@@ -51,8 +51,9 @@ def _now() -> str:
 
 
 class WorkshopUpdates:
-    def __init__(self, service):
+    def __init__(self, service, *, stop_comfy):
         self.service = service
+        self.stop_comfy = stop_comfy
         self.root = install_root(service.project_root)
         self.backup_root = data_root(self.root) / "update_backup"
         self.cache_root = data_root(self.root) / "update_cache"
@@ -176,7 +177,6 @@ class WorkshopUpdates:
                 state = self.status()
                 if not state["checked_at"]:
                     raise ValueError("먼저 커밋 가져오기를 실행하세요.")
-                self.service._require_comfy_not_in_use()
                 if state["application"]["restart_required"]:
                     raise ValueError("공방을 다시 실행한 뒤 업데이트를 계속하세요.")
                 if action != "application":
@@ -274,6 +274,12 @@ class WorkshopUpdates:
     def _run(self, *, action: str, workflow_key: str) -> None:
         quarantines = []
         try:
+            if action != "fetch":
+                self.service._log("업데이트를 준비합니다. 공방에서 실행한 Comfy를 종료합니다.")
+                self.stop_comfy()
+                if self.service._cancel.is_set():
+                    raise ValueError("업데이트를 중단했습니다.")
+                self.service._require_comfy_not_in_use()
             if action in {"fetch", "application"}:
                 self.service._set_phase(action)
             if action == "fetch":

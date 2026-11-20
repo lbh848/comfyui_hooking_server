@@ -732,7 +732,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                 if installer is None:
                     installer = await asyncio.to_thread(ComfyInstallerService, project_root=project_root)
                 if update_panel is None:
-                    update_panel = WorkshopUpdates(installer)
+                    update_panel = WorkshopUpdates(installer, stop_comfy=runtime.manager.stop_all)
                 if request.method == "GET":
                     result = await asyncio.to_thread(update_panel.status)
                 else:
@@ -741,8 +741,6 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                         result = await asyncio.to_thread(update_panel.clear_backups)
                     else:
                         if action not in {"fetch", "cancel"}:
-                            if action != "missing-models" and any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
-                                return web.json_response({"error": "실행 중인 Comfy를 모두 종료한 뒤 업데이트하세요."}, status=409, headers=headers)
                             if downloads is not None and downloads.status()["state"] == "running":
                                 return web.json_response({"error": "모델 다운로드가 끝난 뒤 업데이트하세요."}, status=409, headers=headers)
                         if action == "cancel":
