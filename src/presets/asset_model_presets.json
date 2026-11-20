@@ -459,6 +459,7 @@
         },
         "anima_only": {
           "fields": {
+            "workflow.sequential_offload": true,
             "ANIMA_HAND_DETAILER": {
               "steps": 12,
               "cfg": 4,
@@ -487,6 +488,7 @@
               "scheduler": "linear_quadratic",
               "denoise": 0.25
             },
+            "workflow.clip": "qwen_3_06b_base.safetensors",
             "ANIMA_FIRST_SAMPLER": {
               "steps": 26,
               "cfg": 4,
@@ -498,8 +500,6 @@
               "sage_attention": true
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
-            "workflow.clip": "qwen_3_06b_base.safetensors",
-            "workflow.sequential_offload": false,
             "STYLE_LORA_DATA": {
               "list": [
                 {
