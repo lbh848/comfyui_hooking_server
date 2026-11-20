@@ -741,7 +741,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                         result = await asyncio.to_thread(update_panel.clear_backups)
                     else:
                         if action not in {"fetch", "cancel"}:
-                            if any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
+                            if action != "missing-models" and any(runtime.manager.is_running(instance_id=i) for i in (1, 2, 3)):
                                 return web.json_response({"error": "실행 중인 Comfy를 모두 종료한 뒤 업데이트하세요."}, status=409, headers=headers)
                             if downloads is not None and downloads.status()["state"] == "running":
                                 return web.json_response({"error": "모델 다운로드가 끝난 뒤 업데이트하세요."}, status=409, headers=headers)
@@ -751,8 +751,11 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
                         else:
                             async with store_lock:
                                 settings_value, _ = await asyncio.to_thread(store.read)
-                            workflow_key = (settings_value or {}).get("apiKeys", {}).get("workflow-key", "")
-                            result = await asyncio.to_thread(update_panel.start, action, workflow_key=workflow_key)
+                            keys = (settings_value or {}).get("apiKeys", {})
+                            if action == "missing-models":
+                                result = await asyncio.to_thread(update_panel.start_missing_models, keys.get("other-civitai", ""))
+                            else:
+                                result = await asyncio.to_thread(update_panel.start, action, workflow_key=keys.get("workflow-key", ""))
             return web.json_response(result, headers=headers)
         except (InstallerServiceError, CommandError, ManifestError, ValueError, OSError, RuntimeError) as exc:
             return web.json_response({"error": str(exc)}, status=409, headers=headers)
@@ -891,7 +894,7 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_post("/api/setting/install", install)
     app.router.add_post("/api/setting/install/cancel", install)
     app.router.add_get("/api/setting/updates", updates)
-    app.router.add_post("/api/setting/updates/{action:fetch|application|soya|comfy|cancel|clear-backups}", updates)
+    app.router.add_post("/api/setting/updates/{action:fetch|application|soya|comfy|missing-models|cancel|clear-backups}", updates)
     app.on_cleanup.append(stop_installer)
     from settings_shutdown import register_program_shutdown
 

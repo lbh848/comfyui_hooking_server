@@ -152,11 +152,6 @@ _INSTALL_PHASES = (
     ("complete", "설치 결과 기록"),
 )
 
-# Models that an existing install must fetch when the manifest updates, because
-# they back a feature that was added after the original install. Fresh installs
-# already include every models/loras entry.
-_UPDATE_REQUIRED_MODEL_IDS = ("moss-i2i-swap-text-v4",)
-
 _UPDATE_PHASES = (
     ("transaction_cleanup", "오래된 업데이트 가상환경 백업 정리"),
     ("config_backup", "settings.json 업데이트 전 백업"),
@@ -170,7 +165,6 @@ _UPDATE_PHASES = (
     ("core_dependencies", "변경된 ComfyUI Python/선택 가속 의존성 적용"),
     ("custom_nodes", "변경된 커스텀 노드 업데이트"),
     ("node_dependencies", "변경된 노드 Python 의존성 적용"),
-    ("models", "업데이트에 필요한 신규 모델 설치"),
     ("runtime_isolation", "독립 Python/GPU 빠른 검증"),
     ("repatch", "Comfy input 설치 리패치"),
     ("startup", "ComfyUI 기동·노드 로드 확인"),
@@ -1866,18 +1860,21 @@ class ComfyInstallerService:
         models = missing_models(models=[by_id[model_id] for model_id in model_ids], comfy_root=self.comfy_root)
         if not models:
             raise InstallerServiceError("필수 모델이 이미 설치되어 있습니다. 목록을 새로고침하세요.")
+        return self.start_missing_models(models=models, civitai_key=civitai_key, operation="workflow_models")
+
+    def start_missing_models(self, *, models: list[dict], civitai_key: str, operation: str) -> dict:
         if any(model.get("auth") == "civitai" for model in models) and not civitai_key.strip():
             raise InstallerServiceError("기타 API 관리에서 Civitai API 키를 입력하세요.")
         return self._start_operation(
-            operation="workflow_models", phases=(("models", "필수 모델 설치"), ("complete", "설치 완료")),
-            target=self._run_local_workflow_models,
-            kwargs={"models": models, "identity": identity, "civitai_key": civitai_key},
+            operation=operation, phases=(("models", "누락 모델 다운로드"), ("complete", "설치 완료")),
+            target=self._run_missing_models,
+            kwargs={"models": models, "civitai_key": civitai_key},
         )
 
-    def _run_local_workflow_models(self, *, models: list[dict], identity: str, civitai_key: str) -> None:
+    def _run_missing_models(self, *, models: list[dict], civitai_key: str) -> None:
         try:
             self._set_phase("models")
-            from .model_installer import install_models, missing_models
+            from .model_installer import missing_models
             remaining = missing_models(models=models, comfy_root=self.comfy_root)
             results = install_models(models=remaining, comfy_root=self.comfy_root, downloader=self.downloader,
                                      civitai_key=civitai_key, cancel_event=self._cancel, log=self._log, progress=self._set_progress)
@@ -3767,32 +3764,6 @@ class ComfyInstallerService:
                 )
             else:
                 self._log("[업데이트] 노드 변경 없음: 노드 Python 의존성 재사용")
-
-            self._set_phase("models")
-            from .model_installer import install_models, missing_models
-            required_models = [
-                model for model in new_manifest.models
-                if component != "soya" and model["id"] in _UPDATE_REQUIRED_MODEL_IDS
-            ]
-            missing_required = missing_models(
-                models=required_models, comfy_root=self.comfy_root
-            )
-            if missing_required:
-                self._log(
-                    "[업데이트] 신규 필수 모델 설치: "
-                    + ", ".join(model["id"] for model in missing_required)
-                )
-                install_models(
-                    models=missing_required,
-                    comfy_root=self.comfy_root,
-                    downloader=self.downloader,
-                    civitai_key=load_civitai_key(self.project_root),
-                    cancel_event=self._cancel,
-                    log=self._log,
-                    progress=self._set_progress,
-                )
-            else:
-                self._log("[업데이트] 신규 필수 모델이 이미 설치되어 있습니다")
 
             self._set_phase("runtime_isolation")
             runtime = verify_isolated_runtime(

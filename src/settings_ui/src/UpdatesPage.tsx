@@ -8,12 +8,13 @@ type UpdateStatus = {
   checked_at: string | null;
   application: Component & { ahead: number; behind: number; commits: string[]; restart_required: boolean };
   nodes: (Component & { name: string })[];
+  missing_models: { path: string; size: number }[] | null;
   comfy: Component & { version: string; required_version: string; required_ref: string; changes: string[] };
   backup: { bytes: number; path: string };
   job: { state: string; operation: string | null; phase_label: string; error: string | null; cancel_requested: boolean;
     logs: { seq: number; message: string; level: string }[]; result?: { message?: string; restart_required?: boolean } };
 };
-type Action = "fetch" | "application" | "soya" | "comfy" | "cancel" | "clear-backups";
+type Action = "fetch" | "application" | "soya" | "comfy" | "missing-models" | "cancel" | "clear-backups";
 
 async function requestUpdates(action?: Action): Promise<UpdateStatus> {
   const response = await fetch(`/api/setting/updates${action ? `/${action}` : ""}`, {
@@ -64,6 +65,7 @@ export function UpdatesPage() {
   const available = !!status && !busy && !connectionError;
   const fetched = !!status?.checked_at;
   const application = status?.application;
+  const missingModels = status?.missing_models;
   const ready = available && fetched && !application?.update_needed && !application?.restart_required;
   const ownJob = job?.operation?.startsWith("panel_");
   const lastLog = job?.logs.at(-1)?.seq;
@@ -120,6 +122,24 @@ export function UpdatesPage() {
         {fetched && <p className="field-help" role="status">가져온 공방의 의존 버전 · ComfyUI {status?.comfy.version} <code>{short(status?.comfy.target)}</code>{status?.comfy.update_needed ? " · 업데이트 필요" : " · 적용됨"}</p>}
         {fetched && !!status?.comfy.changes.length && <p className="field-help">업데이트 항목 · {status.comfy.changes.join(" · ")}</p>}
         {!status?.comfy.current && status && <p className="field-help">내장 ComfyUI를 먼저 설치하세요.</p>}
+      </div>
+    </Panel>
+    <Panel title="5. 누락 모델 다운로드">
+      <div className="panel-body form-stack">
+        <div className="updates-action-row">
+          <div>
+            <p>현재 공방의 초기 설치 기본 모델 중 빠진 파일을 받습니다.</p>
+            <p className="field-help" role="status">
+              {missingModels == null ? (status ? "내장 ComfyUI를 먼저 설치하세요." : "모델 확인 중…")
+                : missingModels.length ? `누락 ${missingModels.length}개 · ${bytes(missingModels.reduce((total, model) => total + model.size, 0))}`
+                : "누락된 기본 모델이 없습니다."}
+            </p>
+          </div>
+          <button className="button primary" disabled={!available || !missingModels?.length} onClick={() => void act("missing-models")}>
+            <ArrowDownToLine size={15} />{actionLabel("missing-models", "누락 모델 다운로드")}
+          </button>
+        </div>
+        {!!missingModels?.length && <ul className="updates-models">{missingModels.map(model => <li key={model.path}><code>{model.path}</code> · {bytes(model.size)}</li>)}</ul>}
       </div>
     </Panel>
     {fetched && application?.update_needed && <p className="field-help">공방 업데이트 후 Soya 커스텀 노드와 Comfy를 업데이트하세요.</p>}

@@ -21,7 +21,8 @@ from pathlib import Path
 
 from app_paths import data_root, install_root
 from json_store import write_json_atomic
-from .manifest import InstallManifest, load_install_manifest
+from .manifest import InstallManifest, default_install_model_ids, load_install_manifest
+from .model_installer import missing_models
 from .configurator import apply_repaired_workflow_bindings
 from .execution_profile import custom_nodes_for_profile
 from .operations import run_command, uv_python_path
@@ -82,6 +83,13 @@ class WorkshopUpdates:
             raise ValueError("BACKUP 경로를 확인하세요.")
         return {"path": str(self.backup_root), "bytes": _tree_logical_file_bytes(self.backup_root) if self.backup_root.is_dir() else 0}
 
+    def _missing_default_models(self, manifest: InstallManifest) -> list[dict] | None:
+        comfy_root = self.service.comfy_root
+        if not (comfy_root / "main.py").is_file() or not uv_python_path(comfy_root / ".venv").is_file():
+            return None
+        default_ids = default_install_model_ids(manifest.models)
+        return missing_models(models=[model for model in manifest.models if model["id"] in default_ids], comfy_root=comfy_root)
+
     def status(self) -> dict:
         current = self._head(self.root)
         checked = self._checked_for_branch(self._git(self.root, "branch", "--show-current")) if self.checked and current else {}
@@ -90,6 +98,7 @@ class WorkshopUpdates:
         if target and current:
             ahead, behind = map(int, self._git(self.root, "rev-list", "--left-right", "--count", f"{current}...{target}").split())
         manifest = load_install_manifest(self.service.manifest.source_path)
+        missing = self._missing_default_models(manifest)
         desired = checked.get("comfy", manifest.comfy)
         nodes = []
         for name in SOYA_NODE_NAMES:
@@ -131,6 +140,9 @@ class WorkshopUpdates:
                             "update_needed": bool(behind or checked.get("workflows_pending")),
                             "commits": checked.get("commits", []), "restart_required": restart_required},
             "nodes": nodes,
+            "missing_models": None if missing is None else [
+                {"path": model["relative_path"], "size": model["size"]} for model in missing
+            ],
             "comfy": {"current": comfy_head, "version": desired["version"], "target": desired["ref"],
                       "required_version": manifest.comfy["version"], "required_ref": manifest.comfy["ref"],
                       "update_needed": bool(changes), "changes": changes},
@@ -144,6 +156,15 @@ class WorkshopUpdates:
             self.backup_status()
             if self.backup_root.exists():
                 _remove_tree_force_writable(self.backup_root)
+        return self.status()
+
+    def start_missing_models(self, civitai_key: str) -> dict:
+        missing = self._missing_default_models(load_install_manifest(self.service.manifest.source_path))
+        if missing is None:
+            raise ValueError("내장 ComfyUI를 먼저 설치하세요.")
+        if not missing:
+            return self.status()
+        self.service.start_missing_models(models=missing, civitai_key=civitai_key, operation="panel_missing-models")
         return self.status()
 
     def start(self, action: str, *, workflow_key: str = "") -> dict:
