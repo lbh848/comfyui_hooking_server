@@ -28777,8 +28777,8 @@ async def handle_api_asset_mode_name_mapping_validate(request: web.Request) -> w
 def _build_asset_name_mapping_messages(
     mode: str,
     character: str,
-    outfits: list[str],
-    expressions: list[str],
+    outfits_by_id: dict[str, str],
+    expressions_by_id: dict[str, str],
     current_mapping: dict,
     validation: dict,
     *,
@@ -28790,21 +28790,21 @@ def _build_asset_name_mapping_messages(
 ) -> list[dict]:
     if mode == "auto_fix":
         operation = (
-            "현재 매핑에서 이미 유효한 값은 그대로 보존하고, 비어 있거나 파일명으로 안전하지 않거나 "
-            "최종 파일명 충돌을 만드는 값만 고쳐라. 충돌 해결에 꼭 필요한 최소 범위만 변경하라."
+            "Preserve valid names and change only names that are missing, unsafe, "
+            "or involved in a filename conflict. Make the smallest changes needed."
         )
     else:
         operation = (
-            "현재 매핑값을 답습하지 말고 원래 이름의 의미를 읽어 전체 매핑을 처음부터 새로 설계하라. "
-            "서로 다른 원본 항목은 의미를 구분할 수 있는 간결한 이름으로 매핑하라."
+            "Create new names based on the meaning of each original name. "
+            "Use concise names that distinguish the supplied items."
         )
 
     payload = {
         "mode": mode,
         "chunk": {"index": chunk_index, "count": chunk_count},
         "character": character,
-        "selected_outfits": outfits,
-        "selected_expressions": expressions,
+        "selected_outfits": outfits_by_id,
+        "selected_expressions": expressions_by_id,
         "current_mapping": current_mapping,
         "current_validation_errors": [
             {
@@ -28825,25 +28825,22 @@ def _build_asset_name_mapping_messages(
     }
     system = """You create semantic export-name mappings for character image assets.
 Read every original name by meaning and context. Do not use hard-coded keyword matching.
-Return exactly one JSON object with this schema:
-{
-  "export_name": "string",
-  "outfit_mapping": {"exact original outfit": "safe mapped name"},
-  "expression_mapping": {"exact original expression": "safe mapped name"}
-}
+Return exactly one JSON object:
+- outfit_mapping: an object keyed by the IDs in selected_outfits (such as O01).
+- expression_mapping: an object keyed by the IDs in selected_expressions (such as E01).
+- export_name: a new character name, included only when fixed_export_name is empty.
 Rules:
-- Include every selected outfit and expression exactly once, using the exact original strings as JSON keys.
-- Do not add keys that were not selected.
-- Empty selected_outfits or selected_expressions means the corresponding mapping object must be empty.
+- Use the original names in selected_outfits and selected_expressions as context for the new names.
+- Match each selection's IDs exactly. Any existing names in current_mapping use those same IDs.
+- If a selection is empty, return an empty object for its mapping.
 - Every mapped value must be a non-empty string and preserve meaningful distinctions.
 - Values are filename components. Never use < > : \" / \\ | ? *, control characters, leading/trailing whitespace, or a trailing dot.
 - Avoid Windows reserved names such as CON, PRN, AUX, NUL, COM1, and LPT1.
-- If fixed_export_name is non-empty, return that exact value as export_name.
 - Do not reuse a value listed in reserved_outfit_values for a new outfit value.
 - Do not reuse a value listed in reserved_expression_values for a new expression value.
 - Consider the enabled filename blocks and ensure different source images cannot produce the same final filename, including case-only differences.
 - Output JSON only. Do not use Markdown fences or explanations."""
-    user = f"{operation}\n\n입력 데이터:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    user = f"{operation}\n\nInput data:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -28876,40 +28873,30 @@ def _chunk_asset_name_mapping_items(
 
 def _validate_asset_name_mapping_llm_shape(
     parsed,
-    outfits: list[str],
-    expressions: list[str],
+    outfits_by_id: dict[str, str],
+    expressions_by_id: dict[str, str],
+    fixed_export_name: str,
 ) -> tuple[bool, str]:
     if not isinstance(parsed, dict):
         return False, "LLM 응답이 JSON 객체가 아닙니다."
-    export_name = parsed.get("export_name")
-    outfit_mapping = parsed.get("outfit_mapping")
-    expression_mapping = parsed.get("expression_mapping")
-    if not isinstance(export_name, str) or not export_name:
-        return False, "export_name이 비어 있거나 문자열이 아닙니다."
-    if not isinstance(outfit_mapping, dict) or not isinstance(expression_mapping, dict):
-        return False, "outfit_mapping/expression_mapping이 JSON 객체가 아닙니다."
-    expected_outfits = set(outfits)
-    expected_expressions = set(expressions)
-    if set(outfit_mapping) != expected_outfits:
-        missing = sorted(expected_outfits - set(outfit_mapping))
-        extra = sorted(set(outfit_mapping) - expected_outfits)
-        return False, f"복장 키 불일치: 누락={missing}, 추가={extra}"
-    if set(expression_mapping) != expected_expressions:
-        missing = sorted(expected_expressions - set(expression_mapping))
-        extra = sorted(set(expression_mapping) - expected_expressions)
-        return False, f"표정 키 불일치: 누락={missing}, 추가={extra}"
-    for label, value in [("캐릭터", export_name)]:
-        token_errors = asset_mode._validate_export_token(value, label)
-        if token_errors:
-            return False, token_errors[0]["message"]
-    for original, value in outfit_mapping.items():
-        token_errors = asset_mode._validate_export_token(value, f"복장 '{original}'")
-        if token_errors:
-            return False, token_errors[0]["message"]
-    for original, value in expression_mapping.items():
-        token_errors = asset_mode._validate_export_token(value, f"표정 '{original}'")
-        if token_errors:
-            return False, token_errors[0]["message"]
+    token_errors = asset_mode._validate_export_token(fixed_export_name or parsed.get("export_name"), "캐릭터")
+    if token_errors:
+        return False, token_errors[0]["message"]
+
+    for label, mapping, names_by_id in (
+        ("복장", parsed.get("outfit_mapping"), outfits_by_id),
+        ("표정", parsed.get("expression_mapping"), expressions_by_id),
+    ):
+        if not isinstance(mapping, dict):
+            return False, f"{label} 치환 목록이 JSON 객체가 아닙니다."
+        missing = sorted(names_by_id.keys() - mapping.keys())
+        extra = sorted(mapping.keys() - names_by_id.keys())
+        if missing or extra:
+            return False, f"{label} ID 불일치: 누락={missing}, 추가={extra}"
+        for item_id, original in names_by_id.items():
+            token_errors = asset_mode._validate_export_token(mapping[item_id], f"{label} '{original}'")
+            if token_errors:
+                return False, token_errors[0]["message"]
     return True, ""
 
 
@@ -29089,11 +29076,6 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             })
 
         chunks = _chunk_asset_name_mapping_items(llm_outfits, llm_expressions)
-        merged_mapping = {
-            **normalized_current,
-            "outfits": dict(normalized_current.get("outfits") or {}),
-            "expressions": dict(normalized_current.get("expressions") or {}),
-        }
         generated_outfits = {}
         generated_expressions = {}
         fixed_export_name = (
@@ -29126,17 +29108,18 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             f"chunks={len(chunks)}"
         )
         for chunk_index, (chunk_outfits, chunk_expressions) in enumerate(chunks, start=1):
+            outfits_by_id = {f"O{index:02d}": name for index, name in enumerate(chunk_outfits, start=1)}
+            expressions_by_id = {f"E{index:02d}": name for index, name in enumerate(chunk_expressions, start=1)}
             chunk_current = {
-                "export_name": fixed_export_name,
                 "outfit_mapping": {
-                    name: normalized_current.get("outfits", {}).get(name, "")
-                    for name in chunk_outfits
-                    if mode == "auto_fix" and normalized_current.get("outfits", {}).get(name, "")
+                    item_id: current_outfit_mapping[name]
+                    for item_id, name in outfits_by_id.items()
+                    if mode == "auto_fix" and current_outfit_mapping.get(name)
                 },
                 "expression_mapping": {
-                    name: normalized_current.get("expressions", {}).get(name, "")
-                    for name in chunk_expressions
-                    if mode == "auto_fix" and normalized_current.get("expressions", {}).get(name, "")
+                    item_id: current_expression_mapping[name]
+                    for item_id, name in expressions_by_id.items()
+                    if mode == "auto_fix" and current_expression_mapping.get(name)
                 },
                 "export_format": normalized_current.get("export_format", "webp"),
                 "export_quality": normalized_current.get("export_quality", 90),
@@ -29151,8 +29134,8 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             messages = _build_asset_name_mapping_messages(
                 mode,
                 character,
-                chunk_outfits,
-                chunk_expressions,
+                outfits_by_id,
+                expressions_by_id,
                 chunk_current,
                 validation_public,
                 chunk_index=chunk_index,
@@ -29167,53 +29150,37 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                     *generated_expressions.values(),
                 ],
             )
-            accepted_chunk = {}
+            parsed_chunk = None
 
             def mapping_result_validator(raw_result):
+                nonlocal parsed_chunk
                 parsed_result = llm_prompt_edit.parse_llm_json(raw_result)
-                shape_ok, shape_reason = _validate_asset_name_mapping_llm_shape(
-                    parsed_result, chunk_outfits, chunk_expressions
+                valid, reason = _validate_asset_name_mapping_llm_shape(
+                    parsed_result, outfits_by_id, expressions_by_id, fixed_export_name
                 )
-                if not shape_ok:
-                    print(
-                        f"[ASSET_NAME_MAPPING_LLM] 응답 구조 검증 실패: task={task_key}, "
-                        f"chunk={chunk_index}/{len(chunks)}, reason={shape_reason}"
-                    )
-                    return False, shape_reason
-                if fixed_export_name and parsed_result["export_name"] != fixed_export_name:
-                    reason = (
-                        f"배치 간 export_name 불일치: expected={fixed_export_name!r}, "
-                        f"actual={parsed_result['export_name']!r}"
-                    )
-                    print(
-                        f"[ASSET_NAME_MAPPING_LLM] {reason}, "
-                        f"chunk={chunk_index}/{len(chunks)}"
-                    )
-                    return False, reason
-                accepted_chunk["parsed"] = parsed_result
-                return True, ""
+                if valid:
+                    parsed_chunk = parsed_result
+                return valid, reason
 
             print(
                 f"[ASSET_NAME_MAPPING_LLM] 배치 호출: task={task_key}, "
                 f"chunk={chunk_index}/{len(chunks)}, outfits={len(chunk_outfits)}, "
                 f"expressions={len(chunk_expressions)}"
             )
-            raw = await llm_service.callLLMTask(
+            execution_result = await llm_service.callLLMTaskResult(
                 task_key,
                 messages,
                 json_mode=True,
                 result_validator=mapping_result_validator,
             )
-            if "parsed" not in accepted_chunk:
-                parsed_result = llm_prompt_edit.parse_llm_json(raw)
-                shape_ok, shape_reason = _validate_asset_name_mapping_llm_shape(
-                    parsed_result, chunk_outfits, chunk_expressions
-                )
-                error = shape_reason or "LLM 매핑 결과가 JSON 검증을 통과하지 못했습니다."
+            if not execution_result.accepted or parsed_chunk is None:
+                reason = execution_result.reason
+                if isinstance(execution_result.raw_response, llm_service.ManualCancelledText):
+                    reason = execution_result.text.removeprefix("[LLM 실패] ")
+                error = llm_service._redact_in_text(reason or "LLM 매핑 응답을 검증하지 못했습니다.")
                 print(
                     f"[ASSET_NAME_MAPPING_LLM] 배치 실패: task={task_key}, "
-                    f"chunk={chunk_index}/{len(chunks)}, shape_ok={shape_ok}, "
-                    f"error={error}, raw_preview={str(raw)[:300]!r}"
+                    f"chunk={chunk_index}/{len(chunks)}, error={error}"
                 )
                 return web.json_response({
                     "success": False,
@@ -29221,15 +29188,23 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                     "validation": validation_public,
                 }, status=422)
 
-            parsed_result = accepted_chunk["parsed"]
             if not fixed_export_name:
-                fixed_export_name = parsed_result["export_name"]
-            generated_outfits.update(parsed_result["outfit_mapping"])
-            generated_expressions.update(parsed_result["expression_mapping"])
-            merged_mapping["export_name"] = fixed_export_name
-            merged_mapping["outfits"].update(parsed_result["outfit_mapping"])
-            merged_mapping["expressions"].update(parsed_result["expression_mapping"])
+                fixed_export_name = parsed_chunk["export_name"]
+            generated_outfits.update({
+                name: parsed_chunk["outfit_mapping"][item_id]
+                for item_id, name in outfits_by_id.items()
+            })
+            generated_expressions.update({
+                name: parsed_chunk["expression_mapping"][item_id]
+                for item_id, name in expressions_by_id.items()
+            })
 
+        merged_mapping = {
+            **normalized_current,
+            "export_name": fixed_export_name,
+            "outfits": {**current_outfit_mapping, **generated_outfits},
+            "expressions": {**current_expression_mapping, **generated_expressions},
+        }
         result_plan = asset_mode.build_character_export_plan(
             character,
             outfits,
