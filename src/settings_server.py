@@ -37,7 +37,7 @@ DIST_DIR = SOURCE_DIR / "settings_ui" / "dist"
 async def local_requests_only(request: web.Request, handler):
     # In addition to the loopback bind, reject unexpected Host/Origin values.
     # Do not trust forwarded headers: the external gateway never proxies here.
-    allowed_hosts = {f"127.0.0.1:{SETTINGS_PORT}", f"localhost:{SETTINGS_PORT}"}
+    allowed_hosts = {f"{SETTINGS_HOST}:{SETTINGS_PORT}", f"localhost:{SETTINGS_PORT}"}
     allowed_origins = {f"http://{host}" for host in allowed_hosts}
     if request.host not in allowed_hosts:
         raise web.HTTPForbidden(text="Settings is a local-only service.")
@@ -910,6 +910,12 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_get("/api/setting/install", install)
     app.router.add_post("/api/setting/install", install)
     app.router.add_post("/api/setting/install/cancel", install)
+    from comfy_installer.patch_importer import register_patch_import_routes
+    register_patch_import_routes(
+        app, project_root=project_root, settings_schema=SETTINGS_UI_SCHEMA,
+        installer_lock=installer_lock,
+        installer_status=lambda: installer.status() if installer is not None else {"state": "idle"},
+    )
     app.router.add_get("/api/setting/updates", updates)
     app.router.add_post("/api/setting/updates/{action:sequential|fetch|application|soya|comfy|missing-models|cancel|clear-backups}", updates)
     app.on_cleanup.append(stop_installer)

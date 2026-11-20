@@ -22,6 +22,7 @@ import {
   initialDraft,
 } from "./data";
 import { InstallControls } from "./InstallControls";
+import { PatchInstall } from "./PatchInstall";
 import type { SaveState } from "./useSettings";
 
 type CredentialProps = {
@@ -114,6 +115,7 @@ export function InstallPage(props: CredentialProps & { isSaved: boolean; saveSta
         hasCivitaiKey={!!props.apiKeys[CIVITAI_PROVIDER_ID]?.trim()}
         hasWorkflowKey={!!props.apiKeys[WORKFLOW_KEY_ID]?.trim()}
       />
+      <PatchInstall />
     </div>
   );
 }

@@ -1437,9 +1437,9 @@ td .badge {
 .download-job + .download-job { border-top: 1px solid var(--line); }
 .download-job progress { width: 100%; height: 7px; accent-color: var(--rose); display: block; margin: 10px 0; }
 .resource-download-form .field-help { overflow-wrap: anywhere; }
-.resource-upload-form input[type="file"] { height: auto; padding: 8px; font-size: 12px; }
-.resource-upload-form input[type="file"]::file-selector-button { border: 1px solid var(--control-border); border-radius: 4px; padding: 5px 8px; margin-right: 8px; background: var(--panel); color: var(--ink); cursor: pointer; }
-.resource-upload-form .field-help, .resource-upload-form .field-error { overflow-wrap: anywhere; }
+.resource-upload-form input[type="file"], .patch-install-form input[type="file"] { height: auto; min-width: 0; padding: 8px; font-size: 12px; }
+.resource-upload-form input[type="file"]::file-selector-button, .patch-install-form input[type="file"]::file-selector-button { border: 1px solid var(--control-border); border-radius: 4px; padding: 5px 8px; margin-right: 8px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.resource-upload-form .field-help, .resource-upload-form .field-error, .patch-install-form .field-help, .patch-install-form .field-error { overflow-wrap: anywhere; }
 .resource-upload-file { margin: 0; }
 .resource-upload-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .resource-upload-preview img { width: 84px; height: 104px; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; }

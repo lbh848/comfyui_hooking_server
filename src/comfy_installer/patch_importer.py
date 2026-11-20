@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app_paths import data_root
-
 import asyncio
 import copy
 import hashlib
@@ -14,6 +12,7 @@ import threading
 import traceback
 import uuid
 import zipfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -21,8 +20,17 @@ from typing import Any, Callable
 
 from aiohttp import web
 
+from app_paths import data_root
+from asset_character_presets import AssetCharacterPresets
+from asset_preset_scope import without_local_reference_images
+from configuration import settings_lock
+from lora_paths import validate_lora_storage_name
+from preset_catalog import load_builtin_presets
+from preset_locations import PRESET_LOCATIONS
+
 
 PATCH_FORMAT = "soya-v5-tutorial-patch"
+ASSET_CHARACTER_PATCH_FORMAT = "soya-asset-character-patch"
 PATCH_FORMAT_VERSION = 1
 PATCH_MANIFEST_MEMBER = "manifest.json"
 PATCH_PRESETS_MEMBER = "payload/presets.json"
@@ -68,7 +76,7 @@ _WINDOWS_RESERVED_NAMES = {
 
 
 class PatchImportError(RuntimeError):
-    """V5 tutorial patch validation or import failure."""
+    """Patch validation or import failure."""
 
 
 def _print_failure(message: str) -> None:
@@ -260,12 +268,15 @@ def _validate_archive(
     )
     if not isinstance(manifest, dict):
         raise PatchImportError("manifest.json 최상위 구조는 객체여야 합니다.")
-    if manifest.get("format") != PATCH_FORMAT:
+    patch_format = manifest.get("format")
+    if patch_format not in (PATCH_FORMAT, ASSET_CHARACTER_PATCH_FORMAT):
         raise PatchImportError("지원하지 않는 패치 형식입니다.")
     if manifest.get("format_version") != PATCH_FORMAT_VERSION:
         raise PatchImportError(
             f"지원하지 않는 패치 형식 버전입니다: {manifest.get('format_version')!r}"
         )
+    if not all(isinstance(manifest.get(key, ""), str) for key in ("patch_id", "name")):
+        raise PatchImportError("패치 이름과 ID 형식을 확인하세요.")
     records = manifest.get("files")
     if not isinstance(records, list):
         raise PatchImportError("manifest.json의 files가 배열이 아닙니다.")
@@ -308,12 +319,17 @@ def _validate_archive(
             "manifest와 압축 파일 목록이 일치하지 않습니다: "
             f"missing={missing[:5]}, extra={extra[:5]}"
         )
-    if PATCH_PRESETS_MEMBER not in expected or PATCH_BOT_MEMBER not in expected:
-        raise PatchImportError("프리셋 또는 bot 메타데이터가 없는 패치입니다.")
+    tutorial_patch = patch_format == PATCH_FORMAT
+    metadata_members = PATCH_METADATA_MEMBERS if tutorial_patch else {PATCH_PRESETS_MEMBER}
+    payload_prefixes = ALLOWED_PAYLOAD_PREFIXES if tutorial_patch else ("payload/asset/",)
+    if not metadata_members <= actual_names:
+        raise PatchImportError("필수 패치 데이터가 누락되었습니다.")
+    if not tutorial_patch and infos[PATCH_PRESETS_MEMBER].file_size > MAX_MANIFEST_BYTES:
+        raise PatchImportError("캐릭터 프리셋이 허용 크기를 초과했습니다.")
     for name in actual_names:
-        if name in PATCH_METADATA_MEMBERS:
+        if name in metadata_members:
             continue
-        if not any(name.startswith(prefix) for prefix in ALLOWED_PAYLOAD_PREFIXES):
+        if not name.startswith(payload_prefixes):
             raise PatchImportError(f"허용되지 않은 payload 경로입니다: {name}")
 
     print(
@@ -352,10 +368,7 @@ def _validate_archive(
     return manifest, infos
 
 
-def _validate_patch_metadata(
-    presets: Any,
-    bot_payload: Any,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_preset_payload(presets: Any) -> dict[str, Any]:
     if not isinstance(presets, dict):
         raise PatchImportError("payload/presets.json 최상위 구조가 객체가 아닙니다.")
     allowed = {"characters", *PRESET_CATEGORIES}
@@ -369,7 +382,10 @@ def _validate_patch_metadata(
     for category in allowed:
         if not isinstance(presets.get(category), dict):
             raise PatchImportError(f"프리셋 카테고리가 객체가 아닙니다: {category}")
+    return presets
 
+
+def _validate_tutorial_bot(bot_payload: Any) -> dict[str, Any]:
     if not isinstance(bot_payload, dict) or not isinstance(
         bot_payload.get("bot"), dict
     ):
@@ -379,7 +395,34 @@ def _validate_patch_metadata(
         raise PatchImportError("튜토리얼 패치의 bot 이름은 nikke여야 합니다.")
     if not isinstance(bot.get("characters"), list):
         raise PatchImportError("nikke bot 캐릭터 목록이 배열이 아닙니다.")
-    return presets, bot
+    return bot
+
+
+def _validate_asset_character_payload(presets: dict, infos: dict, project_root: Path) -> None:
+    characters = presets["characters"]
+    if not characters or len({name.casefold() for name in characters}) != len(characters):
+        raise PatchImportError("패치의 캐릭터 목록을 확인하세요.")
+    for name, value in characters.items():
+        if error := validate_lora_storage_name(name, "캐릭터 이름"):
+            raise PatchImportError(error)
+        if not isinstance(value, dict):
+            raise PatchImportError(f"캐릭터 프리셋 형식이 잘못되었습니다: {name}")
+    for category in PRESET_CATEGORIES:
+        if presets[category] and category not in {"appearances", "outfits", "expressions"}:
+            raise PatchImportError(f"캐릭터 패치에서 지원하지 않는 프리셋입니다: {category}")
+        for tags in presets[category].values():
+            if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+                raise PatchImportError(f"캐릭터 태그 형식이 잘못되었습니다: {category}")
+    for member in infos.keys() - {PATCH_MANIFEST_MEMBER, PATCH_PRESETS_MEMBER}:
+        path = PurePosixPath(member)
+        if (len(path.parts) != 6 or path.parts[2] not in characters
+                or not (path.suffix.casefold() in IMAGE_EXTENSIONS
+                        or path.name == "_representative.json" or path.name.endswith("_prompt.json"))):
+            raise PatchImportError(f"캐릭터 갤러리 파일 경로가 잘못되었습니다: {member}")
+        destination = _safe_destination(project_root, path.relative_to("payload").as_posix())
+        character_root = data_root(project_root) / "asset" / path.parts[2]
+        if not destination.resolve().is_relative_to(character_root):
+            raise PatchImportError(f"캐릭터 폴더 밖으로 연결된 경로입니다: {member}")
 
 
 def _next_mapping_conflict_name(
@@ -411,15 +454,25 @@ def _merge_presets(
     current_hidden: dict[str, Any],
     imported: dict[str, Any],
     summary: dict[str, Any],
+    *,
+    builtin: dict | None = None,
+    builtin_hidden: dict | None = None,
 ) -> None:
-    characters = current_tags.setdefault("characters", {})
+    characters = current_tags.get("characters", {})
     if not isinstance(characters, dict):
         raise PatchImportError("기존 tags.json의 characters 구조가 객체가 아닙니다.")
+    builtin_presets = builtin or {}
+    builtin_hidden_presets = builtin_hidden or {}
+    effective_characters = {**builtin_presets.get("characters", {}), **characters}
+    if builtin is not None:
+        effective_characters = {name.casefold(): value for name, value in effective_characters.items()}
     for name, value in imported["characters"].items():
-        if name not in characters:
+        key = name.casefold() if builtin is not None else name
+        if key not in effective_characters:
             characters[name] = copy.deepcopy(value)
+            current_tags["characters"] = characters
             summary["characters"]["added"] += 1
-        elif _json_equal(characters[name], value):
+        elif _json_equal(effective_characters[key], value):
             summary["characters"]["skipped_equal"] += 1
             print(f"[PATCH_IMPORT] 동일 캐릭터 건너뜀: name={name!r}")
         else:
@@ -430,26 +483,31 @@ def _merge_presets(
             )
 
     for category in PRESET_CATEGORIES:
-        active = current_tags.setdefault(category, {})
-        hidden = current_hidden.setdefault(category, {})
+        if not imported[category]:
+            continue
+        active = current_tags.get(category, {})
+        hidden = current_hidden.get(category, {})
         if not isinstance(active, dict) or not isinstance(hidden, dict):
             raise PatchImportError(
                 f"기존 프리셋 카테고리 구조가 객체가 아닙니다: {category}"
             )
+        builtin_active = builtin_presets.get(category, {})
+        builtin_category_hidden = builtin_hidden_presets.get(category, {})
         for name, value in imported[category].items():
             existing_values = [
-                source[name] for source in (active, hidden) if name in source
+                source[name] for source in (active, hidden, builtin_active, builtin_category_hidden) if name in source
             ]
             if not existing_values:
                 active[name] = copy.deepcopy(value)
+                current_tags[category] = active
                 summary["presets"]["added"] += 1
                 continue
             if any(_json_equal(item, value) for item in existing_values):
                 summary["presets"]["skipped_equal"] += 1
                 continue
             conflict_name, already_present = _next_mapping_conflict_name(
-                active,
-                hidden,
+                {**builtin_active, **active},
+                {**builtin_category_hidden, **hidden},
                 original_name=name,
                 imported_value=value,
             )
@@ -458,6 +516,7 @@ def _merge_presets(
                 continue
             assert conflict_name is not None
             hidden[conflict_name] = copy.deepcopy(value)
+            current_hidden[category] = hidden
             summary["presets"]["conflicts_hidden"] += 1
             summary["conflicts"].append(
                 {
@@ -736,7 +795,15 @@ def _copy_archive_member_new(
         if _destination_exists(destination):
             temp_path.unlink()
             return False
-        os.replace(temp_path, destination)
+        try:
+            if os.name == "nt":
+                os.rename(temp_path, destination)
+            else:
+                os.link(temp_path, destination)
+        except FileExistsError:
+            temp_path.unlink()
+            return False
+        temp_path.unlink(missing_ok=True)
         return True
     except Exception as exc:
         _print_failure(
@@ -815,20 +882,9 @@ class PatchImporter:
             raise PatchImportError("다른 패치 가져오기가 이미 진행 중입니다.")
 
         created_files: list[Path] = []
-        json_paths = {
-            "tags": data_root(self.project_root) / "asset_data" / "tags.json",
-            "hidden": data_root(self.project_root) / "asset_data" / "hidden_tags.json",
-            "bot": data_root(self.project_root) / "asset_data" / "bot.json",
-        }
-        originals: dict[str, bytes | None] = {
-            key: None for key in json_paths
-        }
-        wrote_json = False
+        locks = ExitStack()
+        written_json: list[Path] = []
         try:
-            originals = {
-                key: path.read_bytes() if path.is_file() else None
-                for key, path in json_paths.items()
-            }
             summary = _new_summary()
             with zipfile.ZipFile(package, "r") as archive:
                 manifest, infos = _validate_archive(
@@ -852,56 +908,56 @@ class PatchImporter:
                     archive.read(infos[PATCH_PRESETS_MEMBER]),
                     label=PATCH_PRESETS_MEMBER,
                 )
-                bot_payload = _read_json_bytes(
-                    archive.read(infos[PATCH_BOT_MEMBER]),
-                    label=PATCH_BOT_MEMBER,
-                )
-                presets_payload, imported_bot = _validate_patch_metadata(
-                    presets_payload,
-                    bot_payload,
-                )
+                presets_payload = _validate_preset_payload(presets_payload)
+                tutorial_patch = manifest["format"] == PATCH_FORMAT
+                tag_path = _safe_destination(self.project_root, "asset_data/tags.json")
+                hidden_path = _safe_destination(self.project_root, "asset_data/hidden_tags.json")
+                defaults = {tag_path: {}, hidden_path: {}}
+                builtin = builtin_hidden = None
+                imported_bot = None
+                if tutorial_patch:
+                    bot_path = _safe_destination(self.project_root, "asset_data/bot.json")
+                    defaults[bot_path] = {"bots": [], "system_prompt_presets": {}}
+                    imported_bot = _validate_tutorial_bot(_read_json_bytes(
+                        archive.read(infos[PATCH_BOT_MEMBER]), label=PATCH_BOT_MEMBER,
+                    ))
+                else:
+                    _validate_asset_character_payload(presets_payload, infos, self.project_root)
+                    presets_payload["characters"] = without_local_reference_images(presets_payload["characters"])
+                    builtin = load_builtin_presets(self.project_root)
+                    builtin["characters"] = AssetCharacterPresets(
+                        tag_path, PRESET_LOCATIONS["asset_character"].builtin_path(self.project_root),
+                    ).builtin()
+                    builtin_hidden = load_builtin_presets(self.project_root, hidden=True)
 
-                current_tags = _read_json_file(json_paths["tags"], default={})
-                current_hidden = _read_json_file(json_paths["hidden"], default={})
-                current_bot = _read_json_file(
-                    json_paths["bot"],
-                    default={
-                        "bots": [],
-                        "system_prompt_presets": {},
-                    },
-                )
-                if not isinstance(current_tags, dict):
-                    raise PatchImportError("기존 tags.json 최상위 구조가 객체가 아닙니다.")
-                if not isinstance(current_hidden, dict):
-                    raise PatchImportError(
-                        "기존 hidden_tags.json 최상위 구조가 객체가 아닙니다."
-                    )
-                if not isinstance(current_bot, dict) or not isinstance(
-                    current_bot.get("bots"), list
-                ):
-                    raise PatchImportError("기존 bot.json 구조가 잘못되었습니다.")
-
-                merged_tags = copy.deepcopy(current_tags)
-                merged_hidden = copy.deepcopy(current_hidden)
-                merged_bot = copy.deepcopy(current_bot)
+                for path in sorted(defaults):
+                    locks.enter_context(settings_lock(path))
+                originals = {path: path.read_bytes() if path.is_file() else None for path in defaults}
+                current_documents = {path: _read_json_file(path, default=default) for path, default in defaults.items()}
+                for path, document in current_documents.items():
+                    if not isinstance(document, dict):
+                        raise PatchImportError(f"기존 {path.name} 최상위 구조가 객체가 아닙니다.")
+                merged = copy.deepcopy(current_documents)
                 _merge_presets(
-                    merged_tags,
-                    merged_hidden,
+                    merged[tag_path],
+                    merged[hidden_path],
                     presets_payload,
                     summary,
+                    builtin=builtin,
+                    builtin_hidden=builtin_hidden,
                 )
-
-                bot_exists = any(
-                    isinstance(item, dict)
-                    and str(item.get("name", "")).casefold() == "nikke"
-                    for item in merged_bot["bots"]
-                )
-                if bot_exists:
-                    summary["bot"]["skipped_existing"] = 1
-                    print("[PATCH_IMPORT] nikke bot이 이미 존재하여 전체 건너뜀")
-                else:
-                    merged_bot["bots"].append(copy.deepcopy(imported_bot))
-                    summary["bot"]["added"] = 1
+                bot_exists = False
+                if imported_bot is not None:
+                    bots = merged[bot_path].get("bots")
+                    if not isinstance(bots, list):
+                        raise PatchImportError("기존 bot.json 구조가 잘못되었습니다.")
+                    bot_exists = any(isinstance(item, dict) and str(item.get("name", "")).casefold() == "nikke"
+                                     for item in bots)
+                    if bot_exists:
+                        summary["bot"]["skipped_existing"] = 1
+                    else:
+                        bots.append(copy.deepcopy(imported_bot))
+                        summary["bot"]["added"] = 1
 
                 copy_plans = _plan_chain_files(
                     archive,
@@ -933,9 +989,9 @@ class PatchImporter:
                     f"bot_skipped_files={summary['bot']['skipped_files']}"
                 )
 
-                summary["runtime_backups"] = _backup_runtime_json_files(
-                    self.project_root
-                )
+                changed_documents = {path: value for path, value in merged.items() if value != current_documents[path]}
+                if changed_documents:
+                    summary["runtime_backups"] = _backup_runtime_json_files(self.project_root)
 
                 for member_name, destination, section in copy_plans:
                     if _copy_archive_member_new(
@@ -945,20 +1001,17 @@ class PatchImporter:
                     ):
                         created_files.append(destination)
                     else:
+                        if section == "assets":
+                            summary["assets"]["added_files"] -= 1
+                            summary["assets"]["skipped_existing_files"] += 1
                         print(
                             "[PATCH_IMPORT] 복사 직전 기존 파일 감지로 건너뜀: "
                             f"section={section}, path={destination}"
                         )
 
-                if merged_tags != current_tags:
-                    _atomic_write_json(json_paths["tags"], merged_tags)
-                    wrote_json = True
-                if merged_hidden != current_hidden:
-                    _atomic_write_json(json_paths["hidden"], merged_hidden)
-                    wrote_json = True
-                if merged_bot != current_bot:
-                    _atomic_write_json(json_paths["bot"], merged_bot)
-                    wrote_json = True
+                for path, value in changed_documents.items():
+                    _atomic_write_json(path, value)
+                    written_json.append(path)
 
             result = {
                 "patch_id": manifest.get("patch_id", ""),
@@ -977,9 +1030,8 @@ class PatchImporter:
                 "패치 가져오기 실패, 롤백 시작: "
                 f"path={package}, error={type(exc).__name__}: {exc}"
             )
-            if wrote_json:
-                for key, path in json_paths.items():
-                    _restore_original_json(path, originals[key])
+            for path in reversed(written_json):
+                _restore_original_json(path, originals[path])
             for created in reversed(created_files):
                 try:
                     resolved = created.resolve(strict=False)
@@ -999,6 +1051,7 @@ class PatchImporter:
                 raise
             raise PatchImportError(str(exc)) from exc
         finally:
+            locks.close()
             self._lock.release()
 
 
@@ -1134,7 +1187,7 @@ class PatchImportApi:
 
     async def handle_upload_chunk(self, request: web.Request) -> web.Response:
         session: _UploadSession | None = None
-        start_offset = 0
+        rollback_offset: int | None = None
         try:
             upload_id = str(request.query.get("upload_id", ""))
             session = self._get_session(upload_id)
@@ -1156,6 +1209,7 @@ class PatchImportApi:
 
             written = 0
             with session.path.open("ab") as stream:
+                rollback_offset = start_offset
                 while True:
                     chunk = await request.content.read(UPLOAD_READ_BYTES)
                     if not chunk:
@@ -1180,21 +1234,20 @@ class PatchImportApi:
                     "total_size": session.total_size,
                 }
             )
-        except PatchImportError as exc:
-            traceback.print_exc()
-            if session is not None:
+        except (Exception, asyncio.CancelledError) as exc:
+            if session is not None and rollback_offset is not None:
                 try:
                     with session.path.open("r+b") as stream:
-                        stream.truncate(start_offset)
-                    with self._sessions_lock:
-                        session.received = start_offset
+                        stream.truncate(rollback_offset)
                 except Exception as truncate_exc:
                     _print_failure(
                         "실패한 패치 청크 되돌리기 실패: "
                         f"id={session.upload_id}, error={truncate_exc}"
                     )
-            return self._error_response(exc)
-        except Exception as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            if isinstance(exc, PatchImportError):
+                return self._error_response(exc)
             _print_failure(f"패치 청크 업로드 실패: error={exc}")
             return self._error_response(
                 "패치 청크 업로드에 실패했습니다.",
@@ -1319,26 +1372,34 @@ def register_patch_import_routes(
     project_root: str | os.PathLike[str],
     reload_asset_tags: Callable[[], Any] | None = None,
     installer_status: Callable[[], dict[str, Any]] | None = None,
+    settings_schema: str | None = None,
+    installer_lock: asyncio.Lock | None = None,
 ) -> PatchImportApi:
     api = PatchImportApi(
         project_root=project_root,
         reload_asset_tags=reload_asset_tags,
         installer_status=installer_status,
     )
-    app.router.add_post(
-        "/api/patch-import/upload/start",
-        api.handle_upload_start,
-    )
-    app.router.add_post(
-        "/api/patch-import/upload/chunk",
-        api.handle_upload_chunk,
-    )
-    app.router.add_post(
-        "/api/patch-import/upload/complete",
-        api.handle_upload_complete,
-    )
-    app.router.add_post(
-        "/api/patch-import/upload/abort",
-        api.handle_upload_abort,
-    )
+    upload_lock = asyncio.Lock()
+    handlers = {
+        "start": api.handle_upload_start,
+        "chunk": api.handle_upload_chunk,
+        "complete": api.handle_upload_complete,
+        "abort": api.handle_upload_abort,
+    }
+
+    async def handle(request: web.Request) -> web.Response:
+        if settings_schema is not None:
+            if request.headers.get("X-Comfy-Settings") != "1":
+                raise web.HTTPForbidden()
+            if request.headers.get("X-Comfy-Settings-Schema") != settings_schema:
+                return api._error_response("설정 화면을 새로고침해 주세요.", status=409)
+        action = request.match_info["action"]
+        async with upload_lock:
+            if installer_lock is not None and action in {"start", "complete"}:
+                async with installer_lock:
+                    return await handlers[action](request)
+            return await handlers[action](request)
+
+    app.router.add_post("/api/patch-import/upload/{action:start|chunk|complete|abort}", handle)
     return api
