@@ -87,16 +87,17 @@ def bundled_lora_model_ids(models: Iterable[Mapping[str, Any]]) -> frozenset[str
 
 
 def default_install_model_ids(models: Iterable[Mapping[str, Any]]) -> frozenset[str]:
-    """Install Anima base/2.9B, the shared encoder/VAE and bundled LoRAs."""
+    """Include the base models, face detector and bundled LoRAs on initial install."""
     models = tuple(models)
-    anima_model_ids = {
+    default_model_ids = {
         "anima-base-v1",
         "anima-2.9b-preview-v1",
         "anima-text-encoder",
         "anima-vae",
+        "face-yolov8n",
     }
     return bundled_lora_model_ids(models) | frozenset(
-        str(model["id"]) for model in models if str(model["id"]) in anima_model_ids
+        str(model["id"]) for model in models if str(model["id"]) in default_model_ids
     )
 
 
