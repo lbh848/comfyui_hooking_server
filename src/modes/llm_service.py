@@ -1084,6 +1084,25 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     return decoded
 
 
+def _decode_lore_npc_aliases(value: str | list, *, path: str | None = None):
+    """Drop only unreadable marked aliases. Names and card fields use strict decoding."""
+    single = isinstance(value, str)
+    restored = []
+    changed = False
+    for index, alias in enumerate([value] if single else value):
+        if isinstance(alias, str) and alias.startswith("base64:"):
+            changed = True
+            try:
+                alias = _decode_gemini_scene_document(alias)
+            except ValueError as exc:
+                if path is not None:
+                    location = path if single else f"{path}[{index}]"
+                    _record_response_diagnostic(f"복원할 수 없는 NPC 별칭 제외: {location}: {exc}")
+                continue
+        restored.append(alias)
+    return (restored[0] if single and restored else restored), changed
+
+
 def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) -> str | None:
     """Restore marked string values without guessing from field names/content.
 
@@ -1094,6 +1113,7 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     None means this is not a structured document; legacy text transport applies.
     """
     raw = str(raw_text or "")
+    lore_npcs = (_stream_metadata_ctx.get() or {}).get("task_key") == "lore_npc_generation"
     start = len(raw) - len(raw.lstrip())
     wrapped = False
     closing_wrappers = []
@@ -1161,6 +1181,20 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                         )
                         parts.append(json.dumps(decoded, ensure_ascii=False)[:-1])
                 break
+            if lore_npcs and is_key and value == "aliases" and (separator := re.match(r"\s*:\s*", raw[end:])):
+                # A streamed prefix of a corrupt alias cannot be taken back.
+                # Hold this optional field until it can be decoded as a unit.
+                value_start = end + separator.end()
+                if value_start == len(raw) or raw[value_start] in '["':
+                    parts.append(raw[index:value_start])
+                    try:
+                        aliases, index = decoder.raw_decode(raw, value_start)
+                    except json.JSONDecodeError:
+                        break
+                    aliases, modified = _decode_lore_npc_aliases(aliases)
+                    parts.append(json.dumps(aliases, ensure_ascii=False) if modified else raw[value_start:index])
+                    previous = '"'
+                    continue
             if not is_key and value.startswith("base64:"):
                 decoded = _decode_gemini_scene_document(value)
                 parts.append(json.dumps(decoded, ensure_ascii=False))
@@ -1328,10 +1362,15 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
 
     changed = False
 
-    def restore(item, path):
+    def restore(item, path, *, alias_field=False):
         nonlocal changed
+        if lore_npcs and alias_field and isinstance(item, (str, list)):
+            aliases, modified = _decode_lore_npc_aliases(item, path=path)
+            changed |= modified
+            return aliases
         if isinstance(item, dict):
-            return {key: restore(child, f"{path}[{key!r}]") for key, child in item.items()}
+            return {key: restore(child, f"{path}[{key!r}]", alias_field=key == "aliases")
+                    for key, child in item.items()}
         if isinstance(item, list):
             return [restore(child, f"{path}[{index}]") for index, child in enumerate(item)]
         if isinstance(item, str) and item.startswith("base64:"):
