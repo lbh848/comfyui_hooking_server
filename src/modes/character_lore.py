@@ -1,5 +1,6 @@
 """Imported lore belongs to a character, independently of its visual cards."""
 from copy import deepcopy
+import asyncio
 import json
 from pathlib import Path
 
@@ -8,74 +9,142 @@ CHARACTER_LORE_AUTO_LINK_TASK = "character_lore_auto_link"
 
 
 def _parse_lore_npc_candidates(raw, anchors):
-    from modes.illustration_npc import parse_candidates
+    from modes.illustration_npc import parse_candidate
     from modes.llm_prompt_edit import parse_llm_json
 
-    result = parse_llm_json(raw)
-    rows = result.get("candidates") if isinstance(result, dict) else None
+    result = parse_llm_json(raw, repair_closing_brackets=True)
+    if result is None:
+        raise ValueError("LLM 응답을 JSON으로 읽을 수 없습니다.")
+    rows = result
+    if isinstance(result, dict):
+        rows = next((result[key] for key in ("candidates", "npc_candidates", "characters") if key in result), None)
     if not isinstance(rows, list):
         raise ValueError("LLM 응답에서 인물 목록(candidates)을 읽을 수 없습니다.")
-    for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
-            continue
-        name = row["name"].strip()
-        storage_name = "_".join(name.split())
-        if storage_name != name:
-            row["name"] = storage_name
-            aliases = row.setdefault("aliases", [])
-            if isinstance(aliases, list) and name not in aliases:
-                aliases.append(name)
-    return parse_candidates(rows, [], anchors)
+    candidates, issues = [], []
+    for index, row in enumerate(rows, 1):
+        name = row.get("name") if isinstance(row, dict) else None
+        try:
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("인물 이름이 없습니다.")
+            if not isinstance(row.get("description"), str) or not row["description"].strip():
+                raise ValueError("인물 설명이 없습니다.")
+            storage_name = "_".join(name.split())
+            aliases = row.get("aliases", [])
+            if isinstance(aliases, str):
+                aliases = [aliases]
+            elif not isinstance(aliases, list):
+                aliases = []
+            if storage_name != name.strip():
+                aliases.append(name.strip())
+            references = row.get("anchors")
+            if type(references) is int:
+                references = [references]
+            candidates.append(parse_candidate({**row, "name": storage_name, "aliases": aliases,
+                                               "anchors": references}, anchors, repair=True))
+        except ValueError as exc:
+            label = name.strip() if isinstance(name, str) and name.strip() else None
+            issues.append((label, str(exc) if label else f"{index}번째 후보 · {exc}"))
+    return candidates, issues
 
 
-async def analyze_lore_npcs(entries, bot):
-    from modes.llm_service import callLLMTaskResult, create_llm_execution_context
+def _lore_npc_batches(entries, batch_chars):
+    if type(batch_chars) is not int or not 5000 <= batch_chars <= 80000:
+        raise ValueError("한 번에 분석할 글자 수는 5,000~80,000자 범위에서 선택하세요.")
+    batches = [[]]
+    size = 2  # The brackets in the JSON entries array.
+    for index, entry in enumerate(entries):
+        anchor = f"C{index + 1:03d}"
+        content = format_character_lore([entry])
+        offset = 0
+        while offset < len(content):
+            # format_character_lore includes the original title, keys and body.
+            length = min(batch_chars, len(content) - offset)
+            part = {"anchor": anchor, "text": content[offset:offset + length]}
+            part_size = len(json.dumps(part, ensure_ascii=False))
+            while part_size + 2 > batch_chars:
+                length = min(length - 1, length * (batch_chars - 2) // part_size)
+                part["text"] = content[offset:offset + length]
+                part_size = len(json.dumps(part, ensure_ascii=False))
+            if batches[-1] and size + 2 + part_size > batch_chars:
+                batches.append([])
+                size = 2
+            size += part_size + (2 if batches[-1] else 0)
+            batches[-1].append(part)
+            offset += length
+    return batches
+
+
+async def analyze_lore_npcs(entries, bot, *, batch_chars=20000):
+    from modes.llm_service import ManualCancelledText, callLLMTaskResult, create_llm_execution_context
 
     entries = normalize_character_lore(entries)
     if not entries:
         raise ValueError("분석할 로어북이 없습니다.")
+    batches = _lore_npc_batches(entries, batch_chars)
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "character_lore_npcs.txt").read_text(encoding="utf-8")
     roster = {character["name"]: list(dict.fromkeys(
         alias for card in character.get("visual_cards", []) for alias in card.get("aliases", [])
     )) for character in bot.get("characters", [])}
     candidates = {}
-    # Keep source references stable even when a long entry spans multiple calls.
-    batches = [[]]
-    size = 0
-    for index, entry in enumerate(entries):
-        anchor = f"C{index + 1:03d}"
-        content = format_character_lore([entry])
-        for offset in range(0, len(content), 16000):
-            part = {"anchor": anchor, "title": entry["title"], "text": content[offset:offset + 16000]}
-            part_size = len(json.dumps(part, ensure_ascii=False))
-            if batches[-1] and size + part_size > 20000:
-                batches.append([])
-                size = 0
-            batches[-1].append(part)
-            size += part_size
+    warnings = []
+    cancelled = False
 
     for number, batch in enumerate(batches, 1):
         anchors = {part["anchor"] for part in batch}
-        batch_candidates = None
+        batch_candidates = []
+        rejected = {}
+        issues = []
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps({"roster": roster, "entries": batch}, ensure_ascii=False)},
+        ]
+        retry_messages = list(messages)
 
         def validate(raw):
-            nonlocal batch_candidates
             try:
-                batch_candidates = _parse_lore_npc_candidates(raw, anchors)
-                return True, ""
+                parsed, row_issues = _parse_lore_npc_candidates(raw, anchors)
             except (ValueError, TypeError) as exc:
-                return False, str(exc)
+                parsed, row_issues = [], [(None, str(exc))]
+            # Keep grounded rows even if another attempt or the fallback fails.
+            batch_candidates.extend(parsed)
+            issues.clear()
+            for label, reason in row_issues:
+                if label:
+                    rejected["_".join(label.split()).casefold()] = f"{label} · {reason}"
+                else:
+                    issues.append(reason)
+            for candidate in parsed:
+                for identifier in [candidate["name"], *candidate["aliases"]]:
+                    rejected.pop("_".join(identifier.split()).casefold(), None)
+            if not rejected and not issues:
+                return True, ""
+            retry_messages[:] = [*messages, {"role": "user", "content":
+                "Correct the previous response. Return the complete candidates array. For each individual use "
+                "a romanized storage name, a source-grounded description and at least one exact supplied anchor. "
+                "Recheck the following unresolved rows against the source: " + json.dumps(list(rejected), ensure_ascii=False)}]
+            return False, next(iter(rejected.values()), None) or issues[0]
 
         task = "character_lore_npcs"
         context = create_llm_execution_context(task, call_name="로어북 인물 분석", json_mode=True,
             metadata={"bot_name": bot["name"], "batch": number, "batch_count": len(batches)})
-        result = await callLLMTaskResult(task, [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": json.dumps({"roster": roster, "entries": batch}, ensure_ascii=False)},
-        ], json_mode=True, result_validator=validate, execution_context=context)
-        if not result.accepted or batch_candidates is None:
-            reason = result.reason or str(result.exception or result.text or "응답이 비어 있습니다.")
-            raise ValueError(f"로어북 인물 분석 {number}/{len(batches)}번째 묶음에서 실패했습니다. {reason}")
+        try:
+            result = await callLLMTaskResult(task, messages, json_mode=True, result_validator=validate,
+                                             execution_context=context, retry_messages=retry_messages)
+            cancelled = isinstance(result.raw_response, ManualCancelledText)
+            if result.accepted and not cancelled:
+                issues.clear()
+            elif not cancelled:
+                reason = result.reason or str(result.exception or "응답이 비어 있습니다.")
+                if reason not in issues:
+                    issues.append(reason)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception as exc:
+            issues.append(str(exc) or type(exc).__name__)
+        issues = list(dict.fromkeys([*rejected.values(), *issues]))
+        if issues:
+            first = entries[int(batch[0]["anchor"][1:]) - 1]
+            warnings.append({"batch": number, "source": first["source"], "title": first["title"], "issues": issues})
         for candidate in batch_candidates:
             name = candidate["name"]
             current = candidates.setdefault(name.casefold(), {
@@ -93,9 +162,12 @@ async def analyze_lore_npcs(entries, bot):
             if candidate["description"] not in current["descriptions"]:
                 current["descriptions"].append(candidate["description"])
             roster[current["name"]] = list(dict.fromkeys([*roster.get(current["name"], []), *current["aliases"]]))
+        if cancelled:
+            break
     for candidate in candidates.values():
         candidate["description"] = "\n".join(candidate.pop("descriptions"))
-    return list(candidates.values())
+    return {"candidates": list(candidates.values()), "warnings": warnings, "cancelled": cancelled,
+            "batch_count": len(batches), "processed_batches": number - int(cancelled)}
 
 
 async def auto_link_character_lore(body):

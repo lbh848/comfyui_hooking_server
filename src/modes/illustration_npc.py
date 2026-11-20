@@ -98,9 +98,45 @@ def _normalize_candidate_anchor(value, segments) -> str:
     return ""
 
 
-def parse_candidates(value, registered_names, segments, *, repair=False) -> list[dict]:
+def parse_candidate(entry, segments, *, repair=False) -> dict:
     from modes.bot_mode import validate_bot_storage_name
 
+    if not isinstance(entry, dict):
+        raise ValueError("NPC candidate must be an object")
+    name = str(entry.get("name") or "").strip()
+    error = validate_bot_storage_name(name, "NPC 이름")
+    if error or "," in name or "\n" in name:
+        raise ValueError(error or "NPC name cannot contain commas or newlines")
+    raw_anchors = entry.get("anchors")
+    if isinstance(raw_anchors, str):
+        raw_anchors = [raw_anchors]
+    if not isinstance(raw_anchors, list):
+        raise ValueError(f"{name}의 원문 근거 번호가 없습니다.")
+    invalid = [at for at in raw_anchors if not _normalize_candidate_anchor(at, segments)]
+    if invalid and not repair:
+        raise ValueError(f"{name}의 근거 번호가 제공된 원문에 없습니다.")
+    anchors = list(dict.fromkeys(
+        anchor for anchor in (_normalize_candidate_anchor(at, segments) for at in raw_anchors)
+        if anchor))
+    if not anchors:
+        raise ValueError(f"{name}의 근거 번호가 제공된 원문에 없습니다.")
+    description = str(entry.get("description") or "").strip()
+    if not description:
+        raise ValueError(f"NPC candidate requires source identity: {name}")
+    aliases = entry.get("aliases") or []
+    if not isinstance(aliases, list):
+        if not repair:
+            raise ValueError(f"Invalid NPC aliases: {name}")
+        aliases = []
+    elif any(not isinstance(alias, str) for alias in aliases):
+        if not repair:
+            raise ValueError(f"Invalid NPC aliases: {name}")
+        aliases = [alias for alias in aliases if isinstance(alias, str)]
+    return {"name": name, "description": description, "anchors": anchors,
+            "aliases": list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip()))}
+
+
+def parse_candidates(value, registered_names, segments, *, repair=False) -> list[dict]:
     if not isinstance(value, list):
         if repair:
             print(f"[ILLUST_CONTEXT:NPC] 후보 배열 형식 오류로 건너뜀: {type(value).__name__}")
@@ -110,47 +146,16 @@ def parse_candidates(value, registered_names, segments, *, repair=False) -> list
     result = []
     for entry in value:
         try:
-            if not isinstance(entry, dict):
-                raise ValueError("NPC candidate must be an object")
-            name = str(entry.get("name") or "").strip()
-            error = validate_bot_storage_name(name, "NPC 이름")
-            if error or "," in name or "\n" in name:
-                raise ValueError(error or "NPC name cannot contain commas or newlines")
-            if name.casefold() in known:
-                raise ValueError(f"Duplicate or registered NPC candidate: {name}")
-            raw_anchors = entry.get("anchors")
-            if isinstance(raw_anchors, str):
-                raw_anchors = [raw_anchors]
-            if not isinstance(raw_anchors, list):
-                raise ValueError(f"NPC candidate requires CURRENT anchors: {name}")
-            invalid = [at for at in raw_anchors if not _normalize_candidate_anchor(at, segments)]
-            if invalid and not repair:
-                raise ValueError(f"NPC candidate requires CURRENT anchors: {name}")
-            anchors = list(dict.fromkeys(
-                anchor for anchor in (_normalize_candidate_anchor(at, segments) for at in raw_anchors)
-                if anchor))
-            if not anchors:
-                raise ValueError(f"NPC candidate requires CURRENT anchors: {name}")
-            description = str(entry.get("description") or "").strip()
-            if not description:
-                raise ValueError(f"NPC candidate requires source identity: {name}")
-            aliases = entry.get("aliases") or []
-            if not isinstance(aliases, list):
-                if not repair:
-                    raise ValueError(f"Invalid NPC aliases: {name}")
-                aliases = []
-            elif any(not isinstance(alias, str) for alias in aliases):
-                if not repair:
-                    raise ValueError(f"Invalid NPC aliases: {name}")
-                aliases = [alias for alias in aliases if isinstance(alias, str)]
+            candidate = parse_candidate(entry, segments, repair=repair)
+            if candidate["name"].casefold() in known:
+                raise ValueError(f"Duplicate or registered NPC candidate: {candidate['name']}")
         except (ValueError, TypeError) as exc:
             if not repair:
                 raise
             print(f"[ILLUST_CONTEXT:NPC] 후보 제외: {exc}")
             continue
-        result.append({"name": name, "description": description, "anchors": anchors,
-                       "aliases": list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip()))})
-        known.add(name.casefold())
+        result.append(candidate)
+        known.add(candidate["name"].casefold())
     return result
 
 

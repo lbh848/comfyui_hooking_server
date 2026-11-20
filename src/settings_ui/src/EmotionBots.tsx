@@ -7,7 +7,7 @@ import { enc, query, setBotDistributionToken, useIllustrationAction, useIllustra
 import { useBotApi, useBotResource } from "./BotApiScope";
 import { CharacterEditor } from "./IllustBots";
 import { useResources } from "./useResources";
-import { AddIllustrationCharacter } from "./IllustCharacterAdd";
+import { useCharacterAddDialogs } from "./IllustCharacterAdd";
 import { EmotionFolderImages, EmotionFolderImagesModal } from "./EmotionFolderImages";
 import { EmotionProfileBatch } from "./EmotionProfileBatch";
 import { EmotionProfileOutfitGeneration } from "./EmotionProfileOutfitGeneration";
@@ -51,7 +51,6 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
   const [renameOutfitName, setRenameOutfitName] = useState("");
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [deletingBot, setDeletingBot] = useState(false);
-  const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [profileBatchOpen, setProfileBatchOpen] = useState(false);
   const [profileOutfitOpen, setProfileOutfitOpen] = useState(false);
   const [dataPreparationOpen, setDataPreparationOpen] = useState(false);
@@ -161,7 +160,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
       resource.reload(); distribution.reload();
     }, "");
   }, [addedBot, onBotSelected, resource.reload, distribution.reload]);
-  useEffect(() => { resetPath(); setCharacterAddOpen(false); setProfileBatchOpen(false); setDataPreparationOpen(false); setAssetProfileAliasSettingsOpen(false); setGalleryCharacter(null); }, [botName]);
+  useEffect(() => { resetPath(); setProfileBatchOpen(false); setDataPreparationOpen(false); setAssetProfileAliasSettingsOpen(false); setGalleryCharacter(null); }, [botName]);
   useEffect(() => { setProfile(""); setOutfit(""); setEmotion(""); setStartPreview(null); }, [character]);
   useEffect(() => { setOutfit(""); setEmotion(""); }, [profile]);
   useEffect(() => { setEmotion(""); }, [outfit]);
@@ -210,6 +209,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     connect();
     return () => { closed = true; window.clearTimeout(reconnect); socket?.close(); };
   }, []);
+  const characterAdd = useCharacterAddDialogs(bots, name => isLocked(name) || distributionBusy, refreshCharacterStatus);
   function charactersAdded() {
     refreshCharacterStatus();
   }
@@ -329,7 +329,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     </Panel>
 
     {botName && <Panel title="툴박스"><div className="illust-body illust-bot-toolbox" aria-label={`${botName} 봇 도구`}>
-      <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setCharacterAddOpen(true)}><Plus size={14} />캐릭터 추가</button>
+      <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => characterAdd.open(botName)}><Plus size={14} />캐릭터 추가</button>
       <button className="button" disabled={toolsReadOnly || !currentBot?.characters?.length} onClick={() => setProfileBatchOpen(true)}><Images size={14} />프로필 이미지 일괄 설정</button>
       <button className="button" disabled={toolsReadOnly || !currentBot} onClick={() => setAssetProfileAliasSettingsOpen(true)}>에셋·프로필·별칭 설정</button>
       <button className="button" disabled={toolsReadOnly || !currentBot?.characters?.length} onClick={() => setDataPreparationOpen(true)}>감정 삽화 데이터 준비</button>
@@ -528,8 +528,7 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
         clearWorkSession(`${api.scope}:visual-guide:${botName}`);
         setAssetProfileAliasSettingsOpen(false);
       }} onApplied={charactersAdded} />}
-    {characterAddOpen && botName && currentBot && <AddIllustrationCharacter key={botName} botName={botName}
-      characters={currentBot.characters || []} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
+    {characterAdd.dialogs}
     {startPreview && <Modal title={`${startPreview.label} · 시작 이미지`} backgroundable={false} onClose={() => setStartPreview(null)} className="illust-character-modal">
       <img className="illust-asset-preview" src={api.media(startPreview.url)} alt={`${startPreview.label} 시작 이미지`} />
       <div className="illust-actions"><button type="button" className="button" onClick={() => setStartPreview(null)}>닫기</button></div>

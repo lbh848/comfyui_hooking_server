@@ -9,7 +9,7 @@ import { CustomSystemInstruction, customSystemInstructionTitle } from "./IllustS
 import { IllustMatchingRules } from "./IllustMatchingRules";
 import { IllustExtra } from "./IllustExtra";
 import { IllustLoras } from "./IllustLoras";
-import { AddIllustrationCharacter } from "./IllustCharacterAdd";
+import { useCharacterAddDialogs } from "./IllustCharacterAdd";
 import { IllustRepresentativeBatch } from "./IllustRepresentativeBatch";
 import { IllustLoraBatch } from "./IllustLoraBatch";
 import { IllustCharacterSummary } from "./IllustCharacterSummary";
@@ -62,7 +62,6 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const [distributionDialog, setDistributionDialog] = useState<"unlock" | "duplicate" | null>(null);
   const [copyName, setCopyName] = useState("");
   const [botName, setBotName] = useState("");
-  const [characterAddOpen, setCharacterAddOpen] = useState(false);
   const [representativeBatches, setRepresentativeBatches] = useState<{ name: string; characters: IllustrationData[] }[]>([]);
   const [loraBatchBots, setLoraBatchBots] = useState<string[]>([]);
   const [loreLinkingBots, setLoreLinkingBots] = useState<string[]>([]);
@@ -103,6 +102,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   const locked = !!bot && isLocked(bot.name);
   const distributionBusy = action.busy || distributionAction.busy || !distribution.data;
   const toolsReadOnly = locked || distributionBusy;
+  const characterAdd = useCharacterAddDialogs(bots, name => isLocked(name) || distributionBusy, refreshCharacterStatus);
   useEffect(() => () => {
     setBotDistributionToken("");
     if (builtinUnlockToken) void api.request("bot_mode/distribution", { action: "lock", builtin_unlock_token: builtinUnlockToken }).catch(error => console.error("배포 잠금 복구 실패", error));
@@ -123,8 +123,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
   }, [resource.data, botSelected]);
   useEffect(() => { if (addedBot) { void action.run(async () => { await onBotSelected(addedBot.name); setBotName(addedBot.name); resource.reload(); }, ""); } }, [addedBot, onBotSelected, resource.reload]);
   useLayoutEffect(() => { window.scrollTo({ top: gallery ? 0 : listScroll.current }); }, [gallery]);
-  function openBot(name: string) { void action.run(async () => { await onBotSelected(name); listScroll.current = 0; setBotName(name); setGallery(null); setSearch(""); setCharacterAddOpen(false); window.scrollTo({ top: 0 }); }, ""); }
-  function charactersAdded() { setSearch(""); setGallery(null); setCardRevision(value => value + 1); resource.reload(); }
+  function openBot(name: string) { void action.run(async () => { await onBotSelected(name); listScroll.current = 0; setBotName(name); setGallery(null); setSearch(""); window.scrollTo({ top: 0 }); }, ""); }
   function openAssetProfileAliasSettings(name: string) {
     const existing = openModals.find(entry => entry.title === assetProfileAliasSettingsTitle(name));
     if (existing) existing.restore();
@@ -161,7 +160,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
       </div>
     </Panel>
     {bot && <Panel title="툴박스"><div className="illust-body illust-bot-toolbox" aria-label={`${bot.name} 봇 도구`}>
-      <button className="button" disabled={toolsReadOnly} onClick={() => setCharacterAddOpen(true)}><Plus size={14} />캐릭터 추가</button>
+      <button className="button" disabled={toolsReadOnly} onClick={() => characterAdd.open(bot.name)}><Plus size={14} />캐릭터 추가</button>
       <button className="button" disabled={toolsReadOnly || !bot.characters.length} onClick={() => {
         const existing = openModals.find(entry => entry.title === `${bot.name} · 대표 이미지 일괄 설정`);
         if (existing) existing.restore();
@@ -233,7 +232,7 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
         })}
       </div>
     </div>
-    {characterAddOpen && bot && <AddIllustrationCharacter key={bot.name} botName={bot.name} characters={bot.characters} onClose={() => setCharacterAddOpen(false)} onAdded={charactersAdded} />}
+    {characterAdd.dialogs}
     {secondaryBotBatches.map(item => <IllustSecondaryBotBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionBusy || !bots.some(bot => bot.name === item.name)} onClose={() => setSecondaryBotBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {representativeBatches.map(item => <IllustRepresentativeBatch key={item.name} botName={item.name} characters={item.characters} readOnly={isLocked(item.name) || distributionAction.busy} onClose={() => setRepresentativeBatches(current => current.filter(entry => entry.name !== item.name))} onChanged={refreshCharacterStatus} />)}
     {loraBatchBots.map(name => <IllustLoraBatch key={name} botName={name} inventory={inventory} readOnly={isLocked(name) || distributionBusy || !bots.some(item => item.name === name)} onClose={() => setLoraBatchBots(current => current.filter(value => value !== name))} onChanged={refreshCharacterStatus} />)}

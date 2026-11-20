@@ -1,5 +1,7 @@
 """Import lorebook characters through the workshop's NPC generation pipeline."""
+import asyncio
 import traceback
+from uuid import UUID
 
 from aiohttp import web
 
@@ -12,14 +14,44 @@ from settings_illustration_regeneration import render_character_image
 
 
 def register_lore_npcs(server):
+    active = {}
+
+    def operation_key(body):
+        return bot_scope(), body["bot_name"], UUID(str(body["operation_id"]))
+
+    async def run(body, operation, *args, **kwargs):
+        if "operation_id" not in body:
+            return await operation(*args, **kwargs)
+        key = operation_key(body)
+        if key in active:
+            raise ValueError("같은 작업이 이미 진행 중입니다.")
+        task = asyncio.create_task(operation(*args, **kwargs))
+        active[key] = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return {"cancelled": True}
+        finally:
+            active.pop(key, None)
+
+    async def cancel(request):
+        try:
+            task = active.get(operation_key(await request.json()))
+            if task and not task.done() and not task.cancelling():
+                task.cancel()
+            return web.json_response({"found": task is not None})
+        except (KeyError, ValueError, TypeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
     async def handle(request):
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
             bot, _ = server.bot_mode._bot_archive_store(bot_name)
             if request.path.endswith("/analyze"):
-                candidates = await analyze_lore_npcs(body.get("entries"), bot)
-                return web.json_response({"candidates": candidates})
+                analysis = await run(body, analyze_lore_npcs, body.get("entries"), bot,
+                                     batch_chars=body.get("batch_chars", 20000))
+                return web.json_response({"candidates": [], **analysis})
 
             entries = normalize_character_lore(body.get("entries"))
             if not entries:
@@ -46,10 +78,12 @@ def register_lore_npcs(server):
             source = "\n\n".join(f"[{anchor}] {content}" for anchor, content in segments.items())
             if len(source) > 24000:
                 source = candidates[0]["description"]
-            result = await generate_cards(manager=server.bot_mode, bot_name=bot_name, candidates=candidates,
+            result = await run(body, generate_cards, manager=server.bot_mode, bot_name=bot_name, candidates=candidates,
                 prompts=pipeline.load_prompt_files(workshop), past_text="", segmented=source,
                 toggles=snapshot["illustration_context_toggles"], stream_notify=None, render_image=render,
                 workshop=workshop, lore_by_character={name: entries})
+            if result.get("cancelled"):
+                return web.json_response({"created": False, "cancelled": True})
             created = name in result["created"]
             warning = ""
             if created:
@@ -67,3 +101,5 @@ def register_lore_npcs(server):
 
     server.app.router.add_post("/api/bot_mode/lore_npcs/analyze", handle)
     server.app.router.add_post("/api/bot_mode/lore_npcs/create", handle)
+    # Cancellation must reach the running task while its bot write lock is held.
+    server.app.router.add_post("/api/illustration/lore_npcs/cancel", cancel)

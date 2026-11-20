@@ -14,16 +14,36 @@ import type { ImportedGlobalNote } from "./charxImages";
 import { analyzeCbsSyntax } from "./cbsSyntax";
 import { saveBotArchives } from "./botArchives";
 import { LoreNpcImport } from "./IllustLoreNpcImport";
+import { useModalWorkspace } from "./ModalWorkspace";
 
 type CharacterAddFormProps = { botName: string; onClose: () => void; onAdded: () => void; busy: boolean; onBusyChange: (busy: boolean) => void };
 
-export function AddIllustrationCharacter({ botName, characters, onClose, onAdded }: { botName: string; characters: IllustrationData[]; onClose: () => void; onAdded: () => void }) {
+const characterAddTitle = (botName: string) => `${botName} · 캐릭터 추가`;
+
+export function useCharacterAddDialogs(bots: IllustrationData[], isReadOnly: (name: string) => boolean, onAdded: () => void) {
+  const [names, setNames] = useState<string[]>([]);
+  const { scope } = useBotApi();
+  const { entries } = useModalWorkspace();
+  function open(name: string) {
+    const existing = entries.find(entry => entry.workshop === scope && entry.title === characterAddTitle(name));
+    if (existing) existing.restore();
+    else setNames(current => current.includes(name) ? current : [...current, name]);
+  }
+  const dialogs = names.map(name => {
+    const bot = bots.find(item => item.name === name);
+    return <AddIllustrationCharacter key={name} botName={name} characters={bot?.characters || []} readOnly={!bot || isReadOnly(name)}
+      onClose={() => setNames(current => current.filter(value => value !== name))} onAdded={onAdded} />;
+  });
+  return { open, dialogs };
+}
+
+export function AddIllustrationCharacter({ botName, characters, readOnly, onClose, onAdded }: { botName: string; characters: IllustrationData[]; readOnly: boolean; onClose: () => void; onAdded: () => void }) {
   const [mode, setMode] = useState("single");
   const [busy, setBusy] = useState(false);
   const id = useId();
   const formProps = { botName, onClose, onAdded, busy, onBusyChange: setBusy };
-  return <Modal title={`${botName} · 캐릭터 추가`} onClose={onClose} closeDisabled={busy} backgroundable={false} className={mode === "single" ? "" : "illust-character-modal"}>
-    <div className="illust-form">
+  return <Modal title={characterAddTitle(botName)} onClose={onClose} closeDisabled={busy} working={busy} className={mode === "single" ? "" : "illust-character-modal"}>
+    <fieldset className="illust-form" disabled={readOnly}>
       <fieldset className="illust-form" disabled={busy}>
         <SettingsTabs id={id} label="캐릭터 추가 방식" values={{ single: "개별 추가", batch: "일괄 추가", workshop: "공방에서 가져오기" }} value={mode} onChange={value => { if (!busy) setMode(value); }} />
       </fieldset>
@@ -36,7 +56,7 @@ export function AddIllustrationCharacter({ botName, characters, onClose, onAdded
       <div role="tabpanel" id={`${id}-panel-workshop`} aria-labelledby={`${id}-tab-workshop`} hidden={mode !== "workshop"}>
         <WorkshopCharacterImport {...formProps} characters={characters} onImported={onAdded} />
       </div>
-    </div>
+    </fieldset>
   </Modal>;
 }
 
@@ -100,6 +120,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
   const [files, setFiles] = useState<BotBatchFile[]>([]);
   const [excludedCount, setExcludedCount] = useState(0);
   const [sourceMode, setSourceMode] = useState("charx");
+  const [batchChars, setBatchChars] = useState(20000);
   const [botFiles, setBotFiles] = useState<File[]>([]);
   const [moduleFiles, setModuleFiles] = useState<File[]>([]);
   const [loreEntries, setLoreEntries] = useState<CharacterLoreEntry[]>([]);
@@ -349,6 +370,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
         </Panel>}
       </fieldset>
       {sourceMode === "lore" ? <LoreNpcImport key={revision} botName={botName} botFiles={botFiles} moduleFiles={moduleFiles}
+        batchChars={batchChars} onBatchCharsChange={setBatchChars}
         existingNames={existingNames} busy={busy} onBusyChange={onBusyChange} onAdded={onAdded} onClose={onClose} /> : <>
       <Panel title="추출 결과 미리보기" aside={<span className="badge">이미지 {entries.length.toLocaleString()}장</span>} className="illust-character-import-group">
         <div className="illust-form illust-character-import-body">
