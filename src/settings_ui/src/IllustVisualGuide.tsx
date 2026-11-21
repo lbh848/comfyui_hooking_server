@@ -32,6 +32,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
   const [message, setMessage] = useState(saved.message);
   const [preview, setPreview] = useState<VisualGuideTarget | null>(null);
   const submitting = useRef(false);
+  const submitError = useRef("");
   const controller = useRef<AbortController | null>(null);
   const applyAction = useIllustrationAction(); const cancelAction = useIllustrationAction();
   const busy = generating || applyAction.busy;
@@ -103,6 +104,9 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
       const item = (value.items || []).find((item: IllustrationData) => item.type === "visual_profile_guide" && item.params?.request_id === requestId && item.params?.bot_name === botName);
       if (!item) return false;
       missing = 0;
+      // A matching job means the submission reached the queue; drop the
+      // transport error that was shown while the outcome was unknown.
+      if (submitError.current) { submitError.current = ""; setError(""); }
       receive(item.id, { ...item.progress_detail, request_id: requestId, bot_name: botName });
       if (["completed", "failed", "cancelled"].includes(item.status)) {
         finished = true;
@@ -121,10 +125,12 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
         if (polling.signal.aborted) return;
         if (!receiveStatus(state) && !submitting.current && !finished && ++missing >= 5) {
           finished = true;
-          setError("진행 중이던 자동 작성 작업을 찾을 수 없습니다. 저장된 제안을 확인한 뒤 다시 실행하세요.");
+          // Keep the submission error when the send outcome is still relevant;
+          // only a truly lost job may show the generic tracking message.
+          setError(submitError.current || "진행 중이던 자동 작성 작업을 찾을 수 없습니다. 저장된 제안을 확인한 뒤 다시 실행하세요.");
           setRequestId(""); setItemId(""); setProgress(null); setCancelRequested(false);
         }
-      } catch (error) { if (!polling.signal.aborted) setError(`작업 상태 연결 실패: ${(error as Error).message}`); }
+      } catch (error) { if (!polling.signal.aborted) setError(submitError.current || `작업 상태 연결 실패: ${(error as Error).message}`); }
       finally { if (!polling.signal.aborted && !finished) timer = window.setTimeout(poll, 1500); }
     }
     window.addEventListener("illustration-queue-progress", onProgress);
@@ -156,6 +162,7 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
     setTargetIds([...targetIds]);
     setTargets(current => current.map(target => targetIds.has(target.identity) ? { ...target, suggestion: null } : target));
     setRequestId(requestId); setError(""); setMessage(""); setItemId(""); setCancelRequested(false); setProgress(null);
+    submitError.current = "";
     let sent = false;
     try {
       await beforeGenerate();
@@ -167,7 +174,14 @@ export function IllustVisualGuide({ botName, instructionLength, instructionDirty
       }, submission.signal);
       if (!submission.signal.aborted && result.item_id) setItemId(result.item_id);
     } catch (e) {
-      if (!submission.signal.aborted) { setError((e as Error).message); if (!sent) setRequestId(""); }
+      if (!submission.signal.aborted) {
+        const message = (e as Error).message;
+        submitError.current = message;
+        setError(message);
+        // A server response proves the request was rejected. Keep tracking only
+        // when the transport failed, since the job may still have been queued.
+        if (!sent || (e as Error & { status?: number }).status) setRequestId("");
+      }
     } finally { submitting.current = false; }
   }
   function apply() {
