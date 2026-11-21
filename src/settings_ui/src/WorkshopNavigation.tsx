@@ -3,6 +3,7 @@ import { hasIllustrationWorkSession } from "./illustrationWorkSession";
 
 export type Workshop = "setting" | "illust" | "emotion" | "asset" | "lora";
 export const workshopLabels: Record<Workshop, string> = { setting: "설정", illust: "삽화", emotion: "감정 삽화", asset: "에셋", lora: "로라" };
+export const disabledWorkshops: ReadonlySet<Workshop> = new Set(["emotion"]);
 
 type NavigationState = { current: Workshop; locations: Partial<Record<Workshop, string>> };
 const NavigationContext = createContext<(NavigationState & {
@@ -19,19 +20,26 @@ function currentWorkshop(): Workshop {
   return location.pathname.startsWith("/lora") ? "lora" : location.pathname.startsWith("/asset") ? "asset" : location.pathname.startsWith("/emotion") ? "emotion" : location.pathname.startsWith("/illust") ? "illust" : "setting";
 }
 
+function readWorkshopLocation() {
+  const workshop = currentWorkshop();
+  const disabled = disabledWorkshops.has(workshop);
+  return { current: disabled ? "setting" as const : workshop, path: disabled ? "" : location.search + location.hash, disabled };
+}
+
 export function WorkshopNavigation({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<NavigationState>(() => ({
-    current: currentWorkshop(),
-    locations: { ...(hasIllustrationWorkSession() ? { illust: "" } : {}), [currentWorkshop()]: location.search + location.hash },
-  }));
+  const [state, setState] = useState<NavigationState>(() => {
+    const { current, path } = readWorkshopLocation();
+    return { current, locations: { ...(hasIllustrationWorkSession() ? { illust: "" } : {}), [current]: path } };
+  });
   const syncLocation = useCallback(() => {
-    const current = currentWorkshop();
-    const path = location.search + location.hash;
+    const { current, path, disabled } = readWorkshopLocation();
+    if (disabled) history.replaceState(history.state, "", `/${current}/`);
     setState(previous => previous.current === current && previous.locations[current] === path
       ? previous : { current, locations: { ...previous.locations, [current]: path } });
   }, []);
 
   useEffect(() => {
+    syncLocation();
     window.addEventListener("popstate", syncLocation);
     window.addEventListener("hashchange", syncLocation);
     return () => {
@@ -44,6 +52,7 @@ export function WorkshopNavigation({ children }: { children: ReactNode }) {
   }, [state.current]);
 
   const navigate = useCallback((workshop: Workshop, page?: string) => {
+    if (disabledWorkshops.has(workshop)) return;
     const saved = state.locations[workshop] ?? "";
     const path = page === undefined ? saved : `${saved.split("#")[0]}#${page}`;
     const url = `/${workshop}/${path}`;

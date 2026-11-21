@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronDown, Images, LoaderCircle, Power, Settings, Sparkles, Layers, Blend, WandSparkles } from "lucide-react";
 import { Modal } from "./components";
-import { useWorkshopNavigation, type Workshop } from "./WorkshopNavigation";
+import { disabledWorkshops, useWorkshopNavigation, type Workshop } from "./WorkshopNavigation";
 import { collectUnsavedChanges, type UnsavedChange } from "./unsavedChanges";
 import "./workshop-controls.css";
 
@@ -38,17 +38,23 @@ export function WorkshopSwitcher({ current, onOpen }: { current: Workshop; onOpe
     </button>
     {open && <nav id={id} className="workshop-popover" aria-label="작업 공간 선택">
       <p>작업 공간 전환</p>
-      {workspaces.map(({ id: key, label, description, href, icon: Icon }) => <a key={key} href={href + (locations[key] ?? "")}
-        aria-current={key === current ? "page" : undefined} onClick={event => {
-          if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-          event.preventDefault(); setOpen(false);
-          if (key === current) trigger.current?.focus();
-          else navigate(key);
-        }}>
-        <span className="workshop-option-icon"><Icon size={19} /></span>
-        <span><strong>Comfy 공방 {label}</strong><small>{description}</small></span>
-        {key === current && <Check size={16} className="workshop-selected" />}
-      </a>)}
+      {workspaces.map(({ id: key, label, description, href, icon: Icon }) => {
+        const content = <>
+          <span className="workshop-option-icon"><Icon size={19} /></span>
+          <span><strong>Comfy 공방 {label}</strong><small>{description}</small></span>
+          {key === current && <Check size={16} className="workshop-selected" />}
+        </>;
+        if (disabledWorkshops.has(key)) {
+          return <button key={key} className="workshop-option" type="button" disabled>{content}</button>;
+        }
+        return <a key={key} className="workshop-option" href={href + (locations[key] ?? "")}
+          aria-current={key === current ? "page" : undefined} onClick={event => {
+            if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); setOpen(false);
+            if (key === current) trigger.current?.focus();
+            else navigate(key);
+          }}>{content}</a>;
+      })}
     </nav>}
   </div>;
 }

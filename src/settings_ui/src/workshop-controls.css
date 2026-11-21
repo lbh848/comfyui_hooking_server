@@ -6,9 +6,10 @@
 .workshop-trigger[aria-expanded="true"] .workshop-caret { transform: rotate(180deg); }
 .workshop-popover { position: absolute; top: calc(100% + 9px); left: 0; z-index: 45; width: 290px; max-width: calc(100vw - 72px); padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: #fffdfbf5; backdrop-filter: blur(14px); box-shadow: 0 12px 36px #47334526; }
 .workshop-popover > p { margin: 4px 8px 8px; font-size: 10px; color: var(--muted); }
-.workshop-popover > a { display: flex; align-items: center; gap: 10px; padding: 11px 9px; border: 1px solid transparent; border-radius: 9px; }
-.workshop-popover > a:hover { background: var(--lavender); }
-.workshop-popover > a[aria-current="page"] { border-color: var(--line); background: var(--rose-soft); }
+.workshop-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 9px; border: 1px solid transparent; border-radius: 9px; text-align: left; }
+.workshop-option[href]:hover { background: var(--lavender); }
+.workshop-option[aria-current="page"] { border-color: var(--line); background: var(--rose-soft); }
+.workshop-option:disabled { opacity: .6; }
 .workshop-option-icon { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; background: var(--panel); color: var(--rose); }
 .workshop-popover strong { display: block; color: var(--ink); font-size: 12px; font-weight: 650; }
 .workshop-popover small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
