@@ -16,15 +16,16 @@ type Step = 1 | 2 | 3;
 const steps = ["검색 조건", "캐릭터·후보 확인", "실행 결과"];
 const splitIndices = (value: string) => [...new Set(value.toLowerCase().split(/[|,;\n]/).map(word => word.trim()).filter(Boolean))];
 
-function IndexExample({ botName, characters, character, onCharacterChange, indices, invalid, disabled, onPreview }: {
-  botName: string; characters: IllustrationData[]; indices: string[]; invalid: boolean; disabled: boolean;
+function IndexExample({ botName, characters, character, onCharacterChange, indices, excludeIndices, invalid, disabled, onPreview }: {
+  botName: string; characters: IllustrationData[]; indices: string[]; excludeIndices: string[]; invalid: boolean; disabled: boolean;
   character: string; onCharacterChange: (character: string) => void;
   onPreview: (candidate: Candidate) => void;
 }) {
   const api = useBotApi();
   const [result, setResult] = useState<{ key: string; row?: Row; error?: string } | null>(null);
   const query = JSON.stringify(indices);
-  const requestKey = JSON.stringify([botName, character, query]);
+  const excludeQuery = JSON.stringify(excludeIndices);
+  const requestKey = JSON.stringify([botName, character, query, excludeQuery]);
   const current = result?.key === requestKey ? result : null;
   const loading = !!character && !invalid && !current;
   const row = !invalid ? current?.row : undefined;
@@ -35,14 +36,14 @@ function IndexExample({ botName, characters, character, onCharacterChange, indic
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const response = await api.request("bot_mode/auto_batch", { bot_name: botName, indices: JSON.parse(query), characters: [character] }, controller.signal);
+        const response = await api.request("bot_mode/auto_batch", { bot_name: botName, indices: JSON.parse(query), exclude_indices: JSON.parse(excludeQuery), characters: [character] }, controller.signal);
         if (!controller.signal.aborted) setResult({ key: requestKey, row: response.rows[0] });
       } catch (error) {
         if (!controller.signal.aborted) setResult({ key: requestKey, error: (error as Error).message });
       }
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [api, botName, character, query, requestKey, invalid]);
+  }, [api, botName, character, query, excludeQuery, requestKey, invalid]);
 
   return <section className="illust-auto-index-example" aria-label="캐릭터 색인 예제">
     <header><div><h4>캐릭터 색인 예제</h4><p className="field-help">캐릭터의 실제 이미지로 검색 결과를 확인하세요. 검색 색인을 비우면 전체 이미지가 표시됩니다.</p></div>
@@ -51,7 +52,7 @@ function IndexExample({ botName, characters, character, onCharacterChange, indic
         {characters.map(char => <option key={String(char.name)} value={String(char.name)}>{String(char.name)}</option>)}
       </select></label>
     </header>
-    <p className="illust-auto-example-status field-help" role="status">{invalid ? "검색 색인을 확인해 주세요." : loading ? `${character}의 이미지를 검색하는 중…` : row ? `${character} · ${row.groups[0]?.fallback_first ? "검색 후보 없음 · 전체 이미지" : indices.length ? "검색 결과" : "전체 이미지"} ${images.length}장` : !character ? "등록된 캐릭터가 없습니다." : ""}</p>
+    <p className="illust-auto-example-status field-help" role="status">{invalid ? "색인을 확인해 주세요." : loading ? `${character}의 이미지를 검색하는 중…` : row ? `${character} · ${row.groups[0]?.fallback_first ? "검색 후보 없음 · 전체 이미지" : indices.length ? "검색 결과" : "전체 이미지"} ${images.length}장` : !character ? "등록된 캐릭터가 없습니다." : ""}</p>
     {current?.error && !invalid && <p className="field-error" role="alert">{current.error}</p>}
     <div role="region" aria-label="캐릭터 색인 결과" aria-busy={loading}>
       {!!images.length && <ul className="illust-auto-example-grid">{images.map(candidate => <li key={candidate.filename}>
@@ -59,7 +60,7 @@ function IndexExample({ botName, characters, character, onCharacterChange, indic
           <img loading="lazy" src={api.media(candidate.url)} alt={candidate.filename} /><span>{candidate.filename}</span>
         </button>
       </li>)}</ul>}
-      {!images.length && <p className="illust-auto-example-empty">{invalid ? "올바른 검색 색인을 입력하면 결과가 표시됩니다." : loading ? "이미지를 불러오는 중…" : current?.error ? "검색 결과를 불러오지 못했습니다." : !character ? "캐릭터를 등록하면 이미지를 확인할 수 있습니다." : indices.length ? "검색 색인에 일치하는 이미지가 없습니다." : "이 캐릭터에 등록된 이미지가 없습니다."}</p>}
+      {!images.length && <p className="illust-auto-example-empty">{invalid ? "올바른 색인을 입력하면 결과가 표시됩니다." : loading ? "이미지를 불러오는 중…" : current?.error ? "검색 결과를 불러오지 못했습니다." : !character ? "캐릭터를 등록하면 이미지를 확인할 수 있습니다." : indices.length ? "검색 색인에 일치하는 이미지가 없습니다." : "이 캐릭터에 등록된 이미지가 없습니다."}</p>}
     </div>
   </section>;
 }
@@ -71,12 +72,15 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
   const api = useBotApi();
   const [step, setStep] = useState<Step>(1);
   const [indexInput, setIndexInput] = useState(initialIndices);
+  const [excludeInput, setExcludeInput] = useState("");
   const indices = splitIndices(indexInput);
+  const excludeIndices = splitIndices(excludeInput);
   const [exampleCharacter, setExampleCharacter] = useState(() => String((characters.find(char => !char.npc_generated) || characters[0])?.name || ""));
   const [selected, setSelected] = useState(() => new Set(characters.filter(char => !char.npc_generated).map(char => String(char.name))));
   const [characterSearch, setCharacterSearch] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [searchedIndices, setSearchedIndices] = useState<string[]>([]);
+  const [searchedExcludes, setSearchedExcludes] = useState<string[]>([]);
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [prompt, setPrompt] = useState("");
   const [results, setResults] = useState<Record<string, Record<string, Selection>>>({});
@@ -105,17 +109,18 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
   const detailFallback = detailRow?.groups.find(group => group.fallback_first);
   const detailIndices = searchedIndices.length ? searchedIndices : [""];
   const indexError = indices.length > 8 || indices.some(word => word.length > 80) ? "검색 색인은 최대 8개, 각 80자 이내로 입력하세요." : "";
+  const excludeError = excludeIndices.length > 8 || excludeIndices.some(word => word.length > 80) ? "제외 색인은 최대 8개, 각 80자 이내로 입력하세요." : "";
 
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = 0; }, [step]);
   useUnsavedChanges({ label: `${botName} 자동 대표 설정`, busy, busyLabel: deleteTarget ? "캐릭터 삭제 중" : running ? "대표 이미지 선택 중" : "후보 검색 중", modalTitle: `${botName} · 대표 이미지 일괄 설정` });
 
   async function search() {
-    if (indexError) { setError(indexError); return; }
+    if (indexError || excludeError) { setError(indexError || excludeError); return; }
     setBusy(true); setError(""); setMessage(""); setRows([]); setResults({}); setManualSelections({}); setStatuses({}); setApplied(new Set());
     try {
-      const response = await api.request("bot_mode/auto_batch", { bot_name: botName, indices, characters: remainingCharacters.map(char => String(char.name)) });
-      setRows(response.rows); setSearchedIndices(response.indices); setCharacterSearch(""); setRunNames([]);
+      const response = await api.request("bot_mode/auto_batch", { bot_name: botName, indices, exclude_indices: excludeIndices, characters: remainingCharacters.map(char => String(char.name)) });
+      setRows(response.rows); setSearchedIndices(response.indices); setSearchedExcludes(response.exclude_indices || []); setCharacterSearch(""); setRunNames([]);
       setMaxConcurrency(response.max_concurrency || 1);
       if (!prompt) setPrompt(response.prompt);
       setStep(2);
@@ -139,7 +144,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
       await ComfyRepBatch.runLimited(states.flatMap(state => state.row.groups.map(group => async () => {
         if (stop.current || state.failed) return;
         const { row, selections } = state;
-        const body = { bot_name: botName, character: row.character, indices: searchedIndices, fingerprint: row.fingerprint };
+        const body = { bot_name: botName, character: row.character, indices: searchedIndices, exclude_indices: searchedExcludes, fingerprint: row.fingerprint };
         try {
           setStatuses(current => ({ ...current, [row.character]: `대표 선택 중 · ${selections.length}/${row.groups.length} 완료` }));
           const manual = group.fallback_first && group.candidates.find(candidate => candidate.filename === manualSelections[row.character]);
@@ -211,14 +216,19 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
           {indices.map(word => <button type="button" key={word} disabled={busy} onClick={() => { setIndexInput(indices.filter(value => value !== word).join("|")); setError(""); }} aria-label={`${word} 색인 제거`}>{word}<X size={14} /></button>)}
           {!indices.length && <span className="field-help">전체 이미지 표시</span>}
         </div></div>
-        <IndexExample botName={botName} characters={remainingCharacters} character={exampleCharacter} onCharacterChange={setExampleCharacter} indices={indices} invalid={!!indexError} disabled={busy} onPreview={setPreview} />
+        <label className="field illust-auto-index-input illust-auto-exclude-input">제외 색인<textarea rows={2} value={excludeInput} disabled={busy} onChange={event => { setExcludeInput(event.target.value); setError(""); }} placeholder="예: with tears|angry" /></label>
+        <p className="field-help">이 문자열이 파일명에 포함된 이미지는 검색 결과와 전체 이미지 후보에서 제외됩니다. 여러 색인은 | 또는 줄바꿈으로 구분하며, 최대 8개, 각 80자까지 입력할 수 있습니다.</p>
+        {!!excludeIndices.length && <div className="illust-auto-index-summary illust-auto-exclude-summary"><strong>제외 색인 <Badge tone="neutral">{excludeIndices.length} / 8</Badge></strong><div className="illust-auto-chips">
+          {excludeIndices.map(word => <button type="button" key={word} disabled={busy} onClick={() => { setExcludeInput(excludeIndices.filter(value => value !== word).join("|")); setError(""); }} aria-label={`${word} 제외 색인 제거`}>{word}<X size={14} /></button>)}
+        </div></div>}
+        <IndexExample botName={botName} characters={remainingCharacters} character={exampleCharacter} onCharacterChange={setExampleCharacter} indices={indices} excludeIndices={excludeIndices} invalid={!!(indexError || excludeError)} disabled={busy} onPreview={setPreview} />
       </section>}
       {step === 2 && <>
         <div className="illust-auto-heading"><h3>캐릭터와 후보 이미지를 확인하세요</h3><p>대표를 설정할 캐릭터를 선택하세요. 썸네일을 누르면 크게 볼 수 있습니다.</p></div>
         <div className="illust-auto-review-toolbar"><label className="field"><span className="sr-only">캐릭터 검색</span><input type="search" value={characterSearch} onChange={event => setCharacterSearch(event.target.value)} placeholder="캐릭터 검색" /></label>
           <div className="illust-actions"><button type="button" className="button secondary" onClick={() => setSelected(new Set(validRows.map(row => row.character)))}>전체 선택</button><button type="button" className="button secondary" onClick={() => setSelected(new Set())}>전체 해제</button><Badge tone="rose">{applicable.length}명 선택</Badge></div>
         </div>
-        <div className="illust-auto-review-summary"><span>검색 색인: {searchedIndices.join(" · ") || "전체 이미지"}</span><span>후보 있는 캐릭터 {validRows.length}명 / 전체 {rows.length}명</span></div>
+        <div className="illust-auto-review-summary"><span>검색 색인: {searchedIndices.join(" · ") || "전체 이미지"}{searchedExcludes.length ? ` · 제외: ${searchedExcludes.join(" · ")}` : ""}</span><span>후보 있는 캐릭터 {validRows.length}명 / 전체 {rows.length}명</span></div>
         <details className="illust-auto-instructions"><summary>대표 이미지 선택 지침</summary><label className="field"><span className="sr-only">대표 이미지 선택 지침</span><textarea rows={6} value={prompt} onChange={event => setPrompt(event.target.value)} /></label><p className="field-help">모델 설정: LLM API 관리 → 외부 LLM 분기 → 삽화 봇 만들기 → 자동 대표 설정</p></details>
         <p className="illust-auto-apply-note">실행하면 기존 대표 이미지가 교체됩니다. 프로필 수에 맞춰 카드를 추가하거나 정리합니다. 검색 후보가 없으면 첫 번째 이미지를 사용하며, 전체 후보 보기에서 직접 고를 수 있습니다.</p>
       </>}
@@ -226,7 +236,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
         <progress max={Math.max(progress.total, 1)} value={progress.done} aria-label="대표 설정 진행률" />
         <p>{running ? "상단의 백그라운드 버튼으로 내려도 작업이 계속됩니다. 하단 작업 표시에서 다시 열 수 있습니다." : message}</p>
       </section>}
-      <IllustrationFeedback error={error || indexError} />
+      <IllustrationFeedback error={error || indexError || excludeError} />
       {step > 1 && <div className="illust-auto-character-grid">{visibleRows.map(row => {
         const candidates = row.groups.flatMap(group => group.candidates);
         const fallback = row.groups[0]?.fallback_first;
@@ -247,9 +257,9 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
       })}</div>}
       {step === 2 && !visibleRows.length && <Empty title={rows.length ? "검색된 캐릭터가 없습니다" : "후보를 찾지 못했습니다"}>{rows.length ? "다른 캐릭터 이름으로 검색하세요." : "이전 단계에서 검색 색인을 바꿔 주세요."}</Empty>}
     </div>
-    <footer className="illust-auto-footer"><span className="field-help" role="status">{step === 1 ? busy ? "후보 이미지를 찾는 중…" : indices.length ? `검색 색인 ${indices.length}개` : "전체 이미지 검색" : step === 2 ? `캐릭터 ${applicable.length}명 · 프로필 ${applicable.reduce((count, row) => count + row.groups.length, 0)}개 적용 예정` : running ? "백그라운드 실행 가능" : message}</span><div className="illust-actions">
+    <footer className="illust-auto-footer"><span className="field-help" role="status">{step === 1 ? busy ? "후보 이미지를 찾는 중…" : `${indices.length ? `검색 색인 ${indices.length}개` : "전체 이미지 검색"}${excludeIndices.length ? ` · 제외 ${excludeIndices.length}개` : ""}` : step === 2 ? `캐릭터 ${applicable.length}명 · 프로필 ${applicable.reduce((count, row) => count + row.groups.length, 0)}개 적용 예정` : running ? "백그라운드 실행 가능" : message}</span><div className="illust-actions">
       {step > 1 && <button type="button" className="button secondary" disabled={busy} onClick={() => { setStep(step === 3 ? 2 : 1); setError(""); }}><ChevronLeft size={16} />{step === 3 ? "후보 확인" : "검색 조건 수정"}</button>}
-      {step === 1 && <button type="button" className="button primary" disabled={busy || readOnly || !!indexError || !remainingCharacters.length} onClick={() => void search()}><Search size={16} />{busy ? "후보 검색 중…" : "다음 · 캐릭터와 후보 확인"}<ChevronRight size={16} /></button>}
+      {step === 1 && <button type="button" className="button primary" disabled={busy || readOnly || !!indexError || !!excludeError || !remainingCharacters.length} onClick={() => void search()}><Search size={16} />{busy ? "후보 검색 중…" : "다음 · 캐릭터와 후보 확인"}<ChevronRight size={16} /></button>}
       {step === 2 && <button type="button" className="button primary" disabled={busy || readOnly || !applicable.length} onClick={() => void run()}><Sparkles size={16} />자동 대표 설정 실행{applicable.length ? ` · ${applicable.length}명` : ""}</button>}
       {step === 3 && (running ? <button type="button" className="button secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); }}><Square size={15} />{stopping ? "현재 비교 후 중단…" : "중단"}</button> : <>{!!applicable.length && <button type="button" className="button secondary" disabled={readOnly} onClick={() => void run()}>남은 {applicable.length}명 다시 실행</button>}<button type="button" className="button primary" onClick={onClose}><Check size={16} />완료</button></>)}
     </div></footer>

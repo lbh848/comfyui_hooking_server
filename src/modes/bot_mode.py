@@ -2484,7 +2484,7 @@ class BotMode:
             data = _load_bot_data()
             if body.get("operation", "preview") == "preview":
                 from modes.llm_service import routing_primary_max_concurrency
-                result = preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters"))
+                result = preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters"), body.get("exclude_indices"))
                 result["max_concurrency"] = routing_primary_max_concurrency(TASK_KEY)
                 return _json_ok(result)
             if body.get("operation") != "select":

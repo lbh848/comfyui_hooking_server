@@ -15,14 +15,29 @@ PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "bot_auto_batch.
 IMAGE_EXTENSIONS = {".png", ".webp", ".jpg", ".jpeg", ".gif", ".bmp", ".avif"}
 
 
+def _split_terms(value) -> list[str]:
+    values = re.split(r"[|,;\n]", value) if isinstance(value, str) else value
+    return list(dict.fromkeys(str(word).strip().casefold() for word in values if str(word).strip()))
+
+
 def normalize_indices(value) -> list[str]:
     if not isinstance(value, (str, list)):
         raise ValueError("검색 색인을 입력하세요.")
-    values = re.split(r"[|,;\n]", value) if isinstance(value, str) else value
-    indices = list(dict.fromkeys(str(word).strip().casefold() for word in values if str(word).strip()))
+    indices = _split_terms(value)
     if len(indices) > 8 or any(len(word) > 80 for word in indices):
         raise ValueError("검색 색인은 최대 8개, 각 80자 이내로 입력하세요.")
     return indices
+
+
+def normalize_exclude_indices(value) -> list[str]:
+    if value is None or value == "":
+        return []
+    if not isinstance(value, (str, list)):
+        raise ValueError("제외 색인을 확인하세요.")
+    excludes = _split_terms(value)
+    if len(excludes) > 8 or any(len(word) > 80 for word in excludes):
+        raise ValueError("제외 색인은 최대 8개, 각 80자 이내로 입력하세요.")
+    return excludes
 
 
 def image_stem(filename: str) -> str:
@@ -31,7 +46,16 @@ def image_stem(filename: str) -> str:
     return filename
 
 
-def candidate_identity(filename: str, indices: list[str]) -> tuple[str, str] | None:
+def is_excluded(filename: str, exclude_indices) -> bool:
+    stem = image_stem(filename)
+    return any(re.search(re.escape(word), stem, re.IGNORECASE) for word in exclude_indices)
+
+
+def candidate_identity(filename: str, indices: list[str], exclude_indices=()) -> tuple[str, str] | None:
+    # Exclusions remove literal filename matches before any index grouping, so an
+    # excluded image is never offered as a candidate or a fallback choice.
+    if is_excluded(filename, exclude_indices):
+        return None
     stem = image_stem(filename)
     if not indices:
         return re.sub(r"[_\s-]+", "_", stem.strip(" _-.")).casefold(), ""
@@ -46,7 +70,7 @@ def candidate_identity(filename: str, indices: list[str]) -> tuple[str, str] | N
     return None
 
 
-def character_candidates(bot_name: str, character: dict, directory: Path, indices: list[str]) -> dict:
+def character_candidates(bot_name: str, character: dict, directory: Path, indices: list[str], exclude_indices=()) -> dict:
     groups = {}
     stats = []
     all_candidates = []
@@ -55,7 +79,7 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
     for path in sorted(directory.iterdir() if directory.is_dir() else [], key=lambda path: path.name.casefold()):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS or path.name.startswith("_"):
             continue
-        if path.resolve().parent != directory:
+        if path.resolve().parent != directory or is_excluded(path.name, exclude_indices):
             continue
         stat = path.stat()
         file_stat = (path.name, stat.st_size, stat.st_mtime_ns)
@@ -65,7 +89,7 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
         }
         all_candidates.append(candidate)
         all_stats.append(file_stat)
-        identity = candidate_identity(path.name, indices)
+        identity = candidate_identity(path.name, indices, exclude_indices)
         if identity is None:
             continue
         key, emotion = identity
@@ -81,7 +105,7 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
             if card["id"] in used:
                 continue
             rep = next(iter(card.get("rep_images") or []), "")
-            identity = candidate_identity(rep, indices)
+            identity = candidate_identity(rep, indices, exclude_indices)
             rep_key = identity[0] if identity else re.sub(r"[_\s-]+", "_", image_stem(rep).strip(" _-.")).casefold()
             if rep and rep_key == group["key"]:
                 group["visual_card_id"] = card["id"]
@@ -103,7 +127,7 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
         stats = all_stats
     assigned = {group["visual_card_id"] for group in grouped}
     removed = [card["id"] for card in cards if card["id"] not in assigned] if grouped and not fallback_first else []
-    fingerprint = hashlib.sha256(json.dumps([character, indices, stats], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps([character, indices, list(exclude_indices), stats], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return {
         "character": character["name"], "groups": grouped, "fingerprint": fingerprint,
         "current_count": len(cards), "removed_card_ids": removed,
@@ -112,8 +136,9 @@ def character_candidates(bot_name: str, character: dict, directory: Path, indice
     }
 
 
-def preview(data: dict, bot_name: str, directory: Path, indices, characters=None) -> dict:
+def preview(data: dict, bot_name: str, directory: Path, indices, characters=None, exclude_indices=None) -> dict:
     indices = normalize_indices(indices)
+    exclude_indices = normalize_exclude_indices(exclude_indices)
     bot = next((bot for bot in data["bots"] if bot["name"] == bot_name), None)
     if bot is None:
         raise ValueError("봇을 찾을 수 없습니다.")
@@ -128,12 +153,12 @@ def preview(data: dict, bot_name: str, directory: Path, indices, characters=None
         path = (directory / bot_name / name).resolve()
         if not path.is_relative_to(directory.resolve()):
             raise ValueError("캐릭터 이미지 경로가 올바르지 않습니다.")
-        rows.append(character_candidates(bot_name, known[name], path, indices))
-    return {"indices": indices, "rows": rows, "prompt": PROMPT_PATH.read_text(encoding="utf-8"), "max_cards": MAX_VISUAL_CARDS}
+        rows.append(character_candidates(bot_name, known[name], path, indices, exclude_indices))
+    return {"indices": indices, "exclude_indices": exclude_indices, "rows": rows, "prompt": PROMPT_PATH.read_text(encoding="utf-8"), "max_cards": MAX_VISUAL_CARDS}
 
 
 def checked_row(data, directory, body):
-    result = preview(data, str(body.get("bot_name") or ""), directory, body.get("indices"), [body.get("character")])
+    result = preview(data, str(body.get("bot_name") or ""), directory, body.get("indices"), [body.get("character")], body.get("exclude_indices"))
     row = result["rows"][0]
     if row["error"]:
         raise ValueError(row["error"])
