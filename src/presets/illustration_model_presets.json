@@ -691,21 +691,15 @@
               "list": [
                 {
                   "lora_path": "IXY-MOSS-V1 (1).safetensors",
-                  "str": 1,
+                  "str": 0.6,
                   "BASE": "anima",
                   "trigger": "@ixy, sketch"
                 },
                 {
                   "lora_path": "km_flat_half.safetensors",
-                  "str": 0.4,
+                  "str": 0.3,
                   "BASE": "anima",
                   "trigger": ""
-                },
-                {
-                  "lora_path": "hentai_style_moss.safetensors",
-                  "str": 0.4,
-                  "BASE": "anima",
-                  "trigger": "@sera_hentai"
                 }
               ]
             }
@@ -742,21 +736,15 @@
               "list": [
                 {
                   "lora_path": "IXY-MOSS-V1 (1).safetensors",
-                  "str": 1,
+                  "str": 0.6,
                   "BASE": "anima",
                   "trigger": "@ixy, sketch"
                 },
                 {
                   "lora_path": "km_flat_half.safetensors",
-                  "str": 0.4,
+                  "str": 0.3,
                   "BASE": "anima",
                   "trigger": ""
-                },
-                {
-                  "lora_path": "hentai_style_moss.safetensors",
-                  "str": 0.4,
-                  "BASE": "anima",
-                  "trigger": "@sera_hentai"
                 }
               ]
             }
@@ -1340,21 +1328,15 @@
               "list": [
                 {
                   "lora_path": "IXY-MOSS-V1 (1).safetensors",
-                  "str": 1,
+                  "str": 0.6,
                   "BASE": "anima",
                   "trigger": "@ixy, sketch"
                 },
                 {
                   "lora_path": "km_flat_half.safetensors",
-                  "str": 0.4,
+                  "str": 0.3,
                   "BASE": "anima",
                   "trigger": ""
-                },
-                {
-                  "lora_path": "hentai_style_moss.safetensors",
-                  "str": 0.4,
-                  "BASE": "anima",
-                  "trigger": "@sera_hentai"
                 }
               ]
             }

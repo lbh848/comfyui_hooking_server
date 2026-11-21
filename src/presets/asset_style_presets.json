@@ -140,14 +140,14 @@
           "img_h": 1024,
           "seed": -1,
           "hrf_anima": false,
-          "hrf_size": 2,
+          "hrf_size": 1.5,
           "hrf_restore_size": true,
           "mask_area_limit_enabled": true,
           "mask_box": {
-            "x": 0.12142857142857143,
-            "y": 0.1181640625,
-            "width": 0.77,
-            "height": 0.8818359375
+            "x": 0.07714285714285714,
+            "y": 0.09765625,
+            "width": 0.8442857142857142,
+            "height": 0.90234375
           },
           "style_lora_list": []
         }
