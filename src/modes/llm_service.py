@@ -14,7 +14,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 from app_paths import config_root, data_root
 from llm_token_usage import approx_tokens as _approx_tokens, output_token_stats
 from llm_failure_details import format_llm_failure
-from llm_settings import LLM_SP, LLM_SP_SLOTS, fixed_sp_slot, RuntimeSettingsReader, SLOT_COUNT, SLOT_IDS, SLOT_SUFFIXES, UNCONFIGURED_SERVICE, runtime_config
+from llm_settings import LLM_SP, LLM_SP_SLOTS, SLOT_DEFAULTS, fixed_sp_slot, RuntimeSettingsReader, SLOT_COUNT, SLOT_IDS, SLOT_SUFFIXES, UNCONFIGURED_SERVICE, runtime_config
 
 import asyncio
 import illustration_flow
@@ -498,7 +498,7 @@ _current_config = _ContextConfig({
     "llm_custom_headers": "",         # LLM1 OpenAI 호환 요청에 병합할 HTTP header JSON object 문자열
     "llm_temperature": 1.0,
     "llm_max_tokens": DEFAULT_LLM_MAX_OUTPUT_TOKENS,  # 0 = 공급자 기본값 사용
-    "llm_stream": False,              # LLM1 실제 API 스트리밍
+    "llm_stream": SLOT_DEFAULTS["stream"],
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
@@ -525,7 +525,7 @@ for _suffix in LLM_SLOT_SUFFIXES[1:]:
         f"llm_temperature{_suffix}": 1.0,
         f"llm_custom_body{_suffix}": "",
         f"llm_custom_headers{_suffix}": "",
-        f"llm_stream{_suffix}": False,
+        f"llm_stream{_suffix}": SLOT_DEFAULTS["stream"],
         f"llm_max_tokens{_suffix}": 0,
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
@@ -630,7 +630,7 @@ def _slot_config_overrides(slot: str) -> dict:
     for base_key, slot_key, base_default in (
         ("llm_service", f"llm_service{suffix}", "openai"),
         ("llm_model", f"llm_model{suffix}", ""),
-        ("llm_stream", f"llm_stream{suffix}", False),
+        ("llm_stream", f"llm_stream{suffix}", SLOT_DEFAULTS["stream"]),
         ("llm_max_concurrency", f"llm_max_concurrency{suffix}", 1),
         ("llm_stream_idle_timeout_seconds", f"llm_stream_idle_timeout_seconds{suffix}", 90.0),
         ("llm_api_key", f"llm_api_key{suffix}", ""),
@@ -4004,7 +4004,7 @@ async def callLLMTaskResult(
                 "type": "request_mode",
                 "task_key": task_key,
                 "llm_slot": slot,
-                "streaming": bool(_base_config_get(stream_key, False)),
+                "streaming": bool(_base_config_get(stream_key, SLOT_DEFAULTS["stream"])),
             })
             return await _call_routed_text_slot(
                 slot,
@@ -4299,7 +4299,7 @@ async def callLLMVisionTaskResult(
                 "type": "request_mode",
                 "task_key": task_key,
                 "llm_slot": slot,
-                "streaming": bool(_base_config_get(stream_key, False)),
+                "streaming": bool(_base_config_get(stream_key, SLOT_DEFAULTS["stream"])),
             })
             if source_images:
                 # 다중 이미지: 단일 image_b64 자리는 무시하고 images 로 전송.
@@ -6981,7 +6981,7 @@ async def _call_llm_slot_text(slot, messages, model=None, json_mode=False):
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
     try:
-        if bool(_base_config_get(f"llm_stream{suffix}", False)):
+        if bool(_base_config_get(f"llm_stream{suffix}", SLOT_DEFAULTS["stream"])):
             return await _stream_call_to_text(messages, service, use_model, slot)
         return await _dispatch(messages, service, use_model)
     finally:
@@ -7084,7 +7084,7 @@ async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="imag
             return f"[LLM 실패] {e}"
 
         _llm_log(f"callLLMVision{_slot_number(slot)}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
-        if bool(_base_config_get(f"llm_stream{suffix}", False)):
+        if bool(_base_config_get(f"llm_stream{suffix}", SLOT_DEFAULTS["stream"])):
             return await _stream_call_to_text(new_messages, service, use_model, slot)
         return await _dispatch(new_messages, service, use_model)
     finally:

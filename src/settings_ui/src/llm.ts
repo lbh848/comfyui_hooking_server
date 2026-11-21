@@ -66,7 +66,7 @@ export const imagePdfDefaults = {
 };
 export const llms: LlmSlot[] = llmSlotIds.map((id) => ({
   id, providerId: llmSpProfile(id) ? "" : "openai", model: llmSpProfile(id) ? llmSp.workflow_name : "", alias: llmSpProfile(id)?.alias || "",
-  stream: !!llmSpProfile(id), vision_compress: false, gemini_base64: false, pdf_prompt: false,
+  stream: true, vision_compress: false, gemini_base64: false, pdf_prompt: false,
   pdf_prompt_format: "pdf", ...imagePdfDefaults, max_tokens: llmSpProfile(id) ? 8196 : 0, stream_idle_timeout_seconds: llmSpProfile(id) ? 0 : 90,
   context_size: llmSp.context_size,
   ...(llmSpProfile(id) ? { vram_headroom_mib: llmSp.vram_headroom_mib } : {}),

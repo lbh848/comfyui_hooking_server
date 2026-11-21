@@ -14,7 +14,7 @@ SLOT_PATTERN = r"llm(?:[1-9]|10|_sp2?)"
 UNCONFIGURED_SERVICE = "unconfigured"
 SLOT_DEFAULTS = {
     "model": "", "alias": "",
-    "stream": False, "vision_compress": False, "gemini_base64": False,
+    "stream": True, "vision_compress": False, "gemini_base64": False,
     "pdf_prompt": False, "pdf_prompt_format": "pdf", "max_tokens": 0,
     "pdf_image_media_resolution": "medium",
     "pdf_image_page_width": 1191, "pdf_image_page_height": 1684,

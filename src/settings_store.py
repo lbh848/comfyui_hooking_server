@@ -10,7 +10,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 from app_paths import SOURCE_DIR, config_root
 from json_store import write_json_atomic
 from configuration import migrate_legacy_config, read_document, settings_lock, settings_revision
-from llm_settings import LLM_SP, SLOT_IDS, SLOT_PATTERN, default_llm_routing, migrate_document, validate_context_size
+from llm_settings import LLM_SP, SLOT_DEFAULTS, SLOT_IDS, SLOT_PATTERN, default_llm_routing, migrate_document, validate_context_size
 
 
 class SettingsValue(BaseModel):
@@ -93,7 +93,7 @@ class LlmSlot(SettingsValue):
     providerId: Identifier | Literal[""]
     model: Text = ""
     alias: Text = ""
-    stream: bool = False
+    stream: bool = SLOT_DEFAULTS["stream"]
     vision_compress: bool = False
     gemini_base64: bool = False
     pdf_prompt: bool = False

@@ -4,6 +4,7 @@ from console_encoding import configure_utf8_stdio
 configure_utf8_stdio()
 
 from app_paths import config_root, data_root, initialize_layout, default_app_paths, portable_app_paths, resolve_app_paths
+from llm_settings import SLOT_DEFAULTS
 from manga_page_sizes import parse_manga_page_sizes
 from lora_paths import (
     ASSET_LORA_FOLDER,
@@ -736,7 +737,7 @@ DEFAULT_CONFIG = {
     },
     "llm_temperature": 1.0,
     "llm_max_tokens": llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,  # 0 = 공급자 기본값 사용
-    "llm_stream": False,              # LLM1 실제 API 스트리밍
+    "llm_stream": SLOT_DEFAULTS["stream"],
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청 래핑
@@ -862,7 +863,7 @@ for _suffix in llm_service.LLM_SLOT_SUFFIXES[1:]:
         f"llm_reasoning_effort{_suffix}": "",
         f"llm_reasoning_budget_tokens{_suffix}": 0,
         f"llm_temperature{_suffix}": 1.0,
-        f"llm_stream{_suffix}": False,
+        f"llm_stream{_suffix}": SLOT_DEFAULTS["stream"],
         f"llm_max_tokens{_suffix}": 0,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_max_concurrency{_suffix}": 1,
@@ -12702,7 +12703,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     cfg = llm_service.get_config()
     _suffix = "" if target == "llm1" else target[3:]
     if thinking_check:
-        use_stream = bool(cfg.get(f"llm_stream{_suffix}", False))
+        use_stream = bool(cfg.get(f"llm_stream{_suffix}", SLOT_DEFAULTS["stream"]))
     cur_service = cfg.get(f"llm_service{_suffix}") or "openai"
     cur_model_key = f"llm_model{_suffix}"
     fn_single, fn_vision_single = _slot_fns[target]
@@ -23381,7 +23382,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_temperature{_sfx}": app_config.get(f"llm_temperature{_sfx}", 1.0),
                     f"llm_custom_body{_sfx}": app_config.get(f"llm_custom_body{_sfx}", ""),
                     f"llm_custom_headers{_sfx}": app_config.get(f"llm_custom_headers{_sfx}", ""),
-                    f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", False),
+                    f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", SLOT_DEFAULTS["stream"]),
                     f"llm_max_tokens{_sfx}": app_config.get(
                         f"llm_max_tokens{_sfx}",
                         llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
