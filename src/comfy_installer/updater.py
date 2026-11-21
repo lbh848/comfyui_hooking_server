@@ -27,6 +27,7 @@ class HookingServerUpdateError(RuntimeError):
 
 LogCallback = Callable[[str], None]
 HOOKING_REPOSITORY = "https://github.com/lbh848/comfyui_hooking_server"
+HOOKING_BRANCH = "main"
 _QUARANTINE_ROOT_NAME = "comfy-installer-quarantine"
 _TRACKED_BACKUP_ROOT_NAME = "update_backup"
 
@@ -720,18 +721,9 @@ def _git_value(root: Path, *arguments: str) -> str:
     return lines[-1].strip() if lines else ""
 
 
-def hooking_update_branch(root: Path) -> str:
-    branch = _git_value(root, "branch", "--show-current")
-    if branch not in ("main", "dev"):
-        raise HookingServerUpdateError(
-            f"공방 업데이트는 main 또는 dev 브랜치에서 실행하세요. 현재 브랜치: {branch or '(detached)'}"
-        )
-    return branch
-
-
-def fetch_hooking_commit(root: Path, branch: str, *, cancel_event: Event, log: LogCallback | None) -> str:
-    ref = f"refs/remotes/origin/{branch}"
-    run_command(["git", "fetch", "origin", f"+refs/heads/{branch}:{ref}"], cwd=root,
+def fetch_hooking_commit(root: Path, *, cancel_event: Event, log: LogCallback | None) -> str:
+    ref = f"refs/remotes/origin/{HOOKING_BRANCH}"
+    run_command(["git", "fetch", "origin", f"+refs/heads/{HOOKING_BRANCH}:{ref}"], cwd=root,
                 cancel_event=cancel_event, log=log, timeout=900)
     return _git_value(root, "rev-parse", ref)
 
@@ -798,9 +790,8 @@ def update_hooking_server(
     log: LogCallback | None = None,
     config_backup: dict | None = None,
     target_ref: str | None = None,
-    target_branch: str | None = None,
 ) -> dict:
-    """Fast-forward the installed branch to the selected commit from its origin."""
+    """Fast-forward the installed branch to the selected origin/main commit."""
 
     root = install_root(project_root)
     try:
@@ -808,9 +799,11 @@ def update_hooking_server(
             raise HookingServerUpdateError(
                 f"후킹 서버가 Git 설치가 아니어서 업데이트할 수 없습니다: {root}"
             )
-        branch = hooking_update_branch(root)
-        if target_branch is not None and target_branch != branch:
-            raise HookingServerUpdateError("브랜치가 바뀌었습니다. 커밋 가져오기를 다시 실행하세요.")
+        installed_branch = _git_value(root, "branch", "--show-current")
+        if installed_branch not in (HOOKING_BRANCH, "dev"):
+            raise HookingServerUpdateError(
+                f"공방 업데이트는 main 또는 dev 브랜치에서 실행하세요. 현재 브랜치: {installed_branch or '(detached)'}"
+            )
         origin = _git_value(root, "remote", "get-url", "origin")
         if _normalize_repository(origin) != _normalize_repository(
             HOOKING_REPOSITORY
@@ -819,7 +812,7 @@ def update_hooking_server(
                 "후킹 서버 origin이 공식 배포 저장소와 다릅니다: "
                 f"actual={origin}"
             )
-        remote = target_ref or fetch_hooking_commit(root, branch, cancel_event=cancel_event, log=log)
+        remote = target_ref or fetch_hooking_commit(root, cancel_event=cancel_event, log=log)
         validate_release_storage(root, remote)
         changes = run_command(
             ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -841,7 +834,7 @@ def update_hooking_server(
         )
         if log:
             log(
-                f"[후킹 서버 업데이트] 사용자가 요청하여 origin/{branch} 업데이트 시작: "
+                f"[후킹 서버 업데이트] 사용자가 요청하여 origin/{HOOKING_BRANCH} 업데이트 시작: "
                 f"현재={before[:12]}"
             )
         quarantine = _prepare_untracked_quarantine(
@@ -893,11 +886,11 @@ def update_hooking_server(
                 log(f"[후킹 서버 업데이트] 이미 최신: {after[:12]}")
             else:
                 log(
-                    f"[후킹 서버 업데이트] {branch} 적용 완료: "
+                    f"[후킹 서버 업데이트] origin/{HOOKING_BRANCH} 적용 완료: "
                     f"{before[:12]} -> {after[:12]}"
                 )
         return {
-            "branch": branch,
+            "branch": HOOKING_BRANCH,
             "before": before,
             "after": after,
             "changed": before != after,

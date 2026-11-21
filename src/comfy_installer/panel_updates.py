@@ -8,7 +8,7 @@ Original-project fixes retained here:
 * d8a57d4: keep workflow generation tests separate from ordinary updates.
 
 Distribution presets and bundled workflows now follow application releases.
-The sequential and individual actions share the installed branch, conflict backups,
+The sequential and individual actions share the main release branch, conflict backups,
 and update routines for the Soya repositories and the application's pinned Comfy runtime.
 """
 from __future__ import annotations
@@ -31,9 +31,9 @@ from .runtime_state import (
     collect_custom_node_state, desired_python_signature, load_runtime_receipt,
 )
 from .updater import (
-    HOOKING_REPOSITORY, _normalize_repository, _run_git_capture,
+    HOOKING_BRANCH, HOOKING_REPOSITORY, _normalize_repository, _run_git_capture,
     _prepare_untracked_quarantine, _restore_untracked_quarantine,
-    fetch_hooking_commit, hooking_update_branch, update_hooking_server,
+    fetch_hooking_commit, update_hooking_server,
 )
 from .workflow_library import (
     basic_workflow_item_ids, install_managed_workflows, unpack_to_library,
@@ -52,7 +52,7 @@ def read_update_check(project_root: Path) -> dict:
     checked = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     if not isinstance(checked, dict):
         raise ValueError("저장된 업데이트 확인 정보를 읽을 수 없습니다.")
-    return checked
+    return checked if checked.get("branch", HOOKING_BRANCH) == HOOKING_BRANCH else {}
 
 
 def _now() -> str:
@@ -83,10 +83,6 @@ class WorkshopUpdates:
     def _save(self) -> None:
         write_json_atomic(self.state_path, self.checked)
 
-    def _checked_for_branch(self, branch: str) -> dict:
-        # Checks saved before branch selection always came from origin/main.
-        return self.checked if self.checked.get("branch", "main") == branch else {}
-
     def backup_status(self) -> dict:
         # Never traverse a user-created junction outside this installation.
         if self.backup_root.is_symlink() or self.backup_root.is_junction() or self.backup_root.resolve() != self.root / "data" / "update_backup":
@@ -102,7 +98,7 @@ class WorkshopUpdates:
 
     def status(self) -> dict:
         current = self._head(self.root)
-        checked = self._checked_for_branch(self._git(self.root, "branch", "--show-current")) if self.checked and current else {}
+        checked = self.checked if current else {}
         target = checked.get("application")
         ahead = behind = 0
         if target and current:
@@ -214,8 +210,7 @@ class WorkshopUpdates:
 
     def _fetch(self) -> dict:
         self._verify_origin(self.root, HOOKING_REPOSITORY)
-        branch = hooking_update_branch(self.root)
-        target = fetch_hooking_commit(self.root, branch, cancel_event=self.service._cancel, log=self.service._log)
+        target = fetch_hooking_commit(self.root, cancel_event=self.service._cancel, log=self.service._log)
         self.cache_root.mkdir(parents=True, exist_ok=True)
         manifest_path = self.cache_root / "install_manifest.json"
         manifest_path.write_bytes(_run_git_capture(self.root, "show", f"{target}:src/comfy_installer/resources/install_manifest.json"))
@@ -234,8 +229,8 @@ class WorkshopUpdates:
             run_command(["git", "fetch", "origin", node.get("tracking_branch", "main")], cwd=path, cancel_event=self.service._cancel, log=self.service._log, timeout=900)
             nodes[name] = self._git(path, "rev-parse", "FETCH_HEAD")
         commits = self._git(self.root, "log", "-20", "--format=%h%x09%s", f"HEAD..{target}").splitlines()
-        previous = self._checked_for_branch(branch)
-        self.checked = {"checked_at": _now(), "branch": branch, "application": target, "comfy": manifest.comfy, "manifest": manifest.data,
+        previous = self.checked
+        self.checked = {"checked_at": _now(), "branch": HOOKING_BRANCH, "application": target, "comfy": manifest.comfy, "manifest": manifest.data,
                         "nodes": nodes, "commits": commits,
                         "workflows_pending": previous.get("workflows_pending", False),
                         "resume_sequential": previous.get("resume_sequential", False)}
@@ -252,7 +247,7 @@ class WorkshopUpdates:
             result = update_hooking_server(
                 project_root=self.service.project_root, config_path=self.service.config_path,
                 backup_dir=self.backup_root / "config", cancel_event=self.service._cancel,
-                log=self.service._log, target_ref=target, target_branch=self.checked.get("branch", "main"),
+                log=self.service._log, target_ref=target,
             )
             # The newly fetched release can require a newer pack reader. Resume
             # the bundled-workflow phase after the new application has started.
