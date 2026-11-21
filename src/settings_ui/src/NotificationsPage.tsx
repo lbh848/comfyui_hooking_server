@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { CheckCheck, ChevronRight, RefreshCw } from "lucide-react";
+import { CheckCheck, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import { Badge, Modal, Panel } from "./components";
 import "./notifications.css";
 
@@ -7,6 +7,8 @@ const NotificationMarkdown = lazy(() => import("./NotificationMarkdown"));
 
 type NotificationItem = { name: string; download_url: string };
 type Listing = { items: NotificationItem[]; read: string[]; checked_at?: number; warning?: string };
+
+const INTRO_PAGE_URL = "https://arca.live/b/characterai/189840932";
 
 async function request<T>(path: string, signal?: AbortSignal, names?: string[]): Promise<T> {
   const response = await fetch("/api/setting/notifications" + path, {
@@ -119,6 +121,7 @@ export function NotificationsPage({ board }: { board: ReturnType<typeof useNotif
   return <Panel className="notifications-panel" title={<>공지사항 {(feed.items.length > 0 || feed.checked_at !== undefined) &&
     <Badge tone={unread.length ? "rose" : "neutral"}>안 읽음 {unread.length}</Badge>}</>}
     aside={<div className="notification-actions">
+      <a className="button small" href={INTRO_PAGE_URL} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true" />소개 페이지 방문하기</a>
       <button className="button secondary small" onClick={() => void refresh(true)} disabled={loading}><RefreshCw size={14} />새로고침</button>
       <button className="button secondary small" onClick={() => void markAllRead()} disabled={!unread.length || saving}><CheckCheck size={15} />{saving ? "저장 중…" : "전체 읽음 처리"}</button>
     </div>}>

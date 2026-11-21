@@ -76285,7 +76285,8 @@
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
                         <h3 style="margin:0;">공지사항</h3>
-                        <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px;">
+                            <a href="https://arca.live/b/characterai/189840932" target="_blank" rel="noopener noreferrer" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem; text-decoration:none; white-space:nowrap;">소개 페이지 방문하기</a>
                             <button onclick="markAllNotiRead()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 읽음 처리</button>
                             <a href="https://arca.live/b/characterai/179146903" target="_blank" rel="noopener" title="아카라이브" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; text-decoration:none; opacity:0.7; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📝</a>
                             <button onclick="document.getElementById('noti-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
