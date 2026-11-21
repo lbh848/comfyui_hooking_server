@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Clock3, Download, FolderOpen, Pencil, RefreshCw, Star, Trash2, UserRound } from "lucide-react";
 import { Empty, Modal, Panel } from "./components";
 import { AssetImageEdit } from "./AssetImageEdit";
 import { AssetCharacterFolders, AssetOutfitFolders, type AssetGallerySortOrder } from "./AssetGalleryGroups";
+import { IllustrationMaskOverlay } from "./IllustrationMaskPreview";
 import { assetMedia, assetOutputLabels, assetRequest, useAssetResource, type AssetRecord } from "./asset";
 import type { AssetGalleryCombination } from "./assetGallerySelection";
 import { useAssetGalleryKeyboard } from "./useAssetGalleryKeyboard";
@@ -13,6 +14,16 @@ type FolderDeleteTarget = { character: string; url?: string } & (
 );
 type SortOrder = AssetGallerySortOrder;
 const selectionKey = (value?: AssetRecord) => JSON.stringify([value?.character, value?.outfit, value?.expression]);
+
+function originalRegionMask(positive: unknown) {
+  if (typeof positive !== "string" || !positive.trimStart().startsWith("{")) return "";
+  try {
+    const document = JSON.parse(positive);
+    const mask = document?.assets?.[document?.fields?.REGION_MASK];
+    return mask?.media_type === "image/png" && mask.encoding === "base64" && typeof mask.data === "string"
+      ? `data:image/png;base64,${mask.data}` : "";
+  } catch { return ""; }
+}
 
 function generationDuration(image: AssetRecord | null) {
   const seconds = image?.generation_time;
@@ -46,6 +57,15 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
   const [character, setCharacter] = useState(selection?.character || "");
   const [combination, setCombination] = useState<AssetRecord | null>(null);
   const [preview, setPreview] = useState<AssetRecord | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [showMask, setShowMask] = useState(false);
+  const [maskKind, setMaskKind] = useState<"tracked" | "original">("tracked");
+  const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+  const hasRegionalPreview = promptOpen && preview && !preview.is_edited && !preview.is_animated;
+  const originalMask = useMemo(() => hasRegionalPreview ? originalRegionMask(preview.positive) : "", [hasRegionalPreview, preview?.positive]);
+  const trackedMask = hasRegionalPreview && typeof preview.tracked_region_mask === "string" && preview.tracked_region_mask.startsWith("data:image/png;base64,")
+    ? preview.tracked_region_mask : "";
+  const previewMask = maskKind === "original" ? originalMask || trackedMask : trackedMask || originalMask;
   const previewTime = imageTime(preview);
   const previewDuration = generationDuration(preview);
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
@@ -134,7 +154,10 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
     finally { browsing.current = false; setBusy(false); }
   }
   async function openImage(image: AssetRecord) {
-    if (!onPick) { setPreview(image); return; }
+    if (!onPick) {
+      setPromptOpen(false); setShowMask(false); setMaskKind("tracked"); setPreviewSize(null); setPreview(image);
+      return;
+    }
     setBusy(true); setError("");
     try { await onPick(imageUrl(image), image); }
     catch (cause) { setError(String(cause)); } finally { setBusy(false); }
@@ -285,14 +308,26 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
         <p className="field-help">{previewTime ? <>{previewTime.label} · <time dateTime={previewTime.date.toISOString()}>{previewTime.date.toLocaleString("ko-KR", {
           year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
         })}</time></> : "생성 시간 정보 없음"}{previewDuration && <span title={durationHint}> · {previewDuration}</span>}</p>
-        <div className="asset-preview-image" ref={previewArea}><img src={imageUrl(preview)} alt={preview.filename} /></div>
+        <div className="asset-preview-image" ref={previewArea}><div className="illust-mask-image asset-preview-frame">
+          <img src={imageUrl(preview)} alt={preview.filename} onLoad={({ currentTarget: image }) => setPreviewSize({ width: image.naturalWidth, height: image.naturalHeight })} />
+          {showMask && previewMask && previewSize && <IllustrationMaskOverlay {...previewSize} maskUrl={previewMask} maskOutline label={previewMask === trackedMask ? "1차 추적 마스크 오버레이" : "원본 마스크 오버레이"} />}
+        </div></div>
         <div className="asset-actions">
           <a className="button secondary" download={preview.filename} href={imageUrl(preview)}><Download size={14} />다운로드</a>
           {!onPick && <button type="button" className="button secondary" disabled={busy} aria-pressed={!!preview.is_representative} onClick={() => void action("set_representative", preview)}><Star size={14} />{preview.is_representative ? "대표 해제" : "대표 설정"}</button>}
           <button type="button" className="button danger" disabled={busy} onClick={() => requestDelete(preview)}><Trash2 size={14} />삭제</button>
         </div>
         {error && <p className="settings-feedback error" role="alert">{error}</p>}
-        <details className="asset-preview-prompts"><summary className="button secondary"><ChevronRight size={14} />프롬프트</summary><pre className="asset-prompt">{preview.positive || "저장된 프롬프트 없음"}</pre></details>
+        <details className="asset-preview-prompts" onToggle={event => setPromptOpen(event.currentTarget.open)}>
+          <summary className="button secondary"><ChevronRight size={14} />프롬프트</summary>
+          {previewMask && <div className="illust-mask-controls asset-preview-mask-controls">
+            <label><input type="checkbox" checked={showMask} onChange={event => setShowMask(event.target.checked)} />마스크 표시</label>
+            {originalMask && trackedMask ? <label>마스크 종류<select value={maskKind} onChange={event => setMaskKind(event.target.value === "original" ? "original" : "tracked")}>
+              <option value="tracked">1차 추적 마스크</option><option value="original">원본 마스크</option>
+            </select></label> : <span className="field-help">{trackedMask ? "1차 추적 마스크" : "원본 마스크 · 1차 추적 마스크 기록 없음"}</span>}
+          </div>}
+          <pre className="asset-prompt">{preview.positive || "저장된 프롬프트 없음"}</pre>
+        </details>
       </Modal>}
       {deletingFolder && <Modal title={deletingFolder.kind === "character" ? "캐릭터 삭제" : "복장·표정 폴더 삭제"} className="asset-delete-modal" backgroundable={false} closeDisabled={busy} onClose={() => setDeletingFolder(null)}>
         <div className="asset-delete-target">

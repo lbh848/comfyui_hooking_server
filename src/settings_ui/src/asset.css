@@ -393,7 +393,8 @@
   .asset-region-submit { gap: 8px; }
   .asset-region-submit > .button { padding: 8px; font-size: 11px; }
 }
-.asset-preview-image img { display: block; max-width: 100%; max-height: 65vh; margin: 0 auto 20px; object-fit: contain; }
+.asset-preview-frame { width: fit-content; max-width: 100%; margin: 0 auto 20px; }
+.asset-preview-image .asset-preview-frame img { width: auto; height: auto; max-width: 100%; max-height: 65vh; }
 .asset-preview-modal .modal-window-actions .icon-button { width: 35px; height: 35px; border: 1px solid var(--control-border); background: var(--panel); }
 .asset-preview-modal .modal-window-actions .icon-button:hover { border-color: var(--rose); background: var(--rose-soft); }
 .asset-preview-modal .asset-actions { margin-bottom: 12px; }
@@ -401,6 +402,7 @@
 .asset-preview-prompts > summary::-webkit-details-marker { display: none; }
 .asset-preview-prompts[open] > summary { background: var(--rose-soft); border-color: var(--rose); }
 .asset-preview-prompts[open] > summary > svg { transform: rotate(90deg); }
+.asset-preview-mask-controls { margin: 12px 0; }
 .asset-prompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 16px; max-height: 55vh; overflow: auto; }
 .asset-reference-images { display: flex; gap: 10px; flex-wrap: wrap; }
 .asset-reference-images > div { display: flex; flex-direction: column; width: 115px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }

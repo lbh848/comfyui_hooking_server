@@ -4704,7 +4704,10 @@ async def submit_workflow_to_comfy(
                 f"task={task_key}, bytes={len(image_bytes)}, "
                 f"prompt_id={metadata.get('prompt_id')}"
             )
-            return image_bytes, {execution_target: metadata}
+            submit_details = {execution_target: metadata}
+            if task_key == "asset_generation" and metadata.get("mask_url"):
+                submit_details["tracked_region_mask"] = metadata["mask_url"]
+            return image_bytes, submit_details
         except Exception as e:
             print(
                 f"[WORKFLOW:{provider_label.upper()}] 이미지 워크플로우 실패: "
@@ -4803,6 +4806,12 @@ async def submit_workflow_to_comfy(
         submit_details = dict(node_errors)
         if stable_model_reuse_traces:
             submit_details["_stable_model_reuse"] = stable_model_reuse_traces
+        if task_key == "asset_generation":
+            tracked_mask = await illustration_flow.fetch_comfy_dynamic_mask(
+                real_outputs, fetch_real_image, port=target_port,
+            )
+            if tracked_mask:
+                submit_details["tracked_region_mask"] = "data:image/png;base64," + base64.b64encode(tracked_mask).decode("ascii")
         return img_bytes, submit_details
     except aiohttp.ClientError as e:
         # ComfyUI가 켜져 있지 않으면 ws_connect(제출보다 먼저 실행)에서 연결 실패.

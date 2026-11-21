@@ -689,18 +689,9 @@ def record_image_mask(image_bytes):
     print(f"[ILLUST_FLOW:MASK] 실행 중인 삽화 노드 없음: run={run['id']}, frontier={_frontier.get()}")
 
 
-async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
-    """Record tracked face positions and the final mask actually used by Comfy."""
+async def fetch_comfy_dynamic_mask(outputs, fetch_image, *, port):
+    """Fetch the mask exported by the first sampler after face tracking."""
     for node_id, output in outputs.items():
-        if "soya_face_positions" in output:
-            run = _run.get()
-            for image_node_id in _frontier.get():
-                node = run["nodes"].get(image_node_id) if run is not None else None
-                if node is not None and node.get("kind") == "image":
-                    update(run, image_node_id, face_positions=copy.deepcopy(output["soya_face_positions"]))
-                    break
-            else:
-                print(f"[ILLUST_FLOW:FACE] No active image node; positions not recorded: node={node_id}")
         references = output.get("soya_dynamic_mask", [])
         if not references:
             continue
@@ -710,16 +701,33 @@ async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
                 reference["filename"], reference.get("subfolder", ""),
                 reference.get("type", "temp"), port=port,
             )
-            if not image_bytes:
-                print(f"[ILLUST_FLOW:MASK] Dynamic preview empty: node={node_id}, ref={reference}")
-                return
-            record_image_mask(image_bytes)
-            print(f"[ILLUST_FLOW:MASK] Dynamic final mask recorded: node={node_id}")
-            return image_bytes
+            if image_bytes and image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                return image_bytes
+            print(f"[COMFY:MASK] Dynamic mask PNG unavailable: node={node_id}, ref={reference}")
         except Exception as exc:
-            print(f"[ILLUST_FLOW:MASK] Dynamic preview failed: node={node_id}, refs={references}, error={exc}")
+            print(f"[COMFY:MASK] Dynamic mask download failed: node={node_id}, refs={references}, error={exc}")
             traceback.print_exc()
-        return
+
+
+async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
+    """Record tracked face positions and the final mask actually used by Comfy."""
+    for node_id, output in outputs.items():
+        if "soya_face_positions" not in output:
+            continue
+        run = _run.get()
+        for image_node_id in _frontier.get():
+            node = run["nodes"].get(image_node_id) if run is not None else None
+            if node is not None and node.get("kind") == "image":
+                update(run, image_node_id, face_positions=copy.deepcopy(output["soya_face_positions"]))
+                break
+        else:
+            print(f"[ILLUST_FLOW:FACE] No active image node; positions not recorded: node={node_id}")
+        break
+    image_bytes = await fetch_comfy_dynamic_mask(outputs, fetch_image, port=port)
+    if image_bytes:
+        record_image_mask(image_bytes)
+        print("[ILLUST_FLOW:MASK] Dynamic final mask recorded")
+        return image_bytes
     print("[ILLUST_FLOW:MASK] No dynamic output; retaining initial mask or intentional bypass")
 
 

@@ -2362,6 +2362,7 @@ class AssetMode:
             generation_time = round(time.perf_counter() - generation_started, 3)
             created_at = time.time()
             prompt_record_path = os.path.join(save_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
+            tracked_region_mask = error.get("tracked_region_mask") if isinstance(error, dict) else None
             try:
                 with open(prompt_record_path, "w", encoding="utf-8") as f:
                     json.dump({
@@ -2376,6 +2377,7 @@ class AssetMode:
                         "stable_model_reuse": stable_model_reuse,
                         "generation_time": generation_time,
                         "created_at": created_at,
+                        **({"tracked_region_mask": tracked_region_mask} if tracked_region_mask else {}),
                     }, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[ASSET] 프롬프트 기록 저장 실패: {prompt_record_path} ({e})")
@@ -2966,6 +2968,7 @@ class AssetMode:
                 "has_prompt": bool(prompt_data),
                 "positive": prompt_data.get("positive", ""),
                 "negative": prompt_data.get("negative", ""),
+                "tracked_region_mask": prompt_data.get("tracked_region_mask", ""),
                 "prompt_character": prompt_data.get("character", ""),
                 "prompt_appearance": prompt_data.get("appearance", ""),
                 "prompt_outfit": prompt_data.get("outfit", ""),
