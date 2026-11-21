@@ -203,6 +203,10 @@ function AssetAppContent() {
     return assetRequest("asset/preview", await buildAssetRequest(slot, tags.data!, settings, styles));
   }
   function addChain(slot = newAssetSlot()) { setDraft(previous => ({ ...previous, chains: [...previous.chains, newAssetSlot(slot)] })); }
+  function createChain() {
+    const slot = newAssetSlot();
+    setDraft(previous => ({ ...previous, chains: [slot], repeat: 1, preset: "", presetScope: "local" }));
+  }
   async function loadBatchPreset(section: AssetSettingsSection, id: string, onChange: (patch: AssetRecord) => void) {
     if (section === "character") {
       const catalog = await assetRequest("asset_mode/tags");
@@ -363,6 +367,7 @@ function AssetAppContent() {
         <ModalPage page="batch" pageTitle="에셋 일괄 생성" active={info.id === "batch"} onNavigate={changePage}>
           {batchBlockedReason && <p className="field-help" role="status">{batchBlockedReason}</p>}
           <Panel title={<>체인 구성 <Badge>{chains.length}개 슬롯</Badge></>} aside={<AssetGenerationStatus onOpenQueue={() => changePage("work-queue")} onStateChange={setBatchQueue} />}><div className="asset-batch-toolbar"><AssetChainPresetControls resource={presets} name={draft.preset} scope={draft.presetScope} chains={chains} repeat={draft.repeat} disabled={busy}
+            onCreate={createChain}
             onSelect={(preset, presetScope) => setDraft(previous => ({ ...previous, preset, presetScope }))}
             onLoad={loadPreset} notify={setToast} />
             <div className="asset-actions"><button className="button" disabled={busy || !chains.length} onClick={() => { setBulk({}); setBulkKeepExpression(true); setError(""); setDialog("bulk"); }}><Settings2 size={14} />일괄 설정</button><button className="button" disabled={busy || !chains.length} onClick={() => void run(exportChains)}><Download size={14} />공유</button><button className="button" disabled={busy} onClick={() => fileInput.current?.click()}><Upload size={14} />로드</button><input ref={fileInput} hidden type="file" accept=".json,application/json" onChange={event => { const file = event.target.files?.[0]; if (file) void run(() => importChains(file)); event.target.value = ""; }} /></div>

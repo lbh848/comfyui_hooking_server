@@ -1,4 +1,4 @@
-import { Copy, Save, Trash2 } from "lucide-react";
+import { Copy, FilePlus2, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Modal } from "./components";
 import { AssetChainLoadDialog } from "./AssetChainLoadDialog";
@@ -9,9 +9,10 @@ import { assetRequest, type AssetRecord, type useAssetResource } from "./asset";
 type ChainPreset = { name: string; scope: AssetScope; slot_count: number; repeat: number };
 const presetKey = (preset: ChainPreset) => `${preset.scope}:${preset.name}`;
 
-export function AssetChainPresetControls({ resource, name, scope, chains, repeat, disabled, onSelect, onLoad, notify }: {
+export function AssetChainPresetControls({ resource, name, scope, chains, repeat, disabled, onCreate, onSelect, onLoad, notify }: {
   resource: ReturnType<typeof useAssetResource>; name: string; scope?: AssetScope;
   chains: AssetRecord[]; repeat: number; disabled: boolean;
+  onCreate: () => void;
   onSelect: (name: string, scope: AssetScope) => void;
   onLoad: (append: boolean, name: string, scope: AssetScope) => Promise<void>;
   notify: (message: string) => void;
@@ -21,7 +22,7 @@ export function AssetChainPresetControls({ resource, name, scope, chains, repeat
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [dialog, setDialog] = useState<"save" | "duplicate" | null>(null);
+  const [dialog, setDialog] = useState<"create" | "save" | "duplicate" | null>(null);
   const [loadPreset, setLoadPreset] = useState<ChainPreset | null>(null);
   const [targetName, setTargetName] = useState("");
   const [targetScope, setTargetScope] = useState<AssetScope>("local");
@@ -92,6 +93,11 @@ export function AssetChainPresetControls({ resource, name, scope, chains, repeat
     }))} /></SearchableSelect></label>
     <AssetScopeControls scope={selected?.scope} unlocked={!!token} disabled={blocked || !resource.data} onAction={change} />
     <div className="asset-actions">
+      <button type="button" className="button" disabled={blocked} onClick={() => {
+        setError("");
+        if (chains.length) setDialog("create");
+        else onCreate();
+      }}><FilePlus2 size={14} />새 체인</button>
       <button className="button" disabled={blocked || !chains.length || locked || !resource.data} onClick={() => openSave(false)}><Save size={14} />저장</button>
       <button className="button" disabled={blocked || !selected} onClick={() => openSave(true)}><Copy size={14} />복제</button>
       <button className="button danger" disabled={blocked || !selected || locked} onClick={() => {
@@ -105,7 +111,14 @@ export function AssetChainPresetControls({ resource, name, scope, chains, repeat
     {error && !dialog && !loadPreset && <p className="settings-feedback error" role="alert">{error}</p>}
     {loadPreset && <AssetChainLoadDialog preset={loadPreset} currentCount={chains.length} busy={blocked} error={error}
       onClose={() => { setLoadPreset(null); setError(""); }} onLoad={append => void confirmLoad(append)} />}
-    {dialog && <Modal title={dialog === "duplicate" ? "체인 프리셋 복제" : "체인 프리셋 저장"} backgroundable={false} closeDisabled={blocked} onClose={() => setDialog(null)}>
+    {dialog === "create" && <Modal title="새 체인 만들기" backgroundable={false} closeDisabled={blocked} onClose={() => setDialog(null)}>
+      <p>현재 슬롯 {chains.length}개를 비우고 반복을 1회로 설정합니다. 저장하지 않은 슬롯 설정은 사라집니다.</p>
+      <div className="asset-actions">
+        <button type="button" className="button" autoFocus disabled={blocked} onClick={() => setDialog(null)}>취소</button>
+        <button type="button" className="button primary" disabled={blocked} onClick={() => { onCreate(); setDialog(null); }}>만들기</button>
+      </div>
+    </Modal>}
+    {(dialog === "save" || dialog === "duplicate") && <Modal title={dialog === "duplicate" ? "체인 프리셋 복제" : "체인 프리셋 저장"} backgroundable={false} closeDisabled={blocked} onClose={() => setDialog(null)}>
       <form className="asset-form" onSubmit={event => { event.preventDefault(); void save(); }}>
         <label className="field">프리셋 이름<input required autoFocus disabled={blocked} value={targetName} onChange={event => setTargetName(event.target.value)} /></label>
         {dialog === "save" && token && <label className="field">그룹<select disabled={blocked} value={targetScope} onChange={event => setTargetScope(event.target.value as AssetScope)}><option value="builtin">배포 그룹</option><option value="local">사용자 그룹</option></select></label>}
