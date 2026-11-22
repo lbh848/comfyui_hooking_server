@@ -305,29 +305,31 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
       {images.data && !images.data.images?.length && <Empty title="에셋이 없습니다">캐릭터와 프리셋을 선택해 이미지를 생성하세요.</Empty>}
     </div>}
       {preview && <Modal title={preview.filename} className="asset-modal asset-preview-modal" backgroundable={false} onClose={() => setPreview(null)}>
-        <p className="field-help">{previewTime ? <>{previewTime.label} · <time dateTime={previewTime.date.toISOString()}>{previewTime.date.toLocaleString("ko-KR", {
-          year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-        })}</time></> : "생성 시간 정보 없음"}{previewDuration && <span title={durationHint}> · {previewDuration}</span>}</p>
         <div className="asset-preview-image" ref={previewArea}><div className="illust-mask-image asset-preview-frame">
           <img src={imageUrl(preview)} alt={preview.filename} onLoad={({ currentTarget: image }) => setPreviewSize({ width: image.naturalWidth, height: image.naturalHeight })} />
           {showMask && previewMask && previewSize && <IllustrationMaskOverlay {...previewSize} maskUrl={previewMask} maskOutline label={previewMask === trackedMask ? "1차 추적 마스크 오버레이" : "원본 마스크 오버레이"} />}
         </div></div>
-        <div className="asset-actions">
-          <a className="button secondary" download={preview.filename} href={imageUrl(preview)}><Download size={14} />다운로드</a>
-          {!onPick && <button type="button" className="button secondary" disabled={busy} aria-pressed={!!preview.is_representative} onClick={() => void action("set_representative", preview)}><Star size={14} />{preview.is_representative ? "대표 해제" : "대표 설정"}</button>}
-          <button type="button" className="button danger" disabled={busy} onClick={() => requestDelete(preview)}><Trash2 size={14} />삭제</button>
+        <div className="asset-preview-details">
+          <p className="field-help">{previewTime ? <>{previewTime.label} · <time dateTime={previewTime.date.toISOString()}>{previewTime.date.toLocaleString("ko-KR", {
+            year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+          })}</time></> : "생성 시간 정보 없음"}{previewDuration && <span title={durationHint}> · {previewDuration}</span>}</p>
+          <div className="asset-actions">
+            <a className="button secondary" download={preview.filename} href={imageUrl(preview)}><Download size={14} />다운로드</a>
+            {!onPick && <button type="button" className="button secondary" disabled={busy} aria-pressed={!!preview.is_representative} onClick={() => void action("set_representative", preview)}><Star size={14} />{preview.is_representative ? "대표 해제" : "대표 설정"}</button>}
+            <button type="button" className="button danger" disabled={busy} onClick={() => requestDelete(preview)}><Trash2 size={14} />삭제</button>
+          </div>
+          {error && <p className="settings-feedback error" role="alert">{error}</p>}
+          <details className="asset-preview-prompts" onToggle={event => setPromptOpen(event.currentTarget.open)}>
+            <summary className="button secondary"><ChevronRight size={14} />프롬프트</summary>
+            {previewMask && <div className="illust-mask-controls asset-preview-mask-controls">
+              <label><input type="checkbox" checked={showMask} onChange={event => setShowMask(event.target.checked)} />마스크 표시</label>
+              {originalMask && trackedMask ? <label>마스크 종류<select value={maskKind} onChange={event => setMaskKind(event.target.value === "original" ? "original" : "tracked")}>
+                <option value="tracked">1차 추적 마스크</option><option value="original">원본 마스크</option>
+              </select></label> : <span className="field-help">{trackedMask ? "1차 추적 마스크" : "원본 마스크 · 1차 추적 마스크 기록 없음"}</span>}
+            </div>}
+            <pre className="asset-prompt">{preview.positive || "저장된 프롬프트 없음"}</pre>
+          </details>
         </div>
-        {error && <p className="settings-feedback error" role="alert">{error}</p>}
-        <details className="asset-preview-prompts" onToggle={event => setPromptOpen(event.currentTarget.open)}>
-          <summary className="button secondary"><ChevronRight size={14} />프롬프트</summary>
-          {previewMask && <div className="illust-mask-controls asset-preview-mask-controls">
-            <label><input type="checkbox" checked={showMask} onChange={event => setShowMask(event.target.checked)} />마스크 표시</label>
-            {originalMask && trackedMask ? <label>마스크 종류<select value={maskKind} onChange={event => setMaskKind(event.target.value === "original" ? "original" : "tracked")}>
-              <option value="tracked">1차 추적 마스크</option><option value="original">원본 마스크</option>
-            </select></label> : <span className="field-help">{trackedMask ? "1차 추적 마스크" : "원본 마스크 · 1차 추적 마스크 기록 없음"}</span>}
-          </div>}
-          <pre className="asset-prompt">{preview.positive || "저장된 프롬프트 없음"}</pre>
-        </details>
       </Modal>}
       {deletingFolder && <Modal title={deletingFolder.kind === "character" ? "캐릭터 삭제" : "복장·표정 폴더 삭제"} className="asset-delete-modal" backgroundable={false} closeDisabled={busy} onClose={() => setDeletingFolder(null)}>
         <div className="asset-delete-target">
