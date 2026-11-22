@@ -1502,6 +1502,38 @@ def set_session_error(session_id: str, error: str) -> None:
     session["updated_at"] = time.time()
 
 
+def set_session_cancelled(
+    session_id: str,
+    reason: str = "사용자가 삽화 작업을 취소했습니다",
+) -> dict | None:
+    """대기·진행 중 세션을 취소 상태로 정리한다. 기존 ready 결과는 보존한다."""
+    session = _SESSIONS.get(session_id)
+    if session is None:
+        session = get_session(session_id)
+    if session is None:
+        print(f"[ILLUST_CONTEXT] 취소 상태 저장 실패 - 세션 없음: {session_id}; reason={reason}")
+        return None
+    session.pop("_active_slot_progress", None)
+    safe_reason = (
+        str(reason or "사용자가 삽화 작업을 취소했습니다")
+        .replace("\r", " ")
+        .replace("\n", " ")[:300]
+    )
+    previous = session.get("progress") or {}
+    if session.get("status") != "ready":
+        session["status"] = "cancelled"
+    session["error"] = safe_reason
+    session["progress"] = {
+        "phase": "cancelled",
+        "label": safe_reason[:160] or "작업 취소됨",
+        "value": previous.get("value", 0),
+        "done": previous.get("done", 0),
+        "total": previous.get("total", 0),
+    }
+    session["updated_at"] = time.time()
+    return session
+
+
 def _session_bot_root(session: dict) -> str:
     """세션을 만든 워크숍의 봇 저장소 경로. 요청 스코프에 기대지 않는다."""
     from modes.bot_mode import BOT_DIR, reset_bot_scope, set_bot_scope

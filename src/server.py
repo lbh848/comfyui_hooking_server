@@ -8343,56 +8343,84 @@ async def process_illustration_context_queue_item(item) -> dict:
     session_id = str(payload.get("session_id") or "")
     prompt_data = params.get("prompt_data") or {}
     raw_body = params.get("raw_body") or {}
-    # New module requests choose the workshop explicitly. Saved RAW batches
-    # reuse the session's workshop; older modules retain config-based selection.
-    session = illustration_context_pipeline.get_session(session_id) or {}
-    runtime_snapshot = _capture_illustration_runtime_snapshot(
-        workshop=payload.get("workshop") or session.get("workshop"),
-    )
-    if session:
-        session["workshop"] = runtime_snapshot["workshop"]
-    active_bot = str(runtime_snapshot.get("bot_name") or "")
-    illustration_provider_snapshot = str(runtime_snapshot.get("provider") or "comfy")
-    illustration_workflow_type_snapshot = workflow_profiles.normalize_illustration_workflow_type(
-        runtime_snapshot.get("illustration_workflow_type")
-    )
-    illust_toggles = illustration_context_pipeline.merged_toggles(
-        copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {}), for_generation=True
-    )
-    if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("composite_layers") for entry in payload.get("items") or []):
-        illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
-                             illustration_output_mode="composite", visual_correction_enabled=False)
-        runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
-    if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("panels") for entry in payload.get("items") or []):
-        # Saved manga descriptors retain their generation semantics even when
-        # the user has since switched the ordinary illustration mode.
-        illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
-                             illustration_output_mode="manga", visual_correction_enabled=False)
-        runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
-    illustration_enabled = bool(illust_toggles.get("illustration_enabled", True))
-    original_asset_enabled = bool(illust_toggles.get("original_asset_enabled", False))
-    invalid_output_configuration = not illustration_enabled and not original_asset_enabled
-    if invalid_output_configuration:
-        print(
-            f"[ILLUST_CONTEXT] 실행 가능한 출력 방식이 없음: "
-            f"session={session_id}, illustration_enabled={illustration_enabled}, "
-            f"original_asset_enabled={original_asset_enabled}"
+    try:
+        # New module requests choose the workshop explicitly. Saved RAW batches
+        # reuse the session's workshop; older modules retain config-based selection.
+        session = illustration_context_pipeline.get_session(session_id) or {}
+        runtime_snapshot = _capture_illustration_runtime_snapshot(
+            workshop=payload.get("workshop") or session.get("workshop"),
         )
-    multi_char_mask_active = (
-        illustration_context_pipeline.should_enable_multi_char_layout(
-            illust_toggles,
-            illustration_provider_snapshot,
+        if session:
+            session["workshop"] = runtime_snapshot["workshop"]
+        active_bot = str(runtime_snapshot.get("bot_name") or "")
+        illustration_provider_snapshot = str(runtime_snapshot.get("provider") or "comfy")
+        illustration_workflow_type_snapshot = workflow_profiles.normalize_illustration_workflow_type(
+            runtime_snapshot.get("illustration_workflow_type")
         )
-        if illustration_enabled and illust_toggles.get("illustration_model_family") != "moss"
-        else False
-    )
-    if not multi_char_mask_active:
-        print(
-            f"[ILLUST_CONTEXT:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
-            f"setting={bool(illust_toggles.get('multi_char_mask_enabled', True))}, "
-            f"provider={illustration_provider_snapshot!r}, "
-            f"prompt_format={illust_toggles.get('prompt_format')!r}"
+        illust_toggles = illustration_context_pipeline.merged_toggles(
+            copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {}), for_generation=True
         )
+        if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("composite_layers") for entry in payload.get("items") or []):
+            illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
+                                 illustration_output_mode="composite", visual_correction_enabled=False)
+            runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
+        if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("panels") for entry in payload.get("items") or []):
+            # Saved manga descriptors retain their generation semantics even when
+            # the user has since switched the ordinary illustration mode.
+            illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
+                                 illustration_output_mode="manga", visual_correction_enabled=False)
+            runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
+        illustration_enabled = bool(illust_toggles.get("illustration_enabled", True))
+        original_asset_enabled = bool(illust_toggles.get("original_asset_enabled", False))
+        invalid_output_configuration = not illustration_enabled and not original_asset_enabled
+        if invalid_output_configuration:
+            print(
+                f"[ILLUST_CONTEXT] 실행 가능한 출력 방식이 없음: "
+                f"session={session_id}, illustration_enabled={illustration_enabled}, "
+                f"original_asset_enabled={original_asset_enabled}"
+            )
+        multi_char_mask_active = (
+            illustration_context_pipeline.should_enable_multi_char_layout(
+                illust_toggles,
+                illustration_provider_snapshot,
+            )
+            if illustration_enabled and illust_toggles.get("illustration_model_family") != "moss"
+            else False
+        )
+        if not multi_char_mask_active:
+            print(
+                f"[ILLUST_CONTEXT:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
+                f"setting={bool(illust_toggles.get('multi_char_mask_enabled', True))}, "
+                f"provider={illustration_provider_snapshot!r}, "
+                f"prompt_format={illust_toggles.get('prompt_format')!r}"
+            )
+    except asyncio.CancelledError:
+        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        if session_id:
+            illustration_context_pipeline.set_session_cancelled(session_id, reason)
+        _settle_cancelled_illustration_prompt(original_prompt_id)
+        raise
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 세션 초기화 실패: session={session_id}, error={e}")
+        traceback.print_exc()
+        if session_id:
+            if raw_body.get("illustration_regenerate_session_id"):
+                illustration_context_pipeline.set_session_regenerate_error(
+                    session_id, raw_body["illustration_regenerate_slot"], str(e))
+            else:
+                illustration_context_pipeline.set_session_error(session_id, str(e))
+        _settle_cancelled_illustration_prompt(original_prompt_id)
+        try:
+            await notify_frontend("lighbd_llm_stream", {
+                "type": "error",
+                "call_name": "PIPELINE",
+                "error": str(e),
+                "prompt_id": original_prompt_id,
+                "session_id": session_id,
+            })
+        except Exception as notify_error:
+            print(f"[ILLUST_CONTEXT] 초기화 실패 알림 오류: session={session_id}, error={notify_error}")
+        raise
 
     child_pairs = []
     all_child_pairs = []
@@ -9910,25 +9938,11 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, error={publish_error}"
                 )
                 traceback.print_exc()
-                if raw_body.get("illustration_regenerate_session_id"):
-                    illustration_context_pipeline.set_session_regenerate_error(
-                        session_id, raw_body["illustration_regenerate_slot"], reason)
-                else:
-                    illustration_context_pipeline.set_session_error(session_id, reason)
-                if original_prompt_id in prompts:
-                    prompts[original_prompt_id]["status"] = "completed"
-                    prompts[original_prompt_id]["outputs"] = {"images": []}
-                    prompts[original_prompt_id]["image_bytes"] = None
+                illustration_context_pipeline.set_session_cancelled(session_id, reason)
+                _settle_cancelled_illustration_prompt(original_prompt_id)
         else:
-            if raw_body.get("illustration_regenerate_session_id"):
-                illustration_context_pipeline.set_session_regenerate_error(
-                    session_id, raw_body["illustration_regenerate_slot"], reason)
-            else:
-                illustration_context_pipeline.set_session_error(session_id, reason)
-            if original_prompt_id in prompts:
-                prompts[original_prompt_id]["status"] = "completed"
-                prompts[original_prompt_id]["outputs"] = {"images": []}
-                prompts[original_prompt_id]["image_bytes"] = None
+            illustration_context_pipeline.set_session_cancelled(session_id, reason)
+            _settle_cancelled_illustration_prompt(original_prompt_id)
 
         try:
             await stream_notify({
@@ -11325,6 +11339,146 @@ async def handle_video_input_flow_event(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
+_TERMINAL_ILLUSTRATION_SESSION_STATES = frozenset({
+    "ready",
+    "error",
+    "failed",
+    "cancelled",
+    "canceled",
+    "missing",
+})
+
+
+def _queue_item_illustration_session_id(item) -> str:
+    params = getattr(item, "params", None) or {}
+    payload = params.get("payload") or {}
+    raw_body = params.get("raw_body") or {}
+    return str(
+        params.get("session_id")
+        or payload.get("session_id")
+        or raw_body.get("illustration_context_session_id")
+        or raw_body.get("illustration_regenerate_session_id")
+        or ""
+    ).strip()
+
+
+def _settle_cancelled_illustration_prompt(prompt_id: str) -> None:
+    normalized = str(prompt_id or "").strip()
+    if not normalized:
+        return
+    prompt_entry = prompts.get(normalized)
+    if isinstance(prompt_entry, dict) and prompt_entry.get("status") == "running":
+        prompt_entry["status"] = "completed"
+        prompt_entry["outputs"] = {"images": []}
+        prompt_entry["image_bytes"] = None
+        _touch_history_prompt_activity()
+
+
+def _is_illustration_bridge_session_terminal(session: dict | None) -> bool:
+    if not isinstance(session, dict):
+        return True
+    status = str(session.get("status") or "missing").strip().lower()
+    phase = str((session.get("progress") or {}).get("phase") or "").strip().lower()
+    if phase in ("regenerating", "cancelling"):
+        return False
+    return (
+        status in _TERMINAL_ILLUSTRATION_SESSION_STATES
+        or phase in _TERMINAL_ILLUSTRATION_SESSION_STATES
+    )
+
+
+async def _cancel_illustration_bridge_session(
+    session_id: str,
+    reason: str = "사용자가 삽화 작업을 취소했습니다",
+) -> dict | None:
+    """브리지 세션을 기존 흐름·큐 취소 경로로 중단하고 대기/고아 세션 상태를 정리한다."""
+    session = illustration_context_pipeline.get_session(session_id)
+    if session is None:
+        return None
+    if _is_illustration_bridge_session_terminal(session):
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "cancelled": False,
+            "already_finished": True,
+            "cancelling": False,
+            "pending_cancelled": 0,
+            "active_cancelled": 0,
+            "active_finishing": 0,
+            "status": str(session.get("status") or "missing"),
+            "progress": dict(session.get("progress") or {}),
+        }
+
+    run_ids: set[str] = set(illustration_flow.active_run_ids_for_session(session_id))
+    matched_items = []
+    for item in list(getattr(queue_manager, "items", ()) or ()):
+        if item.status in illustration_flow.TERMINAL:
+            continue
+        binding = getattr(item, "_illustration_flow", None)
+        bound_session_id = str(binding[0].get("session_id") or "").strip() if binding else ""
+        if _queue_item_illustration_session_id(item) == session_id or bound_session_id == session_id:
+            matched_items.append(item)
+            if binding and binding[0].get("id"):
+                run_ids.add(str(binding[0]["id"]).strip())
+
+    pending_cancelled = 0
+    active_cancelled = 0
+    active_finishing = 0
+    for run_id in sorted(r for r in run_ids if r):
+        flow_result = await queue_manager.cancel_illustration_flow(run_id)
+        pending_cancelled += int(flow_result.get("pending_cancelled") or 0)
+        active_cancelled += int(flow_result.get("active_cancelled") or 0)
+        active_finishing += int(flow_result.get("active_finishing") or 0)
+
+    for item in matched_items:
+        if item.status in ("pending", "waiting"):
+            if await queue_manager.cancel_item(item.id):
+                pending_cancelled += 1
+
+    for item in matched_items:
+        if item.status == "cancelled":
+            _settle_cancelled_illustration_prompt((item.params or {}).get("prompt_id"))
+
+    still_active = active_cancelled > 0 or active_finishing > 0
+    if still_active:
+        previous = session.get("progress") or {}
+        label = (
+            "현재 생성 중인 이미지 마무리 후 취소 중..."
+            if active_finishing > 0
+            else "작업 취소 처리 중..."
+        )
+        illustration_context_pipeline.set_session_progress(
+            session_id,
+            "cancelling",
+            label,
+            previous.get("value", 0),
+            previous.get("done", 0),
+            previous.get("total", 0),
+        )
+    else:
+        illustration_context_pipeline.set_session_cancelled(session_id, reason)
+        _settle_cancelled_illustration_prompt(session.get("_prompt_id"))
+
+    print(
+        f"[ILLUST_CONTEXT:BRIDGE] 세션 취소 처리: session={session_id}, "
+        f"runs={len(run_ids)}, pending={pending_cancelled}, "
+        f"active={active_cancelled}, finishing={active_finishing}, "
+        f"status={session.get('status')!r}, phase={(session.get('progress') or {}).get('phase')!r}"
+    )
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "cancelled": True,
+        "already_finished": False,
+        "cancelling": still_active,
+        "pending_cancelled": pending_cancelled,
+        "active_cancelled": active_cancelled,
+        "active_finishing": active_finishing,
+        "status": str(session.get("status") or "missing"),
+        "progress": dict(session.get("progress") or {}),
+    }
+
+
 async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -11332,10 +11486,24 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         if not run_id:
             print(f"[ILLUST_FLOW] 중단 API 실패: body={body!r}")
             return web.json_response({"success": False, "error": "run id가 필요합니다"}, status=400)
+        run = illustration_flow.find_run(run_id)
         result = await queue_manager.cancel_illustration_flow(run_id)
         if not result.get("found"):
             print(f"[ILLUST_FLOW] 중단 API 대상 없음: run={run_id}")
             return web.json_response({"success": False, "error": "실행 중인 흐름을 찾을 수 없습니다"}, status=404)
+        run_session_id = str((run or {}).get("session_id") or "").strip()
+        if (
+            run_session_id
+            and not result.get("active_cancelled")
+            and not result.get("active_finishing")
+        ):
+            session = illustration_context_pipeline.get_session(run_session_id)
+            if session is not None and not _is_illustration_bridge_session_terminal(session):
+                illustration_context_pipeline.set_session_cancelled(
+                    run_session_id,
+                    "사용자가 삽화 처리 흐름을 중단했습니다",
+                )
+                _settle_cancelled_illustration_prompt(session.get("_prompt_id"))
         feedback_flow = illustration_flow.snapshot(kind="lora_feedback")
         return web.json_response({
             "success": True,
@@ -11453,9 +11621,10 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "slot_animation_metadata": True,
         "asset_display_metadata": True,
         "asset_reroll": True,
+        "session_cancel": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_select", "call2_plan", "call2_keyvis", "call2_detail", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_select", "call2_plan", "call2_keyvis", "call2_detail", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "cancelling", "cancelled", "ready", "error"],
     })
 
 
@@ -11533,8 +11702,7 @@ async def handle_api_illustration_context_bridge_sessions(request: web.Request) 
         runs = {}
         for item in queue_manager.items:
             binding = getattr(item, "_illustration_flow", None)
-            params = item.params or {}
-            session_id = (params.get("payload") or {}).get("session_id") or params.get("session_id")
+            session_id = _queue_item_illustration_session_id(item)
             if binding and session_id:
                 runs[(session_id, binding[0]["id"])] = binding[0]
         for session in sessions:
@@ -11650,6 +11818,26 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
         print(f"[ILLUST_CONTEXT:BRIDGE] 세션 응답 실패: session={session_id}, error={e}")
         traceback.print_exc()
         return web.json_response({"error": "bridge_session_failed"}, status=500)
+
+
+async def handle_api_illustration_context_bridge_session_cancel(request: web.Request) -> web.Response:
+    """대기 중이거나 진행 중인 브리지 삽화 세션을 취소한다."""
+    session_id = str(request.match_info.get("sid") or "")
+    if not _valid_illustration_context_bridge_session_id(session_id):
+        print(f"[ILLUST_CONTEXT:BRIDGE] 취소 요청 잘못된 세션 ID: {session_id!r}")
+        return web.json_response({"error": "invalid_session_id"}, status=400)
+    try:
+        result = await _cancel_illustration_bridge_session(session_id)
+        if result is None:
+            return web.json_response(
+                {"error": "session_not_found", "session_id": session_id},
+                status=404,
+            )
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 세션 취소 실패: session={session_id}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "bridge_session_cancel_failed"}, status=500)
 
 
 _ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS = {
@@ -13610,6 +13798,9 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
+    regen_session = illustration_context_pipeline.get_session(session_id)
+    if regen_session is not None:
+        regen_session["_prompt_id"] = prompt_id
     if descriptor.get("panels") or descriptor.get("composite_layers"):
         session = illustration_context_pipeline.get_session(session_id) or {}
         workshop = illustration_context_pipeline.normalize_workshop(
@@ -13727,6 +13918,8 @@ async def handle_prompt(request: web.Request) -> web.Response:
             )
             # The session's workshop decides which bot store the edit reads.
             edit_session = illustration_context_pipeline.get_session(session_id) or {}
+            if edit_session:
+                edit_session["_prompt_id"] = prompt_id
             asyncio.create_task(queue_manager.add_item(
                 "illustration_easy_edit",
                 f"삽화 편하게 수정 · slot {slot}",
@@ -13806,7 +13999,8 @@ async def handle_prompt(request: web.Request) -> web.Response:
             workshop = illustration_context_pipeline.normalize_workshop(
                 prompt_batch_payload.get("workshop") or _illustration_workshop_for_config(app_config))
             prompt_batch_payload["workshop"] = workshop
-            illustration_context_pipeline.create_session(session_id, "", workshop=workshop)
+            batch_session = illustration_context_pipeline.create_session(session_id, "", workshop=workshop)
+            batch_session["_prompt_id"] = prompt_id
             save_node = find_save_image_node(prompt_data)
             prompts[prompt_id] = {
                 "status": "running", "prompt": prompt_data,
@@ -13912,6 +14106,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     "image_bytes": None,
                     "timestamp": time.time(),
                 }
+                session["_prompt_id"] = prompt_id
                 asyncio.create_task(queue_manager.add_item(
                     "illustration_llm_build",
                     f"에셋 리롤 · {session_id[:12]} · {asset_count}장",
@@ -13938,9 +14133,10 @@ async def handle_prompt(request: web.Request) -> web.Response:
             workshop = illustration_context_pipeline.normalize_workshop(
                 context_payload.get("workshop") or _illustration_workshop_for_config(app_config))
             context_payload["workshop"] = workshop
-            illustration_context_pipeline.create_session(
+            created_session = illustration_context_pipeline.create_session(
                 session_id, context_value, workshop=workshop,
             )
+            created_session["_prompt_id"] = prompt_id
             save_node = find_save_image_node(prompt_data)
             prompts[prompt_id] = {
                 "status": "running", "prompt": prompt_data,
@@ -21253,16 +21449,8 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             f"[ILLUST_CONTEXT:EDIT] 사용자 중단: session={session_id}, slot={slot}, "
             f"prompt_id={original_prompt_id}"
         )
-        illustration_context_pipeline.set_session_regenerate_error(
-            session_id,
-            slot,
-            reason,
-        )
-        prompt_entry = prompts.get(original_prompt_id)
-        if isinstance(prompt_entry, dict):
-            prompt_entry["status"] = "completed"
-            prompt_entry["outputs"] = {"images": []}
-            prompt_entry["image_bytes"] = None
+        illustration_context_pipeline.set_session_cancelled(session_id, reason)
+        _settle_cancelled_illustration_prompt(original_prompt_id)
         raise
     except Exception as exc:
         print(
@@ -24930,6 +25118,7 @@ app.router.add_post("/api/illustration_context/bridge/bots", handle_api_illustra
 app.router.add_get("/api/illustration_context/bridge/sessions", handle_api_illustration_context_bridge_sessions)
 app.router.add_post("/api/illustration_context/bridge/client-log", handle_api_illustration_context_bridge_client_log)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)
+app.router.add_post("/api/illustration_context/bridge/session/{sid}/cancel", handle_api_illustration_context_bridge_session_cancel)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)
 app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/prompt-structure", handle_api_illustration_prompt_structure)

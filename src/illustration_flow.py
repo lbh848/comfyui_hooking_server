@@ -178,6 +178,18 @@ def find_run(run_id, *, kind="illustration"):
     return run if run and run["id"] == run_id else None
 
 
+def active_run_ids_for_session(session_id: str) -> list[str]:
+    normalized = str(session_id or "").strip()
+    if not normalized:
+        return []
+    return [
+        run["id"]
+        for run in _history.values()
+        if str(run.get("session_id") or "").strip() == normalized
+        and run.get("status") not in TERMINAL
+    ]
+
+
 def history(workshop="illustration"):
     """Return lightweight newest-first entries from one workshop's own space."""
     runs = _histories[normalize_workshop(workshop)]
@@ -1175,7 +1187,8 @@ def queue_added(item):
     if run is None:
         params = item.params or {}
         session_id = str(params.get("session_id") or (params.get("payload") or {}).get("session_id")
-                         or (params.get("raw_body") or {}).get("illustration_context_session_id") or "")
+                         or (params.get("raw_body") or {}).get("illustration_context_session_id")
+                         or (params.get("raw_body") or {}).get("illustration_regenerate_session_id") or "")
         workshop = normalize_workshop(
             params.get("workshop") or (params.get("payload") or {}).get("workshop")
             or _session_workshop(session_id)

@@ -38,6 +38,7 @@ EXTERNAL_ROUTES = (
     ("GET", "/api/illustration_context/bridge/sessions"),
     ("POST", "/api/illustration_context/bridge/client-log"),
     ("GET", "/api/illustration_context/bridge/session/{sid}"),
+    ("POST", "/api/illustration_context/bridge/session/{sid}/cancel"),
     ("GET", "/api/illustration_context/bridge/session/{sid}/image/{slot}"),
 )
 _EXTERNAL_PATTERNS = tuple(
