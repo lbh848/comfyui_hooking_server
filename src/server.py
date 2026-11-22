@@ -2172,8 +2172,20 @@ async def convert_workflow_via_endpoint(
                 if resp.status != 200:
                     err = await resp.text()
                     print(f"[WORKFLOW] ✗ 변환 실패 (HTTP {resp.status}): {err}")
-                    return None, f"HTTP {resp.status}: {err[:200]}"
+                    if resp.status == 404:
+                        return None, (
+                            "ComfyUI 워크플로우 변환 엔드포인트(/workflow/convert)를 찾을 수 없습니다 "
+                            "(HTTP 404). ComfyUI에 comfyui-workflow-to-api-converter-endpoint "
+                            "커스텀 노드가 설치·로드되었는지 확인하세요."
+                        )
+                    return None, f"워크플로우 변환 실패 (HTTP {resp.status}): {err[:200]}"
                 api_format = await resp.json()
+                if not isinstance(api_format, dict) or not api_format:
+                    print(
+                        "[WORKFLOW] ✗ 변환 결과가 비어 있거나 올바르지 않음: "
+                        f"type={type(api_format).__name__}"
+                    )
+                    return None, "워크플로우 변환 결과가 비어 있습니다."
                 print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
                 return api_format, None
 
@@ -2245,6 +2257,13 @@ async def convert_workflow_via_endpoint(
         return None, _comfy_connection_error_message(
             REAL_COMFY_HOST, failed_port, e, task_key=task_key
         )
+    except Exception as e:
+        print(
+            f"[WORKFLOW] ✗ 변환 예외: task={task_key}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return None, f"워크플로우 변환 오류: {type(e).__name__}: {e}"
 
 
 async def convert_workflow_local_first_with_modal_fallback(
@@ -2344,16 +2363,57 @@ async def update_workflow_if_needed(
     global current_original_workflow, current_api_workflow, current_conversion_info
 
     wf_file = source_path if source_path is not None else get_workflow_file(workflow_type)
+    missing_path = ""
+    if not wf_file and source_path is None:
+        missing_path = (
+            get_comfy_workflow_source_path(workflow_type)
+            if workflow_type is not None
+            else get_comfy_workflow_source_path()
+        )
+    elif wf_file and not os.path.isfile(wf_file):
+        missing_path = wf_file
+        wf_file = None
+
     if not wf_file:
-        print("[WORKFLOW] ⚠ workflow 폴더에 JSON 파일 없음")
+        if missing_path and not os.path.isfile(missing_path):
+            error = (
+                f"삽화 워크플로우 파일을 찾을 수 없습니다: {os.path.basename(missing_path)} "
+                f"({missing_path}). 워크플로우 관리에서 워크플로우를 설치했는지 확인하세요."
+            )
+        elif source_path == "":
+            error = (
+                "선택된 삽화 워크플로우가 없습니다. "
+                "워크플로우 관리에서 워크플로우를 설치하고 그림 모델 설정에서 워크플로우를 선택하세요."
+            )
+        else:
+            error = (
+                "삽화 워크플로우 파일을 찾을 수 없습니다. "
+                "워크플로우 관리에서 삽화 워크플로우를 설치했는지 확인하세요."
+            )
+        print(f"[WORKFLOW] ⚠ {error}")
+        current_api_workflow = None
+        current_conversion_info = {
+            "error": error,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }
         return False
 
-    file_hash = compute_file_hash(wf_file)
-    stored_hash = load_stored_hash()
+    try:
+        file_hash = compute_file_hash(wf_file)
+        stored_hash = load_stored_hash()
 
-    # 원본 워크플로우 로드
-    with open(wf_file, "r", encoding="utf-8") as f:
-        wf_data = json.load(f)
+        # 원본 워크플로우 로드
+        with open(wf_file, "r", encoding="utf-8-sig") as f:
+            wf_data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        error = f"삽화 워크플로우 파일을 읽을 수 없습니다 ({os.path.basename(wf_file)}): {e}"
+        print(f"[WORKFLOW] ✗ {error}")
+        current_api_workflow = None
+        current_conversion_info = {
+            "error": error,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }
+        return False
     current_original_workflow = wf_data
 
     # 해시가 같으면 캐시 사용
@@ -2361,13 +2421,21 @@ async def update_workflow_if_needed(
         api_path = os.path.join(CURRENT_WORK_DIR, "workflow_api.json")
         info_path = os.path.join(CURRENT_WORK_DIR, "conversion_info.json")
         if os.path.exists(api_path):
-            with open(api_path, "r", encoding="utf-8") as f:
-                current_api_workflow = json.load(f)
-            if os.path.exists(info_path):
-                with open(info_path, "r", encoding="utf-8") as f:
-                    current_conversion_info = json.load(f)
-            print(f"[WORKFLOW] 해시 일치 — 캐시된 API 워크플로우 사용 ({len(current_api_workflow)} 노드)")
-            return True
+            try:
+                with open(api_path, "r", encoding="utf-8") as f:
+                    cached_api_workflow = json.load(f)
+                if isinstance(cached_api_workflow, dict) and cached_api_workflow:
+                    current_api_workflow = cached_api_workflow
+                    if os.path.exists(info_path):
+                        with open(info_path, "r", encoding="utf-8") as f:
+                            current_conversion_info = json.load(f)
+                    else:
+                        current_conversion_info = {}
+                    print(f"[WORKFLOW] 해시 일치 — 캐시된 API 워크플로우 사용 ({len(current_api_workflow)} 노드)")
+                    return True
+                print("[WORKFLOW] ⚠ 캐시된 API 워크플로우가 비어 있어 다시 변환합니다.")
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"[WORKFLOW] ⚠ 캐시된 API 워크플로우 로드 실패, 다시 변환합니다: {e}")
 
     # 해시 변경 → 변환 필요
     print(f"[WORKFLOW] 해시 변경 — 변환 필요 ({os.path.basename(wf_file)})")
@@ -2399,16 +2467,11 @@ async def update_workflow_if_needed(
                 task_key="illustration",
             )
         if api_wf is None:
+            current_api_workflow = None
             current_conversion_info = {
-                "error": error,
+                "error": error or "워크플로우를 API 형식으로 변환하지 못했습니다.",
                 "timestamp": datetime.datetime.now().isoformat(),
             }
-            api_path = os.path.join(CURRENT_WORK_DIR, "workflow_api.json")
-            if os.path.exists(api_path):
-                with open(api_path, "r", encoding="utf-8") as f:
-                    current_api_workflow = json.load(f)
-                print("[WORKFLOW] ⚠ 변환 실패 — 이전 캐시 사용")
-                return True
             return False
         current_api_workflow = api_wf
         current_conversion_info = analyze_conversion(wf_data, api_wf)
@@ -4332,9 +4395,14 @@ async def generate_image_with_prompt(
         selected_type = illustration_workflow_type or model_preset.get("config", {}).get("illustration_workflow_type") or app_config.get("illustration_workflow_type")
         local_profile = workflow_profiles.illustration_local_profile(selected_type)
         source_path = model_preset.get("config", {}).get("illustration_workflow_source_paths", {}).get(local_profile)
-        await update_workflow_if_needed(selected_type, source_path=source_path)
-        if current_api_workflow is None:
-            return None, "API 워크플로우 없음"
+        workflow_ready = await update_workflow_if_needed(selected_type, source_path=source_path)
+        if workflow_ready is False or current_api_workflow is None:
+            detail = (
+                current_conversion_info.get("error")
+                if isinstance(current_conversion_info, dict)
+                else None
+            )
+            return None, detail or "API 워크플로우 없음"
         preset_api_workflow = apply_preset_workflow(current_api_workflow, model_preset, selected_type)
         workflow_snapshot = {
             "original_workflow": apply_preset_workflow(current_original_workflow, model_preset, selected_type),
@@ -19744,8 +19812,13 @@ async def handle_api_reload_workflow(request: web.Request) -> web.Response:
             print("[RELOAD] 워크플로우 갱신 완료")
             return web.json_response({"success": True, "message": "변경된 워크플로우가 성공적으로 로드되었습니다"})
         else:
+            detail = (
+                current_conversion_info.get("error")
+                if isinstance(current_conversion_info, dict)
+                else None
+            )
             return web.json_response(
-                {"error": "워크플로우 변환에 실패했습니다"}, status=500
+                {"error": detail or "워크플로우 변환에 실패했습니다"}, status=500
             )
     except Exception as e:
         tb = traceback.format_exc()

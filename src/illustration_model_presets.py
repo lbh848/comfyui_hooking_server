@@ -49,7 +49,13 @@ def selected_config(config: dict) -> dict:
 def read_workflow(source: str) -> tuple[dict, str]:
     if not source:
         raise ValueError("그림 모델의 워크플로우를 먼저 선택하세요.")
-    content = Path(source).read_bytes()
+    path = Path(source)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"워크플로우 파일을 찾을 수 없습니다: {path.name} ({source}). "
+            "워크플로우 관리에서 워크플로우를 설치했는지 확인하세요."
+        )
+    content = path.read_bytes()
     workflow = json.loads(content.decode("utf-8-sig"))
     if not isinstance(workflow, dict):
         raise ValueError("워크플로우 JSON 객체를 확인하세요.")
