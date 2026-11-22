@@ -26,7 +26,7 @@ export async function illustrationRequest(path: string, body?: unknown, signal?:
   });
   const result = await response.json().catch(() => null);
   if (response.status === 404 && !result) throw new Error("삽화 기능을 사용하려면 설정 서버를 다시 시작하세요.");
-  if (!response.ok || !result || result.success === false || result.ok === false || result.error) throw Object.assign(new Error(result?.error || `요청을 처리할 수 없습니다 (${response.status}).`), { status: response.status });
+  if (!response.ok || !result || result.success === false || result.ok === false || result.error) throw Object.assign(new Error(result?.error || `요청을 처리할 수 없습니다 (${response.status}).`), { status: response.status, data: result });
   return result;
 }
 

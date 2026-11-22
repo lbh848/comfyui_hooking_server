@@ -90,11 +90,11 @@ def register_external_connection_control(server) -> None:
                     "error": str(exc) or f"{kind} 연결 상태를 확인할 수 없습니다."}
 
     async def status(request):
-        async with lock:
-            tunnel, tailscale = await asyncio.gather(
-                safe_connection_status("tunnel"), safe_connection_status("tailscale")
-            )
-            return web.json_response({"tunnel": tunnel, "tailscale": tailscale})
+        # Status reads must not block behind a long-running start/stop lock.
+        tunnel, tailscale = await asyncio.gather(
+            safe_connection_status("tunnel"), safe_connection_status("tailscale")
+        )
+        return web.json_response({"tunnel": tunnel, "tailscale": tailscale})
 
     async def change(request):
         kind, action = request.match_info["kind"], request.match_info["action"]

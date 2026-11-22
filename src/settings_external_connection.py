@@ -17,7 +17,9 @@ def register_external_connection(app, runtime, schema):
     connection_lock = asyncio.Lock()
     path = config_path(runtime.root)
     auto_start_task: asyncio.Task | None = None
+    auto_starting = False
     auto_start_error = ""
+    auto_start_enable_url = ""
 
     def auto_start_settings():
         return {"tailscale_auto_start": read_config(path).get("tailscale_auto_start") is True}
@@ -41,21 +43,28 @@ def register_external_connection(app, runtime, schema):
             return result, response.status
 
     async def auto_start():
-        nonlocal auto_start_error
+        nonlocal auto_starting, auto_start_error, auto_start_enable_url
         try:
             settings = await asyncio.to_thread(auto_start_settings)
             if not settings["tailscale_auto_start"]:
                 return
+            auto_starting = True
             async with connection_lock:
                 if state["status"] != "running":
                     return
                 result, status = await connection_request("POST", "tailscale/start")
                 if status >= 400 or result.get("error"):
+                    auto_start_enable_url = str(result.get("enable_url") or "")
                     raise RuntimeError(result.get("error") or "고정 주소를 발급하지 못했습니다.")
+            auto_start_error = ""
+            auto_start_enable_url = ""
             print("[EXTERNAL] 시작 시 고정 주소 자동 발급 완료")
         except (RuntimeError, OSError, ValueError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             auto_start_error = f"시작 시 고정 주소 자동 발급 실패: {exc}"
-            print(f"[EXTERNAL] {auto_start_error}")
+            suffix = f" ({auto_start_enable_url})" if auto_start_enable_url else ""
+            print(f"[EXTERNAL] {auto_start_error}{suffix}")
+        finally:
+            auto_starting = False
 
     @web.middleware
     async def external_requests(request, handler):
@@ -71,12 +80,15 @@ def register_external_connection(app, runtime, schema):
         return response
 
     async def external_headers(request, response):
-        # RisuAI uses cross-origin fetches. No cookies or management credentials
-        # cross this gateway, including when callers forge internal headers.
+        # RisuAI uses cross-origin fetches, and Tailscale Serve resolves to
+        # private CGNAT addresses subject to browser Private Network Access.
+        # No cookies or management credentials cross this gateway, including
+        # when callers forge internal headers.
         response.headers.update({
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Private-Network": "true",
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-store",
         })
@@ -117,7 +129,7 @@ def register_external_connection(app, runtime, schema):
         return socket
 
     async def controls(request):
-        nonlocal auto_start_error
+        nonlocal auto_start_error, auto_start_enable_url
         if request.headers.get("X-Comfy-Settings") != "1":
             raise web.HTTPForbidden()
         if request.headers.get("X-Comfy-Settings-Schema") != schema:
@@ -138,16 +150,25 @@ def register_external_connection(app, runtime, schema):
         if request.method == "POST" and not connection_path.endswith("/stop") and state["status"] != "running":
             return web.json_response({"error": state["error"] or "외부 연결 서버를 시작할 수 없습니다."}, status=503)
         try:
-            async with connection_lock:
+            if request.method == "GET":
+                # Keep status queries responsive while auto_start or a slow start runs.
                 result, status = await connection_request(request.method, connection_path)
-                if request.method == "GET":
-                    result["gateway"] = dict(state)
-                    result.update(await asyncio.to_thread(auto_start_settings))
-                    tailscale = result.get("tailscale", {})
+                result["gateway"] = dict(state)
+                result.update(await asyncio.to_thread(auto_start_settings))
+                tailscale = result.get("tailscale")
+                if isinstance(tailscale, dict):
+                    if auto_starting and tailscale.get("status") != "running":
+                        tailscale["auto_starting"] = True
                     if auto_start_error and tailscale.get("status") != "running" and not tailscale.get("error"):
                         tailscale["error"] = auto_start_error
-                elif connection_path.startswith("tailscale/") and status < 400:
+                        if auto_start_enable_url:
+                            tailscale["enable_url"] = auto_start_enable_url
+                return web.json_response(result, status=status, headers={"Cache-Control": "no-store"})
+            async with connection_lock:
+                result, status = await connection_request(request.method, connection_path)
+                if connection_path.startswith("tailscale/"):
                     auto_start_error = ""
+                    auto_start_enable_url = ""
                 return web.json_response(result, status=status, headers={"Cache-Control": "no-store"})
         except (RuntimeError, OSError, ValueError, aiohttp.ClientError, asyncio.TimeoutError):
             return web.json_response({"error": "외부 연결 상태를 확인할 수 없습니다. 다시 시도하세요."}, status=503)
@@ -164,7 +185,8 @@ def register_external_connection(app, runtime, schema):
                     try:
                         async with runtime.session.post(
                             runtime.url + CONTROL_PREFIX + f"/{kind}/stop",
-                            headers={"X-Internal-Lora": runtime.token}, timeout=aiohttp.ClientTimeout(total=15),
+                            headers={"X-Internal-Lora": runtime.token},
+                            timeout=aiohttp.ClientTimeout(total=35 if kind == "tailscale" else 15),
                         ) as response:
                             await response.read()
                     except (aiohttp.ClientError, asyncio.TimeoutError):

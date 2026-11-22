@@ -2,6 +2,9 @@
 .external-connection-body { display: grid; gap: 16px; padding: 22px; }
 .external-connection-body p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .external-connection-body .external-connection-error { color: var(--danger); }
+.external-connection-enable { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--lavender); }
+.external-connection-enable a.button { text-decoration: none; }
+.external-connection-enable-url { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .external-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .external-connection-auto-start { display: inline-flex; align-items: center; gap: 8px; padding: 8px 4px; font-size: 12px; cursor: pointer; }
 .external-connection-url { font-family: ui-monospace, monospace; min-width: 0; }
@@ -40,4 +43,5 @@
   .external-connection-page .sg-section { padding: 12px; }
   .external-connection-page .sg-step { gap: 8px; }
   .external-connection-actions .button { flex: 1 1 auto; justify-content: center; }
+  .external-connection-enable a.button { width: 100%; }
 }

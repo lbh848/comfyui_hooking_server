@@ -93,7 +93,7 @@ export default function EmotionApp() {
 function EmotionAppContent() {
   const { active, hash, navigate } = useWorkshopScreen();
   const tab = currentTab(hash);
-  const connections = useExternalConnections(active);
+  const connections = useExternalConnections(active, tab === "tunnel" || tab === "tailscale");
   const { entries: modals } = useModalWorkspace();
   const hasBackgroundModals = modals.some(modal => modal.backgrounded);
   const model = useIllustrationModelSelection();

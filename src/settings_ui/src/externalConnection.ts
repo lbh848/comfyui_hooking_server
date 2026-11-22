@@ -2,16 +2,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { illustrationRequest } from "./illustration";
 
 export type ConnectionKind = "tunnel" | "tailscale";
-export type ConnectionState = { status: "running" | "stopped" | "error" | "unavailable"; url?: string | null; error?: string };
+export type ConnectionState = {
+  status: "running" | "stopped" | "error" | "unavailable";
+  url?: string | null;
+  error?: string;
+  enable_url?: string;
+  auto_starting?: boolean;
+};
 type Connections = Record<ConnectionKind, ConnectionState> & { gateway: { status: string; port: number; error?: string }; tailscale_auto_start?: boolean };
 type ConnectionAction = "start" | "stop" | "restart";
 
-export function useExternalConnections(active: boolean) {
+function extractEnableUrl(error: unknown): string | undefined {
+  const value = (error as { data?: { enable_url?: unknown } } | null)?.data?.enable_url;
+  return typeof value === "string" && value.startsWith("https://") ? value : undefined;
+}
+
+export function useExternalConnections(active: boolean, focused = true) {
   const [data, setData] = useState<Connections | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<{ kind: ConnectionKind; action: ConnectionAction } | null>(null);
   const [savingAutoStart, setSavingAutoStart] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: ConnectionKind; message: string; error: boolean } | null>(null);
+  const [feedback, setFeedback] = useState<{ kind: ConnectionKind; message: string; error: boolean; enableUrl?: string } | null>(null);
   const busyRef = useRef(false);
   const revision = useRef(0);
   const reload = useCallback(async (signal?: AbortSignal) => {
@@ -28,16 +39,17 @@ export function useExternalConnections(active: boolean) {
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
+    const intervalMs = focused ? 5000 : 20000;
     let timer = 0;
     const poll = async () => {
       if (!busyRef.current) await reload(controller.signal);
-      if (!controller.signal.aborted) timer = window.setTimeout(poll, 5000);
+      if (!controller.signal.aborted) timer = window.setTimeout(poll, intervalMs);
     };
     void poll();
     const focus = () => { if (!busyRef.current) void reload(controller.signal); };
     window.addEventListener("focus", focus);
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", focus); };
-  }, [active, reload]);
+  }, [active, focused, reload]);
 
   async function run(kind: ConnectionKind, action: ConnectionAction) {
     if (busyRef.current) return;
@@ -46,9 +58,13 @@ export function useExternalConnections(active: boolean) {
     try {
       const value = await illustrationRequest(`external-connection/${kind}/${action}`, {}, AbortSignal.timeout(180000));
       setData(previous => previous ? { ...previous, [kind]: value } : previous);
-      setFeedback({ kind, error: false, message: action === "stop" ? "연결이 종료되었습니다." : action === "restart" ? "주소가 재발급되었습니다." : "주소가 발급되었습니다." });
+      const message = action === "stop" ? "연결이 종료되었습니다."
+        : action === "restart" ? "주소가 재발급되었습니다."
+        : kind === "tailscale" ? "고정 주소가 발급되었습니다. 처음 발급한 경우 HTTPS 인증서 준비로 첫 연결 확인에 수십 초가 걸릴 수 있습니다."
+        : "주소가 발급되었습니다.";
+      setFeedback({ kind, error: false, message });
     } catch (e) {
-      setFeedback({ kind, error: true, message: (e as Error).message });
+      setFeedback({ kind, error: true, message: (e as Error).message, enableUrl: extractEnableUrl(e) });
     } finally {
       await reload();
       busyRef.current = false; setBusy(null);
@@ -79,7 +95,10 @@ export function connectionStatus(connections: ExternalConnections, kind: Connect
   const state = connections.data?.[kind];
   if (!state) return { text: "확인 중", tone: "pending" };
   if (state.status === "running" && state.url) return { text: "연결됨", tone: "connected" };
+  if (state.auto_starting) return { text: "연결 중", tone: "pending" };
   if (state.status === "unavailable") return { text: "미설치", tone: "disconnected" };
+  const feedbackEnableUrl = connections.feedback?.kind === kind && connections.feedback.error ? connections.feedback.enableUrl : "";
+  if (feedbackEnableUrl || state.enable_url) return { text: "설정 필요", tone: "error" };
   if (state.status === "error" || state.error) return { text: "확인 불가", tone: "error" };
   return { text: "미연결", tone: "disconnected" };
 }

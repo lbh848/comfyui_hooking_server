@@ -32,6 +32,7 @@ import traceback
 import base64
 import shutil
 import socket
+import subprocess
 import mimetypes
 import tomllib
 from contextvars import ContextVar
@@ -30326,13 +30327,121 @@ _TAILSCALE_SERVE_TARGET = "http://127.0.0.1:8189"
 _TAILSCALE_SERVE_START_TIMEOUT = 60.0
 # CLI가 실패·시간 초과를 보고해도 데몬이 매핑을 적용했을 수 있어 잠시 재확인한다.
 _TAILSCALE_SERVE_CONFIRM_TIMEOUT = 10.0
+# 개행 없이 URL만 출력하고 멈추는 경우 청크 분할이 끝났다고 판단할 대기 시간.
+_TAILSCALE_URL_QUIET_SECONDS = 0.5
 # tailnet에서 Serve/HTTPS가 꺼져 있으면 CLI가 이 활성화 주소를 출력하고
 # 사용자 승인을 기다리며 멈춘다. 앱은 그 주소를 사용자에게 보여줘야 한다.
 _TAILSCALE_FEATURE_URL_RE = re.compile(r"https://login\.tailscale\.com/\S+")
+_TAILSCALE_FEATURE_URL_COMPLETE_RE = re.compile(
+    r"(https://login\.tailscale\.com/\S+)\s"
+)
+_TAILSCALE_URL_TRAILING_PUNCT = ".,;:!?)\"'`>"
+_TAILSCALE_ADMIN_DNS_URL = "https://login.tailscale.com/admin/dns"
+
 
 def _tailscale_bin() -> str | None:
-    """설치된 tailscale CLI 경로. 없으면 None."""
-    return shutil.which("tailscale")
+    """설치된 tailscale CLI 경로. PATH에 없으면 OS별 기본 설치 경로도 확인한다."""
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    candidates: list[str] = []
+    if os.name == "nt":
+        for env_key, default_dir in (
+            ("ProgramFiles", r"C:\Program Files"),
+            ("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        ):
+            base = os.environ.get(env_key) or default_dir
+            candidate = os.path.join(base, "Tailscale", "tailscale.exe")
+            if candidate not in candidates:
+                candidates.append(candidate)
+    elif sys.platform == "darwin":
+        candidates.extend(
+            [
+                "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+                "/opt/homebrew/bin/tailscale",
+                "/usr/local/bin/tailscale",
+            ]
+        )
+    else:
+        candidates.extend(["/usr/bin/tailscale", "/usr/local/bin/tailscale"])
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _tailscale_subprocess_kwargs() -> dict[str, Any]:
+    """Tailscale CLI 실행에 공통으로 쓰는 비대화형 subprocess 옵션."""
+    kwargs: dict[str, Any] = {
+        "stdin": asyncio.subprocess.DEVNULL,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return kwargs
+
+
+def _extract_tailscale_feature_url(
+    text: str,
+    *,
+    allow_unterminated: bool = False,
+) -> str | None:
+    """출력 버퍼에서 Tailscale 로그인/활성화 URL을 안전하게 추출한다."""
+    match = _TAILSCALE_FEATURE_URL_COMPLETE_RE.search(text)
+    if match:
+        raw_url = match.group(1)
+    elif allow_unterminated:
+        fallback = _TAILSCALE_FEATURE_URL_RE.search(text)
+        raw_url = fallback.group(0) if fallback else ""
+    else:
+        return None
+    cleaned = raw_url.rstrip(_TAILSCALE_URL_TRAILING_PUNCT)
+    return cleaned or None
+
+
+def _format_tailscale_cli_error(raw: str, fallback: str) -> str:
+    """Tailscale CLI 원시 오류를 사용자가 조치할 수 있는 안내로 정리한다."""
+    text = raw.strip()
+    lower = text.lower()
+    if (
+        "access is denied" in lower
+        or "permission denied" in lower
+        or "operator" in lower
+    ):
+        return (
+            "Tailscale 서비스에 접근할 권한이 없습니다. Tailscale 앱이 실행 중인지 "
+            "확인하고, 문제가 계속되면 공방을 관리자 권한으로 실행하거나 Tailscale을 "
+            "다시 시작하세요."
+        )
+    if (
+        "failed to connect to local tailscaled" in lower
+        or (
+            "tailscaled" in lower
+            and (
+                "not running" in lower
+                or "cannot connect" in lower
+                or "no such file" in lower
+                or "pipe" in lower
+                or "connectex" in lower
+            )
+        )
+    ):
+        return (
+            "Tailscale 백그라운드 서비스에 연결할 수 없습니다. "
+            "Tailscale 앱을 실행하고 로그인한 뒤 다시 시도하세요."
+        )
+    if "tailscale is stopped" in lower:
+        return (
+            "Tailscale 연결이 꺼져 있습니다. "
+            "Tailscale 앱에서 연결을 켠 뒤 다시 시도하세요."
+        )
+    if "logged out" in lower or "needslogin" in lower:
+        return (
+            "Tailscale에 로그인되어 있지 않습니다. "
+            "Tailscale 앱에서 로그인한 뒤 다시 시도하세요."
+        )
+    return text or fallback
 
 
 async def _communicate_tailscale_on_subprocess_loop(
@@ -30342,9 +30451,9 @@ async def _communicate_tailscale_on_subprocess_loop(
 ) -> tuple[bytes, bytes, int | None]:
     """Tailscale 단기 명령을 subprocess 전용 루프에서 실행한다."""
     proc = await asyncio.create_subprocess_exec(
-        ts, *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        ts,
+        *args,
+        **_tailscale_subprocess_kwargs(),
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -30354,7 +30463,10 @@ async def _communicate_tailscale_on_subprocess_loop(
             f"command={[ts, *args]!r}, timeout={timeout}"
         )
         if proc.returncode is None:
-            proc.kill()
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError):
+                pass
             await proc.wait()
         raise
     return out, err, proc.returncode
@@ -30367,9 +30479,9 @@ async def _run_tailscale_serve_start(
 ) -> dict[str, Any]:
     """`tailscale serve`를 실행하며 tailnet 활성화 주소가 나오는 즉시 감지한다.
 
-    Serve/HTTPS가 꺼진 tailnet에서는 CLI가 활성화 주소를 stdout에 출력한 뒤
-    사용자 승인을 기다리며 끝나지 않는다. 출력을 실시간으로 읽지 않으면 그
-    주소를 잃고 단순 시간 초과로만 보인다.
+    Serve/HTTPS가 꺼진 tailnet에서는 CLI가 활성화 주소를 stdout 또는 stderr에
+    출력한 뒤 사용자 승인을 기다리며 끝나지 않는다. 출력을 실시간으로 읽지 않으면
+    그 주소를 잃고 단순 시간 초과로만 보인다.
     """
     proc = await asyncio.create_subprocess_exec(
         ts,
@@ -30377,48 +30489,77 @@ async def _run_tailscale_serve_start(
         "--bg",
         f"--https={_TAILSCALE_SERVE_HTTPS_PORT}",
         _TAILSCALE_SERVE_TARGET,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        **_tailscale_subprocess_kwargs(),
     )
     stdout = bytearray()
     stderr = bytearray()
+    loop = asyncio.get_running_loop()
+    last_output_at = 0.0
 
     async def pump(stream, buffer: bytearray) -> None:
+        nonlocal last_output_at
         while True:
             chunk = await stream.read(4096)
             if not chunk:
                 return
             buffer.extend(chunk)
+            last_output_at = loop.time()
 
     pumps = [
         asyncio.create_task(pump(proc.stdout, stdout)),
         asyncio.create_task(pump(proc.stderr, stderr)),
     ]
-    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     enable_url: str | None = None
     timed_out = False
+
+    def detect_enable_url(*, allow_unterminated: bool) -> str | None:
+        for raw_buf in (stdout, stderr):
+            text = raw_buf.decode("utf-8", errors="ignore")
+            found_url = _extract_tailscale_feature_url(
+                text, allow_unterminated=allow_unterminated
+            )
+            if found_url:
+                return found_url
+        return None
+
     try:
         while True:
             if enable_url is None:
-                match = _TAILSCALE_FEATURE_URL_RE.search(
-                    stdout.decode("utf-8", errors="ignore")
-                )
-                if match:
-                    enable_url = match.group(0)
-            if enable_url or all(task.done() for task in pumps):
+                enable_url = detect_enable_url(allow_unterminated=False)
+                if (
+                    enable_url is None
+                    and last_output_at > 0.0
+                    and (loop.time() - last_output_at) >= _TAILSCALE_URL_QUIET_SECONDS
+                ):
+                    enable_url = detect_enable_url(allow_unterminated=True)
+            if enable_url:
+                break
+            if all(task.done() for task in pumps):
+                enable_url = detect_enable_url(allow_unterminated=True)
                 break
             if loop.time() >= deadline:
                 timed_out = True
                 break
             await asyncio.sleep(0.1)
+        if not enable_url and not timed_out:
+            remaining = max(1.0, deadline - loop.time())
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=min(remaining, 5.0))
+            except asyncio.TimeoutError:
+                timed_out = True
     finally:
-        if proc.returncode is None:
-            proc.kill()
-            await proc.wait()
-        for task in pumps:
-            task.cancel()
-        await asyncio.gather(*pumps, return_exceptions=True)
+        try:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except (ProcessLookupError, PermissionError):
+                    pass
+                await proc.wait()
+        finally:
+            for task in pumps:
+                task.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
     return {
         "stdout": stdout.decode("utf-8", errors="ignore"),
         "stderr": stderr.decode("utf-8", errors="ignore"),
@@ -30511,8 +30652,10 @@ async def _tailscale_serve_state() -> tuple[bool, str | None, str | None]:
     text = out.decode("utf-8", errors="ignore")
     if returncode != 0:
         err_text = err.decode("utf-8", errors="ignore").strip()
-        msg = err_text or text.strip() or (
-            f"tailscale serve status 실패 (code {returncode})"
+        raw_msg = err_text or text.strip()
+        msg = _format_tailscale_cli_error(
+            raw_msg,
+            f"tailscale serve status 실패 (code {returncode})",
         )
         print(
             "[TAILSCALE] Serve 상태 명령 실패: "
@@ -30531,6 +30674,139 @@ async def _tailscale_serve_state() -> tuple[bool, str | None, str | None]:
         )
         traceback.print_exc()
         raise RuntimeError(f"tailscale serve status JSON 파싱 실패: {exc}") from exc
+
+
+async def _tailscale_status_preflight(ts: str) -> dict[str, Any]:
+    """`tailscale status --json`으로 로그인·연결·MagicDNS·인증서 상태를 사전 확인한다."""
+    try:
+        out, err, returncode = await _run_on_tunnel_subprocess_loop(
+            _communicate_tailscale_on_subprocess_loop(
+                ts, "status", "--json", timeout=10.0
+            )
+        )
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "status": 503,
+            "error": (
+                "Tailscale 상태 확인 시간이 초과되었습니다. "
+                "Tailscale 앱이 정상 실행 중인지 확인한 뒤 다시 시도하세요."
+            ),
+            "enable_url": None,
+            "cert_domains": [],
+        }
+
+    out_text = out.decode("utf-8", errors="ignore").strip()
+    err_text = err.decode("utf-8", errors="ignore").strip()
+    data: dict[str, Any] | None = None
+    if out_text:
+        try:
+            parsed = json.loads(out_text)
+            if isinstance(parsed, dict):
+                data = parsed
+        except ValueError:
+            data = None
+
+    # `tailscale status --json` can exit non-zero while still returning valid
+    # JSON describing NeedsLogin / Stopped states; inspect BackendState first.
+    if data and isinstance(data.get("BackendState"), str):
+        backend_state = data["BackendState"]
+        auth_url = _extract_tailscale_feature_url(
+            str(data.get("AuthURL") or ""),
+            allow_unterminated=True,
+        )
+        self_info = data.get("Self") if isinstance(data.get("Self"), dict) else {}
+        dns_name = str(self_info.get("DNSName") or "").strip(".")
+        cert_domains = [
+            domain
+            for domain in (data.get("CertDomains") or [])
+            if isinstance(domain, str) and domain.strip()
+        ]
+        if backend_state == "NeedsLogin":
+            return {
+                "ok": False,
+                "status": 409,
+                "error": (
+                    "Tailscale에 로그인되어 있지 않습니다. "
+                    "Tailscale 앱에서 로그인한 뒤 다시 주소 발급을 눌러주세요."
+                ),
+                "enable_url": auth_url,
+                "cert_domains": cert_domains,
+            }
+        if backend_state == "NeedsMachineAuth":
+            return {
+                "ok": False,
+                "status": 409,
+                "error": (
+                    "이 기기가 Tailscale 관리 콘솔에서 아직 승인되지 않았습니다. "
+                    "관리 콘솔에서 기기를 승인한 뒤 다시 시도하세요."
+                ),
+                "enable_url": None,
+                "cert_domains": cert_domains,
+            }
+        if backend_state in ("Stopped", "NoState"):
+            return {
+                "ok": False,
+                "status": 409,
+                "error": (
+                    "Tailscale 연결이 꺼져 있습니다. "
+                    "Tailscale 앱에서 연결을 켠 뒤 다시 주소 발급을 눌러주세요."
+                ),
+                "enable_url": None,
+                "cert_domains": cert_domains,
+            }
+        if backend_state == "Starting":
+            return {
+                "ok": False,
+                "status": 503,
+                "error": "Tailscale이 아직 연결 중입니다. 잠시 후 다시 시도하세요.",
+                "enable_url": None,
+                "cert_domains": cert_domains,
+            }
+        if backend_state == "Running" and not dns_name:
+            return {
+                "ok": False,
+                "status": 409,
+                "error": (
+                    "Tailscale 관리 콘솔에서 MagicDNS와 HTTPS Certificates가 켜져 있어야 "
+                    "고정 주소를 발급할 수 있습니다. 아래 설정 페이지를 열어 켠 뒤 "
+                    "다시 주소 발급을 눌러주세요."
+                ),
+                "enable_url": _TAILSCALE_ADMIN_DNS_URL,
+                "cert_domains": cert_domains,
+            }
+        return {
+            "ok": True,
+            "status": 200,
+            "error": None,
+            "enable_url": None,
+            "cert_domains": cert_domains,
+        }
+
+    if returncode != 0:
+        msg = _format_tailscale_cli_error(
+            err_text or out_text,
+            f"tailscale status 실행 실패 (code {returncode})",
+        )
+        print(
+            "[TAILSCALE] 사전 상태 확인 실패: "
+            f"returncode={returncode}, stderr={err_text!r}, stdout={out_text!r}"
+        )
+        return {
+            "ok": False,
+            "status": 500,
+            "error": msg,
+            "enable_url": None,
+            "cert_domains": [],
+        }
+
+    return {
+        "ok": True,
+        "status": 200,
+        "error": None,
+        "enable_url": None,
+        "cert_domains": [],
+    }
 
 
 async def _wait_tailscale_serve_state(
@@ -30553,6 +30829,24 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
         print(f"[TAILSCALE] {msg}")
         return web.json_response({"status": "error", "error": msg}, status=500)
     try:
+        preflight = await _tailscale_status_preflight(ts)
+        if not preflight["ok"]:
+            payload: dict[str, Any] = {
+                "status": "error",
+                "error": preflight["error"],
+            }
+            if preflight["enable_url"]:
+                payload["enable_url"] = preflight["enable_url"]
+            print(
+                f"[TAILSCALE] Serve 시작 사전 확인 실패: {preflight['error']}"
+                + (
+                    f" ({preflight['enable_url']})"
+                    if preflight["enable_url"]
+                    else ""
+                )
+            )
+            return web.json_response(payload, status=preflight["status"])
+
         active, url, conflict = await _tailscale_serve_state()
         if active and url:
             _tailscale_active = True
@@ -30565,6 +30859,7 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
                 status=409,
             )
         command_error: str | None = None
+        fallback_enable_url: str | None = None
         confirm_timeout = 1.0
         result = await _run_on_tunnel_subprocess_loop(
             _run_tailscale_serve_start(
@@ -30576,16 +30871,22 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
         ).strip()
         if result["enable_url"]:
             enable_url = result["enable_url"]
-            print(f"[TAILSCALE] tailnet Serve/HTTPS 활성화 필요: {enable_url}")
+            if "/a/" in enable_url:
+                msg = (
+                    "Tailscale 로그인이 필요합니다. 아래 링크를 브라우저에서 "
+                    "열어 로그인한 뒤 다시 주소 발급을 눌러주세요."
+                )
+            else:
+                msg = (
+                    "Tailscale에서 Serve/HTTPS 기능을 한 번 활성화해야 "
+                    "고정 주소를 발급할 수 있습니다. 아래 링크를 브라우저에서 "
+                    "열어 활성화한 뒤 다시 주소 발급을 눌러주세요."
+                )
+            print(f"[TAILSCALE] tailnet 활성화/로그인 필요: {enable_url}")
             return web.json_response(
                 {
                     "status": "error",
-                    "error": (
-                        "Tailscale에서 Serve/HTTPS 기능을 한 번 활성화해야 "
-                        "고정 주소를 발급할 수 있습니다. 아래 주소를 브라우저에서 "
-                        "열어 활성화한 뒤 다시 주소 발급을 눌러주세요. "
-                        f"{enable_url}"
-                    ),
+                    "error": msg,
                     "enable_url": enable_url,
                 },
                 status=409,
@@ -30595,15 +30896,19 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
                 f"tailscale serve 시작 시간 초과({int(_TAILSCALE_SERVE_START_TIMEOUT)}초). "
                 "HTTPS 인증서를 처음 발급하는 중이면 더 오래 걸릴 수 있습니다. "
                 "Tailscale 관리 콘솔의 DNS에서 HTTPS Certificates가 켜져 있는지 "
-                "확인하고, `tailscale serve status`로 상태를 확인한 뒤 다시 시도하세요."
+                "확인한 뒤 다시 시도하세요."
             )
+            if not preflight["cert_domains"]:
+                fallback_enable_url = _TAILSCALE_ADMIN_DNS_URL
             confirm_timeout = _TAILSCALE_SERVE_CONFIRM_TIMEOUT
             print(f"[TAILSCALE] {command_error}")
         elif result["returncode"] != 0:
-            command_error = (
-                command_output
-                or f"tailscale serve 실행 실패 (code {result['returncode']})"
+            command_error = _format_tailscale_cli_error(
+                command_output,
+                f"tailscale serve 실행 실패 (code {result['returncode']})",
             )
+            if not preflight["cert_domains"]:
+                fallback_enable_url = _TAILSCALE_ADMIN_DNS_URL
             confirm_timeout = 2.0
             print(
                 f"[TAILSCALE] Serve 시작 실패 rc={result['returncode']}: "
@@ -30624,7 +30929,16 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
                 status=409,
             )
         if command_error:
-            return web.json_response({"status": "error", "error": command_error}, status=500)
+            error_payload: dict[str, Any] = {
+                "status": "error",
+                "error": command_error,
+            }
+            if fallback_enable_url:
+                error_payload["enable_url"] = fallback_enable_url
+            return web.json_response(
+                error_payload,
+                status=409 if fallback_enable_url else 500,
+            )
         msg = (
             "Serve 주소를 확인하지 못했습니다. "
             "`tailscale serve status --json` 출력을 확인하세요."
@@ -30689,7 +31003,10 @@ async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
         if returncode != 0:
             err_text = err.decode("utf-8", errors="ignore").strip()
             out_text = out.decode("utf-8", errors="ignore").strip()
-            msg = err_text or out_text or f"tailscale serve off 실패 (code {returncode})"
+            msg = _format_tailscale_cli_error(
+                err_text or out_text,
+                f"tailscale serve off 실패 (code {returncode})",
+            )
             print(
                 f"[TAILSCALE] Serve {_TAILSCALE_SERVE_HTTPS_PORT} 종료 실패: "
                 f"returncode={returncode}, stderr={err_text!r}, stdout={out_text!r}"

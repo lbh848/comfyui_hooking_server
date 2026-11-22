@@ -1,4 +1,4 @@
-import { Copy, Link2, RefreshCw, Unplug } from "lucide-react";
+import { Copy, ExternalLink, Link2, RefreshCw, Unplug } from "lucide-react";
 import { Panel, Toggle } from "./components";
 import { ExternalConnectionGuide } from "./ExternalConnectionGuide";
 import { connectionStatus, type ConnectionKind, type ExternalConnections } from "./externalConnection";
@@ -18,8 +18,11 @@ export function ExternalConnectionPage({ connections, kind, notify }: { connecti
   const other = connections.data?.[otherKind];
   const connected = state?.status === "running" && !!state.url;
   const otherConnected = other?.status === "running";
+  const autoStarting = kind === "tailscale" && !!state?.auto_starting && !connected;
   const feedback = connections.feedback?.kind === kind ? connections.feedback : null;
   const error = connections.error || connections.data?.gateway.error || (feedback?.error ? feedback.message : "") || state?.error;
+  const enableUrl = (feedback?.error ? feedback.enableUrl : "") || state?.enable_url || "";
+  const safeEnableUrl = !connected && enableUrl.startsWith("https://") ? enableUrl : "";
   const guideUrl = (connected ? state.url : otherConnected ? other?.url : "") || "https://발급받은-주소.example.com";
   const pending = connections.busy?.kind === kind ? connections.busy.action : null;
   const busy = !!connections.busy || connections.savingAutoStart;
@@ -35,11 +38,11 @@ export function ExternalConnectionPage({ connections, kind, notify }: { connecti
         <p>{kind === "tunnel" ? "주소를 발급하면 외부에서 삽화 요청을 보낼 수 있습니다. 재발급하면 주소가 변경됩니다." : "같은 tailnet에 연결된 기기에서 사용하는 고정 주소입니다. Tailscale을 설치하고 로그인한 뒤 발급하세요. (HTTPS :8202)"}</p>
         <label className="field">{label}<input className="external-connection-url" readOnly value={connected ? state.url! : ""} placeholder="발급 전" onFocus={event => event.target.select()} /></label>
         <div className="external-connection-actions">
-          <button className="button primary" disabled={busy || !state || connected || otherConnected || state.status === "unavailable" || connections.data?.gateway.status !== "running"}
-            onClick={() => void connections.run(kind, "start")}><Link2 size={15} />{pending === "start" ? "발급 중…" : "주소 발급"}</button>
+          <button className="button primary" disabled={busy || autoStarting || !state || connected || otherConnected || state.status === "unavailable" || connections.data?.gateway.status !== "running"}
+            onClick={() => void connections.run(kind, "start")}><Link2 size={15} />{pending === "start" ? "발급 중…" : autoStarting ? "자동 발급 중…" : "주소 발급"}</button>
           <button className="button" disabled={!connected || !!connections.error} onClick={() => void copy()}><Copy size={15} />복사</button>
           {kind === "tunnel" && <button className="button" disabled={busy || !connected || otherConnected} onClick={() => void connections.run(kind, "restart")}><RefreshCw size={15} />{pending === "restart" ? "재발급 중…" : "재발급"}</button>}
-          <button className="button danger" disabled={busy || !state || state.status === "stopped" || state.status === "unavailable"} onClick={() => void connections.run(kind, "stop")}><Unplug size={15} />{pending === "stop" ? "종료 중…" : "연결 종료"}</button>
+          <button className="button danger" disabled={busy || autoStarting || !state || state.status === "stopped" || state.status === "unavailable"} onClick={() => void connections.run(kind, "stop")}><Unplug size={15} />{pending === "stop" ? "종료 중…" : "연결 종료"}</button>
           <button className="button" disabled={busy} onClick={() => void connections.reload()}><RefreshCw size={15} />상태 새로고침</button>
           {kind === "tailscale" && <label className="external-connection-auto-start" title="공방을 시작할 때 고정 주소를 자동으로 발급합니다.">
             <Toggle label="시작 시 자동으로 발급" checked={connections.data?.tailscale_auto_start ?? false}
@@ -50,8 +53,14 @@ export function ExternalConnectionPage({ connections, kind, notify }: { connecti
         </div>
         {otherConnected && !connected && <p className="external-connection-note">{kind === "tunnel" ? "고정 주소" : "랜덤 주소"}의 연결을 먼저 종료한 뒤 발급하세요.</p>}
         {error && <p className="external-connection-error" role="alert">{error}</p>}
-        {pending && <p role="status">{pending === "stop" ? "연결을 종료하고 있습니다." : "주소를 발급하고 연결을 확인하고 있습니다."}</p>}
-        {!error && !pending && feedback && <p role="status">{feedback.message}</p>}
+        {safeEnableUrl && <div className="external-connection-enable">
+          <a className="button secondary" href={safeEnableUrl} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={15} />Tailscale 설정 페이지 열기
+          </a>
+          <span className="external-connection-enable-url">{safeEnableUrl}</span>
+        </div>}
+        {(pending || autoStarting) && <p role="status">{pending === "stop" ? "연결을 종료하고 있습니다." : autoStarting && !pending ? "시작 시 고정 주소를 자동으로 발급하고 있습니다." : "주소를 발급하고 연결을 확인하고 있습니다."}</p>}
+        {!error && !pending && !autoStarting && feedback && <p role="status">{feedback.message}</p>}
       </div>
     </Panel>
     <Panel title="공유 및 연결 가이드"><ExternalConnectionGuide url={guideUrl} /></Panel>

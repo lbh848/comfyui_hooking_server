@@ -106,8 +106,8 @@ export default function IllustApp() {
 
 function IllustrationAppContent() {
   const { active, hash, navigate: navigatePage } = useWorkshopScreen();
-  const connections = useExternalConnections(active);
   const tab = currentTab(hash);
+  const connections = useExternalConnections(active, tab === "tunnel" || tab === "tailscale");
   const model = useIllustrationModelSelection();
   const { entries: modals } = useModalWorkspace();
   const hasBackgroundModals = modals.some(modal => modal.backgrounded);

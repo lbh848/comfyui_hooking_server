@@ -2918,7 +2918,7 @@
         async function issueTailscale() {
             const issueBtn = document.getElementById('ts-issue-btn');
             if (issueBtn) { issueBtn.disabled = true; issueBtn.textContent = '발급 중...'; }
-            _setTailscaleStatus('Tailscale Serve HTTPS :8189 설정 중... (최대 20초)');
+            _setTailscaleStatus('Tailscale Serve HTTPS :8189 설정 중... (최대 60초)');
             try {
                 const res = await fetch('/api/tailscale/start', {method:'POST'});
                 const data = await res.json();
@@ -2930,7 +2930,11 @@
                     _setTailscaleStatus('고정 주소가 발급되었습니다.');
                     showToast('Tailscale 고정 주소가 발급되었습니다!', 'success');
                 } else {
-                    throw new Error((data && data.error) || 'Tailscale Serve 시작 실패');
+                    const baseError = (data && data.error) || 'Tailscale Serve 시작 실패';
+                    const fullError = (data && data.enable_url && !baseError.includes(data.enable_url))
+                        ? baseError + '\n' + data.enable_url
+                        : baseError;
+                    throw new Error(fullError);
                 }
             } catch (e) {
                 _setTailscaleStatus(
