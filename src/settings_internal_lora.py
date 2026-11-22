@@ -82,20 +82,21 @@ class InternalLoraRuntime:
                 self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300))
             if self.process is not None and self.process.poll() is None:
                 return
-            python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-            if not python.is_file():
-                python = Path(sys.executable)
-            uv = shutil.which("uv")
-            if not uv:
-                uv = next((str(path) for path in sorted((self.root / ".tools").glob("uv-*/uv.exe"), reverse=True)), None)
-            command = ([uv, "run", "--script", str(self.root / "internal_lora_runtime.py")]
-                       if uv else [str(python), str(self.root / "internal_lora_runtime.py")])
+            venv_python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            script = str(self.root / "internal_lora_runtime.py")
+            if venv_python.is_file():
+                command = [str(venv_python), script]
+            else:
+                uv = shutil.which("uv")
+                if not uv:
+                    uv = next((str(path) for path in sorted((self.root / ".tools").glob("uv-*/uv.exe"), reverse=True)), None)
+                command = ([uv, "run", "--script", script] if uv else [str(Path(sys.executable)), script])
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", 0))
                 port = probe.getsockname()[1]
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             env = {**os.environ, "NO_BROWSER": "1", "SOYA_INTERNAL_LORA_TOKEN": self.token,
-                   "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
+                   "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
             with self.log_path.open("ab") as log:
                 self.process = subprocess.Popen(
                     [*command, "--port", str(port)],
