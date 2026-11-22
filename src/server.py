@@ -30322,6 +30322,13 @@ _tailscale_active: bool = False
 _tailscale_url: str | None = None
 _TAILSCALE_SERVE_HTTPS_PORT = 8189
 _TAILSCALE_SERVE_TARGET = "http://127.0.0.1:8189"
+# 첫 HTTPS 인증서 발급이 끝날 때까지 serve 명령이 오래 걸릴 수 있다.
+_TAILSCALE_SERVE_START_TIMEOUT = 60.0
+# CLI가 실패·시간 초과를 보고해도 데몬이 매핑을 적용했을 수 있어 잠시 재확인한다.
+_TAILSCALE_SERVE_CONFIRM_TIMEOUT = 10.0
+# tailnet에서 Serve/HTTPS가 꺼져 있으면 CLI가 이 활성화 주소를 출력하고
+# 사용자 승인을 기다리며 멈춘다. 앱은 그 주소를 사용자에게 보여줘야 한다.
+_TAILSCALE_FEATURE_URL_RE = re.compile(r"https://login\.tailscale\.com/\S+")
 
 def _tailscale_bin() -> str | None:
     """설치된 tailscale CLI 경로. 없으면 None."""
@@ -30351,6 +30358,74 @@ async def _communicate_tailscale_on_subprocess_loop(
             await proc.wait()
         raise
     return out, err, proc.returncode
+
+
+async def _run_tailscale_serve_start(
+    ts: str,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    """`tailscale serve`를 실행하며 tailnet 활성화 주소가 나오는 즉시 감지한다.
+
+    Serve/HTTPS가 꺼진 tailnet에서는 CLI가 활성화 주소를 stdout에 출력한 뒤
+    사용자 승인을 기다리며 끝나지 않는다. 출력을 실시간으로 읽지 않으면 그
+    주소를 잃고 단순 시간 초과로만 보인다.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        ts,
+        "serve",
+        "--bg",
+        f"--https={_TAILSCALE_SERVE_HTTPS_PORT}",
+        _TAILSCALE_SERVE_TARGET,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout = bytearray()
+    stderr = bytearray()
+
+    async def pump(stream, buffer: bytearray) -> None:
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                return
+            buffer.extend(chunk)
+
+    pumps = [
+        asyncio.create_task(pump(proc.stdout, stdout)),
+        asyncio.create_task(pump(proc.stderr, stderr)),
+    ]
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    enable_url: str | None = None
+    timed_out = False
+    try:
+        while True:
+            if enable_url is None:
+                match = _TAILSCALE_FEATURE_URL_RE.search(
+                    stdout.decode("utf-8", errors="ignore")
+                )
+                if match:
+                    enable_url = match.group(0)
+            if enable_url or all(task.done() for task in pumps):
+                break
+            if loop.time() >= deadline:
+                timed_out = True
+                break
+            await asyncio.sleep(0.1)
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        for task in pumps:
+            task.cancel()
+        await asyncio.gather(*pumps, return_exceptions=True)
+    return {
+        "stdout": stdout.decode("utf-8", errors="ignore"),
+        "stderr": stderr.decode("utf-8", errors="ignore"),
+        "returncode": proc.returncode,
+        "enable_url": enable_url,
+        "timed_out": timed_out and not enable_url,
+    }
 
 
 def _parse_tailscale_serve_state(
@@ -30458,6 +30533,18 @@ async def _tailscale_serve_state() -> tuple[bool, str | None, str | None]:
         raise RuntimeError(f"tailscale serve status JSON 파싱 실패: {exc}") from exc
 
 
+async def _wait_tailscale_serve_state(
+    timeout: float,
+) -> tuple[bool, str | None, str | None]:
+    """serve 상태가 늦게 반영되는 경우를 위해 짧게 재확인한다."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        active, url, conflict = await _tailscale_serve_state()
+        if active or conflict or asyncio.get_running_loop().time() >= deadline:
+            return active, url, conflict
+        await asyncio.sleep(1.0)
+
+
 async def handle_api_tailscale_start(request: web.Request) -> web.Response:
     global _tailscale_active, _tailscale_url
     ts = _tailscale_bin()
@@ -30477,44 +30564,73 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
                 {"status": "error", "error": conflict, "conflict": True},
                 status=409,
             )
-        out, err, returncode = await _run_on_tunnel_subprocess_loop(
-            _communicate_tailscale_on_subprocess_loop(
-                ts,
-                "serve",
-                "--bg",
-                f"--https={_TAILSCALE_SERVE_HTTPS_PORT}",
-                _TAILSCALE_SERVE_TARGET,
-                timeout=20.0,
+        command_error: str | None = None
+        confirm_timeout = 1.0
+        result = await _run_on_tunnel_subprocess_loop(
+            _run_tailscale_serve_start(
+                ts, timeout=_TAILSCALE_SERVE_START_TIMEOUT
             )
         )
         command_output = (
-            out.decode("utf-8", errors="ignore")
-            + "\n"
-            + err.decode("utf-8", errors="ignore")
+            result["stdout"] + "\n" + result["stderr"]
         ).strip()
-        if returncode != 0:
-            msg = command_output or f"tailscale serve 실행 실패 (code {returncode})"
-            print(f"[TAILSCALE] Serve 시작 실패 rc={returncode}: {msg}")
-            return web.json_response({"status": "error", "error": msg}, status=500)
-        active, url, conflict = await _tailscale_serve_state()
+        if result["enable_url"]:
+            enable_url = result["enable_url"]
+            print(f"[TAILSCALE] tailnet Serve/HTTPS 활성화 필요: {enable_url}")
+            return web.json_response(
+                {
+                    "status": "error",
+                    "error": (
+                        "Tailscale에서 Serve/HTTPS 기능을 한 번 활성화해야 "
+                        "고정 주소를 발급할 수 있습니다. 아래 주소를 브라우저에서 "
+                        "열어 활성화한 뒤 다시 주소 발급을 눌러주세요. "
+                        f"{enable_url}"
+                    ),
+                    "enable_url": enable_url,
+                },
+                status=409,
+            )
+        if result["timed_out"]:
+            command_error = (
+                f"tailscale serve 시작 시간 초과({int(_TAILSCALE_SERVE_START_TIMEOUT)}초). "
+                "HTTPS 인증서를 처음 발급하는 중이면 더 오래 걸릴 수 있습니다. "
+                "Tailscale 관리 콘솔의 DNS에서 HTTPS Certificates가 켜져 있는지 "
+                "확인하고, `tailscale serve status`로 상태를 확인한 뒤 다시 시도하세요."
+            )
+            confirm_timeout = _TAILSCALE_SERVE_CONFIRM_TIMEOUT
+            print(f"[TAILSCALE] {command_error}")
+        elif result["returncode"] != 0:
+            command_error = (
+                command_output
+                or f"tailscale serve 실행 실패 (code {result['returncode']})"
+            )
+            confirm_timeout = 2.0
+            print(
+                f"[TAILSCALE] Serve 시작 실패 rc={result['returncode']}: "
+                f"{command_error}"
+            )
+        # The CLI can fail or time out while the daemon still applies the
+        # mapping, so the authoritative result is the serve state itself.
+        active, url, conflict = await _wait_tailscale_serve_state(confirm_timeout)
         if active and url:
             _tailscale_active = True
             _tailscale_url = url
             print(f"[TAILSCALE] Serve 고정 주소 발급: {url}")
             return web.json_response({"status": "running", "url": url})
-        msg = conflict or (
+        if conflict:
+            print(f"[TAILSCALE] Serve 시작 후 충돌: {conflict}")
+            return web.json_response(
+                {"status": "error", "error": conflict, "conflict": True},
+                status=409,
+            )
+        if command_error:
+            return web.json_response({"status": "error", "error": command_error}, status=500)
+        msg = (
             "Serve 주소를 확인하지 못했습니다. "
             "`tailscale serve status --json` 출력을 확인하세요."
         )
         print(f"[TAILSCALE] Serve 시작 후 주소 확인 실패: {msg}")
-        return web.json_response(
-            {"status": "error", "error": msg, "conflict": bool(conflict)},
-            status=409 if conflict else 500,
-        )
-    except asyncio.TimeoutError:
-        print("[TAILSCALE] Serve 시작 타임아웃(20s)")
-        traceback.print_exc()
-        return web.json_response({"status": "error", "error": "tailscale serve 시작 시간 초과(20초)"}, status=500)
+        return web.json_response({"status": "error", "error": msg}, status=500)
     except Exception as exc:
         print(f"[TAILSCALE] Serve 시작 중 예외: {exc}")
         traceback.print_exc()
