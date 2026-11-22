@@ -13930,6 +13930,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         prompt_id = str(uuid.uuid4())
+        _touch_history_prompt_activity()
 
         log_to_file(
             f"prompt_{prompt_id[:8]}.json",
@@ -14302,6 +14303,58 @@ async def handle_prompt(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+_history_prompt_activity_at = 0.0
+_idle_history_poll_state = {"first_at": 0.0, "last_at": 0.0, "count": 0}
+
+
+def _touch_history_prompt_activity() -> None:
+    global _history_prompt_activity_at
+    _history_prompt_activity_at = time.time()
+    _idle_history_poll_state["first_at"] = 0.0
+    _idle_history_poll_state["last_at"] = 0.0
+    _idle_history_poll_state["count"] = 0
+
+
+def _should_release_orphaned_history_poller(now: float) -> bool:
+    """Detect a client stuck in ComfyUI's /history loop for a prompt lost across restart."""
+    has_running = any(e.get("status") == "running" for e in prompts.values())
+    if has_running:
+        _touch_history_prompt_activity()
+        return False
+    latest_prompt_ts = max(
+        (float(e.get("timestamp") or 0.0) for e in prompts.values()),
+        default=0.0,
+    )
+    last_activity = max(_history_prompt_activity_at, latest_prompt_ts)
+    if last_activity > 0.0 and (now - last_activity) < 5.0:
+        _idle_history_poll_state["first_at"] = 0.0
+        _idle_history_poll_state["last_at"] = 0.0
+        _idle_history_poll_state["count"] = 0
+        return False
+    last_poll = _idle_history_poll_state["last_at"]
+    if last_poll <= 0.0 or (now - last_poll) > 3.5:
+        _idle_history_poll_state["first_at"] = now
+        _idle_history_poll_state["last_at"] = now
+        _idle_history_poll_state["count"] = 1
+        return False
+    _idle_history_poll_state["last_at"] = now
+    _idle_history_poll_state["count"] += 1
+    if (
+        _idle_history_poll_state["count"] >= 4
+        and (now - _idle_history_poll_state["first_at"]) >= 3.0
+    ):
+        count = _idle_history_poll_state["count"]
+        _idle_history_poll_state["first_at"] = 0.0
+        _idle_history_poll_state["last_at"] = 0.0
+        _idle_history_poll_state["count"] = 0
+        print(
+            "[HISTORY] 실행 중 프롬프트 없는 반복 /history 폴링 감지 — "
+            f"이전 서버 세션 고아 폴러 해제 (count={count}, prompts={len(prompts)})"
+        )
+        return True
+    return False
+
+
 async def handle_history(request: web.Request) -> web.Response:
     prompt_id = request.match_info.get("prompt_id", "")
 
@@ -14318,6 +14371,11 @@ async def handle_history(request: web.Request) -> web.Response:
         }
 
     if not prompt_id:
+        if _should_release_orphaned_history_poller(time.time()):
+            return web.Response(
+                status=410,
+                text="server restarted; prompt history cleared",
+            )
         res = {
             pid: build_entry(pid, e, include_workflow=False)
             for pid, e in prompts.items()
