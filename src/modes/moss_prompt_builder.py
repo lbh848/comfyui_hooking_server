@@ -498,8 +498,11 @@ def merge_lora_lists(*groups) -> list[dict]:
 
 def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
                      batch_size=1, seed=0, negative="", sampling=None,
-                     lora_list=None, lora_filter="", sequential_offload=False) -> dict:
+                     lora_list=None, lora_filter="", clip_device="gpu",
+                     sequential_offload=False) -> dict:
     """Build the workflow controller object shared by every MOSS V2 wrapper."""
+    from illustration_json import normalize_clip_device
+
     loras = list(lora_list or [])
     if not workflow_profiles.MOSS_REFERENCE_ENABLED:
         loras = [item for item in loras
@@ -508,6 +511,7 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
     return {
         "model": _text(model),
         "clip": _text(clip),
+        "clip_device": normalize_clip_device(clip_device),
         "vae": _text(vae),
         "width": int(width),
         "height": int(height),

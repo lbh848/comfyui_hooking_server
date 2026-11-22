@@ -28,6 +28,8 @@ const modelLabels: Record<string, string> = {
 };
 const fieldLabels: Record<string, string> = { steps: "STEP", cfg: "CFG", sampler_mode: "샘플러 종류", sampler_name: "샘플링 알고리즘", scheduler: "스케줄러", denoise: "Denoise", shift: "Shift", uncond_skip_layers: "Uncond skip layers", sage_attention: "SAGE ATTN", spd_scale: "SPD scale", spd_sigma: "SPD sigma" };
 const samplerModeLabels: Record<string, string> = { KSampler: "KSampler · 기본", FAST: "FAST · Spectrum SPD/SPEED", SpectrumKSamplerModGuidance: "Spectrum · Mod Guidance" };
+const clipDeviceLabels: Record<string, string> = { gpu: "GPU · GPU 로드", default: "DEFAULT · ComfyUI 기본", cpu: "CPU · CPU 로드" };
+const clipDeviceHelp = "DEFAULT는 ComfyUI VRAM 설정을 따르며, GPU는 GPU에서 실행하고 CPU는 VRAM을 사용하지 않고 CPU에서 실행합니다.";
 const fastFieldOptions: Record<string, { min: number; max: number; step: number }> = {
   spd_scale: { min: 0.25, max: 1, step: 0.05 },
   spd_sigma: { min: 0, max: 1, step: 0.01 },
@@ -205,6 +207,10 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
   const loraSets = branchLoraKeys.length >= 2 ? branchLoraKeys : loraKeys.filter(key => key === "STYLE_LORA_DATA");
   const loraList = (key: string): IllustrationData[] => Array.isArray(fields?.[key]?.list) ? fields![key].list : [];
   const modelPath = (value = "") => value.replaceAll("\\", "/").replace(/^(checkpoints|diffusion_models|unet|loras|text_encoders|clip|vae)\//, "");
+  const clipDeviceControl = (value: string) => <label className="field">텍스트 인코더 로드 장치<select value={value} disabled={readOnly} onChange={event => update("workflow.clip_device", event.target.value)}>
+    {!(value in clipDeviceLabels) && <option value={value}>{value ? `${value} · 현재 설정` : "선택하세요"}</option>}
+    {Object.entries(clipDeviceLabels).map(([option, text]) => <option key={option} value={option}>{text}</option>)}
+  </select><span className="field-help">{clipDeviceHelp}</span></label>;
   const name = scope.labels[profile] || profile;
   return <Panel title={`${name} · 모델·샘플링·LoRA`} aside={<div className="illust-actions"><span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span><button className="button" disabled={dirty || autosave.busy} onClick={resource.reload}><RefreshCw size={14} />다시 불러오기</button></div>}><div className="illust-body">
     {!path ? <Empty title="그림 모델을 선택하세요">그림 모델과 워크플로우를 선택하면 세부 설정을 불러옵니다.</Empty> : !resource.data ? <IllustrationLoading error={resource.error} retry={resource.reload} /> : <form ref={form} noValidate className="illust-form" onSubmit={event => { event.preventDefault(); void autosave.retry(); }}><fieldset className="illust-form">
@@ -215,23 +221,28 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
       {fields && <>
         <div hidden={section !== "models"}><div className="illust-form">
           <div className="illust-actions"><p className="field-help">설정의 모델 관리에 등록된 모델을 선택합니다.</p><button type="button" className="button" disabled={inventory.loading} onClick={() => void inventory.refresh()}><RefreshCw size={14} />모델 목록 새로고침</button></div>
-          <div className="illust-fields">{Object.entries(fields).filter(([, value]) => typeof value === "string").map(([key, value]) => {
+          <div className="illust-fields">{Object.entries(fields).filter(([key, value]) => typeof value === "string" && key !== "workflow.clip_device").map(([key, value]) => {
             const kind = key === "workflow.clip" ? "Text encoder" : key === "workflow.vae" ? "VAE" : key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion";
             const label = key === "workflow.clip" && "ANIMA_FIRST_SAMPLER" in fields ? "ANIMA 텍스트 인코더" : modelLabels[key] || key;
             const entries = inventory.models.filter(item => item.path && item.kind === kind);
             const models = [...entries].sort((a, b) => resourceDisplayName(a).localeCompare(resourceDisplayName(b), "ko"));
             const selected = entries.find(item => modelPath(item.path) === modelPath(value));
             const currentName = selected ? resourceDisplayName(selected) : String(value).replaceAll("\\", "/").split("/").pop()?.replace(/\.(safetensors|sft|ckpt|pt|pth|bin|gguf)$/i, "");
+            const clipDevice = key === "workflow.clip" && typeof fields["workflow.clip_device"] === "string" ? fields["workflow.clip_device"] : null;
             return <div className="illust-model-choice" key={key}>
               <div className="illust-model-thumbnail"><ResourceThumbnail name={currentName || label} thumbnail={selected?.thumbnail} /></div>
-              <label className="field">{label}<select value={selected?.id || ""} disabled={readOnly || inventory.loading || !!inventory.error} onChange={event => {
-              const model = models.find(item => item.id === event.target.value);
-              if (model) update(key, modelPath(model.path));
-            }}>
-              {(!selected || !models.some(item => item.id === selected.id)) && <option value={selected?.id || ""} disabled>{inventory.loading ? "모델 목록을 불러오는 중…" : currentName ? `${currentName} · 현재 모델` : "모델 선택"}</option>}
-              {models.map(item => <option key={item.id} value={item.id}>{resourceDisplayName(item)}{item.linked ? " · LINKED" : ""}</option>)}
-            </select>{!inventory.loading && !inventory.error && !models.length && <span className="field-help">모델 관리에 {kind} 모델을 등록한 뒤 목록을 새로고침하세요.</span>}</label></div>;
+              <div className="illust-model-choice-fields">
+                <label className="field">{label}<select value={selected?.id || ""} disabled={readOnly || inventory.loading || !!inventory.error} onChange={event => {
+                const model = models.find(item => item.id === event.target.value);
+                if (model) update(key, modelPath(model.path));
+              }}>
+                {(!selected || !models.some(item => item.id === selected.id)) && <option value={selected?.id || ""} disabled>{inventory.loading ? "모델 목록을 불러오는 중…" : currentName ? `${currentName} · 현재 모델` : "모델 선택"}</option>}
+                {models.map(item => <option key={item.id} value={item.id}>{resourceDisplayName(item)}{item.linked ? " · LINKED" : ""}</option>)}
+              </select>{!inventory.loading && !inventory.error && !models.length && <span className="field-help">모델 관리에 {kind} 모델을 등록한 뒤 목록을 새로고침하세요.</span>}</label>
+                {clipDevice !== null && clipDeviceControl(clipDevice)}
+              </div></div>;
           })}</div>
+          {!("workflow.clip" in fields) && typeof fields["workflow.clip_device"] === "string" && <div className="illust-fields">{clipDeviceControl(fields["workflow.clip_device"])}</div>}
         </div></div>
         <div hidden={section !== "sampling"}><fieldset className="illust-form" disabled={readOnly}>
           {"workflow.sequential_offload" in fields && <div className="field">

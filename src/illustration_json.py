@@ -32,10 +32,25 @@ INT_FIELDS = {"IMG_W", "IMG_H", "SEED"}
 FIRST_SAMPLER_MODES = ("KSampler", "FAST", "SpectrumKSamplerModGuidance")
 FIRST_SAMPLER_NUMERIC_CONTROLS = {"spd_scale": (0.25, 1.0), "spd_sigma": (0.0, 1.0)}
 FIRST_SAMPLER_CONTROLS = ("sampler_mode", "sage_attention", *FIRST_SAMPLER_NUMERIC_CONTROLS)
+CLIP_DEVICES = ("gpu", "default", "cpu")
+DEFAULT_CLIP_DEVICE = "gpu"
 REFERENCE_PREPROCESS_LABELS = {
     "none": "전처리 없음", "lineart": "선만 따기(흑백)",
     "lineart_color": "선만 따기(원본 색상)", "grayscale": "흑백화",
 }
+
+
+def normalize_clip_device(value, default: str = DEFAULT_CLIP_DEVICE) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError("workflow.clip_device: gpu, default, cpu 중 하나를 선택하세요.")
+    normalized = value.strip().lower()
+    if not normalized:
+        return default
+    if normalized not in CLIP_DEVICES:
+        raise ValueError("workflow.clip_device: gpu, default, cpu 중 하나를 선택하세요.")
+    return normalized
 
 
 def _text(value) -> str:
@@ -187,7 +202,8 @@ def workflow_json_settings_nodes(workflow: dict, *, widget_names=None) -> dict:
         widgets = [item for item in node.get("inputs", []) if item.get("widget")]
         values = node.get("widgets_values", [])
         selectors = widget_names if widget_names is not None else ("sampling_key", "model_key", *FIRST_SAMPLER_CONTROLS)
-        model = _illustration_v2_specs().get(node["type"], {}).get("model", {})
+        spec = _illustration_v2_specs().get(node["type"], {})
+        model = spec.get("model", {})
         if widget_names is None and model.get("fallback_widget"):
             selectors = (*selectors, model["input"])
         for selector in selectors:
@@ -510,6 +526,7 @@ def workflow_lora_data_keys(workflow: dict) -> list[str]:
 def workflow_json_defaults(workflow: dict) -> dict:
     """Read selected sampling settings and model names from the workflow JSON."""
     workflow = workflow_json_settings_nodes(workflow)
+    specs = _illustration_v2_specs()
     sources = {}
     model_fallbacks = {}
     for node in workflow.values():
@@ -520,9 +537,11 @@ def workflow_json_defaults(workflow: dict) -> dict:
         bindings = [(inputs[selector].strip().removeprefix("fields."), value_type)
                     for selector, value_type in (("sampling_key", dict), ("model_key", str))
                     if isinstance(inputs.get(selector), str)]
-        model = _illustration_v2_specs().get(node.get("class_type"), {}).get("model", {})
+        spec = specs.get(node.get("class_type"), {})
+        model = spec.get("model", {})
+        clip_device = spec.get("clip_device", {})
         fallback = inputs.get(model.get("input")) if model.get("fallback_widget") else None
-        if not bindings and not isinstance(fallback, str):
+        if not bindings and not isinstance(fallback, str) and not clip_device:
             continue
         source_id = _prompt_json_source(workflow, str(prompt_json[0]))
         if source_id is None:
@@ -530,6 +549,9 @@ def workflow_json_defaults(workflow: dict) -> dict:
         if isinstance(fallback, str):
             bindings.append((model["key"], str))
             model_fallbacks.setdefault(source_id, {})[model["key"]] = fallback
+        if clip_device:
+            bindings.append((clip_device["key"], str))
+            model_fallbacks.setdefault(source_id, {})[clip_device["key"]] = DEFAULT_CLIP_DEVICE
         for key, value_type in bindings:
             if key.startswith("workflow.detailer."):
                 continue
@@ -547,7 +569,12 @@ def workflow_json_defaults(workflow: dict) -> dict:
             result["workflow.sequential_offload"] = read_prompt_path(payload, "workflow.sequential_offload") is True
         for key, value_type in keys.items():
             settings = read_prompt_path(payload, key, model_fallbacks.get(source_id, {}).get(key))
-            if not isinstance(settings, value_type) or value_type is str and not settings.strip():
+            if key == "workflow.clip_device":
+                if settings is None:
+                    settings = model_fallbacks.get(source_id, {}).get(key, DEFAULT_CLIP_DEVICE)
+                if not isinstance(settings, str) or settings not in CLIP_DEVICES:
+                    raise ValueError("workflow.clip_device: gpu, default, cpu 중 하나를 선택하세요.")
+            elif not isinstance(settings, value_type) or value_type is str and not settings.strip():
                 raise ValueError(f"Workflow JSON prompt requires {key}")
             if key in result and result[key] != settings:
                 raise ValueError(f"Workflow JSON sources disagree on {key}")
@@ -598,6 +625,10 @@ def validate_workflow_json_settings(fields: dict, defaults: dict) -> None:
                         or not isinstance(item.get("enabled", True), bool)
                         or not isinstance(item.get("trigger", ""), str)):
                     raise ValueError("LoRA 파일·계열·강도·트리거를 확인하세요.")
+            continue
+        if key == "workflow.clip_device":
+            if not isinstance(value, str) or value not in CLIP_DEVICES:
+                raise ValueError("workflow.clip_device: gpu, default, cpu 중 하나를 선택하세요.")
             continue
         if isinstance(defaults[key], str):
             if not isinstance(value, str) or not value.strip():
@@ -661,7 +692,7 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
             for key, value in defaults.items():
                 fields.setdefault(key, copy.deepcopy(value))
         else:
-            for key in ("workflow.clip", "workflow.sequential_offload"):
+            for key in ("workflow.clip", "workflow.clip_device", "workflow.sequential_offload"):
                 if key in defaults:
                     fields.setdefault(key, defaults[key])
     validate_workflow_json_settings(fields, defaults)
@@ -1119,6 +1150,7 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         negative=workflow.get("negative") or negative or "",
         sampling=sampling, lora_list=loras,
         lora_filter=saved_loras.get("filter", ""),
+        clip_device=workflow.get("clip_device") or workflow_defaults.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
         sequential_offload=workflow.get("sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
     rebuilt = MossPromptBuilder.build(document["moss"], controller)
@@ -1197,6 +1229,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         negative=fields.get("NEGATIVE_ANIMA") or negative or "",
         sampling=sampling, lora_list=lora_list,
         lora_filter=controller_loras.get("filter", ""),
+        clip_device=fields.get("workflow.clip_device") or workflow_defaults.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
         sequential_offload=fields.get("workflow.sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
     rebuilt = MossPromptBuilder.build(moss, controller)

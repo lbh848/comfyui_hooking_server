@@ -57,6 +57,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -110,6 +111,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 16,
@@ -216,6 +218,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 6,
@@ -288,6 +291,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 30,
@@ -388,6 +392,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -441,6 +446,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
@@ -547,6 +553,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -600,6 +607,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
@@ -679,6 +687,7 @@
             "workflow.sequential_offload": false,
             "workflow.model": "moss_image_sft_8stepdmd_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
               "steps": 10,
@@ -724,6 +733,7 @@
             "workflow.sequential_offload": false,
             "workflow.model": "moss_image_sft_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
               "steps": 5,
@@ -814,6 +824,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -867,6 +878,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 12,
@@ -939,6 +951,7 @@
           "fields": {
             "workflow.model": "moss_image_sft_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
               "steps": 5,
@@ -1037,6 +1050,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -1090,6 +1104,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 8,
@@ -1196,6 +1211,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -1249,6 +1265,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
             "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": true,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 8,
@@ -1316,6 +1333,7 @@
             "workflow.sequential_offload": true,
             "workflow.model": "moss_image_sft_int8_convrot.safetensors",
             "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.vae": "flux2-vae_small.safetensors",
             "workflow.sampling": {
               "steps": 5,
@@ -1406,6 +1424,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_EYE_DETAILER": {
               "steps": 20,
@@ -1459,6 +1478,7 @@
             },
             "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
             "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
             "workflow.sequential_offload": false,
             "ANIMA_FIRST_SAMPLER": {
               "steps": 10,

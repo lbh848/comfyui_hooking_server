@@ -504,6 +504,11 @@
       "key": "workflow.clip",
       "fallback_widget": true
     },
+    "clip_device": {
+      "input": "device",
+      "key": "workflow.clip_device",
+      "fallback_widget": true
+    },
     "json_inputs": {},
     "fixed_inputs": {},
     "output": [
@@ -1548,6 +1553,10 @@
     "model": {
       "input": "clip_name",
       "key": "workflow.clip"
+    },
+    "clip_device": {
+      "input": "device",
+      "key": "workflow.clip_device"
     }
   },
   "SoyaVAELoaderV2_moss_mdsoya": {
