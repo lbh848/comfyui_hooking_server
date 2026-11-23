@@ -1,10 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCheck, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import { Badge, Modal, Panel } from "./components";
+import NotificationMarkdown from "./NotificationMarkdown";
 import { notificationDate, notificationTitle } from "./notificationMarkdownRenderer.js";
 import "./notifications.css";
-
-const NotificationMarkdown = lazy(() => import("./NotificationMarkdown"));
 
 type NotificationItem = { name: string; download_url: string };
 type Listing = { items: NotificationItem[]; read: string[]; checked_at?: number; warning?: string };
@@ -90,9 +89,7 @@ function NotificationDetail({ item, unread, markRead, onClose }: {
   return <Modal title={notificationTitle(item.name)} onClose={onClose} className="notification-dialog" backgroundable={false}>
     {error && <div className="settings-feedback error" role="alert"><p>{error}</p>
       <button className="button secondary small" onClick={() => setAttempt(value => value + 1)}>다시 시도</button></div>}
-    {content !== null ? <Suspense fallback={<p className="muted" role="status">본문을 표시하는 중…</p>}>
-      <NotificationMarkdown content={content} url={item.download_url} />
-    </Suspense>
+    {content !== null ? <NotificationMarkdown content={content} url={item.download_url} />
       : !error && <p className="muted" role="status">공지 본문을 불러오는 중…</p>}
   </Modal>;
 }

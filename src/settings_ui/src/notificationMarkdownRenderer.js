@@ -53,6 +53,14 @@ export function notificationDate(name) {
   return match ? `20${match[1]}.${match[2]}.${match[3]}` : "";
 }
 
+function parseUrl(raw, base) {
+  try {
+    return new URL(raw, base);
+  } catch {
+    return null;
+  }
+}
+
 export function renderNotificationMarkdownFragment(content, url, { marked, DOMPurify }) {
   const fragment = DOMPurify.sanitize(marked.parse(content, { async: false }), {
     RETURN_DOM_FRAGMENT: true,
@@ -74,7 +82,7 @@ export function renderNotificationMarkdownFragment(content, url, { marked, DOMPu
   }
   for (const element of fragment.querySelectorAll("img[src], a[href]")) {
     const attribute = element.tagName === "IMG" ? "src" : "href";
-    const target = URL.parse(element.getAttribute(attribute) || "", url);
+    const target = parseUrl(element.getAttribute(attribute) || "", url);
     if (!target || !["https:", "http:"].includes(target.protocol)) {
       element.removeAttribute(attribute);
       continue;

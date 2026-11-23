@@ -6,6 +6,7 @@ import IllustApp from "./IllustApp";
 import EmotionApp from "./EmotionApp";
 import AssetApp from "./AssetApp";
 import LoraApp from "./LoraApp";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { ModalWorkspace } from "./ModalWorkspace";
 import { WorkshopNavigation, WorkshopScreen } from "./WorkshopNavigation";
 import { captureBrowserErrors } from "./programLogs";
@@ -24,12 +25,14 @@ document.addEventListener("wheel", (event) => {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <WorkshopNavigation><ModalWorkspace>
-      <WorkshopScreen workshop="setting"><App /></WorkshopScreen>
-      <WorkshopScreen workshop="illust"><IllustApp /></WorkshopScreen>
-      <WorkshopScreen workshop="emotion"><EmotionApp /></WorkshopScreen>
-      <WorkshopScreen workshop="asset"><AssetApp /></WorkshopScreen>
-      <WorkshopScreen workshop="lora"><LoraApp /></WorkshopScreen>
-    </ModalWorkspace></WorkshopNavigation>
+    <ErrorBoundary>
+      <WorkshopNavigation><ModalWorkspace>
+        <WorkshopScreen workshop="setting"><App /></WorkshopScreen>
+        <WorkshopScreen workshop="illust"><IllustApp /></WorkshopScreen>
+        <WorkshopScreen workshop="emotion"><EmotionApp /></WorkshopScreen>
+        <WorkshopScreen workshop="asset"><AssetApp /></WorkshopScreen>
+        <WorkshopScreen workshop="lora"><LoraApp /></WorkshopScreen>
+      </ModalWorkspace></WorkshopNavigation>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

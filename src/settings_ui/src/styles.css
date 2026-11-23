@@ -2271,6 +2271,11 @@ td .badge {
   flex: 1 1 260px;
   line-height: 1.7;
 }
+.app-error-boundary {
+  max-width: 640px;
+  margin: 48px auto;
+  padding: 0 20px;
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,
