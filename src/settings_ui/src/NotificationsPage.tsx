@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { CheckCheck, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import { Badge, Modal, Panel } from "./components";
+import { notificationDate, notificationTitle } from "./notificationMarkdownRenderer.js";
 import "./notifications.css";
 
 const NotificationMarkdown = lazy(() => import("./NotificationMarkdown"));
@@ -61,15 +62,6 @@ export function useNotifications(active: boolean) {
   const read = new Set(feed.read);
   const unread = feed.items.filter(item => !read.has(item.name));
   return { feed, read, unread, loading, error, refresh, markRead };
-}
-
-function notificationTitle(name: string) {
-  return name.replace(/\.md$/i, "").replace(/^\d{6}[-_ ]+/, "");
-}
-
-function notificationDate(name: string) {
-  const match = /^(\d{2})(\d{2})(\d{2})[-_ ]/.exec(name);
-  return match ? `20${match[1]}.${match[2]}.${match[3]}` : "";
 }
 
 function NotificationDetail({ item, unread, markRead, onClose }: {
