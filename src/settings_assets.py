@@ -16,7 +16,7 @@ READ_PATHS = {
     "chain_presets", "queue/status", "asset_mode/qwen_edit/composite_items",
 }
 WRITE_PATHS = {
-    "asset/character-maker",
+    "asset/character-maker", "asset/character-upload",
     "asset/presets", "asset/style-presets", "asset/character-presets", "asset/workflow", "asset/preview",
     "asset/config", "asset/enqueue", "asset_mode/tags", "asset_mode/upload_reference",
     "asset_mode/compute_ref_hash", "asset_mode/set_representative", "asset_mode/delete_image", "asset_mode/delete_combination",
@@ -186,7 +186,133 @@ def register_asset_runtime(server) -> None:
         ])
         return web.json_response({"success": True, "count": len(items), "batch_id": items[0].batch_id})
 
+    async def character_upload(request: web.Request) -> web.Response:
+        from io import BytesIO
+        from PIL import Image
+        from asset_json import CHARACTER_UPLOAD_EXPRESSION, CHARACTER_UPLOAD_OUTFIT
+        try:
+            if getattr(server, "asset_mode", None) is None:
+                raise ValueError("에셋 모드가 준비되지 않았습니다.")
+            asset_tool = getattr(server, "asset_tool", None)
+            if asset_tool is None or (not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path):
+                raise ValueError("태그 분석 워크플로우 경로가 설정되지 않았습니다. 워크플로우 관리에서 태그 분석 워크플로우를 확인하세요.")
+            reader = await request.multipart()
+            metadata_raw = ""
+            images = []
+            async for part in reader:
+                if part.name == "metadata":
+                    metadata_raw = (await part.read()).decode("utf-8")
+                elif part.name == "image":
+                    data = await part.read()
+                    if data:
+                        images.append((part.filename or "upload.png", data))
+            if not images:
+                raise ValueError("업로드할 이미지 파일을 선택하세요.")
+            if not metadata_raw:
+                raise ValueError("업로드 설정 정보를 확인하세요.")
+            metadata = json.loads(metadata_raw)
+            if not isinstance(metadata, dict) or not isinstance(metadata.get("job"), dict):
+                raise ValueError("업로드 프롬프트 설정을 확인하세요.")
+            job = dict(metadata["job"])
+            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl"}:
+                raise ValueError("ANIMA 또는 ANIMA+ILXL 워크플로우를 선택하세요.")
+            character = job.get("character")
+            if not isinstance(character, str) or not character.strip():
+                raise ValueError("캐릭터를 선택하세요.")
+            if character not in server.asset_mode.character_presets.catalog()["characters"]:
+                raise ValueError("캐릭터를 찾을 수 없습니다. 다시 선택하세요.")
+            raw_background = metadata.get("background_tags", "")
+            if isinstance(raw_background, list):
+                background_tags = ", ".join(tag.strip() for tag in raw_background if isinstance(tag, str) and tag.strip())
+            elif isinstance(raw_background, str):
+                background_tags = raw_background.strip()
+            else:
+                raise ValueError("배경 태그 형식을 확인하세요.")
+            # Ignore configured outfit/expression and store uploaded character images under 참고복장/참고표정.
+            job["outfit"] = CHARACTER_UPLOAD_OUTFIT
+            job["expression"] = CHARACTER_UPLOAD_EXPRESSION
+            job["appearance"] = ""
+            job["snapref_enabled"] = False
+            job["snapref_images"] = []
+            job["snapref_face_images"] = []
+            job["snapref_secondary_images"] = []
+            if isinstance(job.get("prompt_json"), dict) and isinstance(job["prompt_json"].get("fields"), dict):
+                snapref = job["prompt_json"]["fields"].get("SNAPREF")
+                if isinstance(snapref, dict):
+                    snapref["enabled"] = False
+                    snapref["references"] = []
+                    snapref.pop("dir", None)
+            prepare_job(job, styles.read()["presets"])
+            for _, image_data in images:
+                try:
+                    with Image.open(BytesIO(image_data)) as opened:
+                        if opened.format not in {"PNG", "JPEG", "WEBP"}:
+                            raise ValueError("PNG, JPEG, WebP 이미지 파일을 선택하세요.")
+                        opened.load()
+                except ValueError:
+                    raise
+                except Exception as exc:
+                    raise ValueError("이미지 파일을 읽을 수 없습니다.") from exc
+            saved = [
+                server.asset_mode.save_uploaded_character_image(
+                    character,
+                    CHARACTER_UPLOAD_OUTFIT,
+                    CHARACTER_UPLOAD_EXPRESSION,
+                    image_data,
+                    job["positive_prompt"],
+                    job.get("negative_prompt", ""),
+                )
+                for _, image_data in images
+            ]
+            if server.asset_mode.notify_frontend_func:
+                for entry in saved:
+                    await server.asset_mode.notify_frontend_func("asset_generation_completed", {
+                        "status": "success",
+                        "character": character,
+                        "outfit": CHARACTER_UPLOAD_OUTFIT,
+                        "expression": CHARACTER_UPLOAD_EXPRESSION,
+                        "filename": entry["filename"],
+                        "storage_group": "",
+                        "storage_outfit": CHARACTER_UPLOAD_OUTFIT,
+                    })
+            batch_label = f"캐릭터 업로드 프롬프트 태깅 · {character} ({len(saved)}장)"
+            items_spec = [
+                {
+                    "type": "tag_analysis",
+                    "label": f"캐릭터 업로드 태깅: {character}/{CHARACTER_UPLOAD_OUTFIT}/{CHARACTER_UPLOAD_EXPRESSION}/{entry['filename']}",
+                    "batch_label": batch_label,
+                    "params": {
+                        "source": "asset_character_upload",
+                        "image": {
+                            "filepath": entry["filepath"],
+                            "filename": entry["filename"],
+                            "character": character,
+                            "outfit": CHARACTER_UPLOAD_OUTFIT,
+                            "expression": CHARACTER_UPLOAD_EXPRESSION,
+                            "background_tags": background_tags,
+                        },
+                    },
+                }
+                for entry in saved
+            ]
+            created = await server.queue_manager.add_items_batch(items_spec)
+            return web.json_response({
+                "success": True,
+                "character": character,
+                "outfit": CHARACTER_UPLOAD_OUTFIT,
+                "expression": CHARACTER_UPLOAD_EXPRESSION,
+                "uploaded": [entry["filename"] for entry in saved],
+                "count": len(saved),
+                "tagging": {
+                    "batch_id": created[0].batch_id if created else None,
+                    "count": len(created),
+                },
+            }, headers={"Cache-Control": "no-store"})
+        except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
     server.app.router.add_get("/api/asset/config", config)
     server.app.router.add_post("/api/asset/config", config)
     server.app.router.add_post("/api/asset/enqueue", enqueue)
     server.app.router.add_post("/api/asset/preview", preview)
+    server.app.router.add_post("/api/asset/character-upload", character_upload)

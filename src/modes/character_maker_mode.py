@@ -26,7 +26,7 @@ import traceback
 import uuid
 from typing import Any, Callable
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import llm_prompt_edit
 from . import llm_service
@@ -1259,6 +1259,89 @@ class CharacterMakerService:
             traceback.print_exc()
             return None
 
+    @staticmethod
+    def _banner_font(size: int):
+        for font_name in (
+            "arialbd.ttf",
+            "segoeuib.ttf",
+            "DejaVuSans-Bold.ttf",
+            "LiberationSans-Bold.ttf",
+        ):
+            try:
+                return ImageFont.truetype(font_name, size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default(size=size)
+
+    def _encode_vision_image_with_banner(
+        self,
+        path: str,
+        *,
+        banner_text: str,
+        short_banner: str,
+        banner_color: str,
+    ) -> tuple[str, str] | None:
+        """Return a base64 PNG copy with a padded color header banner above the image.
+
+        Never modifies the original file on disk. Falls back to _encode_vision_image
+        when path is not on disk (e.g. unit-test stubs) or if rendering fails.
+        """
+        if not path or not os.path.isfile(path):
+            return self._encode_vision_image(path)
+        try:
+            with Image.open(path) as source:
+                oriented = ImageOps.exif_transpose(source)
+                if oriented.mode in ("RGBA", "LA") or (
+                    oriented.mode == "P" and "transparency" in oriented.info
+                ):
+                    rgba = oriented.convert("RGBA")
+                    rgb = Image.new("RGB", rgba.size, "#ffffff")
+                    rgb.paste(rgba, mask=rgba.split()[-1])
+                else:
+                    rgb = oriented.convert("RGB")
+            width, height = rgb.size
+            banner_h = max(44, min(140, int(round(width * 0.065))))
+            canvas = Image.new("RGB", (width, height + banner_h), banner_color)
+            canvas.paste(rgb, (0, banner_h))
+            draw = ImageDraw.Draw(canvas)
+            draw.rectangle((0, banner_h - 2, width, banner_h - 1), fill="#ffffff")
+            max_text_w = max(40, width - 24)
+            chosen_text = short_banner
+            chosen_font = self._banner_font(14)
+            matched = False
+            for candidate_text in (banner_text, short_banner):
+                size = max(16, int(round(banner_h * 0.48)))
+                while size >= 14:
+                    font = self._banner_font(size)
+                    bbox = draw.textbbox((0, 0), candidate_text, font=font)
+                    if (bbox[2] - bbox[0]) <= max_text_w:
+                        chosen_text = candidate_text
+                        chosen_font = font
+                        matched = True
+                        break
+                    size -= 2
+                if matched:
+                    break
+            bbox = draw.textbbox((0, 0), chosen_text, font=chosen_font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            text_x = max(12, (width - text_w) // 2)
+            text_y = max(2, (banner_h - 2 - text_h) // 2 - bbox[1])
+            draw.text((text_x, text_y), chosen_text, fill="#ffffff", font=chosen_font)
+            out = io.BytesIO()
+            canvas.save(out, format="PNG")
+            raw = out.getvalue()
+            if not raw:
+                return None
+            return base64.b64encode(raw).decode("ascii"), "image/png"
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 배너 비전 이미지 생성 실패, 원본 인코딩으로 폴백: "
+                f"path={path}, error={exc}"
+            )
+            traceback.print_exc()
+            return self._encode_vision_image(path)
+
     def _revision_vision_inputs(
         self, session: dict[str, Any], *, base: str = "user"
     ) -> list[dict[str, Any]]:
@@ -1367,7 +1450,26 @@ class CharacterMakerService:
     def _image_legend(image_manifest: list[dict[str, Any]]) -> str:
         if not image_manifest:
             return "No images are attached. Reason only from text and current fields."
-        if any(item.get("role") == "CURRENT" for item in image_manifest):
+        has_banners = any(item.get("banner_color") for item in image_manifest)
+        has_current = any(item.get("role") == "CURRENT" for item in image_manifest)
+        if has_banners and has_current:
+            return (
+                "Images are attached separately in image_manifest order. "
+                "Identify each image by the colored header banner added above its top edge: "
+                "the blue GENERATED_CURRENT banner marks the existing generated character image "
+                "to inspect/edit, and red USER_UPLOADED_1, USER_UPLOADED_2, ... banners mark "
+                "reference images uploaded by the user in this turn. "
+                "Never swap GENERATED_CURRENT and USER_UPLOADED_*, and ignore the added "
+                "header banners when writing tags or descriptions."
+            )
+        if has_banners:
+            return (
+                "No GENERATED_CURRENT image is attached. Every attached image is a user-uploaded "
+                "reference image marked with a red USER_UPLOADED_1, USER_UPLOADED_2, ... banner "
+                "above its top edge. Do not treat a USER_UPLOADED_* image as a prior generated "
+                "output, and ignore the added header banners when writing tags or descriptions."
+            )
+        if has_current:
             return (
                 "Images are attached separately in image_manifest order. "
                 "Exactly one CURRENT image is the edit target. Every REF image is "
@@ -1433,6 +1535,31 @@ class CharacterMakerService:
             "You may modify four tag fields (appearance, outfit, expression, composition) "
             "and a SEPARATE top-level field natural_language. "
             "All other generation settings are read-only presets. Preserve locked fields exactly. "
+            "When attached images carry a colored header banner above the top edge, read that "
+            "banner to identify each image reliably: blue GENERATED_CURRENT is the existing "
+            "generated character image to inspect/fix, and red USER_UPLOADED_1, USER_UPLOADED_2, "
+            "... are reference images uploaded by the user in the current turn. Never confuse "
+            "or swap GENERATED_CURRENT with USER_UPLOADED_*, and never describe the added header "
+            "banner itself. "
+            "When USER_UPLOADED_* (REF) images are attached: if the user asks to transfer only "
+            "specific attributes (for example, outfit only), extract all visible details of "
+            "those requested attributes into concrete tags and natural_language while preserving "
+            "unrelated fields of the current character; if the user asks to recreate the "
+            "reference character or compare GENERATED_CURRENT against USER_UPLOADED_* to fix "
+            "wrong or missing tags, systematically inspect every visible region — hairstyle "
+            "(ponytail, twin tails, braids, half-up, loose hair, bangs, side curls, hair "
+            "highlights/inner color), hair ornaments, eye color, ears, wings/tails/horns, "
+            "collar or shoulder mantle/cape, dress/top/sleeves/waist/ribbons and their exact "
+            "placement, skirt layers, legwear/tights/socks, footwear, and held props — actively "
+            "remove tags in current_fields that contradict USER_UPLOADED_* or caused wrong "
+            "features in GENERATED_CURRENT, and add every prominent feature visible in "
+            "USER_UPLOADED_* that is missing from GENERATED_CURRENT. "
+            "Prior turns in recent_conversation may refer to earlier images that are no longer "
+            "attached; base visual observations on the images attached to the current turn "
+            "rather than carrying over position cues from earlier turns (such as 'leftmost "
+            "character') onto a different image. "
+            "Keep character fields focused on the character rather than background scenery or "
+            "weather effects unless the user explicitly asks for them. "
             "natural_language is free-form descriptive text inserted into the image prompt; it "
             "may be empty. "
             "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
@@ -1498,7 +1625,7 @@ class CharacterMakerService:
         self,
         task_key: str,
         messages: list[dict[str, str]],
-        images: list[tuple[str, str]] | None,
+        images: list[tuple[str, ...]] | None,
         *,
         require_queries: bool,
         call_label: str = "캐릭터 메이커",
@@ -1876,7 +2003,16 @@ class CharacterMakerService:
             "dropped": dropped,
         }
 
-    async def suggest_asset_values(self, character: str, values: dict, message: str, history: list, *, image_path: str | None = None) -> dict:
+    async def suggest_asset_values(
+        self,
+        character: str,
+        values: dict,
+        message: str,
+        history: list,
+        *,
+        image_path: str | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
+    ) -> dict:
         """Use the configured editor and logs without mutating the legacy singleton session."""
         fields = _normalize_fields({field: values.get(f"raw_{field}_tags", []) for field in EDITABLE_FIELDS})
         session = {
@@ -1884,13 +2020,79 @@ class CharacterMakerService:
             "world_context": f"Character: {character}", "settings": {},
             "locks": dict.fromkeys(LOCKABLE_FIELDS, False), "chat": history,
         }
-        images, manifest = None, []
+        vision_images: list[tuple[str, ...]] = []
+        manifest: list[dict[str, Any]] = []
+        has_references = bool(reference_images)
         if image_path:
-            encoded = self._encode_vision_image(image_path)
+            if has_references:
+                encoded = self._encode_vision_image_with_banner(
+                    image_path,
+                    banner_text="GENERATED_CURRENT | Current generated image (edit target)",
+                    short_banner="GENERATED_CURRENT",
+                    banner_color="#1d4ed8",
+                )
+            else:
+                encoded = self._encode_vision_image(image_path)
             if encoded is None:
                 raise CharacterMakerError("피드백할 이미지를 읽지 못했습니다. 다시 생성하세요.")
-            images = [encoded]
-            manifest = [{"role": "CURRENT", "description": "선택한 캐릭터 버전의 생성 이미지"}]
+            if has_references:
+                vision_images.append((
+                    encoded[0],
+                    encoded[1],
+                    "Image 1 [GENERATED_CURRENT] (blue top banner): Existing generated character "
+                    "image to inspect and modify.",
+                ))
+                manifest.append({
+                    "position": 1,
+                    "role": "CURRENT",
+                    "image_id": "GENERATED_CURRENT",
+                    "banner_color": "blue",
+                    "description": (
+                        "Existing generated image of the target character to inspect and modify "
+                        "(marked with a blue GENERATED_CURRENT banner above the top edge)."
+                    ),
+                })
+            else:
+                vision_images.append(encoded)
+                manifest.append({
+                    "position": 1,
+                    "role": "CURRENT",
+                    "description": "Latest selected generated image of the target character to modify.",
+                })
+        for ref_index, ref in enumerate(reference_images or [], start=1):
+            ref_path = ref.get("path", "") if isinstance(ref, dict) else str(ref or "")
+            ref_name = str(ref.get("name") or "").strip() if isinstance(ref, dict) else os.path.basename(ref_path)
+            image_id = f"USER_UPLOADED_{ref_index}"
+            encoded = self._encode_vision_image_with_banner(
+                ref_path,
+                banner_text=f"{image_id} | User-uploaded reference image",
+                short_banner=image_id,
+                banner_color="#be123c",
+            )
+            if encoded is None:
+                raise CharacterMakerError("첨부한 참고 이미지를 읽지 못했습니다. 다시 업로드해 주세요.")
+            position = len(vision_images) + 1
+            label_name = f" ({ref_name})" if ref_name else ""
+            vision_images.append((
+                encoded[0],
+                encoded[1],
+                f"Image {position} [{image_id}] (red top banner): Reference image #{ref_index} "
+                f"uploaded by the user{label_name}. Not the generated output.",
+            ))
+            manifest.append({
+                "position": position,
+                "role": "REF",
+                "image_id": image_id,
+                "reference_index": ref_index,
+                "banner_color": "red",
+                "name": ref_name,
+                "description": (
+                    f"User-uploaded reference image #{ref_index} attached to the current message "
+                    f"(marked with a red {image_id} banner above the top edge). "
+                    "Not the generated output; use it as the visual reference requested by the user."
+                ),
+            })
+        images = vision_images or None
         messages = self._revision_messages(session, message, rag_enabled=False, image_manifest=manifest)
         return await self._call_revision_llm(
             "character_maker_feedback" if images else "character_maker_draft",

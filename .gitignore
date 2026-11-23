@@ -71,8 +71,7 @@ graphify-out/
 # Notification cache
 notification_cache.json
 
-# Local notification authoring workspace & standalone editor (developer-only)
-/notification/
+# Local standalone notification editor and its notification git workspace (developer-only)
 /notification_editor/
 # Built-in WD Tagger downloaded model (362MB ONNX, regenerate at runtime)
 tagger_data/

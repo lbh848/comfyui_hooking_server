@@ -1,7 +1,11 @@
 type AssetQueueItem = {
   id: string; type: string; status: string; label?: string; progress?: number;
   error?: string | null; completed_at?: number | null;
-  params?: { body?: { asset_chain_slot_id?: string } };
+  params?: {
+    body?: { asset_chain_slot_id?: string };
+    source?: string;
+    image?: { character?: string; outfit?: string; expression?: string; filename?: string };
+  };
   progress_detail?: { value?: number; max?: number; message?: string };
 };
 export type AssetQueueState = { items: AssetQueueItem[]; paused?: boolean };

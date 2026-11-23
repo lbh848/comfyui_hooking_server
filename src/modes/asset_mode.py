@@ -3487,6 +3487,100 @@ class AssetMode:
         print(f"[ASSET_MODE] 이미지 업로드: {final_path}")
         return {"success": True, "filename": os.path.basename(final_path)}
 
+    def save_uploaded_character_image(
+        self,
+        character: str,
+        outfit: str,
+        expression: str,
+        image_data: bytes,
+        positive_prompt: str,
+        negative_prompt: str = "",
+    ) -> dict:
+        """Save an uploaded character image and its initial style prompt metadata."""
+        from io import BytesIO
+        from PIL import Image, ImageOps
+
+        try:
+            with Image.open(BytesIO(image_data)) as opened:
+                if opened.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("PNG, JPEG, WebP 이미지 파일을 선택하세요.")
+                opened.load()
+                image = ImageOps.exif_transpose(opened)
+                save_img = image if image.mode == "RGBA" else image.convert("RGB")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError("이미지 파일을 읽을 수 없습니다.") from exc
+
+        img_dir = os.path.join(
+            ASSET_DIR,
+            self._safe_dirname(character),
+            self._safe_dirname(outfit),
+            self._safe_dirname(expression),
+        )
+        os.makedirs(img_dir, exist_ok=True)
+
+        while True:
+            stem = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            webp_path = os.path.join(img_dir, f"{stem}.webp")
+            png_path = os.path.join(img_dir, f"{stem}.png")
+            prompt_path = os.path.join(img_dir, f"{stem}_prompt.json")
+            if not any(os.path.exists(candidate) for candidate in (webp_path, png_path, prompt_path)):
+                break
+
+        filename = f"{stem}.webp"
+        filepath = webp_path
+        try:
+            save_img.save(filepath, format="WEBP", quality=90, method=4)
+        except Exception as webp_error:
+            print(
+                f"[ASSET] 업로드 WEBP 저장 실패, PNG 저장 시도: "
+                f"path={filepath}, error={type(webp_error).__name__}: {webp_error}"
+            )
+            traceback.print_exc()
+            filename = f"{stem}.png"
+            filepath = png_path
+            save_img.save(filepath, format="PNG")
+
+        created_at = time.time()
+        try:
+            write_json_atomic(Path(prompt_path), {
+                "positive": positive_prompt,
+                "negative": negative_prompt,
+                "character": character,
+                "appearance": "",
+                "outfit": outfit,
+                "expression": expression,
+                "storage_group": "",
+                "storage_outfit": outfit,
+                "created_at": created_at,
+            })
+        except Exception:
+            if os.path.isfile(filepath):
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+            raise
+
+        self._log("character_upload_saved", {
+            "character": character,
+            "outfit": outfit,
+            "expression": expression,
+            "filename": filename,
+            "size": len(image_data),
+        })
+        return {
+            "success": True,
+            "filename": filename,
+            "filepath": filepath,
+            "prompt_record_path": prompt_path,
+            "character": character,
+            "outfit": outfit,
+            "expression": expression,
+            "created_at": created_at,
+        }
+
     def list_character_gallery(self, character: str) -> list[dict]:
         """캐릭터 폴더의 실제 복장×표정 조합을 스캔하여 반환."""
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))

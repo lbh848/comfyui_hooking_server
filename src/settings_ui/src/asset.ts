@@ -6,6 +6,8 @@ import type { MaskBox } from "./assetMaskRequest";
 export type { AssetRecord };
 export const assetWorkflowTypes = { anima_only: "ANIMA", anima_ilxl: "ANIMA+ILXL" };
 export const assetWorkflowPaths: Record<string, string> = { anima_only: "anima_only_asset_workflow_source_path", anima_ilxl: "anima_asset_workflow_source_path" };
+export const CHARACTER_UPLOAD_OUTFIT = "참고복장";
+export const CHARACTER_UPLOAD_EXPRESSION = "참고표정";
 export const assetCapabilities = ComfyAssetPrompt.getAssetWorkflowCapabilities;
 export const getAssetPresetValues = ComfyAssetPrompt.getAssetPresetValues;
 export type AssetSettingsSection = "style" | "character";
@@ -261,4 +263,38 @@ export async function buildAssetRequest(slot: AssetRecord, tags: AssetRecord, se
   const prompt = await ComfyAssetPrompt.buildAssetPromptData(prepared.slot, tags, id => assetRequest(`pose_mode/poses/${encodeURIComponent(id)}`));
   if (!prompt) throw new Error("프롬프트를 만들지 못했습니다.");
   return { ...prepared.job, prompt_json: prompt.document };
+}
+
+export async function buildCharacterUploadRequest(slot: AssetRecord, tags: AssetRecord, selection: AssetRecord, styles: AssetRecord) {
+  const rawBackground = Array.isArray(slot.raw_background_tags)
+    ? slot.raw_background_tags
+    : getAssetPresetValues(tags, "background_presets")[slot.background_preset] || [];
+  const backgroundTags = rawBackground.filter((tag: unknown): tag is string => typeof tag === "string" && !!tag.trim()).map((tag: string) => tag.trim());
+  const uploadSlot: AssetRecord = {
+    ...slot,
+    appearance: "",
+    outfit: CHARACTER_UPLOAD_OUTFIT,
+    expression: CHARACTER_UPLOAD_EXPRESSION,
+    raw_appearance_tags: [],
+    raw_outfit_tags: [],
+    raw_expression_tags: [],
+    raw_composition_tags: [],
+    natural_language: "",
+    natural_language_preset: "",
+    raw_character_negative_tags: [],
+    character_negative_preset: "",
+    raw_background_tags: backgroundTags,
+    snapref_enabled: false,
+    snapref_images: [],
+    snapref_face_images: [],
+    snapref_secondary_images: [],
+    lora_enabled: false,
+    lora_list: [],
+    face_lora_enabled: false,
+    face_lora_list: [],
+    face_tags: "",
+    eye_tags: "",
+  };
+  const job = await buildAssetRequest(uploadSlot, tags, selection, styles);
+  return { job, background_tags: backgroundTags.join(", ") };
 }

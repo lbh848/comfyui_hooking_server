@@ -510,7 +510,26 @@
 .asset-maker-chat-panel { position: sticky; top: 18px; }
 .asset-maker-chat-body { display: flex; flex-direction: column; gap: 14px; }
 .asset-maker-compose { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.asset-maker-compose.is-dragging { outline: 2px dashed var(--rose); outline-offset: 4px; border-radius: 8px; }
 .asset-maker-compose textarea { resize: vertical; min-height: 82px; max-height: 220px; }
+.asset-maker-compose-help { margin: -4px 0 0; }
+.asset-maker-upload-stage { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.asset-maker-upload-stage .field-help { margin: 0; }
+.asset-maker-upload-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.asset-maker-upload-item { position: relative; display: grid; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; }
+.asset-maker-upload-meta { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.asset-maker-upload-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 1px 6px; border-radius: 999px; background: var(--rose-soft); border: 1px solid var(--rose); color: var(--rose-dark); font-size: 10px; font-weight: 700; line-height: 1.5; }
+.asset-maker-upload-thumb-button { display: block; width: 100%; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: zoom-in; overflow: hidden; }
+.asset-maker-upload-thumb-button:focus-visible { outline: 2px solid var(--rose-dark); outline-offset: 2px; }
+.asset-maker-upload-thumb-button img { display: block; width: 100%; height: 76px; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.asset-maker-upload-name { font-size: 11px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.asset-maker-upload-remove { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--secondary); }
+.asset-maker-upload-remove:hover:not(:disabled) { border-color: var(--rose); color: var(--rose-dark); background: var(--rose-soft); }
+.asset-maker-user-uploads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.asset-maker-user-upload-item { display: grid; gap: 4px; justify-items: start; width: 84px; flex: 0 0 auto; }
+.asset-maker-user-uploads .asset-maker-upload-thumb-button { width: 84px; }
+.asset-maker-user-uploads .asset-maker-upload-thumb-button img { height: 88px; }
+.asset-maker-feedback-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .asset-inline-workroom { height: 0; overflow: hidden; opacity: 0; visibility: hidden; transform: translateX(32px); transition: opacity .28s ease, transform .28s ease, visibility 0s .28s; }
 .is-making > .asset-inline-workroom { height: auto; opacity: 1; visibility: visible; transform: translateX(0); transition-delay: 0s; }
 .asset-inline-workroom > * { min-width: 260px; }

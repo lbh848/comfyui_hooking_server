@@ -4,16 +4,61 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timezone
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
+import shutil
 import uuid
 from urllib.parse import urlencode
 
 from aiohttp import web
+from PIL import Image
 
 from asset_preset_scope import write_scope_documents
 from configuration import settings_lock
 from json_store import write_json_atomic
+
+MAX_UPLOAD_IMAGES = 6
+MAX_UPLOAD_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_UPLOAD_TOTAL_BYTES = 36 * 1024 * 1024
+UPLOAD_IMAGE_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
+
+
+def validate_uploaded_images(uploaded_files):
+    if not uploaded_files:
+        return []
+    if not isinstance(uploaded_files, list):
+        raise ValueError("첨부 이미지 형식을 확인하세요.")
+    if len(uploaded_files) > MAX_UPLOAD_IMAGES:
+        raise ValueError(f"이미지는 한 번에 최대 {MAX_UPLOAD_IMAGES}장까지 첨부할 수 있습니다.")
+    validated = []
+    total_bytes = 0
+    for index, item in enumerate(uploaded_files, start=1):
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            raise ValueError("첨부 이미지 형식을 확인하세요.")
+        filename, data = item
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            raise ValueError("비어 있는 이미지 파일은 첨부할 수 없습니다.")
+        raw = bytes(data)
+        if len(raw) > MAX_UPLOAD_IMAGE_BYTES:
+            raise ValueError("이미지 한 장은 12MB를 넘을 수 없습니다.")
+        total_bytes += len(raw)
+        if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
+            raise ValueError("첨부한 이미지의 전체 크기는 36MB를 넘을 수 없습니다.")
+        try:
+            with Image.open(BytesIO(raw)) as opened:
+                fmt = (opened.format or "").upper()
+                if fmt not in UPLOAD_IMAGE_FORMATS:
+                    raise ValueError("PNG, JPEG, WebP 이미지 파일을 선택하세요.")
+                opened.load()
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError("이미지 파일을 읽을 수 없습니다.") from exc
+        ext = UPLOAD_IMAGE_FORMATS[fmt]
+        clean_name = Path(str(filename or "").replace("\\", "/")).name.strip()[:200] or f"image-{index}{ext}"
+        validated.append((clean_name, ext, raw))
+    return validated
 
 
 def fingerprint(value):
@@ -46,6 +91,64 @@ class AssetCharacterMaker:
         # Names never become filesystem paths.
         return self.root / f"{fingerprint(name)}.json"
 
+    def uploads_dir(self, name):
+        return self.root / "uploads" / fingerprint(name)
+
+    @staticmethod
+    def _uploaded_images_by_id(state):
+        known = {}
+        pending = state.get("pending")
+        if isinstance(pending, dict):
+            for item in pending.get("uploaded_images") or []:
+                if isinstance(item, dict) and item.get("id"):
+                    known[item["id"]] = item
+        for version in state.get("versions") or []:
+            if isinstance(version, dict):
+                for item in version.get("uploaded_images") or []:
+                    if isinstance(item, dict) and item.get("id"):
+                        known[item["id"]] = item
+        return known
+
+    def _remove_uploaded_files(self, name, items):
+        if not items:
+            return
+        uploads_root = self.uploads_dir(name).resolve()
+        for item in items:
+            raw_path = item.get("path", "") if isinstance(item, dict) else ""
+            if not raw_path:
+                continue
+            try:
+                resolved = Path(raw_path).resolve()
+                if resolved.parent == uploads_root and resolved.is_file():
+                    resolved.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            if uploads_root.is_dir() and not any(uploads_root.iterdir()):
+                uploads_root.rmdir()
+        except OSError:
+            pass
+
+    def _clear_uploads_dir(self, name):
+        uploads_root = self.uploads_dir(name)
+        if uploads_root.is_dir():
+            shutil.rmtree(uploads_root, ignore_errors=True)
+
+    @staticmethod
+    def _public_uploads(name, items):
+        public = []
+        for item in items or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            public.append({
+                "id": item["id"],
+                "name": str(item.get("name") or ""),
+                "url": "/api/asset/asset/character-maker/image?" + urlencode({
+                    "name": name, "upload_id": item["id"],
+                }),
+            })
+        return public
+
     def _character(self, name):
         if not isinstance(name, str) or not name:
             raise ValueError("캐릭터를 선택하세요.")
@@ -62,8 +165,10 @@ class AssetCharacterMaker:
         if state.get("name") != name or not isinstance(state.get("versions"), list):
             raise ValueError("캐릭터 버전 파일을 확인하세요.")
         if state.get("pending") and state["pending"]["id"] not in self.running:
+            orphan_uploads = list(state["pending"].get("uploaded_images") or [])
             state.update(pending=None, error="서버 재시작으로 AI 요청이 중단되었습니다. 다시 요청하세요.")
             write_json_atomic(path, state)
+            self._remove_uploaded_files(name, orphan_uploads)
         return state
 
     def _public(self, state, character):
@@ -74,6 +179,13 @@ class AssetCharacterMaker:
                 version["image_url"] = "/api/asset/asset/character-maker/image?" + urlencode({
                     "name": state["name"], "version_id": version["id"], "updated": version.get("image_updated_at", ""),
                 })
+            raw_uploads = version.pop("uploaded_images", None)
+            if raw_uploads:
+                version["uploaded_images"] = self._public_uploads(state["name"], raw_uploads)
+        if isinstance(result.get("pending"), dict):
+            raw_uploads = result["pending"].pop("uploaded_images", None)
+            if raw_uploads:
+                result["pending"]["uploaded_images"] = self._public_uploads(state["name"], raw_uploads)
         return result
 
     def image_path(self, name, version_id):
@@ -84,6 +196,29 @@ class AssetCharacterMaker:
             if not path or not Path(path).is_file():
                 raise ValueError("이 버전의 생성 이미지를 찾을 수 없습니다. 다시 생성하세요.")
             return path
+
+    def uploaded_image_entries(self, name, items):
+        with settings_lock(self.characters.path):
+            self._character(name)
+            state = self._read(name)
+            known = self._uploaded_images_by_id(state)
+            uploads_root = self.uploads_dir(name).resolve()
+            entries = []
+            for item in items or []:
+                upload_id = item.get("id") if isinstance(item, dict) else str(item or "")
+                record = known.get(upload_id)
+                path = record.get("path", "") if record else ""
+                if not path:
+                    raise ValueError("첨부한 이미지를 찾을 수 없습니다. 다시 업로드해 주세요.")
+                resolved = Path(path).resolve()
+                if resolved.parent != uploads_root or not resolved.is_file():
+                    raise ValueError("첨부한 이미지를 찾을 수 없습니다. 다시 업로드해 주세요.")
+                entries.append({"id": upload_id, "name": str(record.get("name") or ""), "path": str(resolved)})
+            return entries
+
+    def uploaded_image_path(self, name, upload_id):
+        entries = self.uploaded_image_entries(name, [{"id": upload_id}])
+        return entries[0]["path"]
 
     def read(self, name):
         with settings_lock(self.characters.path):
@@ -142,6 +277,7 @@ class AssetCharacterMaker:
             elif action == "reset":
                 state.update(versions=[], active_version_id="", pending=None, error="")
                 write_json_atomic(self.path(name), state)
+                self._clear_uploads_dir(name)
             elif action in {"apply", "rollback"}:
                 target = next((v for v in state["versions"] if v["id"] == body.get("version_id")), None)
                 if not target:
@@ -169,10 +305,13 @@ class AssetCharacterMaker:
                 raise ValueError("지원하지 않는 메이커 요청입니다.")
             return self._public(state, character)
 
-    def begin(self, body):
+    def begin(self, body, uploaded_files=None):
+        validated_uploads = validate_uploaded_images(uploaded_files)
         with settings_lock(self.characters.path):
             name, _, character, state, settings = self._checked(body)
             generating = body.get("action") == "generate"
+            if generating and validated_uploads:
+                raise ValueError("이미지는 AI 대화 요청에만 첨부할 수 있습니다.")
             message = "이미지 생성" if generating else body.get("message")
             if not isinstance(message, str) or not message.strip() or len(message) > 8000:
                 raise ValueError("AI 요청을 1~8,000자로 입력하세요.")
@@ -203,12 +342,23 @@ class AssetCharacterMaker:
                 if not Path(base["image_path"]).is_file():
                     raise ValueError("기준 이미지가 없습니다. 다시 생성하거나 이미지 전달을 꺼 주세요.")
                 pending["image_version_id"] = base["id"]
-            state.update(pending=pending, error="")
-            self.running.add(pending["id"])
+            saved_uploads = []
             try:
+                if validated_uploads:
+                    uploads_root = self.uploads_dir(name)
+                    uploads_root.mkdir(parents=True, exist_ok=True)
+                    for clean_name, ext, raw in validated_uploads:
+                        upload_id = uuid.uuid4().hex
+                        file_path = uploads_root / f"{upload_id}{ext}"
+                        file_path.write_bytes(raw)
+                        saved_uploads.append({"id": upload_id, "name": clean_name, "path": str(file_path)})
+                    pending["uploaded_images"] = saved_uploads
+                state.update(pending=pending, error="")
+                self.running.add(pending["id"])
                 write_json_atomic(self.path(name), state)
             except Exception:
                 self.running.discard(pending["id"])
+                self._remove_uploaded_files(name, saved_uploads)
                 raise
             return self._public(state, character), copy.deepcopy(base["after"]), history
 
@@ -218,6 +368,7 @@ class AssetCharacterMaker:
             pending = state.get("pending")
             if not pending or pending["id"] != request_id:
                 return
+            orphan_uploads = []
             if result is not None:
                 after = copy.deepcopy(before)
                 for key in ("appearance", "outfit", "expression", "composition"):
@@ -234,16 +385,24 @@ class AssetCharacterMaker:
                 if result.get("natural_language") is not None:
                     after["values"]["natural_language"] = result["natural_language"]
                 validate_settings(after)
+                uploaded_images = copy.deepcopy(pending.pop("uploaded_images", None) or [])
+                extra = {"feedback_image_version_id": pending.get("image_version_id", "")}
+                if uploaded_images:
+                    extra["uploaded_images"] = uploaded_images
                 version = self._append(state, "proposal", before, after, parent_id=pending["base_id"],
                                        message=pending["message"], assistant_message=str(result.get("assistant_message", "")),
-                                       feedback_image_version_id=pending.get("image_version_id", ""))
+                                       **extra)
                 if generate:
                     pending.update(phase="generate", version_id=version["id"])
+            else:
+                orphan_uploads = list(pending.get("uploaded_images") or [])
             if error and pending.get("version_id"):
                 target = next(v for v in state["versions"] if v["id"] == pending["version_id"])
                 target["image_error"] = error
             state.update(pending=pending if generate and not error else None, error=error)
             write_json_atomic(self.path(name), state)
+            if orphan_uploads:
+                self._remove_uploaded_files(name, orphan_uploads)
             if not state["pending"]:
                 self.running.discard(request_id)
             return copy.deepcopy(version) if result is not None else None
@@ -291,14 +450,55 @@ def register_character_maker_runtime(server, prepare_generation=None):
     store = AssetCharacterMaker(server.asset_mode.character_presets,
                                 Path(server.CONFIG_FILE).parent / "asset_character_versions")
 
+    async def read_request(request):
+        if request.content_type and request.content_type.startswith("multipart/"):
+            reader = await request.multipart()
+            payload_raw = ""
+            uploaded_files = []
+            total_bytes = 0
+            async for part in reader:
+                if part.name == "payload":
+                    data = await part.read(decode=False)
+                    if len(data) > 4_000_000:
+                        raise ValueError("메이커 요청 크기가 너무 큽니다.")
+                    payload_raw = data.decode("utf-8")
+                elif part.name == "image":
+                    if len(uploaded_files) >= MAX_UPLOAD_IMAGES:
+                        raise ValueError(f"이미지는 한 번에 최대 {MAX_UPLOAD_IMAGES}장까지 첨부할 수 있습니다.")
+                    chunks = []
+                    size = 0
+                    while True:
+                        chunk = await part.read_chunk(64 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > MAX_UPLOAD_IMAGE_BYTES:
+                            raise ValueError("이미지 한 장은 12MB를 넘을 수 없습니다.")
+                        if total_bytes + size > MAX_UPLOAD_TOTAL_BYTES:
+                            raise ValueError("첨부한 이미지의 전체 크기는 36MB를 넘을 수 없습니다.")
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+                    if data:
+                        total_bytes += len(data)
+                        uploaded_files.append((part.filename or "image.png", data))
+            if not payload_raw:
+                raise ValueError("메이커 요청을 확인하세요.")
+            body = json.loads(payload_raw)
+            return body, uploaded_files
+        return await request.json(), []
+
     async def endpoint(request):
         try:
             if request.method == "GET":
                 result = store.read(request.query.get("name", ""))
             else:
-                body = await request.json()
+                body, uploaded_files = await read_request(request)
                 if not isinstance(body, dict):
                     raise ValueError("메이커 요청을 확인하세요.")
+                if uploaded_files and body.get("action") != "propose":
+                    raise ValueError("이미지는 AI 대화 요청에만 첨부할 수 있습니다.")
+                if uploaded_files:
+                    validate_uploaded_images(uploaded_files)
                 if body.get("action") in {"propose", "generate"}:
                     template = body.get("generation_job")
                     snapshot = None
@@ -311,7 +511,7 @@ def register_character_maker_runtime(server, prepare_generation=None):
                         template.update(storage_group="character_maker", storage_session=f"asset-{fingerprint(body.get('name'))}")
                     elif body.get("action") == "generate":
                         raise ValueError("이미지 생성 설정을 확인하세요.")
-                    result, before, history = store.begin(body)
+                    result, before, history = store.begin(body, uploaded_files=uploaded_files)
                     name, pending = result["name"], result["pending"]
 
                     async def enqueue_image(values):
@@ -329,8 +529,11 @@ def register_character_maker_runtime(server, prepare_generation=None):
 
                     async def run(_item):
                         image_path = store.image_path(name, pending["image_version_id"]) if pending.get("image_version_id") else None
+                        kwargs = {"image_path": image_path}
+                        if pending.get("uploaded_images"):
+                            kwargs["reference_images"] = store.uploaded_image_entries(name, pending["uploaded_images"])
                         proposal = await server.character_maker.suggest_asset_values(
-                            name, before["values"], pending["message"], history, image_path=image_path,
+                            name, before["values"], pending["message"], history, **kwargs,
                         )
                         version = store.finish(name, pending["id"], before, proposal, generate=template is not None)
                         if template is not None and version:
@@ -369,8 +572,11 @@ def register_character_maker_runtime(server, prepare_generation=None):
 
     async def image(request):
         try:
-            return web.FileResponse(store.image_path(request.query.get("name", ""), request.query.get("version_id", "")),
-                                    headers={"Cache-Control": "no-store"})
+            name = request.query.get("name", "")
+            upload_id = request.query.get("upload_id", "")
+            path = (store.uploaded_image_path(name, upload_id) if upload_id
+                    else store.image_path(name, request.query.get("version_id", "")))
+            return web.FileResponse(path, headers={"Cache-Control": "no-store"})
         except (ValueError, OSError):
             raise web.HTTPNotFound()
 

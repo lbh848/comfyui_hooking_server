@@ -26,7 +26,7 @@ import { useAssetCharacterSettings } from "./useAssetCharacterSettings";
 import { useAssetCharacterMaker } from "./useAssetCharacterMaker";
 import { useAssetStylePresets } from "./useAssetStylePresets";
 import { AssetStyleSelectionDialog } from "./AssetStyleSelectionDialog";
-import { AssetGallery } from "./AssetGallery";
+import { AssetGallery, type AssetGalleryFocusTarget } from "./AssetGallery";
 import { AssetExport } from "./AssetExport";
 import { AssetGenerationControls, type AssetGenerationControlsProps } from "./AssetGenerationControls";
 import { AssetGenerationTags } from "./AssetGenerationTags";
@@ -34,7 +34,7 @@ import { AssetGenerationStatus } from "./AssetGenerationStatus";
 import { assetChainGenerationStatus, type AssetQueueState } from "./assetGenerationQueue";
 import type { AssetGalleryCombination } from "./assetGallerySelection";
 import { AssetMaskGeneration } from "./AssetMaskGeneration";
-import { applyActiveAssetModel, assetRequest, assetModelPreset, assetPresetFields, assetStyleValues, buildAssetRequest, getAssetPresetValues, loadAssetCharacterSettings, newAssetSlot, requireAssetStylePreset, snapshotAssetSlot, uploadAssetReferences, useAssetDraft, useAssetResource, type AssetRecord, type AssetSettingsSection } from "./asset";
+import { applyActiveAssetModel, assetRequest, assetModelPreset, assetPresetFields, assetStyleValues, buildAssetRequest, buildCharacterUploadRequest, getAssetPresetValues, loadAssetCharacterSettings, newAssetSlot, requireAssetStylePreset, snapshotAssetSlot, uploadAssetReferences, useAssetDraft, useAssetResource, type AssetRecord, type AssetSettingsSection } from "./asset";
 import "./illust.css";
 import "./asset.css";
 
@@ -86,6 +86,7 @@ function AssetAppContent() {
   const fileInput = useRef<HTMLInputElement>(null);
   const chains: AssetRecord[] = draft.chains.map((slot: AssetRecord) => assetBatchSlot(slot, modelSelection.data));
   const [batchQueue, setBatchQueue] = useState<AssetQueueState | null>(null);
+  const [characterUploadFocus, setCharacterUploadFocus] = useState<AssetGalleryFocusTarget | null>(null);
   const generatingChains = assetChainGenerationStatus(batchQueue);
   const characterSettings = useAssetCharacterSettings(draft, setDraft, tags);
   const characterMaker = useAssetCharacterMaker(draft, characterSettings);
@@ -196,6 +197,29 @@ function AssetAppContent() {
     });
     const result = await assetRequest("asset/enqueue", { label, jobs: Array.from({ length: repeat }, () => jobs).flat() });
     setToast(`${result.count}개 에셋을 작업 큐에 추가했습니다.`);
+  }
+  async function uploadCharacterImages(files: File[]) {
+    if (!tags.data) throw new Error("프리셋을 먼저 불러오세요.");
+    if (!files.length) throw new Error("업로드할 이미지를 선택하세요.");
+    if (modelSelection.disabled) throw new Error("그림 모델 설정을 저장한 뒤 업로드하세요.");
+    const [settings, styles] = await Promise.all([assetRequest("asset/presets"), assetRequest("asset/style-presets")]);
+    requireAssetStylePreset(draft.slot, styles);
+    if (!draft.slot.character?.trim()) throw new Error("캐릭터를 선택하세요.");
+    const preset = assetModelPreset(draft.slot, settings);
+    if (!preset?.config.asset_workflow_source_paths[preset.config.asset_workflow_type]) throw new Error("그림 모델 설정에서 워크플로우를 선택하세요.");
+    if (![draft.slot.img_w, draft.slot.img_h].every(value => Number.isFinite(value) && value > 0)) throw new Error("이미지 크기를 확인하세요.");
+    const payload = await buildCharacterUploadRequest(draft.slot, tags.data, settings, styles);
+    const form = new FormData();
+    form.append("metadata", JSON.stringify(payload));
+    files.forEach(file => form.append("image", file));
+    const result = await assetRequest("asset/character-upload", form);
+    setCharacterUploadFocus(previous => ({
+      character: result.character,
+      outfit: result.outfit,
+      expression: result.expression,
+      token: (previous?.token || 0) + 1,
+    }));
+    setToast(`${result.count}장을 ${result.outfit}/${result.expression} 폴더에 업로드하고 프롬프트 태깅을 작업 큐에 추가했습니다.`);
   }
   async function previewAsset(slot: AssetRecord) {
     if (modelSelection.disabled) throw new Error("그림 모델 설정을 저장한 뒤 미리보기를 확인하세요.");
@@ -362,7 +386,9 @@ function AssetAppContent() {
             makerOpen={makers[section]} onMakerToggle={() => toggleMaker(section)} targetBusy={makerTargetBusy}
             targetError={makerTargetError} onTargetSelect={id => void changeMakerTarget(section, id)}
             generation={{ ...generationControls, onGenerate: () => void run(() => generate([draft.slot], draft.count, `${section === "style" ? "그림체" : "캐릭터"} 메이커`)) }}
-            generationError={error} makerVisible={makers[section] && info.id === section} onWorkQueue={() => changePage("work-queue")} />
+            generationError={error} makerVisible={makers[section] && info.id === section} onWorkQueue={() => changePage("work-queue")}
+            onCharacterUpload={section === "character" ? files => void run(() => uploadCharacterImages(files), true) : undefined}
+            uploadFocus={section === "character" ? characterUploadFocus : null} />
         </ModalPage>)}
         <ModalPage page="batch" pageTitle="에셋 일괄 생성" active={info.id === "batch"} onNavigate={changePage}>
           {batchBlockedReason && <p className="field-help" role="status">{batchBlockedReason}</p>}

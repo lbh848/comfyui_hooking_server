@@ -13,6 +13,7 @@ type FolderDeleteTarget = { character: string; url?: string } & (
   { kind: "character" } | { kind: "combination"; outfit: string; expression: string; count: number }
 );
 type SortOrder = AssetGallerySortOrder;
+export type AssetGalleryFocusTarget = { character: string; outfit: string; expression: string; token: number };
 const selectionKey = (value?: AssetRecord) => JSON.stringify([value?.character, value?.outfit, value?.expression]);
 
 function originalRegionMask(positive: unknown) {
@@ -47,8 +48,8 @@ function imageTime(image: AssetRecord | null) {
   return seconds > 0 && Number.isFinite(date.getTime()) ? { date, label: generatedAt ? "생성 시간" : "파일 저장 시간" } : null;
 }
 
-export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = false, controls, scrollable = false, keyboardEnabled = false, builtinUnlockToken = "", onCharacterDeleted, className = "" }: {
-  tags: AssetRecord; selection?: AssetRecord; onPick?: (url: string, image: AssetRecord) => void | Promise<void>; newestFirst?: boolean; controls?: ReactNode; builtinUnlockToken?: string; onCharacterDeleted?: (name: string) => void;
+export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBrowse, newestFirst = false, controls, scrollable = false, keyboardEnabled = false, builtinUnlockToken = "", onCharacterDeleted, className = "" }: {
+  tags: AssetRecord; selection?: AssetRecord; focusTarget?: AssetGalleryFocusTarget | null; onPick?: (url: string, image: AssetRecord) => void | Promise<void>; newestFirst?: boolean; controls?: ReactNode; builtinUnlockToken?: string; onCharacterDeleted?: (name: string) => void;
   onBrowse?: (character: string, combination: AssetGalleryCombination | null) => Promise<AssetRecord | void>;
   scrollable?: boolean;
   keyboardEnabled?: boolean;
@@ -90,6 +91,7 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
   const groupWriting = useRef(false);
   const browsing = useRef(false);
   const browsedSelection = useRef<string | null>(null);
+  const lastFocusToken = useRef(0);
   useEffect(() => {
     if (browsing.current) return;
     const fromGallery = browsedSelection.current === selectionKey(selection);
@@ -103,6 +105,21 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
   const characterGroupError = !character ? characterGroups.error : "";
   const gallery = useAssetResource(character ? `asset_mode/characters/${encodeURIComponent(character)}/gallery` : null, 12000);
   const images = useAssetResource(character && combination ? `asset_mode/characters/${encodeURIComponent(character)}/outfits/${encodeURIComponent(combination.outfit)}/expressions/${encodeURIComponent(combination.expression)}/images` : null, 8000);
+  useEffect(() => {
+    if (!focusTarget || focusTarget.token === lastFocusToken.current) return;
+    lastFocusToken.current = focusTarget.token;
+    setCharacter(focusTarget.character);
+    setCombination({ outfit: focusTarget.outfit, expression: focusTarget.expression });
+    setImageSearch("");
+    characters.reload();
+    gallery.reload();
+    images.reload();
+  }, [focusTarget, characters.reload, gallery.reload, images.reload]);
+  useEffect(() => {
+    const list: AssetRecord[] | undefined = images.data?.images;
+    if (!list) return;
+    setPreview(current => current ? list.find(item => item.filename === current.filename) || current : null);
+  }, [images.data]);
   useEffect(() => {
     let stopped = false;
     let reconnect: number;
@@ -118,8 +135,10 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
       socket.onmessage = event => {
         if (stopped) return;
         const value = JSON.parse(event.data);
-        if ((value.type === "asset_generation_completed" || value.type === "qwen_edit_completed")
-          && value.data?.status === "success" && value.data.storage_group !== "character_maker") refresh();
+        if (((value.type === "asset_generation_completed" || value.type === "qwen_edit_completed")
+          && value.data?.status === "success" && value.data.storage_group !== "character_maker")
+          || (value.type === "tag_analysis_progress" && value.data?.source === "asset_character_upload"
+            && value.data?.phase === "completed")) refresh();
       };
       socket.onclose = () => { if (!stopped) reconnect = window.setTimeout(connect, 3000); };
     };

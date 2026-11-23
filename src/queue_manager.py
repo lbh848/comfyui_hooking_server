@@ -6327,6 +6327,7 @@ class QueueManager:
     _TAG_SAVE_MODE = {
         "asset_batch": "asset", "asset_selected": "asset",
         "asset_lora": "asset",
+        "asset_character_upload": "asset_character_upload",
         "bot_rep": "bot", "bot_utility": "bot",
         "instance_lora": "instance_lora", "style_lora": "style_lora",
     }
@@ -6387,7 +6388,7 @@ class QueueManager:
             )
             analysis_tool = self.asset_tool
             if (
-                comfy_task_key in ("instance_lora", "asset_lora_training")
+                (comfy_task_key in ("instance_lora", "asset_lora_training") or source == "asset_character_upload")
                 and callable(getattr(analysis_tool, "fork_for_execution", None))
             ):
                 analysis_tool = analysis_tool.fork_for_execution()
@@ -6413,6 +6414,8 @@ class QueueManager:
             save_mode = self._TAG_SAVE_MODE.get(source)
             if save_mode == "asset":
                 self._save_asset_prompt(img, positive, reset_original_positive=source == "asset_lora")
+            elif save_mode == "asset_character_upload":
+                self._save_asset_character_upload_prompt(img, tags)
             elif save_mode == "bot":
                 self._save_bot_prompt(img, positive)
             elif save_mode == "instance_lora":
@@ -7669,6 +7672,40 @@ class QueueManager:
         existing.setdefault("expression", img.get("expression", ""))
         with open(prompt_path, "w", encoding="utf-8") as pf:
             json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _save_asset_character_upload_prompt(img: dict, tags: list[str]):
+        """Merge tagged character prompt into an uploaded character asset's style JSON."""
+        from pathlib import Path
+        from asset_json import CHARACTER_UPLOAD_EXPRESSION, CHARACTER_UPLOAD_OUTFIT, merge_tagged_character_prompt
+        from json_store import write_json_atomic
+
+        filepath = img.get("filepath", "")
+        filename = img.get("filename", "")
+        if not filepath or not filename or not os.path.isfile(filepath):
+            return
+        img_dir = os.path.dirname(filepath)
+        prompt_path = os.path.join(img_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as pf:
+                existing = json.load(pf)
+        positive_raw = existing.get("positive", "")
+        if not isinstance(positive_raw, str) or not positive_raw.lstrip().startswith("{"):
+            raise ValueError("저장된 그림체 프롬프트 JSON을 찾을 수 없습니다.")
+        document = json.loads(positive_raw)
+        merged = merge_tagged_character_prompt(
+            document,
+            tags,
+            str(img.get("background_tags") or ""),
+        )
+        existing["positive"] = json.dumps(merged, ensure_ascii=False, allow_nan=False)
+        existing["negative"] = ""
+        existing.setdefault("character", img.get("character", ""))
+        existing["appearance"] = ""
+        existing["outfit"] = img.get("outfit") or CHARACTER_UPLOAD_OUTFIT
+        existing["expression"] = img.get("expression") or CHARACTER_UPLOAD_EXPRESSION
+        write_json_atomic(Path(prompt_path), existing)
 
     @staticmethod
     def _save_bot_prompt(img: dict, positive: str):

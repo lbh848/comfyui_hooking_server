@@ -1,16 +1,20 @@
 """Asset requests use the same per-node JSON contract as illustrations."""
 from __future__ import annotations
 
-import json
-import random
 import base64
+import copy
 import hashlib
 import io
+import json
 import math
 from pathlib import Path
+import random
 from modes.prompt_path_normalizer import _CONTROL_BLOCK_HEADER_RE
 
 from illustration_json import illustration_fields, preprocess_reference_images, REFERENCE_PREPROCESS_LABELS
+
+CHARACTER_UPLOAD_OUTFIT = "참고복장"
+CHARACTER_UPLOAD_EXPRESSION = "참고표정"
 
 
 REMOVED_FIELDS = {
@@ -233,3 +237,38 @@ def embed_asset_mask_references(positive: str, references: list) -> str:
     document["fields"]["SNAPREF"]["enabled"] = bool(references)
     preprocess_reference_images(document)
     return json.dumps(document, ensure_ascii=False, allow_nan=False)
+
+
+def merge_tagged_character_prompt(document: dict, tags: list[str], background_tags: str = "") -> dict:
+    """Insert Anima Tagger character tags into a prepared style/model prompt document."""
+    merged = copy.deepcopy(document)
+    fields = merged.get("fields")
+    if not isinstance(fields, dict):
+        raise ValueError("프롬프트 JSON의 fields를 확인하세요.")
+    clean_tags = [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
+    character_prompt = ", ".join(clean_tags)
+    background = background_tags.strip() if isinstance(background_tags, str) else ""
+
+    def inject_character_tags(existing: str) -> str:
+        text = existing.strip() if isinstance(existing, str) else ""
+        if not character_prompt:
+            return text
+        prefix = text
+        suffix = ""
+        if background:
+            if text == background:
+                prefix, suffix = "", background
+            elif text.endswith(", " + background):
+                prefix, suffix = text[:-(len(background) + 2)].strip(), background
+        return ", ".join(part for part in (prefix, character_prompt, suffix) if part)
+
+    for key in ("ANIMA_CONTENT", "SDXL_CONTENT"):
+        if key in fields:
+            fields[key] = inject_character_tags(fields[key])
+
+    multi = fields.get("MULTI_CHAR")
+    if isinstance(multi, dict) and multi.get("mask_area_limit_enabled"):
+        multi["char_inform"] = [character_prompt or "character"]
+        multi["char_composition_list"] = [""]
+
+    return merged

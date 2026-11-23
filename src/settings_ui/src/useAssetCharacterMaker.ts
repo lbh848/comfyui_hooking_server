@@ -2,16 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetRequest, buildAssetRequest, copyAssetCharacterSettings, type AssetRecord } from "./asset";
 import type { useAssetCharacterSettings } from "./useAssetCharacterSettings";
 
+export type UploadedCharacterImage = {
+  id: string; name: string; url: string;
+};
 export type CharacterVersion = {
   id: string; number: number; kind: "snapshot" | "proposal" | "apply" | "rollback";
   created_at: string; before: AssetRecord; after: AssetRecord; message: string;
   assistant_message?: string; parent_id?: string; source_id?: string;
   image_url?: string; image_error?: string; image_updated_at?: string; feedback_image_version_id?: string;
+  uploaded_images?: UploadedCharacterImage[];
 };
 export type CharacterHistory = {
   name: string; versions: CharacterVersion[]; active_version_id: string;
   revision: string; character_revision: string; error: string;
-  pending: { id: string; message: string; base_id: string; phase?: "propose" | "generate"; version_id?: string; image_version_id?: string } | null;
+  pending: { id: string; message: string; base_id: string; phase?: "propose" | "generate"; version_id?: string; image_version_id?: string; uploaded_images?: UploadedCharacterImage[] } | null;
 };
 
 export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType<typeof useAssetCharacterSettings>) {
@@ -84,10 +88,19 @@ export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType
         }, tags, models, styles);
       }
       if (currentName.current !== name) return false;
-      const result = await assetRequest("asset/character-maker", {
+      const { files, ...extraPayload } = extra;
+      const payload = {
         action, name, settings, revision: action === "reset" ? data?.revision : latest.revision, character_revision: latest.character_revision,
-        builtin_unlock_token: character.unlockToken, ...extra, generation_job: generationJob,
-      }) as CharacterHistory;
+        builtin_unlock_token: character.unlockToken, ...extraPayload, generation_job: generationJob,
+      };
+      let requestBody: AssetRecord | FormData = payload;
+      if (Array.isArray(files) && files.length) {
+        const form = new FormData();
+        form.append("payload", JSON.stringify(payload));
+        for (const file of files as File[]) form.append("image", file, file.name || "image.png");
+        requestBody = form;
+      }
+      const result = await assetRequest("asset/character-maker", requestBody) as CharacterHistory;
       if (currentName.current === name) {
         pendingId.current = result.pending?.id || "";
         pendingVersion.current = result.pending?.version_id || "";
