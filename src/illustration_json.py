@@ -1122,7 +1122,8 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
                        seed=None, dialogue_repair: dict | None = None) -> str:
     """Re-emit a saved MOSS document, filling missing values from the preset."""
     from modes.moss_prompt_builder import (
-        MossPromptBuilder, build_controller, merge_lora_lists,
+        MossPromptBuilder, build_controller, drop_empty_moss_boxes,
+        merge_lora_lists, prune_dropped_character_loras,
     )
 
     workflow = document.get("workflow") or {}
@@ -1130,10 +1131,14 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
     if not reference and isinstance(document.get("reference"), dict):
         reference = document["reference"]
     reference_active = workflow_profiles.MOSS_REFERENCE_ENABLED and bool(reference.get("activate"))
+    width = workflow.get("width") or 1024
+    height = workflow.get("height") or 1024
+    moss = drop_empty_moss_boxes(document["moss"], width, height)
     saved_loras = workflow.get("loras") if isinstance(workflow.get("loras"), dict) else {}
     loras = merge_lora_lists(saved_loras)
     if not loras:
         loras = merge_lora_lists(workflow_defaults.get("STYLE_LORA_DATA", {}))
+    loras = prune_dropped_character_loras(loras, moss, document["moss"])
     saved_sampling = workflow.get("sampling")
     if saved_sampling is not None and not isinstance(saved_sampling, dict):
         raise ValueError("MOSS sampling settings must be an object")
@@ -1143,8 +1148,8 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         model=model,
         clip=workflow.get("clip") or workflow_defaults.get("workflow.clip", ""),
         vae=workflow.get("vae") or workflow_defaults.get("workflow.vae", ""),
-        width=workflow.get("width") or 1024,
-        height=workflow.get("height") or 1024,
+        width=width,
+        height=height,
         batch_size=workflow.get("batch_size") or 1,
         seed=int(seed) if seed is not None else int(workflow.get("seed") or 0),
         negative=workflow.get("negative") or negative or "",
@@ -1153,7 +1158,7 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         clip_device=workflow.get("clip_device") or workflow_defaults.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
         sequential_offload=workflow.get("sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
     )
-    rebuilt = MossPromptBuilder.build(document["moss"], controller)
+    rebuilt = MossPromptBuilder.build(moss, controller)
     # A replay keeps the source captured with the original request, but the
     # current request owns the enabled flag: turning the toggle off must also
     # skip repair when an already saved document is redrawn.
@@ -1179,6 +1184,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
     from modes.moss_prompt_builder import (
         MossNpcPromptBuilder, MossPromptBuilder, add_character_lora_triggers,
         build_controller, build_moss_layout, merge_lora_lists,
+        prune_dropped_character_loras,
     )
     assets = assets if isinstance(assets, dict) else {}
 
@@ -1200,6 +1206,8 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         fields.get("STYLE_LORA_DATA", {}),
         workflow_defaults.get("STYLE_LORA_DATA", {}),
     )
+    if not single_subject:
+        lora_list = prune_dropped_character_loras(lora_list, moss, layout)
     if reference:
         # Existing MOSS style LoRAs stay first; CharRef is applied last.
         lora_list = merge_lora_lists(lora_list, [{

@@ -23,7 +23,7 @@ from modes import postprocess
 from modes.illustration_prompt_assembly import prompt_join, variable
 from modes import illustration_prompt_builders as prompt_builders
 from modes import illustration_composite
-from modes.moss_prompt_builder import MANGA_META
+from modes.moss_prompt_builder import MANGA_META, clamp_centered_bbox
 from modes.visual_profiles import profile_by_id, resolve_visual_base
 from manga_page_vocabulary import (
     ACTOR_PANEL_RELATION, BALLOON, BALLOON_TAIL, BOUNDARY_PHRASES,
@@ -443,7 +443,7 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     return scene, bases
 
 
-def _moss_bbox(value, field: str, width: int, height: int) -> list[int]:
+def _moss_bbox(value, field: str, width: int, height: int) -> list[int] | None:
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise ValueError(f"DETAIL-MOSS {field}는 [y0,x0,y1,x1] 4개 숫자여야 합니다")
     numbers = []
@@ -457,14 +457,11 @@ def _moss_bbox(value, field: str, width: int, height: int) -> list[int]:
         if not math.isfinite(number):
             raise ValueError(f"DETAIL-MOSS {field} 좌표가 유한수가 아닙니다: {entry!r}")
         numbers.append(int(round(number)))
-    y0, x0, y1, x1 = numbers
-    if y0 > y1:
-        y0, y1 = y1, y0
-    if x0 > x1:
-        x0, x1 = x1, x0
-    half_w, half_h = width // 2, height // 2
-    return [max(-half_h, min(half_h, y0)), max(-half_w, min(half_w, x0)),
-            max(-half_h, min(half_h, y1)), max(-half_w, min(half_w, x1))]
+    clamped = clamp_centered_bbox(numbers, width, height)
+    if clamped is None:
+        print(f"[ILLUST_CONTEXT:DETAIL-MOSS] 빈 bbox 항목 제외: "
+              f"field={field}, raw={numbers!r}, canvas={width}x{height}")
+    return clamped
 
 
 _MANGA_NON_RECT_FRAME_WORDS = (
@@ -563,7 +560,7 @@ def _manga_attach_note(panel: dict, panel_ids: dict[str, int] | None) -> str:
 
 def _manga_panel_item(number: int, panel: dict, width: int, height: int,
                       panel_ids: dict[str, int] | None = None, *,
-                      boundaries: str = "separated") -> dict:
+                      boundaries: str = "separated") -> dict | None:
     shape = normalize_choice(panel.get("shape"), PANEL_SHAPE, "regular", "shape")
     distance = normalize_choice(panel.get("camera_distance"), PANEL_CAMERA_DISTANCE,
                                 "medium", "camera_distance")
@@ -576,41 +573,50 @@ def _manga_panel_item(number: int, panel: dict, width: int, height: int,
                             shared_dividers=boundaries == "touching" or bool(attach_note))
     if attach_note:
         caption = f"{caption} {attach_note}"
+    bbox = _moss_bbox(panel.get("bbox"), f"panels[{number - 1}].bbox", width, height)
+    if bbox is None:
+        return None
     return {
         "label": "object",
         "caption": caption,
-        "bbox": _moss_bbox(panel.get("bbox"), f"panels[{number - 1}].bbox", width, height),
+        "bbox": bbox,
     }
 
 
-def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int) -> dict:
+def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int) -> dict | None:
     name = _manga_actor_name(actor.get("name") or actor.get("actorId"))
     if not name:
         raise ValueError(f"DETAIL-MANGA {field}.name이 비어 있습니다")
     instruction = str(actor.get("instruction") or "").strip()
     if not instruction:
         raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
+    bbox = _moss_bbox(actor.get("bbox"), f"{field}.bbox", width, height)
+    if bbox is None:
+        return None
     return {
         "label": "character",
         "name": name,
         "caption": f"PANEL {number}. {instruction}",
-        "bbox": _moss_bbox(actor.get("bbox"), f"{field}.bbox", width, height),
+        "bbox": bbox,
     }
 
 
-def _manga_object_item(number: int, obj: dict, field: str, width: int, height: int) -> dict:
+def _manga_object_item(number: int, obj: dict, field: str, width: int, height: int) -> dict | None:
     instruction = str(obj.get("instruction") or "").strip()
     if not instruction:
         raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
+    bbox = _moss_bbox(obj.get("bbox"), f"{field}.bbox", width, height)
+    if bbox is None:
+        return None
     return {
         "label": "object",
         "caption": instruction,
-        "bbox": _moss_bbox(obj.get("bbox"), f"{field}.bbox", width, height),
+        "bbox": bbox,
     }
 
 
 def _manga_dialogue_item(number: int, dialogue: dict, field: str,
-                         width: int, height: int) -> dict:
+                         width: int, height: int) -> dict | None:
     spoken = pipeline.multi_char_mask._prompt_text(
         dialogue.get("text"), f"{field}.text", required=False)
     if not spoken:
@@ -619,11 +625,14 @@ def _manga_dialogue_item(number: int, dialogue: dict, field: str,
     tail = normalize_choice(dialogue.get("tail"), BALLOON_TAIL, "none", "tail")
     speaker = _manga_actor_name(dialogue.get("speaker"))
     owner = f"Speaker: {speaker}. " if speaker and balloon != "narration" else ""
+    bbox = _moss_bbox(dialogue.get("bbox"), f"{field}.bbox", width, height)
+    if bbox is None:
+        return None
     return {
         "label": "text",
         "caption": f"PANEL {number}. {owner}{balloon_caption(balloon, tail)}",
         "text": spoken,
-        "bbox": _moss_bbox(dialogue.get("bbox"), f"{field}.bbox", width, height),
+        "bbox": bbox,
     }
 
 
@@ -636,9 +645,12 @@ def _manga_shared_dividers(panels: list[dict], width: int, height: int) -> list[
     duplicate the stroke. Small model-authored gaps are not silently bridged.
     """
     rectangular = {"regular", "wide", "tall"}
-    regions = [_moss_bbox(panel.get("bbox"), f"panels[{index}].bbox", width, height)
-               for index, panel in enumerate(panels)
-               if str(panel.get("shape") or "regular").strip().lower() in rectangular]
+    regions = [
+        box
+        for index, panel in enumerate(panels)
+        if str(panel.get("shape") or "regular").strip().lower() in rectangular
+        and (box := _moss_bbox(panel.get("bbox"), f"panels[{index}].bbox", width, height)) is not None
+    ]
     thickness = max(2, round(min(width, height) / 192))
     before, after = thickness // 2, thickness - thickness // 2
     dividers = []
@@ -658,6 +670,8 @@ def _manga_shared_dividers(panels: list[dict], width: int, height: int) -> list[
             else:
                 continue
             line = _moss_bbox(line, "shared_divider.bbox", width, height)
+            if line is None:
+                continue
             key = tuple(line)
             if key in seen:
                 continue
@@ -741,6 +755,10 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
             raise ValueError(f"DETAIL-MANGA cross_panel_actors[{index}].instruction이 비어 있습니다")
         relation = normalize_choice(entry.get("relation"), ACTOR_PANEL_RELATION,
                                     "breaks_border", "relation")
+        bbox = _moss_bbox(entry.get("bbox"), f"cross_panel_actors[{index}].bbox",
+                          width, height)
+        if bbox is None:
+            continue
         span_labels = [f"PANEL {panel_ids[panel_id]}" for panel_id in linked]
         span_text = (", ".join(span_labels[:-1]) + " and " + span_labels[-1]
                      if len(span_labels) > 1 else span_labels[0])
@@ -759,8 +777,7 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
             "label": "character",
             "name": name,
             "caption": f"{lead} {instruction}",
-            "bbox": _moss_bbox(entry.get("bbox"), f"cross_panel_actors[{index}].bbox",
-                               width, height),
+            "bbox": bbox,
         })
         cross_names.add(key)
         # A page overlay owns its home shot; crossed inset pictures may show
@@ -773,13 +790,14 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
         number = index + 1
         panel_item = _manga_panel_item(number, panel, width, height, panel_ids,
                                        boundaries=boundaries)
-        for name in foreground_overlays.get(number, []):
-            panel_item["caption"] += (
-                f" This inset picture lies BEHIND {name}'s continuous foreground body. "
-                "Hide the inset artwork and border wherever that body overlaps; the border "
-                "ends at the foreground silhouette and resumes beyond it."
-            )
-        items.append(panel_item)
+        if panel_item is not None:
+            for name in foreground_overlays.get(number, []):
+                panel_item["caption"] += (
+                    f" This inset picture lies BEHIND {name}'s continuous foreground body. "
+                    "Hide the inset artwork and border wherever that body overlaps; the border "
+                    "ends at the foreground silhouette and resumes beyond it."
+                )
+            items.append(panel_item)
         actors = panel.get("actors")
         if isinstance(actors, list):
             for actor_index, actor in enumerate(actors):
@@ -790,22 +808,28 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                     print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 크로스패널 액터의 패널 사본 제거: "
                           f"name={name!r}, panel={number}")
                     continue
-                items.append(_manga_actor_item(
-                    number, actor, f"panels[{index}].actors[{actor_index}]", width, height))
+                actor_item = _manga_actor_item(
+                    number, actor, f"panels[{index}].actors[{actor_index}]", width, height)
+                if actor_item is not None:
+                    items.append(actor_item)
         objects = panel.get("objects")
         if isinstance(objects, list):
             for object_index, obj in enumerate(objects):
                 if not isinstance(obj, dict):
                     raise ValueError(f"DETAIL-MANGA panels[{index}].objects[{object_index}]가 object가 아닙니다")
-                items.append(_manga_object_item(
-                    number, obj, f"panels[{index}].objects[{object_index}]", width, height))
+                object_item = _manga_object_item(
+                    number, obj, f"panels[{index}].objects[{object_index}]", width, height)
+                if object_item is not None:
+                    items.append(object_item)
         dialogues = panel.get("dialogue")
         if isinstance(dialogues, list):
             for dialogue_index, dialogue in enumerate(dialogues):
                 if not isinstance(dialogue, dict):
                     raise ValueError(f"DETAIL-MANGA panels[{index}].dialogue[{dialogue_index}]가 object가 아닙니다")
-                items.append(_manga_dialogue_item(
-                    number, dialogue, f"panels[{index}].dialogue[{dialogue_index}]", width, height))
+                dialogue_item = _manga_dialogue_item(
+                    number, dialogue, f"panels[{index}].dialogue[{dialogue_index}]", width, height)
+                if dialogue_item is not None:
+                    items.append(dialogue_item)
     if boundaries == "touching":
         items.extend(_manga_shared_dividers(panels, width, height))
     items.extend(cross_items)
@@ -836,15 +860,21 @@ def _parse_flat_moss_items(raw_items, width: int, height: int,
                 raw_item.get("text"), f"items[{index}].text", required=False)
             if not spoken:
                 raise ValueError(f"DETAIL-MOSS items[{index}] text가 비어 있습니다")
+            bbox = _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height)
+            if bbox is None:
+                continue
             parsed_items.append({
                 "label": "text",
                 "caption": text or "speech balloon",
                 "text": spoken,
-                "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
+                "bbox": bbox,
             })
             continue
         if not text:
             raise ValueError(f"DETAIL-MOSS items[{index}] caption이 비어 있습니다")
+        bbox = _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height)
+        if bbox is None:
+            continue
         if label == "character":
             # DETAIL owns the depicted cast. Card/profile or candidate data is
             # supplied by the scene input; when neither exists the caption
@@ -860,7 +890,7 @@ def _parse_flat_moss_items(raw_items, width: int, height: int,
             "label": label,
             **({"name": name} if name else {}),
             "caption": text,
-            "bbox": _moss_bbox(raw_item.get("bbox"), f"items[{index}].bbox", width, height),
+            "bbox": bbox,
         })
     return parsed_items
 

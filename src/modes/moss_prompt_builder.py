@@ -146,7 +146,7 @@ def preview_layout(document) -> dict | None:
     return {"mask_width": width, "mask_height": height, "regions": regions}
 
 
-def _clamp_centered_bbox(value, image_width: int, image_height: int) -> list[int] | None:
+def clamp_centered_bbox(value, image_width: int, image_height: int) -> list[int] | None:
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
     numbers = []
@@ -166,8 +166,63 @@ def _clamp_centered_bbox(value, image_width: int, image_height: int) -> list[int
     if x0 > x1:
         x0, x1 = x1, x0
     half_w, half_h = image_width // 2, image_height // 2
-    return [max(-half_h, min(half_h, y0)), max(-half_w, min(half_w, x0)),
-            max(-half_h, min(half_h, y1)), max(-half_w, min(half_w, x1))]
+    y0, x0, y1, x1 = (
+        max(-half_h, min(half_h, y0)), max(-half_w, min(half_w, x0)),
+        max(-half_h, min(half_h, y1)), max(-half_w, min(half_w, x1)),
+    )
+    if y1 <= y0 or x1 <= x0:
+        return None
+    return [y0, x0, y1, x1]
+
+
+def drop_empty_moss_boxes(moss: dict, image_width: int, image_height: int) -> dict:
+    """Drop items whose clamped centered bbox collapses to zero width or height."""
+    if (not isinstance(moss, dict)
+            or moss.get("bbox_coord_space") != MOSS_BBOX_COORD_SPACE
+            or not isinstance(moss.get("items"), list)):
+        return moss
+    size = moss.get("image_size") if isinstance(moss.get("image_size"), dict) else {}
+    try:
+        width = max(16, int(size.get("width") or image_width or 1024))
+        height = max(16, int(size.get("height") or image_height or 1024))
+    except (TypeError, ValueError):
+        width, height = max(16, int(image_width or 1024)), max(16, int(image_height or 1024))
+    kept = []
+    for entry in moss["items"]:
+        if not isinstance(entry, dict):
+            continue
+        bbox = clamp_centered_bbox(entry.get("bbox"), width, height)
+        if bbox is None:
+            continue
+        kept.append({**entry, "bbox": bbox})
+    if not kept:
+        return {"summary": copy.deepcopy(moss.get("summary") or {})}
+    return {**moss, "items": kept}
+
+
+def prune_dropped_character_loras(lora_list: list[dict], moss: dict, source_layout) -> list[dict]:
+    """Drop character LoRAs for characters whose only bbox was removed as empty."""
+    def character_names(layout) -> set[str]:
+        if not isinstance(layout, dict) or not isinstance(layout.get("items"), list):
+            return set()
+        return {
+            _text(item.get("name")).casefold()
+            for item in layout["items"]
+            if isinstance(item, dict)
+            and _text(item.get("label")).lower() == "character"
+            and _text(item.get("name"))
+        }
+
+    remaining = character_names(moss)
+    if not remaining:
+        return lora_list
+    dropped = character_names(source_layout) - remaining
+    if not dropped:
+        return lora_list
+    return [
+        entry for entry in lora_list
+        if not isinstance(entry, dict) or _text(entry.get("CHAR")).casefold() not in dropped
+    ]
 
 
 def _absolute_moss_layout(layout: dict, image_width: int, image_height: int) -> dict:
@@ -204,7 +259,7 @@ def _absolute_moss_layout(layout: dict, image_width: int, image_height: int) -> 
         label = _text(entry.get("label")).lower()
         if label not in {"character", "object", "text"}:
             continue
-        bbox = _clamp_centered_bbox(entry.get("bbox"), image_width, image_height)
+        bbox = clamp_centered_bbox(entry.get("bbox"), image_width, image_height)
         if bbox is None:
             continue
         item = {"label": label, "caption": _text(entry.get("caption"))}
