@@ -37,6 +37,7 @@ function generationDuration(image: AssetRecord | null) {
 }
 
 const durationHint = "이미지 생성 요청부터 저장까지 걸린 시간 (작업 큐 대기 제외)";
+const representativeBadge = <span className="asset-image-representative"><Star size={14} fill="currentColor" />대표 이미지</span>;
 
 function imageTime(image: AssetRecord | null) {
   if (!image) return null;
@@ -294,7 +295,7 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
     {character && combination && <div className="asset-gallery-body" data-keyboard-enabled={keyboardEnabled || undefined} ref={imageScrollArea} tabIndex={internalScroll ? 0 : undefined} role={internalScroll ? "region" : undefined} aria-label={internalScroll ? "생성된 에셋 목록" : undefined}>
       {feedback}
       <div className="asset-gallery-grid asset-gallery-images">{visibleImages.map((image: AssetRecord) => <div className={`asset-image-card${image.is_representative ? " is-representative" : ""}`} key={image.filename}><button type="button" className="asset-image" data-asset-gallery-item={image.filename} disabled={busy} onClick={() => void openImage(image)}>
-            <div className="asset-image-preview"><img loading="lazy" src={imageUrl(image)} alt={image.filename} />{image.is_representative && <span className="asset-image-representative"><Star size={14} fill="currentColor" />대표 이미지</span>}</div><span className="asset-image-caption"><span className="asset-image-filename" title={image.filename}>{image.filename}</span>{generationDuration(image) && <span className="asset-image-duration" title={durationHint}><Clock3 size={12} />{generationDuration(image)}</span>}</span></button>
+            <div className="asset-image-preview"><img loading="lazy" src={imageUrl(image)} alt={image.filename} />{image.is_representative && representativeBadge}</div><span className="asset-image-caption"><span className="asset-image-filename" title={image.filename}>{image.filename}</span>{generationDuration(image) && <span className="asset-image-duration" title={durationHint}><Clock3 size={12} />{generationDuration(image)}</span>}</span></button>
             {!onPick && <div className="asset-image-actions">
               <button type="button" className="button secondary" disabled={busy} aria-pressed={!!image.is_representative} onClick={() => void action("set_representative", image)}><Star size={14} />{image.is_representative ? "대표 해제" : "대표 설정"}</button>
               <button type="button" className="button secondary" disabled={busy || image.is_animated} title={image.is_animated ? "영상 에셋에는 EDIT 툴을 사용할 수 없습니다" : "EDIT 툴 호출"} onClick={() => { setMessage(""); setEditing({ image, character, outfit: combination!.outfit, expression: combination!.expression, url: imageUrl(image) }); }}><Pencil size={14} />Edit</button>
@@ -308,6 +309,7 @@ export function AssetGallery({ tags, selection, onPick, onBrowse, newestFirst = 
         <div className="asset-preview-image" ref={previewArea}><div className="illust-mask-image asset-preview-frame">
           <img src={imageUrl(preview)} alt={preview.filename} onLoad={({ currentTarget: image }) => setPreviewSize({ width: image.naturalWidth, height: image.naturalHeight })} />
           {showMask && previewMask && previewSize && <IllustrationMaskOverlay {...previewSize} maskUrl={previewMask} maskOutline label={previewMask === trackedMask ? "1차 추적 마스크 오버레이" : "원본 마스크 오버레이"} />}
+          {preview.is_representative && representativeBadge}
         </div></div>
         <div className="asset-preview-details">
           <p className="field-help">{previewTime ? <>{previewTime.label} · <time dateTime={previewTime.date.toISOString()}>{previewTime.date.toLocaleString("ko-KR", {

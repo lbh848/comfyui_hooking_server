@@ -199,7 +199,7 @@
 .asset-image-card .asset-image { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; }
 .asset-image-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px; }
 .asset-image-actions .button { padding: 6px 9px; font-size: 12px; }
-.asset-image-actions .button[aria-pressed="true"] { color: var(--rose-dark); background: var(--rose-soft); border-color: var(--rose); }
+.asset-image-actions .button[aria-pressed="true"], .asset-preview-modal .asset-actions .button[aria-pressed="true"] { color: var(--rose-dark); background: var(--rose-soft); border-color: var(--rose); }
 .asset-image-actions .danger { margin-left: auto; }
 .asset-folder, .asset-image { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; min-width: 0; background: var(--panel); text-align: left; }
 .asset-folder { display: flex; align-items: center; gap: 12px; padding: 10px; color: var(--secondary); text-align: left; }
