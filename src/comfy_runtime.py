@@ -78,6 +78,21 @@ class ComfyRuntimeApiError(ComfyRuntimeError):
     """실행 중인 ComfyUI API 호출 실패."""
 
 
+def compile_cache_env(project_root: str | Path) -> dict[str, str]:
+    """Keep ComfyUI's TorchInductor and Triton caches at a short in-project path."""
+
+    cache_root = data_root(project_root) / "cache"
+    compile_dir = cache_root / "cc"
+    triton_dir = cache_root / "ct"
+    compile_dir.mkdir(parents=True, exist_ok=True)
+    triton_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "TORCHINDUCTOR_CACHE_DIR": str(compile_dir),
+        "TRITON_CACHE_DIR": str(triton_dir),
+        "TORCHINDUCTOR_UNIQUE_KERNEL_NAMES": "0",
+    }
+
+
 def _split_windows_command_line(value: str) -> tuple[str, ...]:
     """Split user-entered arguments using Windows command-line quoting rules."""
 
@@ -667,6 +682,7 @@ class ComfyRuntimeManager:
             env["PYTHONUNBUFFERED"] = "1"
             env["LORA_MANAGER_PORTABLE"] = "1"
             env["LORA_MANAGER_STANDALONE"] = "0"
+            env.update(compile_cache_env(self.project_root))
             # Never inherit another installation's explicit cache database paths.
             for key in ("LORA_MANAGER_CACHE_DB", "LORA_MANAGER_MODEL_UPDATE_DB", "LORA_MANAGER_RECIPE_CACHE_DB", "LORA_MANAGER_RECIPE_FTS_DB", "LORA_MANAGER_TAG_FTS_DB"):
                 env.pop(key, None)
