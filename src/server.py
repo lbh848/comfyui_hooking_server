@@ -30390,19 +30390,116 @@ def _cloudflared_asset(system: str, machine: str) -> tuple[str, str]:
     return f"cloudflared-linux-{arch}", "cloudflared"
 
 
+def _is_ssl_error(exc: BaseException) -> bool:
+    """예외 체인에 SSL 오류가 포함되어 있는지 확인한다."""
+    import ssl
+
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _build_cloudflared_ssl_contexts() -> list[tuple[str, Any]]:
+    """OS 인증서 저장소와 certifi CA 번들을 활용한 SSL 컨텍스트 목록을 만든다."""
+    import ssl
+
+    ca_bundle: str | None = None
+    try:
+        import certifi
+
+        candidate = certifi.where()
+        if candidate and os.path.isfile(candidate):
+            ca_bundle = candidate
+    except ImportError:
+        ca_bundle = None
+
+    contexts: list[tuple[str, Any]] = []
+    try:
+        combined = ssl.create_default_context()
+        if ca_bundle:
+            combined.load_verify_locations(cafile=ca_bundle)
+            contexts.append(("system+certifi", combined))
+        else:
+            contexts.append(("system", combined))
+    except ssl.SSLError as exc:
+        print(
+            "[TUNNEL] OS 기본 SSL 컨텍스트 생성 실패; certifi 번들로 대체합니다: "
+            f"{exc}"
+        )
+
+    if ca_bundle:
+        contexts.append(("certifi", ssl.create_default_context(cafile=ca_bundle)))
+
+    if not contexts:
+        contexts.append(("system", ssl.create_default_context()))
+    return contexts
+
+
+async def _download_cloudflared_file(url: str, dest_path: str) -> None:
+    """httpx로 cloudflared 릴리스 파일을 다운로드한다."""
+    import httpx
+    import ssl
+
+    contexts = _build_cloudflared_ssl_contexts()
+    timeout = httpx.Timeout(120.0, connect=30.0, read=60.0)
+    headers = {"User-Agent": "comfyui-hooking-server/1.0"}
+
+    for index, (label, ssl_context) in enumerate(contexts):
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=True,
+                headers=headers,
+                verify=ssl_context,
+            ) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    written = 0
+                    with open(dest_path, "wb") as handle:
+                        async for chunk in response.aiter_bytes(256 * 1024):
+                            if not chunk:
+                                continue
+                            handle.write(chunk)
+                            written += len(chunk)
+            if written <= 0:
+                raise RuntimeError(f"cloudflared 다운로드 결과가 비어 있습니다: {url}")
+            return
+        except (httpx.HTTPError, ssl.SSLError, OSError) as exc:
+            if _is_ssl_error(exc) and index + 1 < len(contexts):
+                next_label = contexts[index + 1][0]
+                print(
+                    "[TUNNEL] cloudflared 다운로드 SSL 검증 실패; "
+                    f"다른 인증서 저장소로 재시도합니다 ({label} -> {next_label}): {exc}"
+                )
+                continue
+            if _is_ssl_error(exc):
+                raise RuntimeError(
+                    "cloudflared 다운로드 중 SSL 인증서 검증에 실패했습니다. "
+                    "백신의 HTTPS 검사, 프록시/보안 프로그램 설정을 확인하거나 "
+                    f"cloudflared를 직접 설치한 뒤 다시 시도하세요. ({exc})"
+                ) from exc
+            raise
+
+
 async def _ensure_cloudflared() -> str:
     """cloudflared 바이너리 경로 반환. 없으면 자동 다운로드."""
     global _cloudflared_path
-    if _cloudflared_path:
+    if _cloudflared_path and os.path.isfile(_cloudflared_path):
         return _cloudflared_path
     # 시스템에 설치된 경우
-    import shutil
     found = shutil.which("cloudflared")
     if found:
         _cloudflared_path = found
         return found
     # 로컬에 다운로드
-    import platform, urllib.request
+    import platform
+    import tempfile
+
     local_dir = os.path.join(os.path.dirname(__file__), ".bin")
     os.makedirs(local_dir, exist_ok=True)
     asset, filename = _cloudflared_asset(platform.system(), platform.machine())
@@ -30412,13 +30509,17 @@ async def _ensure_cloudflared() -> str:
         + asset
     )
     archive = asset.endswith(".tgz")
-    if not os.path.exists(bin_path):
+    if not (os.path.isfile(bin_path) and os.path.getsize(bin_path) > 0):
         print(f"[INFO] cloudflared 다운로드 중... url={url}")
-        if archive:
-            import tarfile, tempfile
-            with tempfile.TemporaryDirectory(prefix="cloudflared_") as temp_dir:
+        with tempfile.TemporaryDirectory(
+            dir=local_dir, prefix="cloudflared_"
+        ) as temp_dir:
+            staged_path = os.path.join(temp_dir, filename)
+            if archive:
+                import tarfile
+
                 tgz_path = os.path.join(temp_dir, "cloudflared.tgz")
-                urllib.request.urlretrieve(url, tgz_path)
+                await _download_cloudflared_file(url, tgz_path)
                 with tarfile.open(tgz_path, "r:gz") as archive_file:
                     member = next(
                         (
@@ -30437,11 +30538,14 @@ async def _ensure_cloudflared() -> str:
                         raise RuntimeError(
                             f"cloudflared 실행 파일을 읽지 못했습니다: {member.name}"
                         )
-                    with extracted, open(bin_path, "wb") as handle:
+                    with extracted, open(staged_path, "wb") as handle:
                         shutil.copyfileobj(extracted, handle)
-        else:
-            urllib.request.urlretrieve(url, bin_path)
-        os.chmod(bin_path, 0o755)
+            else:
+                await _download_cloudflared_file(url, staged_path)
+            if not (os.path.isfile(staged_path) and os.path.getsize(staged_path) > 0):
+                raise RuntimeError(f"cloudflared 실행 파일이 비어 있습니다: {url}")
+            os.chmod(staged_path, 0o755)
+            os.replace(staged_path, bin_path)
         print(f"[INFO] cloudflared 다운로드 완료: {bin_path}")
     _cloudflared_path = bin_path
     return bin_path
