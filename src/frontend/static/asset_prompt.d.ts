@@ -1,5 +1,5 @@
 export type AssetRecord = Record<string, any>;
-export type AssetCapabilities = { type: string; anima: boolean; ilxl: boolean; dual: boolean; pose: boolean; ipadapter: boolean; faceLora: boolean; seed: boolean };
+export type AssetCapabilities = { type: string; anima: boolean; ilxl: boolean; moss: boolean; dual: boolean; pose: boolean; ipadapter: boolean; faceLora: boolean; seed: boolean };
 declare global {
   const ComfyAssetPrompt: {
     normalizeAssetWorkflowType(value?: string): string;

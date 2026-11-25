@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+import sys
 import webbrowser
 
 from aiohttp import web
@@ -831,6 +832,9 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     async def asset_redirect(request: web.Request) -> web.Response:
         raise web.HTTPFound("/asset/")
 
+    async def bg_asset_redirect(request: web.Request) -> web.Response:
+        raise web.HTTPFound("/bg-asset/")
+
     async def lora_redirect(request: web.Request) -> web.Response:
         raise web.HTTPFound("/lora/")
 
@@ -856,6 +860,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     app.router.add_get("/emotion/", index)
     app.router.add_get("/asset", asset_redirect)
     app.router.add_get("/asset/", index)
+    app.router.add_get("/bg-asset", bg_asset_redirect)
+    app.router.add_get("/bg-asset/", index)
     app.router.add_get("/lora", lora_redirect)
     app.router.add_get("/lora/", index)
     app.router.add_get("/setting/favicon.svg", favicon)
@@ -872,6 +878,8 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     register_illustration(app, internal_lora, SETTINGS_UI_SCHEMA)
     from settings_assets import register_assets
     register_assets(app, internal_lora, SETTINGS_UI_SCHEMA)
+    from settings_bg_assets import register_bg_assets
+    register_bg_assets(app, internal_lora, SETTINGS_UI_SCHEMA)
     from settings_llm_logs import register_llm_logs
     record_llm_history = register_llm_logs(app, project_root, SETTINGS_UI_SCHEMA, internal_lora)
     from settings_memo import register_memo
@@ -935,6 +943,19 @@ def create_app(dist_dir: Path = DIST_DIR, project_root: Path = SOURCE_DIR, *, in
     return app
 
 
+def _handle_windows_proactor_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    exc = context.get("exception")
+    handle = context.get("handle")
+    callback = getattr(handle, "_callback", None)
+    if (
+        isinstance(exc, ConnectionResetError)
+        and getattr(exc, "winerror", None) == 10054
+        and getattr(callback, "__qualname__", "") == "_ProactorBasePipeTransport._call_connection_lost"
+    ):
+        return
+    loop.default_exception_handler(context)
+
+
 def main() -> None:
     from settings_program_logs import capture_console
     with capture_console(SOURCE_DIR):
@@ -948,10 +969,15 @@ def main() -> None:
         except FileNotFoundError as exc:
             parser.exit(1, f"{exc}\n")
 
+        async def configure_loop(app: web.Application) -> None:
+            if sys.platform == "win32":
+                asyncio.get_running_loop().set_exception_handler(_handle_windows_proactor_exception)
+
         async def open_browser(app: web.Application) -> None:
             if not args.no_browser:
                 asyncio.get_running_loop().call_later(0.5, webbrowser.open, SETTINGS_URL)
 
+        app.on_startup.append(configure_loop)
         app.on_startup.append(open_browser)
         # Intentionally no --host flag: this management service is never public.
         web.run_app(app, host=SETTINGS_HOST, port=SETTINGS_PORT, access_log=None, shutdown_timeout=5)

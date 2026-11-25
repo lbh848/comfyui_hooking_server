@@ -1,11 +1,12 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { CircleCheck, CircleX, ListTodo } from "lucide-react";
 import { loraRequest } from "./internalLora";
-import { assetGenerationStatus, type AssetQueueState } from "./assetGenerationQueue";
+import { assetGenerationStatus, matchesAssetQueueWorkspace, type AssetQueueState, type AssetQueueWorkspace } from "./assetGenerationQueue";
 
-export function AssetGenerationStatus({ onOpenQueue, onStateChange }: {
+export function AssetGenerationStatus({ onOpenQueue, onStateChange, workspace = "asset" }: {
   onOpenQueue: () => void;
   onStateChange?: (state: AssetQueueState | null) => void;
+  workspace?: AssetQueueWorkspace;
 }) {
   const [state, setState] = useState<AssetQueueState | null>(null);
   const [error, setError] = useState("");
@@ -25,6 +26,7 @@ export function AssetGenerationStatus({ onOpenQueue, onStateChange }: {
       if (latest) {
         const previous = new Map(latest.items.map(item => [item.id, item.status]));
         const finished = next.items.filter(item => item.type === "asset_generation"
+          && matchesAssetQueueWorkspace(item, workspace)
           && (item.status === "completed" || item.status === "failed") && previous.get(item.id) !== item.status)
           .sort((left, right) => (right.completed_at || 0) - (left.completed_at || 0))[0];
         if (finished) {
@@ -69,13 +71,13 @@ export function AssetGenerationStatus({ onOpenQueue, onStateChange }: {
     connect();
     void poll();
     return () => { controller.abort(); clearTimeout(timer); clearTimeout(reconnect); clearTimeout(resultTimer); socket?.close(); };
-  }, []);
+  }, [workspace]);
 
   useEffect(() => { onStateChange?.(error ? null : state); }, [state, error, onStateChange]);
 
-  const status = state ? assetGenerationStatus(state) : null;
+  const status = state ? assetGenerationStatus(state, workspace) : null;
   const available = status && !error;
-  return <div className={`asset-generation-status${error ? " has-error" : ""}`} aria-label="에셋 생성 현황">
+  return <div className={`asset-generation-status${error ? " has-error" : ""}`} aria-label={workspace === "bg_asset" ? "배경 생성 현황" : "에셋 생성 현황"}>
     <div className="asset-generation-status-line" role="status">
       <span className="asset-generation-pending" title={error || undefined}>대기 <strong>{available ? status.pending.toLocaleString("ko-KR") : "—"}</strong></span>
       {available && status.label && <span className="asset-generation-status-label" role="progressbar" aria-label="현재 그리기 단계 진행률" aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.percent ?? undefined} title={[status.title, status.detail].filter(Boolean).join("\n")} style={{ "--asset-progress": `${status.percent ?? 0}%` } as CSSProperties}>

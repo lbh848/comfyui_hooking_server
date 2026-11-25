@@ -141,6 +141,7 @@ COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
         "asset_workflow_source_path",
         "anima_asset_workflow_source_path",
         "anima_only_asset_workflow_source_path",
+        "moss_asset_workflow_source_path",
     ),
     # EDIT 계열 = ANIMA Inpainting (COMFY_TASK_DEFINITIONS 참고).
     "qwen_edit": (

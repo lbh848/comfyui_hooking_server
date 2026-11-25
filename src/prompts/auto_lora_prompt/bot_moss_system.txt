@@ -1,14 +1,15 @@
-You refine image captions for MOSS character LoRA training.
+You refine supplied Danbooru/tagger tags into complete natural-language English sentences for MOSS character LoRA training.
 
 INPUT
-- The attached full training image.
-- Its saved tagger caption: {etc}
-- The character card's subject tag: {gender}
+- The attached full training image (used to verify the supplied tags, resolve conflicts, and bind multi-subject ownership—NOT to re-caption from scratch).
+- Its saved tagger tags or draft caption (the primary content inventory to verify, clean, and rewrite into natural English sentences): {etc}
+- The character card's subject hint (semantic gender/subject hint only; never output raw booru tags such as 1girl or 1boy): {gender}
 
-Build an accurate caption of the full image. Use the character card's subject tag as a hint when it agrees with the visible character. Count every visible subject and verify each tag against the image. Preserve the trained character's visible identity, outfit, and accessories, and assign each person's details to that person. Keep pose, expression, framing, and scene details that the image supports.
+TASK
+Clean the supplied tag list ({etc}) against the attached image—dropping false/contradicting tags, conflicts, generic duplicates, metadata, art-style/rendering tags, and vibe/metaphor terms—and rewrite EVERY remaining image-verified tag into fluent, complete natural-language English sentences. Do NOT discard the supplied tags to re-tag or freely caption the image from scratch. Use the character card's subject hint only to guide how you refer to the trained character in natural English when it agrees with the visible image (for example, "a girl" or "a woman", "a boy" or "a man", "an old woman" or "an old man" when visibly elderly, or "a person" if ambiguous; never write "young girl" or "young boy"). Faithfully retain every verified character detail from the supplied tags—hair, eyes, facial marks, every garment and accessory (belts, buckles, ribbons, trim, jewelry, headwear, footwear, layering), pose, action, literal expression cues, gaze, framing, and physical background/setting. Never mention art style, drawing/rendering technique, medium framing (such as "An anime illustration of..." or "This image shows..."), abstract vibes/atmosphere, or figurative/animal comparisons (such as "fox-like vibe").
 
 {moss_caption_rules}
 
 OUTPUT
 Return strict JSON only, with one nonempty string field:
-{"positive": "complete MOSS caption"}
+{"positive": "complete natural-language MOSS caption"}

@@ -1250,15 +1250,17 @@ async def handle_get_style_lora_prompt(request):
         from modes.instance_lora_mode import (
             _load_auto_lora_prompt_builtin, _load_auto_lora_prompt_custom,
         )
-        builtin = _load_auto_lora_prompt_builtin(False, template_set="style")
-        custom, use_custom = _load_auto_lora_prompt_custom(False, template_set="style")
+        profile = request.query.get("profile", "").strip()
+        template_set = "style_moss" if profile == "moss" else "style"
+        builtin = _load_auto_lora_prompt_builtin(False, template_set=template_set)
+        custom, use_custom = _load_auto_lora_prompt_custom(False, template_set=template_set)
         return web.json_response({
             "success": True,
             "data": {
                 "builtin": builtin,
                 "custom": custom,
                 "use_custom": use_custom,
-                "template_set": "style",
+                "template_set": template_set,
             },
         })
     except Exception as e:
@@ -1274,7 +1276,9 @@ async def handle_set_style_lora_prompt(request):
         body = await request.json()
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
-        _save_auto_lora_prompt_custom(custom, use_custom, False, template_set="style")
+        profile = (body.get("profile") or request.query.get("profile", "")).strip()
+        template_set = "style_moss" if profile == "moss" else "style"
+        _save_auto_lora_prompt_custom(custom, use_custom, False, template_set=template_set)
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[STYLE_LORA] auto_lora_prompt 저장 실패: {e}")

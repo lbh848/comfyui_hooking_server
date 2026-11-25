@@ -1,8 +1,10 @@
+export type AssetQueueWorkspace = "asset" | "bg_asset";
 type AssetQueueItem = {
   id: string; type: string; status: string; label?: string; progress?: number;
   error?: string | null; completed_at?: number | null;
   params?: {
-    body?: { asset_chain_slot_id?: string };
+    asset_workspace?: string;
+    body?: { asset_chain_slot_id?: string; asset_workspace?: string };
     source?: string;
     image?: { character?: string; outfit?: string; expression?: string; filename?: string };
   };
@@ -10,20 +12,25 @@ type AssetQueueItem = {
 };
 export type AssetQueueState = { items: AssetQueueItem[]; paused?: boolean };
 
-export function assetChainGenerationStatus(state: AssetQueueState | null) {
+export function matchesAssetQueueWorkspace(item: AssetQueueItem, workspace: AssetQueueWorkspace = "asset"): boolean {
+  const itemWorkspace = item.params?.body?.asset_workspace || item.params?.asset_workspace || "asset";
+  return workspace === "bg_asset" ? itemWorkspace === "bg_asset" : itemWorkspace !== "bg_asset";
+}
+
+export function assetChainGenerationStatus(state: AssetQueueState | null, workspace: AssetQueueWorkspace = "asset") {
   const slots = new Map<string, AssetQueueItem[]>();
   for (const item of state?.items || []) {
     const id = item.params?.body?.asset_chain_slot_id;
-    if (item.type !== "asset_generation" || item.status !== "processing" || !id) continue;
+    if (item.type !== "asset_generation" || item.status !== "processing" || !id || !matchesAssetQueueWorkspace(item, workspace)) continue;
     const items = slots.get(id) || [];
     items.push(item);
     slots.set(id, items);
   }
-  return new Map([...slots].map(([id, items]) => [id, assetGenerationStatus({ items })]));
+  return new Map([...slots].map(([id, items]) => [id, assetGenerationStatus({ items }, workspace)]));
 }
 
-export function assetGenerationStatus(state: AssetQueueState) {
-  const assets = state.items.filter(item => item.type === "asset_generation");
+export function assetGenerationStatus(state: AssetQueueState, workspace: AssetQueueWorkspace = "asset") {
+  const assets = state.items.filter(item => item.type === "asset_generation" && matchesAssetQueueWorkspace(item, workspace));
   const pending = assets.filter(item => item.status === "pending" || item.status === "waiting").length;
   const running = assets.filter(item => item.status === "processing");
   const current = running[0];

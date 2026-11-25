@@ -1,7 +1,7 @@
 import { ArrowRight, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Badge, Panel } from "./components";
 import { AssetForm } from "./AssetForm";
-import { assetCapabilities, assetModelPreset, assetPresetFields, copyAssetSettings, type AssetRecord, type AssetSettingsSection } from "./asset";
+import { assetCapabilities, assetModelPreset, assetPresetFieldLabel, assetPresetFieldVisible, assetPresetFields, copyAssetSettings, type AssetCapabilities, type AssetRecord, type AssetSettingsSection } from "./asset";
 import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 import type { Resources } from "./useResources";
 
@@ -10,11 +10,19 @@ type EditorProps = {
   onChange: (patch: AssetRecord) => void; reloadTags: () => void; inventory: Resources; disabled: boolean;
 };
 
-type SettingField = { key: string; label: string; capability?: "anima" | "ilxl" | "faceLora"; appliedOnly?: boolean };
+type SettingField = { key: string; label: string; capability?: "anima" | "ilxl" | "faceLora" | "stylePrimary"; appliedOnly?: boolean };
+
+function fieldAvailable(capability: SettingField["capability"], capabilities: AssetCapabilities): boolean {
+  if (!capability) return true;
+  if (capability === "stylePrimary") return assetPresetFieldVisible("anima", capabilities);
+  return capabilities[capability];
+}
 
 function settingFields(section: AssetSettingsSection): SettingField[] {
   return [
-    ...assetPresetFields.filter(field => field[5] === section).map(([key, label, , , model]) => ({ key, label, capability: model || undefined })),
+    ...assetPresetFields.filter(field => field[5] === section).map(([key, label, , , model]) => ({
+      key, label, capability: model === "anima" ? "stylePrimary" as const : model || undefined,
+    })),
     ...(section === "style" ? [{ key: "generation", label: "생성 옵션", appliedOnly: true }, { key: "style_lora", label: "스타일 LoRA", appliedOnly: true }] : [
       { key: "natural_language", label: "자연어" }, { key: "references", label: "참조 이미지", capability: "anima" as const, appliedOnly: true },
       { key: "lora", label: "캐릭터 LoRA", appliedOnly: true }, { key: "face_lora", label: "Face LoRA", capability: "faceLora" as const, appliedOnly: true },
@@ -29,8 +37,8 @@ function AssetSettingControl({ field, mode, ...props }: EditorProps & { field: S
     ? { ...props.defaults, asset_model_preset_id: props.slot.asset_model_preset_id, asset_workflow_type: props.slot.asset_workflow_type }
     : props.defaults;
   const capabilities = assetCapabilities(assetModelPreset(slot, selection.data)?.config.asset_workflow_type || slot.asset_workflow_type);
-  if (mode === "presets" && field.appliedOnly) return <div className="asset-form"><span className="field">{field.label}</span><span className="field-help">적용값에서 직접 설정하세요.</span></div>;
-  if (field.capability && !capabilities[field.capability]) return <p className="field-help">현재 그림 모델에서 사용하지 않는 항목입니다.</p>;
+  if (mode === "presets" && field.appliedOnly) return <div className="asset-form"><span className="field">{assetPresetFieldLabel(field.key, field.label, capabilities)}</span><span className="field-help">적용값에서 직접 설정하세요.</span></div>;
+  if (!fieldAvailable(field.capability, capabilities)) return <p className="field-help">현재 그림 모델에서 사용하지 않는 항목입니다.</p>;
   return <AssetForm {...props} slot={slot} field={field.key} mode={mode} />;
 }
 
@@ -52,13 +60,13 @@ export function AssetSettingsEditor(props: EditorProps & { onDefaultsChange: (pa
   }>
     <div className="asset-preset-columns">
       <div className="asset-setting-cell asset-defaults-cell" inert={props.makerOpen} aria-hidden={props.makerOpen}>
-        <div className="asset-actions"><h3>{label} 기본값</h3><Badge>프리셋 선택</Badge></div><p className="field-help">선택한 값을 적용값으로 보냅니다.</p>
+        <div className="asset-actions"><h3>{label} 기본값</h3><Badge>프리셋 선택</Badge></div><p className="field-help">선택한 값을 적용값으로 보냅니다. 항목 프리셋의 이름 변경·삭제·숨김은 프리셋 관리에서 할 수 있습니다.</p>
         <div className="asset-send-actions"><SendDefaultsButton {...props} /></div>
       </div>
       <div className="asset-setting-cell asset-applied-cell"><div className="asset-actions"><h3>{label} 적용값</h3><Badge tone="rose">실제 생성에 사용</Badge></div><p className="field-help">생성에 사용할 값입니다.</p></div>
     </div>
-    {settingFields(props.section).filter(field => !field.capability || applied[field.capability] || !field.appliedOnly && defaults[field.capability]).map(field =>
-      <section className="asset-setting-row" key={field.key} aria-label={field.label} data-setting={field.key}>
+    {settingFields(props.section).filter(field => fieldAvailable(field.capability, applied) || !field.appliedOnly && fieldAvailable(field.capability, defaults)).map(field =>
+      <section className="asset-setting-row" key={field.key} aria-label={assetPresetFieldLabel(field.key, field.label, applied)} data-setting={field.key}>
         <div className="asset-setting-cell asset-defaults-cell" inert={props.makerOpen} aria-hidden={props.makerOpen}><span className="asset-setting-side">기본값</span>
           <AssetSettingControl {...props} field={field} mode="presets" onChange={props.onDefaultsChange} onApplyDefaults={props.onChange} />
         </div>

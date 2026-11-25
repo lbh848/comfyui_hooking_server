@@ -234,11 +234,89 @@ def _apply_overthinking_prevention(detail_system, toggles):
         return detail_system
     return prompt_join("\n\n", (
         "Reasoning Discipline: Keep internal thinking brief, high-level, and single-pass. "
-        "Decide the immediate causal outcome, active character motives, and closing beat in one concise outline, "
-        "then write the final response directly—never draft full prose paragraphs in thinking, "
-        "run line-by-line rule checklists, or repeatedly scrap and rewrite candidate scenes.",
+        "For each scene, make one concise high-level decision—selected beats, layout or composition choice, "
+        "and visible cast—then emit the final structured output directly. "
+        "Do not pre-draft full JSON, panel scripts, full tag strings, or exact pixel bbox tables in thinking; "
+        "compute each box and field once while writing the output. "
+        "Do not compare multiple alternative layouts, run end-of-response rule checklists, "
+        "or scrap and redo already chosen scenes.",
         detail_system,
     ))
+
+
+def _is_section_heading(paragraph):
+    stripped = paragraph.strip()
+    return bool(stripped) and "\n" not in stripped and len(stripped) <= 70 and bool(
+        re.fullmatch(r"[A-Z][A-Z0-9 &/_-]*", stripped)
+    )
+
+
+def _deduplicate_system_paragraphs(reference_system, extra_system, *, min_len=120):
+    """Drop long paragraphs in extra_system already present verbatim in reference_system.
+
+    Also drops any standalone uppercase section heading left empty after all of
+    its body paragraphs are deduplicated.
+    """
+    reference_paragraphs = {
+        paragraph.strip() for paragraph in reference_system.split("\n\n")
+        if len(paragraph.strip()) >= min_len
+    }
+    raw_paragraphs = [paragraph for paragraph in extra_system.split("\n\n") if paragraph.strip()]
+    kept = []
+    removed_since_heading = False
+    for paragraph in raw_paragraphs:
+        stripped = paragraph.strip()
+        if len(stripped) >= min_len and stripped in reference_paragraphs:
+            removed_since_heading = True
+            continue
+        if _is_section_heading(paragraph):
+            if removed_since_heading and kept and _is_section_heading(kept[-1]):
+                kept.pop()
+            removed_since_heading = False
+        else:
+            removed_since_heading = False
+        kept.append(paragraph)
+    if removed_since_heading and kept and _is_section_heading(kept[-1]):
+        kept.pop()
+    return prompt_join("\n\n", kept)
+
+
+def _keyvis_supplied_sections(keyvis_messages):
+    """Detect full-cast timeline blocks already provided by keyvis_messages."""
+    sections = {"profiles": False, "outfit": False, "time_place": False}
+    if not keyvis_messages:
+        return sections
+    for message in keyvis_messages[1:]:
+        content = str(message.get("content") or "")
+        if "# AUTHORITATIVE FIXED APPEARANCE BY STORY INSTANT" in content:
+            sections["profiles"] = True
+        if "# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT" in content:
+            sections["outfit"] = True
+        if "# CHRONOLOGICAL TIME AND PLACE BY STORY INSTANT" in content:
+            sections["time_place"] = True
+    return sections
+
+
+def _combined_keyvis_user_messages(keyvis_messages, *, has_prior_status=False,
+                                   has_prior_time_place=False, has_past_text=False,
+                                   has_segmented=False):
+    """Keep only KEYVIS user blocks not already sent in the DETAIL user message."""
+    if not keyvis_messages:
+        return []
+    result = []
+    for message in keyvis_messages[1:]:
+        content = prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])
+        header = content.strip().splitlines()[0].strip() if content.strip() else ""
+        if header == "# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)" and has_prior_status:
+            continue
+        if header == "# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)" and has_prior_time_place:
+            continue
+        if header == "# PAST CONTEXT" and has_past_text:
+            continue
+        if header == "[Last log entry]" and has_segmented:
+            continue
+        result.append({**message, "content": content})
+    return result
 
 
 def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
@@ -267,11 +345,17 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
         messages[-1]["content"] = prompt_sub(r"\n\nReturn TOON[\s\S]*\Z", "", messages[-1]["content"])
         if keyvis_messages:
             keyvis_policy = prompt_sub(r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "", keyvis_messages[0]["content"])
+            keyvis_policy = _deduplicate_system_paragraphs(detail_system, keyvis_policy)
             messages[0]["content"] = _apply_overthinking_prevention(prompt_join("\n\n", (
                 "KEY VISUAL STORY AND IDENTITY POLICY (keyvis only; layer output contract below takes precedence)",
                 keyvis_policy, detail_system)), toggles)
-            messages[1:1] = [{**message, "content": prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])}
-                             for message in keyvis_messages[1:]]
+            messages[1:1] = _combined_keyvis_user_messages(
+                keyvis_messages,
+                has_prior_status=bool(prior_status),
+                has_prior_time_place=bool(prior_time_place),
+                has_past_text=bool(past_text),
+                has_segmented=bool(segmented),
+            )
         messages[-1]["content"] += (
             "\n\nReturn ONE JSON object using the DETAIL-COMPOSITE canvas/background/characters/x schema. "
             "Each assigned scene owns one background and one image per person. Assigned slots: "
@@ -333,6 +417,7 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
         # scene-only and keyvis-only output instructions.
         detail_system = prompt_sub(r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "", detail_system)
         keyvis_system = prompt_sub(r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "", keyvis_messages[0]["content"])
+        keyvis_system = _deduplicate_system_paragraphs(detail_system, keyvis_system)
         detail_system = prompt_join("\n\n", (
             "ORDINARY SCENE INSTRUCTIONS (apply only to scenes)", detail_system,
             "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_system,
@@ -363,6 +448,7 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
                "The top-level TOON fields are scenes and keyvis. ")
             + "Write scenes first, then keyvis. If no scene anchors remain, return scenes: [] and keyvis only."
         )
+    kv_sections = _keyvis_supplied_sections(keyvis_messages)
     messages = [
         {"role": "system", "content": _apply_overthinking_prevention(detail_system, toggles)},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
@@ -370,13 +456,13 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
          + ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
             + variable(json.dumps(profile_context_for_prompt([item for item in plan_profiles if item["character"] in batch_names]),
                                   ensure_ascii=False), "해당 인물 프로필 타임라인")
-            if manga and plan_profiles is not None else "")
+            if manga and plan_profiles is not None and not kv_sections["profiles"] else "")
          + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
             + tracked_state_timeline(tracking, anchors, "추적된 복장·머리 상태", names=batch_names)
-            if manga and tracking is not None else "")
+            if manga and tracking is not None and not kv_sections["outfit"] else "")
          + ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
             + tracked_state_timeline(time_place, anchors, "추적된 시간·장소 상태", names=batch_names)
-            if manga and time_place is not None else "")
+            if manga and time_place is not None and not kv_sections["time_place"] else "")
          + ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
             + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장") if prior_status else "")
          + ("\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
@@ -442,11 +528,13 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             if mask_inline else "No extra fields.</lb-xnai>")},
     ]
     if keyvis_messages:
-        messages[1:1] = [
-            {**message, "content": prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])}
-            if message["content"].startswith("# KEY VISUAL TASK\n") else message
-            for message in keyvis_messages[1:]
-        ]
+        messages[1:1] = _combined_keyvis_user_messages(
+            keyvis_messages,
+            has_prior_status=bool(prior_status),
+            has_prior_time_place=bool(prior_time_place),
+            has_past_text=bool(past_text),
+            has_segmented=bool(segmented),
+        )
     if emotion_note := _emotion_asset_note(batch):
         messages[0]["content"] = prompt_join("\n\n", (messages[0]["content"], emotion_note))
     return messages
@@ -520,11 +608,7 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             keyvis_system = moss_instruction_fields(keyvis_system)
         # DETAIL and KEYVIS share some long policy paragraphs. Keep one copy:
         # drop keyvis paragraphs already present verbatim in the scene system.
-        detail_paragraphs = {paragraph.strip() for paragraph in detail_system.split("\n\n")
-                             if len(paragraph.strip()) >= 120}
-        keyvis_system = "\n\n".join(
-            paragraph for paragraph in keyvis_system.split("\n\n")
-            if paragraph.strip() not in detail_paragraphs)
+        keyvis_system = _deduplicate_system_paragraphs(detail_system, keyvis_system)
         detail_system = prompt_join("\n\n", (
             "MANGA PAGE INSTRUCTIONS (apply to every page)" if manga else
             "ORDINARY SCENE INSTRUCTIONS (apply only to scenes)", detail_system,
@@ -582,11 +666,9 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             entry["page_format"] = "manga_multi_panel"
             entry["panel_count"] = (
                 "3-5 primary panels; choose any count to fit the source; panel counts may repeat, "
-                "but each allowed composition may be used only once per request; no reduction to 1 or 2"
+                "but each allowed composition may be used only once per request; never 1 or 2"
                 if composition_hints else
-                "2-5 primary panels; consider 3, 4 and 5 source-supported shots first; "
-                "2 for a genuinely sparse passage or necessary sustained large framing; "
-                "1 only for an explicitly requested splash")
+                "3-5 primary panels (never 2); 1 only for an explicitly requested splash")
             entry["page_size_options"] = options
         else:
             size = (canvas_sizes or {}).get(profile) or (1024, 1024)
@@ -597,18 +679,19 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
         prepared.append(entry)
     batch_names = {str(character.get("name") or "") for scene in prepared
                    for character in (scene.get("characters") or []) if isinstance(character, dict)}
+    kv_sections = _keyvis_supplied_sections(keyvis_messages)
     user = ("# ONLY THIS BATCH'S PREPARED SCENES\n"
             + variable(json.dumps(profile_context_for_prompt({"scenes": prepared}), ensure_ascii=False),
                        "이 호출의 장면·프로필·상태·이미지 크기(bbox 기준)"))
-    if manga and plan_profiles is not None:
+    if manga and plan_profiles is not None and not kv_sections["profiles"]:
         user += ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
                  + variable(json.dumps(profile_context_for_prompt([item for item in plan_profiles
                                         if item["character"] in batch_names]), ensure_ascii=False),
                             "해당 인물 프로필 타임라인"))
-    if tracking is not None:
+    if tracking is not None and not kv_sections["outfit"]:
         user += ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
                  + tracked_state_timeline(tracking, anchors, "추적된 복장·머리 상태", names=batch_names))
-    if time_place is not None:
+    if time_place is not None and not kv_sections["time_place"]:
         user += ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
                  + tracked_state_timeline(time_place, anchors, "추적된 시간·장소 상태", names=batch_names))
     if prior_status:
@@ -668,11 +751,10 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                     "Do not reduce a page to two panels. Each 3-5-panel scene MUST include summary as "
                     "its chosen composition ID integer; this is required metadata, not analysis. "
                     "Use each allowed composition ID and its actual grouping at most once across all scenes "
-                    "in this request; assign unused IDs before writing and replace any duplicates before returning. "
+                    "in this request. "
                     "IDs 4 and 18 are forbidden, including via transposition. "
                     if composition_hints else
-                    "For each ordinary scene, use 2-5 primary shots in divided or layered panels; consider three, four and five "
-                    "source-supported shots before compressing to two. ")
+                    "For each ordinary scene, use 3-5 primary shots in divided or layered panels; do not reduce a page to two panels. ")
                  + ("The ordinary-scene count-selection guidance above does not override the KEY VISUAL-specific "
                     "section-summary and preferred panel-count instructions. " if keyvis_messages else "")
                  + "Preserve distinct action changes, causal details and responses without inventing filler. "
@@ -706,7 +788,7 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  "Use name for each actor and cross_panel_actors entry, copying the character's supplied "
                  "name verbatim; visibleNames lists those same character names. "
                  "Keep character tags in actors; apply the system's dialogue length rule to speech. "
-                 "Write all summaries, captions and instructions in English, even when the source is Korean. "
+                 "Write all captions and instructions in English, even when the source is Korean. "
                  "Only dialogue[].text uses the dialogue output language: "
                  + variable((toggles or {}).get("speak_language") or "한국어", "만화 대사 언어") + ". "
                  + ("Slot -1 is the whole-section KEYVIS page in that same scenes array. " if keyvis_messages else "")
@@ -730,21 +812,15 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
         {"role": "user", "content": user},
     ]
     if keyvis_messages:
-        # Key Visual profile/timeline context is shared by the combined call.
-        # Prior state and bounded history already appear in the scene message;
-        # keep only KEYVIS-specific context blocks to avoid sending them twice.
-        duplicate_headers = {
-            "# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)",
-            "# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)",
-        }
-        for message in keyvis_messages[1:]:
-            content = prompt_sub(r"\n\n# OUTPUT SCHEMA\n[\s\S]*\Z", "", message["content"])
-            header = content.strip().splitlines()[0].strip() if content.strip() else ""
-            if header in duplicate_headers:
-                continue
-            if header == "# PAST CONTEXT" and past_text:
-                continue
-            messages.append({**message, "content": content})
+        # Key Visual shares full-cast profiles/timelines and source context with
+        # DETAIL; keep only blocks not already present in the scene user message.
+        messages.extend(_combined_keyvis_user_messages(
+            keyvis_messages,
+            has_prior_status=bool(prior_status),
+            has_prior_time_place=bool(prior_time_place),
+            has_past_text=bool(past_text),
+            has_segmented=bool(segmented),
+        ))
     return messages
 
 
@@ -770,6 +846,48 @@ def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""
     return prompt_join("\n\n", (part for part in (protected,
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
         genre_context) if part))
+
+
+def detail_system_prompt(protected, lb_extra_system_prompt, detail_prompt, *,
+                         explicit_policy="", moss_manga=False, genre="",
+                         genre_prompt="", genre_work_title="",
+                         genre_secondary_prompt=""):
+    """Build the shared DETAIL system prompt for both runtime and preview.
+
+    DETAIL-MANGA excludes the active bot image policy because that policy targets
+    single-image V3/regional contracts that conflict with multi-panel MOSS pages.
+    """
+    context = role_context(
+        protected,
+        "" if moss_manga else lb_extra_system_prompt,
+        genre=genre,
+        genre_prompt=genre_prompt,
+        genre_work_title=genre_work_title,
+        genre_secondary_prompt=genre_secondary_prompt,
+    )
+    parts = (context, detail_prompt) if moss_manga else (context, explicit_policy, detail_prompt)
+    return prompt_join("\n\n", (part for part in parts if part))
+
+
+def keyvis_system_prompt(prompts, *, explicit_policy="", moss=False,
+                         moss_manga=False, combined_in_detail=False):
+    """Assemble the raw KEYVIS system prompt before template rendering.
+
+    Combined DETAIL+KEYVIS calls already carry the compatibility envelope,
+    active bot image policy, explicit policy, and shared illustration rules
+    in DETAIL, so KEYVIS contributes only its own role instructions.
+    """
+    if moss_manga:
+        return prompts["call2_keyvis_manga"]
+    if combined_in_detail or moss:
+        return prompts.get("call2_keyvis", "")
+    return prompt_join("\n\n", (part for part in (
+        prompts.get("call2_jailbreak", ""),
+        prompts.get("call2_job", ""),
+        prompts.get("call2_common", ""),
+        explicit_policy,
+        prompts.get("call2_keyvis", ""),
+    ) if part))
 
 def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None, draw_point_anchors=None, emotion=False, background_context=None):
     # NPC candidates are part of the resolve contract regardless of whether the
@@ -1343,23 +1461,22 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
                             genre_prompt="", genre_secondary_prompt="", moss=False):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     manga = moss and (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
-    # Combined generation already receives this shared context from DETAIL.
-    if not (toggles or {}).get("keyvis_in_detail_enabled"):
+    combined_in_detail = bool(moss or (toggles or {}).get("keyvis_in_detail_enabled"))
+    # Combined generation already receives genre, active bot image policy,
+    # and regional mask instructions from DETAIL.
+    if not combined_in_detail:
         keyvis_system = role_context(
             keyvis_system, "", genre=(toggles or {}).get("genre", ""), genre_prompt=genre_prompt,
             genre_work_title=(toggles or {}).get("genre_work_title", ""),
             genre_secondary_prompt=genre_secondary_prompt)
-    # MOSS has no V3 mask; its combined call already carries the bot policy
-    # from DETAIL, so KEYVIS adds neither mask instructions nor a second copy.
-    if not moss and (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False)):
+    if not combined_in_detail and (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False)):
         generation_system = prompt_join("\n\n", (part for part in (keyvis_system,
             lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "") if part))
         keyvis_system = mask_messages(mask_prompt, {}, mask_inline=mask_inline,
             generation_system=generation_system, keyvis=True, canvas_sizes=canvas_sizes,
             positive_note=positive_note)[0]["content"]
     keyvis_messages = [{"role": "system", "content": keyvis_system}]
-    combined_moss = moss and bool((toggles or {}).get("key_visual", False))
-    if (lb_extra_system_prompt and not combined_moss
+    if (lb_extra_system_prompt and not combined_in_detail and not manga
             and not (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False))):
         keyvis_messages.append({"role": "user", "content": lb_extra_system_prompt_block(lb_extra_system_prompt)})
     keyvis_messages.append({"role": "user", "content": "# AUTHORITATIVE FIXED APPEARANCE BY STORY INSTANT\n"

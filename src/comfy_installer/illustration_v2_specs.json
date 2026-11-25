@@ -1834,5 +1834,96 @@
     ],
     "input_is_list": false,
     "output_node": false
+  },
+  "SoyaScaleByV2_moss_mdsoya": {
+    "name": "SoyaScaleByV2_moss_mdsoya",
+    "base": "SoyaScaleBy_mdsoya",
+    "display_name": "Scale By (MOSS JSON)",
+    "json_inputs": {
+      "scale_by": {
+        "key": "workflow.hiresfix.scale_by",
+        "type": "FLOAT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
+  },
+  "SoyaHiresfixToggleV2_moss_mdsoya": {
+    "name": "SoyaHiresfixToggleV2_moss_mdsoya",
+    "base": "SoyaHiresfixToggle_mdsoya",
+    "display_name": "Hiresfix Toggle (MOSS JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "workflow.hiresfix.activate",
+        "type": "STRING"
+      },
+      "seed": {
+        "key": "workflow.seed",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false,
+    "sampling": {
+      "key": "workflow.hiresfix.sampling",
+      "inputs": [
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise"
+      ]
+    }
+  },
+  "SoyaResizeToggleV2_moss_mdsoya": {
+    "name": "SoyaResizeToggleV2_moss_mdsoya",
+    "base": "SoyaResizeToggle_mdsoya",
+    "display_name": "Resize Toggle (MOSS JSON)",
+    "json_inputs": {
+      "enable": {
+        "key": "workflow.hiresfix.restore_size",
+        "type": "STRING"
+      },
+      "target_width": {
+        "key": "workflow.width",
+        "type": "INT"
+      },
+      "target_height": {
+        "key": "workflow.height",
+        "type": "INT"
+      }
+    },
+    "fixed_inputs": {},
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "input_is_list": false,
+    "output_node": false
   }
 }

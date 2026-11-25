@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import { Badge } from "./components";
-import { assetCapabilities, assetModelPreset, assetPresetFields, type AssetRecord } from "./asset";
+import { assetCapabilities, assetModelPreset, assetPresetFieldLabel, assetPresetFieldVisible, assetPresetFields, type AssetRecord } from "./asset";
 
 export function AssetChainDiff({ previous, slot, index, stylePresets, models }: {
   previous?: AssetRecord; slot: AssetRecord; index: number; stylePresets: AssetRecord[]; models: AssetRecord | null;
@@ -17,8 +17,8 @@ export function AssetChainDiff({ previous, slot, index, stylePresets, models }: 
     const previousCapabilities = assetCapabilities(assetModelPreset(previous, models)?.config.asset_workflow_type || previous.asset_workflow_type);
     const capabilities = assetCapabilities(assetModelPreset(slot, models)?.config.asset_workflow_type || slot.asset_workflow_type);
     for (const [key, label, , , model] of assetPresetFields) {
-      if (model && !previousCapabilities[model] && !capabilities[model]) continue;
-      add(key, label, previous[key] || "", slot[key] || "");
+      if (!assetPresetFieldVisible(model, previousCapabilities) && !assetPresetFieldVisible(model, capabilities)) continue;
+      add(key, assetPresetFieldLabel(key, label, capabilities), previous[key] || "", slot[key] || "");
     }
     add("natural_language_preset", "자연어 프리셋", previous.natural_language_preset || "", slot.natural_language_preset || "");
   }

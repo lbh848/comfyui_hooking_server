@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "../../frontend/static/bot_visual_guide.js";
-import { useUnsavedChanges } from "./unsavedChanges";
-import { ArrowLeft, ChevronRight, Copy, Crop, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Crop, Images, LockKeyhole, LockKeyholeOpen, Pencil, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { IllustCharacterTags } from "./IllustCharacterTags";
 import { IllustSecondaryBotBatch } from "./IllustSecondaryBotBatch";
@@ -34,6 +34,22 @@ import { useBotApi } from "./BotApiScope";
 const botToolLabels = { generation: "그리기 설정", rules: "매칭 기반 규칙", extra: "캐릭터 태그 일괄 관리" };
 const OUTFIT_SLIDE_MS = 420; // matches the carousel transition in illust.css
 const OUTFIT_SETTLE_MS = 220; // matches the carousel height transition in illust.css
+
+function canonicalCharacterCardSnapshot(value: IllustrationData | null): string {
+  if (!value) return "";
+  return JSON.stringify({
+    ...value,
+    profiles: (value.profiles || []).map((profile: IllustrationData) => ({
+      ...profile,
+      label: String(profile.label || "").trim(),
+      selection_guide: String(profile.selection_guide || "").trim(),
+      visual_context: String(profile.visual_context || "").trim(),
+      aliases: Array.isArray(profile.aliases)
+        ? profile.aliases.map((item: unknown) => String(item || "").trim()).filter(Boolean)
+        : [],
+    })),
+  });
+}
 
 export function AddIllustrationBot({ onClose, onAdded }: { onClose: () => void; onAdded: (name: string) => void }) {
   const api = useBotApi();
@@ -301,15 +317,20 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const [deleteOutfitTarget, setDeleteOutfitTarget] = useState<IllustrationData | null>(null);
   // The regenerated cover keeps its filename, so bust the media cache after it completes.
   const [outfitMediaRevision, setOutfitMediaRevision] = useState(0);
-  const action = useIllustrationAction(); const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction(); const renameAction = useIllustrationAction();
+  const [composing, setComposing] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+  const uploadAction = useIllustrationAction(); const prepareAction = useIllustrationAction(); const renameAction = useIllustrationAction();
   const outfitTagAction = useIllustrationAction();
   const outfitFolderAction = useIllustrationAction();
   const npcLifetimeAction = useIllustrationAction();
   // Remember the tags the cover prompt was made with, so saving the editor first
   // does not make the regeneration compare the new tags against themselves.
   const outfitTagsSeed = useRef<{ outfit: string; tags: string[] }>({ outfit: "", tags: [] });
+  const draftValue = canonicalCharacterCardSnapshot(draft);
+  const baseValue = canonicalCharacterCardSnapshot(base);
+  const dirty = !!draft && !!base && draftValue !== baseValue;
   // Tag modals own a local draft. Keep its original conflict base during background refreshes.
-  useEffect(() => { if (((detail !== "tags" && !tagsOnly) || !base) && data?.character && (!base || JSON.stringify(draft) === JSON.stringify(base))) {
+  useEffect(() => { if (((detail !== "tags" && !tagsOnly) || !base) && data?.character && (!base || draftValue === baseValue)) {
     setDraft(data.character); setBase(data.character);
     setIndex(current => Math.min(current, data.character.profiles.length - 1));
   } }, [data]);
@@ -319,7 +340,6 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const card = draft?.profiles[index];
   const savedCard = base?.profiles.find((item: IllustrationData) => item.id === card?.id);
   const images = useIllustrationResource(card ? api.path(`bot_mode/images?${query({ bot: botName, character: characterName, ...(savedCard ? { visual_card_id: card.id } : {}) })}`) : null);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   const loadedRevision = useRef(refreshKey);
   useEffect(() => {
     if (loadedRevision.current !== refreshKey) { loadedRevision.current = refreshKey; images.reload(); if (!dirty && !cardData) resource.reload(); }
@@ -327,9 +347,42 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const regeneration = useCharacterImageRegeneration(botName, characterName, !!images.data?.images.some((item: IllustrationData) => item.generated), () => {
     images.reload(); onReload?.();
   });
-  const busy = action.busy || uploadAction.busy || prepareAction.busy || regeneration.busy || npcLifetimeAction.busy || faceCropBusy;
+  const busy = uploadAction.busy || prepareAction.busy || regeneration.busy || npcLifetimeAction.busy || faceCropBusy;
+  async function persistCharacterCard() {
+    if (!draft || !base) return;
+    const sent = draft;
+    const sentKey = canonicalCharacterCardSnapshot(sent);
+    const result = await api.request("bot_mode/character_cards", { bot_name: botName, character: characterName, data: sent, base });
+    const saved = result.character;
+    const savedKey = canonicalCharacterCardSnapshot(saved);
+    setBase(saved);
+    setDraft(current => {
+      if (!current) return current;
+      // Preserve edits typed while saving, and keep trailing whitespace/blank alias lines from jumping the cursor.
+      if (canonicalCharacterCardSnapshot(current) !== sentKey) return current;
+      return savedKey === sentKey ? current : saved;
+    });
+    setIndex(current => Math.min(current, Math.max(0, saved.profiles.length - 1)));
+  }
+  const autosave = useWorkflowAutosave({
+    label: `${botName} · ${characterName} · 캐릭터 편집`,
+    modalTitle: `${characterName} · 캐릭터 편집`,
+    value: draftValue,
+    dirty,
+    form,
+    paused: composing || readOnly || busy || detail === "tags" || tagsOnly,
+    validation: readOnly ? "읽기 전용 상태에서는 변경 내용을 저장할 수 없습니다."
+      : draft?.profiles?.some((item: IllustrationData) => !String(item.label || "").trim()) ? "카드 이름을 입력하세요." : "",
+    save: persistCharacterCard,
+  });
+  const savingOrBusy = busy || autosave.busy;
+  async function flushAndRun(next: () => void | Promise<void>) {
+    if (savingOrBusy) return;
+    if (dirty && !await autosave.retry()) return;
+    await next();
+  }
   const updateNpcLifetime = (locked?: boolean) => {
-    if (readOnly || busy || !draft?.npc_generated) return;
+    if (readOnly || savingOrBusy || !draft?.npc_generated) return;
     const change = locked === undefined ? { action: "renew_npc_lifetime" } : { action: "set_npc_lifetime_lock", npc_lifetime_locked: locked };
     const message = locked === undefined ? "캐릭터 수명을 갱신했습니다." : locked ? "수명을 잠갔습니다." : "수명 잠금을 해제했습니다.";
     void npcLifetimeAction.run(async () => {
@@ -341,14 +394,14 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   };
   const npcLifetimeLocked = draft?.npc_lifetime_locked === true;
   const npcLifetimeControls = draft?.npc_generated ? <>
-    <button type="button" className="button secondary small" disabled={readOnly || busy} onClick={() => updateNpcLifetime()}
+    <button type="button" className="button secondary small" disabled={readOnly || savingOrBusy} onClick={() => updateNpcLifetime()}
       title="남은 수명을 설정된 최대 횟수로 갱신합니다" aria-label={`${characterName} 수명 갱신`}><RefreshCw size={13} aria-hidden="true" />수명 갱신</button>
-    <button type="button" className={`button small ${npcLifetimeLocked ? "primary" : "secondary"}`} disabled={readOnly || busy}
+    <button type="button" className={`button small ${npcLifetimeLocked ? "primary" : "secondary"}`} disabled={readOnly || savingOrBusy}
       aria-label={`${characterName} 수명 잠금`} aria-pressed={npcLifetimeLocked} title={npcLifetimeLocked ? "수명 잠금 해제" : "남은 수명 잠금"}
       onClick={() => updateNpcLifetime(!npcLifetimeLocked)}>{npcLifetimeLocked ? <LockKeyhole size={14} aria-hidden="true" /> : <LockKeyholeOpen size={14} aria-hidden="true" />}</button>
     <Badge tone="lavender">생성됨 · 남은 수명 {Math.max(0, draft.npc_lifetime - draft.npc_idle_calls)}회{npcLifetimeLocked && " · 잠김"}</Badge>
   </> : null;
-  const canRename = allowRename && draft?.npc_generated === true && !readOnly && !busy;
+  const canRename = allowRename && draft?.npc_generated === true && !readOnly && !savingOrBusy;
   const openRename = () => { setRenameName(characterName); setRenameOpen(true); };
   const submitRename = () => {
     const next = renameName.trim();
@@ -360,8 +413,6 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       onReload?.();
     }, "캐릭터 이름을 변경했습니다.");
   };
-  useUnsavedChanges({ label: `${botName} · ${characterName} · 캐릭터 편집`, dirty, busy: dirty && action.busy,
-    error: action.error, modalTitle: `${characterName} · 캐릭터 편집`, detail: "캐릭터 카드 변경 사항을 저장하세요." });
   const update = (changes: IllustrationData) => setDraft(current => current && ({ ...current, profiles: current.profiles.map((item: IllustrationData, i: number) => i === index ? { ...item, ...changes } : item) }));
   const updateRender = (changes: IllustrationData) => update({ render_overrides: { ...card.render_overrides, ...changes } });
   const render = { ...draft?.profiles[0]?.render_overrides, ...card?.render_overrides };
@@ -375,15 +426,15 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   useEffect(() => { setPreview(current => current && (allImages.find(item => item.filename === current.filename) || current)); }, [images.data]);
   async function saveCharacter() {
     if (!dirty) return;
-    const result = await api.request("bot_mode/character_cards", { bot_name: botName, character: characterName, data: draft, base });
-    setDraft(result.character); setBase(result.character);
-    setIndex(current => Math.min(current, result.character.profiles.length - 1));
+    if (!await autosave.retry()) {
+      throw new Error(autosave.error || autosave.inputError || "캐릭터 카드 변경 사항을 저장하지 못했습니다.");
+    }
   }
   const regenerateImage = (image: IllustrationData) => {
-    if (readOnly || busy || !image.generated) return;
+    if (readOnly || savingOrBusy || !image.generated) return;
     void regeneration.regenerate(image.filename, card.id, saveCharacter);
   };
-  const regenerateButton = (image: IllustrationData) => image.generated && <button type="button" className="button secondary" disabled={readOnly || busy} onClick={() => regenerateImage(image)}><RefreshCw size={14} />{regeneration.busy ? "재생성 중…" : "재생성"}</button>;
+  const regenerateButton = (image: IllustrationData) => image.generated && <button type="button" className="button secondary" disabled={readOnly || savingOrBusy} onClick={() => regenerateImage(image)}><RefreshCw size={14} />{regeneration.busy ? "재생성 중…" : "재생성"}</button>;
   const summaryMode = compact && !gallery;
   // The outfit tree next to the selected profile shows only the active card's outfits.
   const outfitResource = useIllustrationResource(summaryMode && showProfileTree && card
@@ -610,25 +661,25 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       const result = await api.request("bot_mode/character_cards", { bot_name: botName, character: characterName, data: next, base });
       setDraft(result.character); setBase(result.character);
     }} />;
-  const editor = !draft || !card ? <div className="illust-body"><IllustrationLoading error={data?.error || resource.error} retry={onReload || resource.reload} /></div> : <form className="illust-character-editor" onSubmit={event => { event.preventDefault(); if (readOnly || busy) return; void action.run(saveCharacter); }}>
+  const editor = !draft || !card ? <div className="illust-body"><IllustrationLoading error={data?.error || resource.error} retry={onReload || resource.reload} /></div> : <form ref={form} className="illust-character-editor" onSubmit={event => { event.preventDefault(); if (readOnly || savingOrBusy) return; void autosave.retry(); }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}>
       <CharacterImportedLore entries={draft.imported_lore || []} />
       <div className="illust-card-slots" aria-label={`${characterName} 외형 카드`}>
         <strong>캐릭터 카드</strong>
-        {draft.profiles.map((item: IllustrationData, i: number) => <button type="button" key={item.id} className={`button ${index === i ? "primary" : ""}`} aria-pressed={index === i} aria-label={`${characterName} 카드 ${i + 1} · ${item.label}`} disabled={busy} onClick={() => { setIndex(i); setDetail(null); }}>{i + 1}{item.id === draft.default_visual_profile_id ? " · 기본" : ""}</button>)}
-        <button type="button" className="button" aria-label={`${characterName} 카드 추가`} disabled={readOnly || busy || draft.profiles.length >= (data?.max_cards ?? 0)} onClick={() => {
+        {draft.profiles.map((item: IllustrationData, i: number) => <button type="button" key={item.id} className={`button ${index === i ? "primary" : ""}`} aria-pressed={index === i} aria-label={`${characterName} 카드 ${i + 1} · ${item.label}`} disabled={savingOrBusy} onClick={() => { setIndex(i); setDetail(null); }}>{i + 1}{item.id === draft.default_visual_profile_id ? " · 기본" : ""}</button>)}
+        <button type="button" className="button" aria-label={`${characterName} 카드 추가`} disabled={readOnly || savingOrBusy || draft.profiles.length >= (data?.max_cards ?? 0)} onClick={() => {
           const profiles = [...draft.profiles, {
             id: `card_${crypto.randomUUID().slice(0, 8)}`, label: `카드 ${draft.profiles.length + 1}`,
             selection_guide: "", visual_context: "", aliases: [], appearance: [], default_outfit: [], skip_lb_extra_batch_refine: false,
             render_overrides: { absolute_tags: "", character_negative: "", eye_prompt: "", eye_tags: "", face_loras: [], face_tags: "", gender_tag: render.gender_tag || "1girl", image_name_tag: "", loras: [], loras_solo: [], loras_group: [], rep_images: [], use_image_name_tag: false, use_profile_embedding: true },
           }]; setDraft({ ...draft, profiles }); setIndex(profiles.length - 1);
         }}><Plus size={14} />카드 추가</button>
-        {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || busy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
+        {onDelete && <button type="button" className="icon-button illust-character-delete" aria-label={`${characterName} 캐릭터 삭제`} title="캐릭터 삭제" disabled={readOnly || savingOrBusy} onClick={onDelete}><X size={18} aria-hidden="true" /></button>}
       </div>
       <header className="illust-character-heading">
-        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={openRename} disabled={busy || dirty} title={dirty ? "변경 사항을 먼저 저장하세요" : undefined} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{npcLifetimeControls}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
+        <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={() => void flushAndRun(openRename)} disabled={savingOrBusy} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{npcLifetimeControls}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
         <div className="illust-actions">
           {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
-          <button type="button" className="button secondary" onClick={() => setDetail("tags")}>캐릭터 태그 편집</button>
+          <button type="button" className="button secondary" disabled={savingOrBusy} onClick={() => void flushAndRun(() => setDetail("tags"))}>캐릭터 태그 편집</button>
           <label className="field illust-gender-field"><span className="sr-only">{characterName} 성별 태그</span><select required aria-label={`${characterName} 성별 태그`} value={render.gender_tag || "1girl"} disabled={readOnly || busy} onChange={event => updateRender({ gender_tag: event.target.value })}>{[...new Set([...ComfyVisualGuide.genderTags, render.gender_tag].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
           {onPersona && <label className="illust-check"><input type="checkbox" checked={persona} disabled={readOnly || busy || personaBusy} onChange={event => onPersona(event.target.checked)} />페르소나</label>}
         </div>
@@ -643,9 +694,9 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         <section className="illust-character-section"><div className="illust-actions"><h3>캐릭터 데이터</h3><button type="button" className="button" onClick={openImages}>대표 이미지 선택</button></div>
           {!images.data ? <IllustrationLoading error={images.error} retry={images.reload} /> : <div className="illust-character-data">
             <div className="illust-face-data"><h4>얼굴</h4>{face ? <><button type="button" className="illust-reference-preview" onClick={() => setPreview(face)}><img src={api.media(face.url)} alt={`${characterName} ${card.label} 얼굴`} loading="lazy" /></button><p className="illust-image-prompt">{face.prompt || "프롬프트 없음"}</p></> : <div className="illust-face-empty">얼굴 이미지 없음</div>}
-              <button type="button" className="button secondary small illust-face-crop-button" disabled={readOnly || busy || dirty || !savedCard || !referenceNames.length}
-                onClick={() => setFaceCropTarget({ character: characterName, visual_card_id: card.id, visual_card_index: index + 1, visual_card_label: card.label })}><Crop size={14} />수동 자르기</button>
-              <p className="field-help">{dirty || !savedCard ? "카드 변경 사항을 먼저 저장하세요." : !referenceNames.length ? "대표 이미지를 먼저 선택하고 저장하세요." : "메인 대표 이미지에서 얼굴 영역을 직접 선택해 저장합니다."}</p>
+              <button type="button" className="button secondary small illust-face-crop-button" disabled={readOnly || savingOrBusy || !referenceNames.length}
+                onClick={() => void flushAndRun(() => setFaceCropTarget({ character: characterName, visual_card_id: card.id, visual_card_index: index + 1, visual_card_label: card.label }))}><Crop size={14} />수동 자르기</button>
+              <p className="field-help">{autosave.error || (dirty ? autosave.inputError : "") ? "카드 저장 오류를 해결한 뒤 다시 시도하세요." : !referenceNames.length ? "대표 이미지를 먼저 선택하세요." : "메인 대표 이미지에서 얼굴 영역을 직접 선택해 저장합니다."}</p>
             </div>
             <div className="illust-representative-data">{references.length ? references.map((item, i) => <article key={item.filename}>
               <h4>{i === 0 ? "메인 대표" : `대표 ${i + 1}`}</h4><button type="button" className="illust-reference-preview" onClick={() => setPreview(item)}><img src={api.media(item.url)} alt={`${characterName} ${card.label} 대표 ${i + 1}`} loading="lazy" /></button>
@@ -677,37 +728,58 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         })}</div>}
       </section>}
       <footer className="illust-character-footer">
-        <div className="illust-form"><IllustrationFeedback {...action} /><IllustrationFeedback {...prepareAction} /><IllustrationFeedback {...regeneration} />{dirty && <Badge tone="rose">저장하지 않은 변경</Badge>}</div>
+        <div className="illust-form">
+          <IllustrationFeedback {...prepareAction} />
+          <IllustrationFeedback {...regeneration} />
+          <IllustrationFeedback error={autosave.error || (dirty ? autosave.inputError : "")} />
+          {!readOnly && <span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span>}
+        </div>
         <div className="illust-actions">
-          <button type="submit" className="button primary" disabled={readOnly || busy || !dirty}><Save size={14} />{busy && action.busy ? "저장 중…" : "캐릭터 카드 저장"}</button>
-          <button type="button" className="button" disabled={readOnly || busy || dirty || !base?.profiles.some((item: IllustrationData) => item.render_overrides?.rep_images?.length)} onClick={() => void prepareAction.run(async () => { await api.request("illustration/prepare", { bot_name: botName, char_name: characterName }); }, "데이터 패치 작업을 작업 큐에 등록했습니다.")}>데이터 패치 시작</button>
-          <button type="button" className="button danger" disabled={readOnly || busy || index === 0} onClick={() => setDeleteCard(true)}>현재 카드 삭제</button>
+          {autosave.error && <button type="button" className="button" disabled={readOnly || savingOrBusy} onClick={() => void autosave.retry()}><RefreshCw size={14} />저장 다시 시도</button>}
+          <button type="button" className="button" disabled={readOnly || savingOrBusy || !draft.profiles.some((item: IllustrationData) => item.render_overrides?.rep_images?.length)} onClick={() => void flushAndRun(() => prepareAction.run(async () => { await api.request("illustration/prepare", { bot_name: botName, char_name: characterName }); }, "데이터 패치 작업을 작업 큐에 등록했습니다."))}>데이터 패치 시작</button>
+          <button type="button" className="button danger" disabled={readOnly || savingOrBusy || index === 0} onClick={() => setDeleteCard(true)}>현재 카드 삭제</button>
         </div>
       </footer>
       {detail === "tags" && tagEditor}
       {detail && detail !== "tags" && <Modal title={`${characterName} · ${card.label} · ${loraLabels[detail]}`} onClose={() => setDetail(null)} closeDisabled={busy} backgroundable={false} className="illust-character-modal">
         <fieldset className="illust-form" disabled={busy || readOnly}>
           {inventory && <IllustLoras profile="v3" value={render[detail] || []} inventory={inventory} onChange={value => updateRender({ [detail]: value })} character />}
-        </fieldset><div className="modal-actions"><span className="field-help">변경한 내용은 캐릭터 카드 저장으로 적용합니다.</span><button type="button" className="button" onClick={() => setDetail(null)}>닫기</button></div>
+        </fieldset><div className="modal-actions"><span className="field-help">변경한 내용은 자동으로 저장됩니다.</span><button type="button" className="button" onClick={() => setDetail(null)}>닫기</button></div>
       </Modal>}
-      {deleteCard && <Modal title="현재 카드 삭제" backgroundable={false} onClose={() => setDeleteCard(false)}><p>{characterName}의 {card.label}을 삭제할까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDeleteCard(false)}>취소</button><button type="button" className="button danger" disabled={readOnly || busy} onClick={() => { setDraft({ ...draft, profiles: draft.profiles.filter((_: unknown, i: number) => i !== index) }); setIndex(0); setDeleteCard(false); }}>카드 삭제</button></div></Modal>}
+      {deleteCard && <Modal title="현재 카드 삭제" backgroundable={false} onClose={() => setDeleteCard(false)}><p>{characterName}의 {card.label}을 삭제할까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDeleteCard(false)}>취소</button><button type="button" className="button danger" disabled={readOnly || savingOrBusy} onClick={() => { setDraft({ ...draft, profiles: draft.profiles.filter((_: unknown, i: number) => i !== index) }); setIndex(0); setDeleteCard(false); }}>카드 삭제</button></div></Modal>}
       {deleteImage && <Modal title="이미지 삭제" backgroundable={false} onClose={() => setDeleteImage(null)} closeDisabled={busy}><p>{deleteImage} 이미지를 삭제할까요?</p><IllustrationFeedback error={uploadAction.error} /><div className="modal-actions"><button type="button" className="button" disabled={busy} onClick={() => setDeleteImage(null)}>취소</button><button type="button" className="button danger" disabled={readOnly || busy} onClick={() => void uploadAction.run(async () => {
         await api.request("bot_mode/delete_image", { bot: botName, character: characterName, filename: deleteImage });
         const clean = (value: IllustrationData | null) => value && ({ ...value, profiles: value.profiles.map((profile: IllustrationData) => ({ ...profile, render_overrides: { ...profile.render_overrides, rep_images: (profile.render_overrides?.rep_images || []).filter((name: string) => name !== deleteImage) } })) });
         setDraft(clean); setBase(clean); setDeleteImage(null); images.reload();
       }, "이미지를 삭제했습니다.")}>삭제 확인</button></div></Modal>}
     </form>;
+  const closeSummaryDetails = () => {
+    if (savingOrBusy) return;
+    if (!dirty) { setSummaryDetailsOpen(false); setLocalGallery(false); return; }
+    void autosave.retry().then(ok => {
+      if (ok) { setSummaryDetailsOpen(false); setLocalGallery(false); }
+      else setDiscard(true);
+    });
+  };
+  const closeStandaloneModal = () => {
+    if (savingOrBusy) return;
+    if (!dirty) { onClose(); return; }
+    void autosave.retry().then(ok => {
+      if (ok) onClose();
+      else setDiscard(true);
+    });
+  };
   const content = <>
     {summaryMode && <IllustrationFeedback {...npcLifetimeAction} />}
     {summaryMode && draft && card ? <IllustCharacterSummary
       characterName={characterName} card={card} render={render} index={index} count={draft.profiles.length} isDefault={card.id === draft.default_visual_profile_id} npcLifetimeControls={npcLifetimeControls}
-      onRename={canRename ? openRename : undefined}
+      onRename={canRename ? () => void flushAndRun(openRename) : undefined}
       references={references} imagesLoaded={!!images.data} imagesError={images.error} hasFace={!!face} saved={!!savedCard}
       patch={savedCard?.id === base?.profiles[0]?.id ? patchStatus : patchStatus?.cards?.[card.id]} patchLoading={patchLoading} patchError={patchError}
-      readOnly={readOnly} persona={persona} dirty={dirty} busy={busy} onChangeProfile={changeProfile} onPreview={setPreview}
+      readOnly={readOnly} persona={persona} dirty={dirty} busy={savingOrBusy} onChangeProfile={changeProfile} onPreview={setPreview}
       onShowDetails={() => setSummaryDetailsOpen(true)} onEnter={onEnter} onDelete={onDelete} onRegenerate={regenerateImage} /> : editor}
     {summaryMode && <IllustrationFeedback {...regeneration} />}
-    {summaryMode && summaryDetailsOpen && <Modal title={`${characterName} · ${card?.label || "캐릭터"} · 상세 보기`} onClose={() => { setSummaryDetailsOpen(false); setLocalGallery(false); }} closeDisabled={busy} backgroundable={false} className="illust-character-modal">{editor}</Modal>}
+    {summaryMode && summaryDetailsOpen && <Modal title={`${characterName} · ${card?.label || "캐릭터"} · 상세 보기`} onClose={closeSummaryDetails} closeDisabled={savingOrBusy} backgroundable={false} className="illust-character-modal">{editor}</Modal>}
     {faceCropTarget && <IllustPreparationFaceCrop botName={botName} issue={faceCropTarget} title={`${characterName} · ${faceCropTarget.visual_card_label} · 얼굴 수동 자르기`} readOnly={readOnly}
       onClose={() => setFaceCropTarget(null)} onApply={async image => {
         if (readOnly) throw new Error("읽기 전용 상태에서는 얼굴 이미지를 저장할 수 없습니다.");
@@ -742,10 +814,10 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         <div className="modal-actions"><button type="button" className="button" disabled={outfitFolderAction.busy} onClick={() => setDeleteOutfitTarget(null)}>취소</button><button type="button" className="button danger" disabled={outfitFolderAction.busy} onClick={removeOutfit}>삭제 확인</button></div>
       </div>
     </Modal>}
-    {discard && <Modal title="편집 닫기" backgroundable={false} onClose={() => setDiscard(false)}><p>저장하지 않은 캐릭터 카드 변경을 버리고 닫을까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDiscard(false)}>계속 편집</button><button type="button" className="button danger" onClick={onClose}>변경 버리기</button></div></Modal>}
+    {discard && <Modal title="편집 닫기" backgroundable={false} onClose={() => setDiscard(false)}><p>저장하지 못한 캐릭터 카드 변경을 버리고 닫을까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDiscard(false)}>계속 편집</button><button type="button" className="button danger" onClick={() => { setDiscard(false); if (summaryMode && summaryDetailsOpen) { setDraft(base); setSummaryDetailsOpen(false); setLocalGallery(false); } else onClose(); }}>변경 버리기</button></div></Modal>}
   </>;
   if (tagsOnly) return tagEditor || <Modal title={`${characterName} · 태그 불러오기`} onClose={onClose} backgroundable={false} className="illust-character-modal"><IllustrationLoading error={data?.error || resource.error} retry={onReload || resource.reload} /></Modal>;
-  if (!embedded) return <Modal title={`${characterName} · 캐릭터 편집`} onClose={() => dirty ? setDiscard(true) : onClose()} closeDisabled={busy} className="illust-character-modal">{content}</Modal>;
+  if (!embedded) return <Modal title={`${characterName} · 캐릭터 편집`} onClose={closeStandaloneModal} closeDisabled={savingOrBusy} className="illust-character-modal">{content}</Modal>;
   const article = <article className={`panel illust-character-row${summaryMode ? " illust-character-summary-card" : ""}`} aria-label={`${characterName} 캐릭터`}>{content}</article>;
   if (!summaryMode || !showProfileTree || !draft || !card) return article;
   const outfitItem = outfitResource.data?.outfits?.find((item: IllustrationData) => item.name === selectedOutfit);

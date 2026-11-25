@@ -37,7 +37,9 @@ export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, 
       const [settings, styles] = await Promise.all([assetRequest("asset/presets"), assetRequest("asset/style-presets")]);
       const job = await buildAssetMaskRequest(slot, regions, composition, tags, settings, styles);
       const prepared = await assetRequest("asset/preview", job);
-      if (!prepared.prompt_json?.fields?.REGION_MASK || !prepared.prompt_json?.fields?.MULTI_CHAR?.mask_fingerprint) throw new Error("마스크 기반 생성 서버가 업데이트되지 않았습니다. 프로그램을 재시작하세요.");
+      const validAnimaMask = Boolean(prepared.prompt_json?.fields?.REGION_MASK && prepared.prompt_json?.fields?.MULTI_CHAR?.mask_fingerprint);
+      const validMossMask = Boolean(prepared.prompt_json?.moss?.items?.length && prepared.prompt_json?.workflow);
+      if (!validAnimaMask && !validMossMask) throw new Error("마스크 기반 생성 서버가 업데이트되지 않았습니다. 프로그램을 재시작하세요.");
       if (previewOnly) setPreview(prepared.prompt_json);
       else {
         const result = await assetRequest("asset/enqueue", { label: "마스크 기반 생성", jobs: Array.from({ length: repeat }, () => job) });
@@ -88,7 +90,7 @@ export function AssetMaskGeneration({ slot, tags, count, inventory, reloadTags, 
             </div>
           </div>
         </section>
-        {preview && <details className="asset-region-group asset-region-preview" open><summary>최종 프롬프트와 영역 좌표</summary><pre className="asset-prompt">{JSON.stringify({ ...preview, assets: Object.fromEntries(Object.entries(preview.assets || {}).map(([id, asset]) => [id, { ...(asset as AssetRecord), data: "(마스크 이미지 데이터)" }])) }, null, 2)}</pre></details>}
+        {preview && <details className="asset-region-group asset-region-preview" open><summary>최종 프롬프트와 영역 좌표</summary><pre className="asset-prompt">{JSON.stringify(preview.assets ? { ...preview, assets: Object.fromEntries(Object.entries(preview.assets).map(([id, asset]) => [id, { ...(asset as AssetRecord), data: "(마스크 이미지 데이터)" }])) } : preview, null, 2)}</pre></details>}
       </div>
       <div className="asset-region-drawing">
         <header className="asset-region-canvas-heading"><h3>마스크 배치</h3><span className="asset-region-current" style={regionStyle}><i aria-hidden="true" />영역 {selected + 1} 편집 중</span></header>

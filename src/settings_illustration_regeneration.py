@@ -522,6 +522,7 @@ def _replace_document_outfit_tags(document, old_tags, new_tags):
 _DRAWING_MODE_BOOLEAN_FIELDS = {
     "hrf_activate": "HRF_ACTIVATE",
     "anima_hrf_activate": "ANIMA_HRF_ACTIVATE",
+    "moss_hrf_activate": "MOSS_HRF_ACTIVATE",
     "hrf_restore_size": "HRF_RESTORE_SIZE",
     "anima_fd_activate": "ANIMA_FD_ACTIVATE",
     "anima_hd_activate": "ANIMA_HD_ACTIVATE",

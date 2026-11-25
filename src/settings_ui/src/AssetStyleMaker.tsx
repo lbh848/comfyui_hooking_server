@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Badge, Empty, Panel } from "./components";
-import { assetPresetFields, type AssetRecord } from "./asset";
+import { assetCapabilities, assetModelPreset, assetPresetFieldLabel, assetPresetFields, type AssetRecord } from "./asset";
 import { assetStyleLabels, compareAssetStyleGeneration, displayStyleValue, restoreAssetStyleGeneration } from "./assetStyleComparison";
 import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 import type { useAssetStylePresets } from "./useAssetStylePresets";
@@ -16,6 +16,8 @@ export function AssetStyleMaker({ slot, defaults, tags, presets, disabled, onCha
 }) {
   const [showAll, setShowAll] = useState(false);
   const selection = useIllustrationModelSelection();
+  const capabilities = assetCapabilities(assetModelPreset(slot, selection.data)?.config.asset_workflow_type || slot.asset_workflow_type);
+  const fieldLabel = (key: string) => assetPresetFieldLabel(key, labels[key] || key, capabilities);
   function displayField(key: string, value: unknown) {
     if (key === "asset_model_preset_id") return selection.data?.presets.find((preset: AssetRecord) => preset.id === value)?.name || (value ? "찾을 수 없는 그림 모델" : "현재 활성화된 그림 모델");
     return displayStyleValue(value, key);
@@ -32,8 +34,8 @@ export function AssetStyleMaker({ slot, defaults, tags, presets, disabled, onCha
         <div className="asset-maker-comparison" role="table" aria-label="프리셋 기본값과 이번 생성 적용값 비교">
           <div className="asset-maker-diff-heading" role="row"><strong role="columnheader">프리셋 기본값</strong><strong role="columnheader">이번 생성 적용값</strong></div>
           {(showAll ? rows : changed).map(row => <div className={`asset-maker-diff-row${row.changed ? " changed" : ""}`} role="row" key={row.key}>
-            <div role="cell"><span>{labels[row.key] || row.key} · 기본값</span><pre>{displayField(row.key, row.before)}</pre></div>
-            <div role="cell"><span>{labels[row.key] || row.key} · {row.changed ? "변경됨" : "동일"}</span><pre>{displayField(row.key, row.after)}</pre></div>
+            <div role="cell"><span>{fieldLabel(row.key)} · 기본값</span><pre>{displayField(row.key, row.before)}</pre></div>
+            <div role="cell"><span>{fieldLabel(row.key)} · {row.changed ? "변경됨" : "동일"}</span><pre>{displayField(row.key, row.after)}</pre></div>
           </div>)}
           {!changed.length && !showAll && <p className="field-help asset-editor-intro">이번 생성에서 변경한 값이 없습니다. 선택한 프리셋의 기본값을 사용합니다.</p>}
         </div>

@@ -114,6 +114,7 @@ def _render_review_request(
     source_type: str,
     review_mode: str,
     image_roles: list[str],
+    caption_format: str = "",
 ) -> str:
     roles = "\n".join(
         f"- Image {index}: {role}" for index, role in enumerate(image_roles, start=1)
@@ -158,6 +159,44 @@ def _render_review_request(
             "and enforce the original task contract without inventing unsupported details."
         )
 
+    if caption_format == "moss":
+        final_check = (
+            "FINAL NON-NEGOTIABLE CHECK BEFORE OUTPUT\n"
+            "Reinspect the CURRENT COMPLETE CANDIDATE sentence by sentence against the attached "
+            "image(s) and the supplied tags in ORIGINAL TASK CONTRACT instead of copying it "
+            "blindly or re-captioning from scratch. Verify that: (1) every surviving image-"
+            "verified content tag from ORIGINAL TASK CONTRACT is faithfully preserved in natural "
+            "English sentences, with no cross-image leakage, no unsupported invented details, and "
+            "no contradictory transient states (including mutually exclusive mouth states); "
+            "(2) the output consists strictly of fluent, complete natural-language English "
+            "sentences in a single paragraph with no line breaks, no Danbooru/booru tags (no "
+            "1girl/1boy/solo, no underscores, no comma-separated tag lists), no quality/rating/"
+            "meta tags, no LoRA trigger word, no meta-framing openers ('This image shows...', "
+            "'An anime illustration of...'), no 'young girl'/'young boy'/'little girl'/'little "
+            "boy' phrasing (use plain 'girl'/'boy', 'woman'/'man', or 'old woman'/'old man'), "
+            "and no redundant generic phrasing; and (3) ALL "
+            "art-style and rendering descriptions (medium, brushwork, line art, shading, "
+            "palette, anime style, digital illustration, stylistic lighting labels) AND ALL "
+            "abstract vibe/atmosphere/mood adjectives or figurative/animal comparisons (such as "
+            "'fox-like vibe', 'cat-like aura', 'dreamy atmosphere') are completely removed and "
+            "expressed as literal, physically visible features only. Return strict JSON only "
+            "after all checks pass.\n"
+        )
+    else:
+        final_check = (
+            "FINAL NON-NEGOTIABLE CHECK BEFORE OUTPUT\n"
+            "Reinspect the CURRENT COMPLETE CANDIDATE tag by tag instead of copying it. For every "
+            "surviving pose, action, expression, framing, or background tag, verify that its assigned "
+            "image role supports it; delete it if the evidence comes from the wrong image. Then compare "
+            "every output tag pair and remove each bare generic tag when a specific combined tag names "
+            "the same item. This has no multiple-item exception: use a specific tag for each distinct "
+            "instance and never keep the bare generic as a placeholder. An output containing both sides "
+            "of bow/white bow, dress/white dress, choker/white choker, or crown/mini crown is invalid. "
+            "Finally compare all transient-state tags against each other and remove the "
+            "wrong-role side of every visual contradiction, including mutually exclusive mouth states. "
+            "Return JSON only after all three checks pass.\n"
+        )
+
     return (
         f"SOURCE TYPE\n{source_type}\n\n"
         "REVIEW MODE POLICY (takes precedence if the general contract is ambiguous)\n"
@@ -165,17 +204,7 @@ def _render_review_request(
         f"IMAGE ROLES\n{roles}\n\n"
         f"CURRENT COMPLETE CANDIDATE\n{candidate_positive}\n\n"
         f"ORIGINAL TASK CONTRACT\n{original_contract}\n\n"
-        "FINAL NON-NEGOTIABLE CHECK BEFORE OUTPUT\n"
-        "Reinspect the CURRENT COMPLETE CANDIDATE tag by tag instead of copying it. For every "
-        "surviving pose, action, expression, framing, or background tag, verify that its assigned "
-        "image role supports it; delete it if the evidence comes from the wrong image. Then compare "
-        "every output tag pair and remove each bare generic tag when a specific combined tag names "
-        "the same item. This has no multiple-item exception: use a specific tag for each distinct "
-        "instance and never keep the bare generic as a placeholder. An output containing both sides "
-        "of bow/white bow, dress/white dress, choker/white choker, or crown/mini crown is invalid. "
-        "Finally compare all transient-state tags against each other and remove the "
-        "wrong-role side of every visual contradiction, including mutually exclusive mouth states. "
-        "Return JSON only after all three checks pass.\n"
+        f"{final_check}"
     )
 
 
@@ -254,10 +283,16 @@ async def run_lora_prompt_review(
         from modes.instance_lora_mode import load_moss_caption_rules
         system_prompt += (
             "\n\nMOSS FORMAT OVERRIDE\n"
-            "Keep the assigned image roles. The following format and subject-scoped duplicate "
-            "rules override all generic flat-tag or global duplicate-removal instructions, "
-            "including the final checklist in the review request. Preserve subject clauses "
-            "and attributes repeated across different subjects.\n"
+            "Keep the assigned image roles and review-mode policy (including strict Image-1/Image-2 "
+            "role separation for two-image transfers). Convert and refine the verified supplied "
+            "tags from ORIGINAL TASK CONTRACT into natural-language English sentences—do NOT "
+            "discard the supplied tags to re-caption the image from scratch. For ALL MOSS captions, "
+            "remove every art-style or rendering description (medium, anime style, brushwork, line "
+            "art, shading, palette) and every abstract vibe, atmosphere, mood, or figurative/animal "
+            "comparison (such as 'fox-like vibe'), keeping only literal, physically visible details. "
+            "The following MOSS tag-to-sentence rules override all lowercase flat-tag or comma-"
+            "separated tag-list instructions in the base review prompt. Write complete, fluent "
+            "natural-language English sentences in a single paragraph with zero Danbooru tags.\n"
             + load_moss_caption_rules()
         )
 
@@ -420,6 +455,7 @@ async def run_lora_prompt_review(
         source_type=source_type,
         review_mode=review_mode,
         image_roles=roles,
+        caption_format=caption_format,
     )
     messages = [
         {"role": "system", "content": system_prompt},

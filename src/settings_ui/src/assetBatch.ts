@@ -22,7 +22,7 @@ export function assetBatchSettingsValues(patch: AssetRecord): AssetRecord {
   const values = { ...newAssetSlot(), ...patch };
   // The displayed form values are also the values copied by Apply to all slots.
   // An unchecked checkbox must overwrite a previously loaded true value.
-  for (const key of ["snapref_enabled", "hrf_anima", "hrf_sdxl", "hrf_restore_size",
+  for (const key of ["snapref_enabled", "hrf_anima", "hrf_sdxl", "hrf_moss", "hrf_restore_size",
     "anima_fd_enabled", "anima_hd_enabled", "anima_ed_enabled", "sdxl_fd_enabled", "sdxl_hd_enabled", "sdxl_ed_enabled",
     "lora_enabled", "face_lora_enabled", "style_lora_enabled"]) values[key] = !!values[key];
   delete values._id;

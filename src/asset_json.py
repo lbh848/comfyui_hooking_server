@@ -11,7 +11,15 @@ from pathlib import Path
 import random
 from modes.prompt_path_normalizer import _CONTROL_BLOCK_HEADER_RE
 
-from illustration_json import illustration_fields, preprocess_reference_images, REFERENCE_PREPROCESS_LABELS
+from illustration_json import (
+    DEFAULT_CLIP_DEVICE,
+    enabled_lora_list,
+    illustration_fields,
+    is_moss_document,
+    preprocess_reference_images,
+    REFERENCE_PREPROCESS_LABELS,
+)
+from style_ref_storage import embed_style_ref_images
 
 CHARACTER_UPLOAD_OUTFIT = "참고복장"
 CHARACTER_UPLOAD_EXPRESSION = "참고표정"
@@ -47,6 +55,18 @@ def asset_document(positive: str, negative: str = "") -> dict:
 def prepare_asset_prompt(positive: str, negative: str, *, snapref_enabled=False,
                          snapref_dir="", snapref_strength=0.0, snapref_mode="char",
                          snapref_megapixels=1.0, reference_job: dict | None = None) -> str:
+    if isinstance(positive, str) and positive.lstrip().startswith("{"):
+        try:
+            candidate = json.loads(positive)
+        except json.JSONDecodeError:
+            candidate = None
+        if is_moss_document(candidate):
+            from modes.moss_prompt_builder import MossPromptBuilder
+            workflow = candidate.get("workflow")
+            seed = workflow.get("seed", -1) if isinstance(workflow, dict) else -1
+            if isinstance(workflow, dict) and (isinstance(seed, bool) or not isinstance(seed, int) or seed < 0):
+                workflow["seed"] = random.randint(0, 2**32 - 1)
+            return MossPromptBuilder.dumps(candidate)
     payload = asset_document(positive, negative)
     fields = payload["fields"]
     if fields.get("SEED", -1) == -1:
@@ -67,7 +87,178 @@ def prepare_asset_prompt(positive: str, negative: str, *, snapref_enabled=False,
         settings["references"] = []
     elif not settings.get("references") and not (settings.get("strength_scale") == "linear" and settings.get("strength") == 0):
         raise ValueError("Ref 이미지가 켜져 있지만 참조 이미지가 없습니다.")
+    embed_style_ref_images(payload)
     return json.dumps(payload, ensure_ascii=False, allow_nan=False)
+
+
+def _split_clean_tags(value: str) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _dedupe_segments(segments: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for segment in segments:
+        if not isinstance(segment, str):
+            continue
+        cleaned = segment.strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def build_asset_moss_document(document: dict, preset: dict) -> dict:
+    """Convert normalized asset fields and a MOSS model preset into a MOSS document."""
+    from modes.moss_prompt_builder import (
+        MOSS_BBOX_COORD_SPACE,
+        MOSS_BBOX_FORMAT,
+        MossPromptBuilder,
+        build_controller,
+        build_moss_hiresfix,
+        layout_bbox,
+        merge_lora_lists,
+    )
+
+    fields = document["fields"]
+    settings = preset["workflows"]["moss"]["fields"]
+    width = fields.get("IMG_W")
+    height = fields.get("IMG_H")
+    if any(isinstance(value, bool) or not isinstance(value, int) or not 64 <= value <= 8192 for value in (width, height)):
+        raise ValueError("이미지 너비와 높이는 64~8192 사이의 정수여야 합니다.")
+    raw_seed = fields.get("SEED", -1)
+    if isinstance(raw_seed, bool) or not isinstance(raw_seed, int):
+        raise ValueError("시드 값을 확인하세요.")
+
+    char_loras = (fields.get("LORA_DATA") or {}).get("list", []) if fields.get("LORA_ACTIVATE") else []
+    slot_style_loras = (fields.get("STYLE_LORA_DATA") or {}).get("list", []) if fields.get("STYLE_LORA_ACTIVATE") else []
+    common_loras = enabled_lora_list(settings.get("STYLE_LORA_DATA", {}))
+    merged_loras = [
+        {**item, "lora_path": item["lora_path"].replace("\\", "/")}
+        for item in merge_lora_lists(char_loras, slot_style_loras, common_loras)
+    ]
+    common_triggers = _dedupe_segments([
+        tag for item in common_loras for tag in _split_clean_tags(item.get("trigger", ""))
+    ])
+
+    multi = fields.get("MULTI_CHAR", {})
+    if isinstance(multi, dict) and multi.get("enable") and "layout" in multi:
+        names = multi.get("char_name_list")
+        if not isinstance(names, list) or not 1 <= len(names) <= 3 or multi.get("char_num") != len(names):
+            raise ValueError("마스크 기반 생성의 캐릭터 수는 1~3명이어야 합니다.")
+        if len(set(names)) != len(names) or any(not isinstance(name, str) or not name.strip() for name in names):
+            raise ValueError("영역 이름을 확인하세요.")
+        for key in ("char_inform", "char_trigger_list"):
+            if not isinstance(multi.get(key), list) or len(multi[key]) != len(names):
+                raise ValueError(f"영역별 프롬프트 개수를 확인하세요: {key}")
+        if any(not isinstance(group, list) or any(not isinstance(value, str) for value in group) for group in multi["char_trigger_list"]):
+            raise ValueError("영역별 LoRA 트리거 형식을 확인하세요.")
+        placements = multi.get("char_composition_list")
+        if "char_composition_list" in multi and (not isinstance(placements, list) or len(placements) != len(names)
+                or any(not isinstance(value, str) for value in placements)):
+            raise ValueError("마스크별 자연어를 확인하세요.")
+        if any(not isinstance(value, str) or not (value.strip() or placements is not None and placements[index].strip())
+               for index, value in enumerate(multi["char_inform"])):
+            raise ValueError("각 영역의 캐릭터 프롬프트 또는 자연어를 입력하세요.")
+        if not isinstance(multi.get("composition_prompt"), str) or placements is None and not multi["composition_prompt"].strip():
+            raise ValueError("공통 자연어를 확인하세요.")
+        if not isinstance(multi.get("background_prompt", ""), str):
+            raise ValueError("공통 배경은 문자열이어야 합니다.")
+        shared = multi.get("shared_tag")
+        if not isinstance(shared, dict) or any(not isinstance(shared.get(key), list) or any(not isinstance(part, str) for part in shared[key]) for key in ("before_char", "after_char")):
+            raise ValueError("공통 그림체 프롬프트 형식을 확인하세요.")
+        background_triggers = multi.get("background_trigger_list", [])
+        if not isinstance(background_triggers, list) or any(not isinstance(value, str) for value in background_triggers):
+            raise ValueError("공통 LoRA 트리거 형식을 확인하세요.")
+        source = multi["layout"]
+        regions = source.get("regions") if isinstance(source, dict) else None
+        if not isinstance(regions, list) or len(regions) != len(names) or any(not isinstance(region, dict) for region in regions):
+            raise ValueError("사각형 영역 좌표를 확인하세요.")
+        by_name = {region.get("name"): region for region in regions}
+        if set(by_name) != set(names):
+            raise ValueError("사각형 영역과 캐릭터 목록이 일치하지 않습니다.")
+
+        summary_triggers = _dedupe_segments([
+            *common_triggers,
+            *(tag for group_val in background_triggers for tag in _split_clean_tags(group_val)),
+        ])
+        summary_trigger_keys = {tag.casefold() for tag in summary_triggers}
+        summary_parts = _dedupe_segments([
+            *summary_triggers,
+            *shared["before_char"],
+            *shared["after_char"],
+            multi.get("background_prompt", ""),
+            multi.get("composition_prompt", ""),
+        ])
+        items = []
+        for index, name in enumerate(names):
+            region = by_name[name]
+            bbox = layout_bbox(
+                region.get("x"), region.get("y"),
+                region.get("width"), region.get("height"),
+                width, height,
+            )
+            region_triggers = _dedupe_segments([
+                tag for entry in multi["char_trigger_list"][index]
+                for tag in _split_clean_tags(entry)
+                if tag.casefold() not in summary_trigger_keys
+            ])
+            inform = multi["char_inform"][index].strip()
+            regional_text = placements[index].strip() if placements is not None else ""
+            caption = ", ".join(part for part in (*region_triggers, inform, regional_text) if part)
+            items.append({
+                "label": "character",
+                "name": name,
+                "caption": caption,
+                "bbox": bbox,
+            })
+        moss = {
+            "summary": {"caption": ", ".join(summary_parts)},
+            "items": items,
+            "bbox_coord_space": MOSS_BBOX_COORD_SPACE,
+            "bbox_format": MOSS_BBOX_FORMAT,
+            "image_size": {"width": width, "height": height},
+        }
+    else:
+        quality_text = str(fields.get("ANIMA_QUALITY") or "").strip()
+        content_text = str(fields.get("ANIMA_CONTENT") or "").strip()
+        existing_keys = {
+            tag.casefold()
+            for part in (quality_text, content_text)
+            for tag in _split_clean_tags(part)
+        }
+        missing_common = [tag for tag in common_triggers if tag.casefold() not in existing_keys]
+        summary_caption = ", ".join(part for part in (*missing_common, quality_text, content_text) if part)
+        moss = {"summary": {"caption": summary_caption}}
+
+    sampling = settings.get("workflow.sampling") or {}
+    hiresfix = build_moss_hiresfix(
+        fields, settings, fallback_sampling=sampling,
+        default_size=2.0, default_restore_size=True,
+    )
+    controller = build_controller(
+        model=settings.get("workflow.model", ""),
+        clip=settings.get("workflow.clip", ""),
+        clip_device=settings.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
+        vae=settings.get("workflow.vae", ""),
+        width=width,
+        height=height,
+        batch_size=1,
+        seed=raw_seed,
+        negative=str(fields.get("NEGATIVE_ANIMA") or ""),
+        sampling=sampling,
+        lora_list=merged_loras,
+        lora_filter="",
+        sequential_offload=settings.get("workflow.sequential_offload") is True,
+        hiresfix=hiresfix,
+    )
+    return MossPromptBuilder.build(moss, controller)
 
 
 def prepare_asset_mask_document(document: dict) -> dict:
@@ -214,6 +405,7 @@ def prepare_asset_references(document: dict, job: dict) -> dict:
     if not enabled or linear and settings.get("strength", 1) == 0:
         settings["references"] = []
         settings.pop("dir", None)
+        embed_style_ref_images(document)
         return document
     multi = document["fields"].get("MULTI_CHAR", {})
     names = multi.get("char_name_list", []) if multi.get("enable") else document["fields"].get("CHAR_LIST", ["asset_mode"])
@@ -227,6 +419,7 @@ def prepare_asset_references(document: dict, job: dict) -> dict:
     if not settings["references"]:
         raise ValueError("Ref 이미지가 켜져 있지만 참조 이미지가 없습니다.")
     preprocess_reference_images(document)
+    embed_style_ref_images(document)
     return document
 
 
@@ -242,9 +435,6 @@ def embed_asset_mask_references(positive: str, references: list) -> str:
 def merge_tagged_character_prompt(document: dict, tags: list[str], background_tags: str = "") -> dict:
     """Insert Anima Tagger character tags into a prepared style/model prompt document."""
     merged = copy.deepcopy(document)
-    fields = merged.get("fields")
-    if not isinstance(fields, dict):
-        raise ValueError("프롬프트 JSON의 fields를 확인하세요.")
     clean_tags = [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
     character_prompt = ", ".join(clean_tags)
     background = background_tags.strip() if isinstance(background_tags, str) else ""
@@ -261,6 +451,27 @@ def merge_tagged_character_prompt(document: dict, tags: list[str], background_ta
             elif text.endswith(", " + background):
                 prefix, suffix = text[:-(len(background) + 2)].strip(), background
         return ", ".join(part for part in (prefix, character_prompt, suffix) if part)
+
+    if is_moss_document(merged):
+        moss = merged["moss"]
+        items = moss.get("items")
+        if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict):
+            existing = str(items[0].get("caption") or "").strip()
+            if existing == "character":
+                prefix = ""
+            elif existing.endswith(", character"):
+                prefix = existing[:-len(", character")].strip()
+            else:
+                prefix = existing
+            items[0]["caption"] = ", ".join(part for part in (prefix, character_prompt or "character") if part)
+        else:
+            summary = moss.setdefault("summary", {})
+            summary["caption"] = inject_character_tags(summary.get("caption", ""))
+        return merged
+
+    fields = merged.get("fields")
+    if not isinstance(fields, dict):
+        raise ValueError("프롬프트 JSON의 fields를 확인하세요.")
 
     for key in ("ANIMA_CONTENT", "SDXL_CONTENT"):
         if key in fields:

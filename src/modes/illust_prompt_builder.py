@@ -1340,10 +1340,13 @@ class IllustPromptBuilder:
         hrf_size = settings.get("hrf_size", 1.5)
         hrf_restore_size = settings.get("hrf_restore_size", False)
         anima_hrf_activate = settings.get("anima_hrf_activate", False)
+        moss_hrf_activate = settings.get("moss_hrf_activate", False)
         positive += f"\n[HRF_ACTIVATE]"
         positive += f"\n{'true' if hrf_activate else 'false'}"
         positive += f"\n[ANIMA_HRF_ACTIVATE]"
         positive += f"\n{'true' if anima_hrf_activate else 'false'}"
+        positive += f"\n[MOSS_HRF_ACTIVATE]"
+        positive += f"\n{'true' if moss_hrf_activate else 'false'}"
         positive += f"\n[HRF_SIZE]"
         positive += f"\n{hrf_size}"
         positive += f"\n[HRF_RESTORE_SIZE]"

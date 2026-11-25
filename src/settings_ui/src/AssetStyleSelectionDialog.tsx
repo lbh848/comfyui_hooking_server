@@ -17,7 +17,7 @@ export function AssetStyleSelectionDialog({ presets, models, disabled }: {
     if (key === "img_w" || key === "img_h") return `${displayStyleValue(value)} px`;
     if (key === "seed" && value === -1) return "랜덤 (-1)";
     if (key === "style_lora_list" && Array.isArray(value) && value.length) return value.map((item: AssetRecord, index) =>
-      `${index + 1}. ${item.lora_path || "LoRA"}\n계열: ${item.BASE === "sdxl" ? "ILXL / SDXL" : item.BASE || "ANIMA"} · 강도: ${item.strength ?? item.str ?? 1}\n트리거: ${item.trigger || "없음"}`
+      `${index + 1}. ${item.lora_path || "LoRA"}\n계열: ${item.BASE === "sdxl" ? "ILXL / SDXL" : item.BASE === "moss" ? "MOSS" : item.BASE ? String(item.BASE).toUpperCase() : "ANIMA"} · 강도: ${item.strength ?? item.str ?? 1}\n트리거: ${item.trigger || "없음"}`
     ).join("\n\n");
     return displayStyleValue(value, key);
   }

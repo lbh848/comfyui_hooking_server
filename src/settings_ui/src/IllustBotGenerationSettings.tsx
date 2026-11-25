@@ -191,17 +191,22 @@ function CommonGenerationFields({ value, tags, capabilities, readOnly, update, o
           {range("snapref_megapixels", "레퍼런스 해상도", .25, 2, .25, " MP")}</div>}
       </div>}
     </fieldset>
-    <fieldset className="illust-bot-generation-section illust-form" data-group="enhancement" disabled={capabilities.moss || !capabilities.local_advanced}><legend>고해상도·디테일러 보정{capabilities.moss && <span>MOSS 미사용</span>}</legend>
+    <fieldset className="illust-bot-generation-section illust-form" data-group="enhancement" disabled={!capabilities.local_advanced}><legend>고해상도·디테일러 보정</legend>
       {range("hrf_size", "HIRESFIX 및 디테일러 적용 전 확대 배율", 1, 3, .05, "배")}
       {check("hrf_restore_size", "원본 크기 복원")}
-      <div className="illust-bot-generation-columns">{Object.entries(families).map(([family, label]) => <fieldset key={family} className="illust-form illust-bot-generation-family" data-family={family} disabled={!capabilities[`${family}_presets`]}><legend>{label}</legend>
+      {capabilities.moss && <fieldset className="illust-form illust-bot-generation-family" data-family="moss"><legend>MOSS</legend>
+        {check("moss_hrf_activate", "MOSS HIRESFIX")}
+      </fieldset>}
+      <div className="illust-bot-generation-columns">{Object.entries(families).map(([family, label]) => <fieldset key={family} className="illust-form illust-bot-generation-family" data-family={family} disabled={capabilities.moss || !capabilities[`${family}_presets`]}><legend>{label}{(capabilities.moss || !capabilities[`${family}_presets`]) && <span>현재 그림 모델에서 미사용</span>}</legend>
         {check(family === "anima" ? "anima_hrf_activate" : "hrf_activate", `${label} HIRESFIX`)}
         <div className="illust-actions">{[["fd", "얼굴"], ["hd", "손"], ["ed", "눈"]].map(([kind, title]) => <span key={kind}>{check(`${family === "anima" ? "anima_" : ""}${kind}_activate`, `${title} 보정 (${kind.toUpperCase()})`)}</span>)}</div>
       </fieldset>)}</div>
-      <GenerationNumberField label="FD / ED 시 고정 사이즈 (px)" value={value.face_lora_upscale_size} min={0} optional onChange={next => update("face_lora_upscale_size", next)} />
+      <fieldset className="illust-form" disabled={capabilities.moss}>
+        <GenerationNumberField label="FD / ED 시 고정 사이즈 (px)" value={value.face_lora_upscale_size} min={0} optional onChange={next => update("face_lora_upscale_size", next)} />
+      </fieldset>
     </fieldset>
     {capabilities.moss_reference && <p className="field-help">MOSS의 이미지 레퍼런스(CharRef v2)는 현재 사용을 중지했습니다.</p>}
-    {capabilities.moss && !capabilities.moss_reference && <p className="field-help">MOSS 그림 모델에서는 이미지 레퍼런스·고해상도 보정·얼굴·손·눈 디테일러를 사용하지 않습니다.</p>}
+    {capabilities.moss && !capabilities.moss_reference && <p className="field-help">MOSS 그림 모델에서는 이미지 레퍼런스와 얼굴·손·눈 디테일러를 사용하지 않습니다. 고해상도 보정(MOSS HIRESFIX)만 선택해 사용할 수 있습니다.</p>}
     {!capabilities.local_advanced && !capabilities.moss_reference && <p className="field-help">현재 그림 모델에서는 로컬 전용 시드·레퍼런스·고해상도·디테일러 설정을 사용하지 않습니다.</p>}
   </fieldset>;
 }

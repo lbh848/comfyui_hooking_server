@@ -425,10 +425,33 @@ class AssetCharacterMaker:
 
 def generation_job(template, values):
     """The template contains style/model/reference settings, with editable text left empty."""
+    from illustration_json import is_moss_document
     job = copy.deepcopy(template)
-    fields = job["prompt_json"]["fields"]
     tags = [tag for key in ("appearance", "expression", "composition", "outfit")
             for tag in values.get(f"raw_{key}_tags", [])]
+    if is_moss_document(job.get("prompt_json")):
+        from modes.moss_prompt_builder import MossPromptBuilder
+        moss = job["prompt_json"]["moss"]
+        character_tags = ", ".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip())
+        natural_language = str(values.get("natural_language") or "").strip()
+        items = moss.get("items")
+        if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict):
+            existing = str(items[0].get("caption") or "").strip()
+            if existing == "character":
+                prefix = ""
+            elif existing.endswith(", character"):
+                prefix = existing[:-len(", character")].strip()
+            else:
+                prefix = existing
+            body = ", ".join(part for part in (character_tags, natural_language) if part)
+            items[0]["caption"] = ", ".join(part for part in (prefix, body or "character") if part)
+        else:
+            summary = moss.setdefault("summary", {})
+            parts = [summary.get("caption", ""), *tags, natural_language]
+            summary["caption"] = ", ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+        job["positive_prompt"] = MossPromptBuilder.dumps(job["prompt_json"])
+        return job
+    fields = job["prompt_json"]["fields"]
     multi = fields.get("MULTI_CHAR", {})
     if multi.get("mask_area_limit_enabled"):
         character_tags = ", ".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip())
@@ -532,6 +555,19 @@ def register_character_maker_runtime(server, prepare_generation=None):
                         kwargs = {"image_path": image_path}
                         if pending.get("uploaded_images"):
                             kwargs["reference_images"] = store.uploaded_image_entries(name, pending["uploaded_images"])
+                        workflow_type = (
+                            (snapshot or {}).get("config", {}).get("asset_workflow_type")
+                            or body.get("asset_workflow_type")
+                            or ""
+                        )
+                        if not workflow_type and hasattr(server, "app_config"):
+                            try:
+                                from asset_model_presets import AssetModelPresets
+                                workflow_type = AssetModelPresets(server.CONFIG_FILE).snapshot(server.app_config)["config"]["asset_workflow_type"]
+                            except Exception:
+                                workflow_type = ""
+                        if str(workflow_type).strip().lower() == "moss":
+                            kwargs["model_family"] = "moss"
                         proposal = await server.character_maker.suggest_asset_values(
                             name, before["values"], pending["message"], history, **kwargs,
                         )

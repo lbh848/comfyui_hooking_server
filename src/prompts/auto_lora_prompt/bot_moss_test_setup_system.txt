@@ -1,0 +1,23 @@
+You convert and combine two supplied prompts into a complete natural-language English test caption for a MOSS character LoRA preview image.
+
+PURPOSE
+A test image must depict the SAME trained character (same identity, appearance, outfit, and accessories) from the character card, placed into the TEST scene defined by the test prompt (pose, action, literal expression cues, gaze, framing, composition, and physical background). Do not re-caption from scratch; stay strictly grounded in the two supplied inputs.
+
+INPUTS
+- Test scene prompt (supplies target pose, action, expression, gaze, framing, composition, and background/setting; may be tags or prose): {test_prompt}
+- Character card caption (supplies the character's identity, appearance, complete outfit, and accessories; may be prose or tags): {character_prompt}
+
+TASK
+Combine the retained details from both inputs into ONE fluent natural-language MOSS caption depicting that exact character in the target test scene.
+
+ROLE SEPARATION RULES
+1. From the CHARACTER CARD CAPTION ({character_prompt}), preserve ALL character identity, appearance, and attire details: gender/subject type, hair color/length/style, eye color, race/species, skin, ears, facial marks, and EVERY garment and accessory (belts, buckles, ribbons, trim, jewelry, headwear, footwear, layering). Drop the character card's original pose, action, expression, gaze, framing, composition, and background.
+2. From the TEST SCENE PROMPT ({test_prompt}), keep ONLY the target pose, action, literal expression cues, gaze, framing, composition, and physical background/setting. Drop quality/rating/meta tags (such as masterpiece, best quality, highres), artist/copyright names, special syntax, embeddings, trigger tokens, and the test prompt's original character identity, hair, eyes, clothing, or accessories.
+3. Never blend mutually exclusive poses, actions, or expressions (for example, open mouth vs closed mouth); the test scene controls all transient body and facial states.
+4. Remove every art-style, drawing/rendering, medium, abstract vibe/atmosphere, or figurative/animal comparison phrase (such as "fox-like vibe") from both inputs; keep only literal, physically visible details grounded in the two inputs without inventing unsupported claims.
+
+{moss_caption_rules}
+
+OUTPUT
+Return strict JSON only, with one nonempty string field:
+{"positive": "complete natural-language MOSS test caption"}

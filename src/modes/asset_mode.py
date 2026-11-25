@@ -260,17 +260,43 @@ def _match_chunk(file_args) -> list:
 class AssetMode:
     """에셋 생성 모드 매니저"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        asset_dir: Optional[str] = None,
+        asset_data_dir: Optional[str] = None,
+        tags_file: Optional[str] = None,
+        hidden_tags_file: Optional[str] = None,
+        name_mapping_file: Optional[str] = None,
+        character_presets=None,
+        sync_lora_manage: bool = True,
+        asset_workspace: str = "asset",
+        entity_labels: Optional[dict[str, str]] = None,
+    ):
+        self._asset_dir = asset_dir
+        self._asset_data_dir = asset_data_dir
+        self._tags_file = tags_file
+        self._hidden_tags_file = hidden_tags_file
+        self._name_mapping_file = name_mapping_file
+        self.sync_lora_manage = sync_lora_manage
+        self.asset_workspace = asset_workspace
+        self._entity_labels = {
+            "entity": "캐릭터",
+            "level2": "복장",
+            "level3": "표정",
+            **(entity_labels or {}),
+        }
         self.enabled: bool = False
         self.workflow_source_path: str = ""
         self.anima_workflow_source_path: str = ""
         self.anima_only_workflow_source_path: str = ""
+        self.moss_workflow_source_path: str = ""
         self.workflow_type: str = workflow_profiles.ASSET_ILXL
         self._asset_api_workflow: Optional[dict] = None
         self._asset_hash: str = ""
         self._tags: dict = copy.deepcopy(DEFAULT_TAGS)
         self._tags_loaded: bool = False
-        self.character_presets = AssetCharacterPresets(TAGS_FILE)
+        self.character_presets = character_presets if character_presets is not None else AssetCharacterPresets(self.tags_file)
         self._tags_file_stamp = None
         self._is_generating: bool = False
         self._lock = asyncio.Lock()
@@ -285,6 +311,26 @@ class AssetMode:
         self.submit_workflow_func: Optional[Callable] = None
         self.build_prompt_with_workflow_func: Optional[Callable] = None
         self.upload_reference_image_func: Optional[Callable] = None
+
+    @property
+    def asset_dir(self) -> str:
+        return self._asset_dir if self._asset_dir is not None else ASSET_DIR
+
+    @property
+    def asset_data_dir(self) -> str:
+        return self._asset_data_dir if self._asset_data_dir is not None else ASSET_DATA_DIR
+
+    @property
+    def tags_file(self) -> str:
+        return self._tags_file if self._tags_file is not None else TAGS_FILE
+
+    @property
+    def hidden_tags_file(self) -> str:
+        return self._hidden_tags_file if self._hidden_tags_file is not None else HIDDEN_TAGS_FILE
+
+    @property
+    def name_mapping_file(self) -> str:
+        return self._name_mapping_file if self._name_mapping_file is not None else NAME_MAPPING_FILE
 
     def fork_for_execution(self) -> "AssetMode":
         """병렬 큐 레인에서 사용할 작업별 실행 상태를 만든다.
@@ -305,10 +351,10 @@ class AssetMode:
 
     # ─── 태그 로드 / 마이그레이션 ──────────────────────────
     def load_tags(self):
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        if os.path.isfile(TAGS_FILE):
+        os.makedirs(self.asset_data_dir, exist_ok=True)
+        if os.path.isfile(self.tags_file):
             try:
-                with open(TAGS_FILE, "r", encoding="utf-8") as f:
+                with open(self.tags_file, "r", encoding="utf-8") as f:
                     stored_tags = json.load(f)
                 self._tags = preset_catalog_only(stored_tags)
                 self._migrate_if_needed()
@@ -330,10 +376,9 @@ class AssetMode:
         if "업로드이미지" in self._tags.get("characters", {}):
             self.ensure_upload_character()
 
-    @staticmethod
-    def _current_tags_file_stamp():
+    def _current_tags_file_stamp(self):
         try:
-            stat = os.stat(TAGS_FILE)
+            stat = os.stat(self.tags_file)
             return (stat.st_mtime_ns, stat.st_size)
         except FileNotFoundError:
             return None
@@ -376,7 +421,7 @@ class AssetMode:
             print("[ASSET_MODE] WARNING: save_tags() called before load_tags(). Skipping to prevent data loss.")
             return
         self._tags = preset_catalog_only(self._tags)
-        write_json_atomic(Path(TAGS_FILE), self._tags)
+        write_json_atomic(Path(self.tags_file), self._tags)
         self._tags_file_stamp = self._current_tags_file_stamp()
 
     def get_local_tags(self) -> dict:
@@ -675,15 +720,16 @@ class AssetMode:
         if os.path.isdir(char_dir):
             shutil.rmtree(char_dir)
         # lora_manage.json에서도 해당 캐릭터 제거
-        try:
-            from modes.lora_mode import _load_lora_manage, _save_lora_manage
-            lora_data = _load_lora_manage()
-            if name in lora_data.get("loras", {}):
-                del lora_data["loras"][name]
-                _save_lora_manage(lora_data)
-                print(f"[ASSET] lora_manage에서 캐릭터 제거: {name}")
-        except Exception as e:
-            print(f"[ASSET] lora_manage 캐릭터 제거 실패: {e}")
+        if self.sync_lora_manage:
+            try:
+                from modes.lora_mode import _load_lora_manage, _save_lora_manage
+                lora_data = _load_lora_manage()
+                if name in lora_data.get("loras", {}):
+                    del lora_data["loras"][name]
+                    _save_lora_manage(lora_data)
+                    print(f"[ASSET] lora_manage에서 캐릭터 제거: {name}")
+            except Exception as e:
+                print(f"[ASSET] lora_manage 캐릭터 제거 실패: {e}")
         self._log("character_removed", {"name": name})
         return {"success": True}
 
@@ -694,8 +740,8 @@ class AssetMode:
             return {"success": False, "error": str(exc)}
         self.load_tags()
         # 에셋 폴더 전체 복사
-        src_dir = os.path.join(ASSET_DIR, self._safe_dirname(source_name))
-        new_dir = os.path.join(ASSET_DIR, self._safe_dirname(new_name))
+        src_dir = os.path.join(self.asset_dir, self._safe_dirname(source_name))
+        new_dir = os.path.join(self.asset_dir, self._safe_dirname(new_name))
         if os.path.isdir(src_dir):
             shutil.copytree(src_dir, new_dir)
         # 이름 매핑도 복사
@@ -728,7 +774,7 @@ class AssetMode:
         """
         result = {}
         for char_name in self.list_characters():
-            char_dir = os.path.join(ASSET_DIR, self._safe_dirname(char_name))
+            char_dir = os.path.join(self.asset_dir, self._safe_dirname(char_name))
             if not os.path.isdir(char_dir):
                 continue
             for outfit_dir_name in sorted(os.listdir(char_dir)):
@@ -761,14 +807,14 @@ class AssetMode:
 
     # ─── 복장×표정 그룹 (Level 1) ────────────────────────────
     def _expr_group_path(self, character: str, outfit: str, expression: str) -> str:
-        return os.path.join(ASSET_DIR, self._safe_dirname(character),
+        return os.path.join(self.asset_dir, self._safe_dirname(character),
                             self._safe_dirname(outfit), self._safe_dirname(expression),
                             "_expr_group.json")
 
     def get_outfit_groups(self, character: str) -> dict:
         """캐릭터의 복장×표정 그룹을 {group_id: [{outfit, expression}, ...]} 반환."""
         groups: dict[str, list[dict]] = {}
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
             return groups
         for outfit_dir in sorted(os.listdir(char_dir)):
@@ -998,6 +1044,7 @@ class AssetMode:
         pose_data: dict = None,
         hrf_activate: bool = False,
         anima_hrf_activate: bool = False,
+        moss_hrf_activate: bool = False,
         hrf_size: float = 2.0,
         hrf_restore_size: bool = True,
         hrf_control_net: bool = False,
@@ -1228,6 +1275,8 @@ class AssetMode:
         positive += f"\n[HRF_ACTIVATE]\n{'true' if hrf_activate and capabilities['ilxl'] else 'false'}"
         if is_anima:
             positive += f"\n[ANIMA_HRF_ACTIVATE]\n{'true' if anima_hrf_activate else 'false'}"
+        if capabilities["moss"]:
+            positive += f"\n[MOSS_HRF_ACTIVATE]\n{'true' if moss_hrf_activate else 'false'}"
         positive += f"\n[HRF_SIZE]\n{hrf_size}"
         positive += f"\n[HRF_RESTORE_SIZE]\n{'true' if hrf_restore_size else 'false'}"
         positive += f"\n[HRF_CONTROL_NET]\n{'true' if hrf_control_net else 'false'}"
@@ -1898,6 +1947,7 @@ class AssetMode:
         pose_id: str = "",
         hrf_activate: bool = False,
         anima_hrf_activate: bool = False,
+        moss_hrf_activate: bool = False,
         hrf_size: float = 2.0,
         hrf_restore_size: bool = True,
         hrf_control_net: bool = False,
@@ -1969,6 +2019,7 @@ class AssetMode:
                     preset_selections,
                     model_preset,
                     progress_callback,
+                    moss_hrf_activate=moss_hrf_activate,
                 )
             finally:
                 self._is_generating = False
@@ -2028,6 +2079,7 @@ class AssetMode:
         preset_selections: dict | None = None,
         model_preset: dict | None = None,
         progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
+        moss_hrf_activate: bool = False,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
@@ -2058,6 +2110,7 @@ class AssetMode:
             workflow_profiles.ASSET_ILXL: self.workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ILXL: self.anima_workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ONLY: self.anima_only_workflow_source_path,
+            workflow_profiles.ASSET_MOSS: self.moss_workflow_source_path,
         }[asset_workflow_type]
         if model_preset:
             selected_workflow_path = model_preset["config"]["asset_workflow_source_paths"][asset_workflow_type]
@@ -2115,6 +2168,7 @@ class AssetMode:
                     pose_data=pose_data,
                     hrf_activate=hrf_activate,
                     anima_hrf_activate=anima_hrf_activate,
+                    moss_hrf_activate=moss_hrf_activate,
                     hrf_size=hrf_size,
                     hrf_restore_size=hrf_restore_size,
                     hrf_control_net=hrf_control_net,
@@ -2196,6 +2250,7 @@ class AssetMode:
             if self.notify_frontend_func:
                 await self.notify_frontend_func("asset_generation_started", {
                     "character": character, "outfit": outfit, "expression": expression,
+                    "asset_workspace": self.asset_workspace,
                 })
 
             if self.build_prompt_with_workflow_func:
@@ -2265,6 +2320,7 @@ class AssetMode:
                         await self.notify_frontend_func("asset_generation_progress", {
                             "value": value, "max": max_value,
                             "character": character, "outfit": outfit, "expression": expression,
+                            "asset_workspace": self.asset_workspace,
                         })
 
                 submit_kwargs = {"progress_callback": _on_progress}
@@ -2302,6 +2358,7 @@ class AssetMode:
                     await self.notify_frontend_func("asset_generation_completed", {
                         "status": "error", "error": error_msg,
                         "character": character, "outfit": outfit, "expression": expression,
+                        "asset_workspace": self.asset_workspace,
                     })
                 failed_result = {"success": False, "error": error_msg}
                 if diagnostic_dcw_cwm_smc_enabled is not None:
@@ -2332,7 +2389,7 @@ class AssetMode:
                 )
             else:
                 save_dir = os.path.join(
-                    ASSET_DIR,
+                    self.asset_dir,
                     self._safe_dirname(character),
                     self._safe_dirname(storage_outfit),
                     self._safe_dirname(expression),
@@ -2374,6 +2431,7 @@ class AssetMode:
                         "expression": expression,
                         "storage_group": storage_group,
                         "storage_outfit": storage_outfit,
+                        "asset_workspace": self.asset_workspace,
                         "stable_model_reuse": stable_model_reuse,
                         "generation_time": generation_time,
                         "created_at": created_at,
@@ -2409,6 +2467,7 @@ class AssetMode:
                     "filename": filename,
                     "storage_group": storage_group,
                     "storage_outfit": storage_outfit,
+                    "asset_workspace": self.asset_workspace,
                     "generation_time": generation_time,
                 })
 
@@ -2420,6 +2479,7 @@ class AssetMode:
                 "expression": expression,
                 "storage_group": storage_group,
                 "storage_outfit": storage_outfit,
+                "asset_workspace": self.asset_workspace,
                 "generation_time": generation_time,
             }
             if storage_group == "character_maker":
@@ -2584,12 +2644,12 @@ class AssetMode:
             )
             raise ValueError("에셋 영상 참조 파일명이 올바르지 않습니다")
         image_dir = os.path.realpath(os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             normalized["character"],
             normalized["outfit"],
             normalized["expression"],
         ))
-        asset_root = os.path.realpath(ASSET_DIR)
+        asset_root = os.path.realpath(self.asset_dir)
         try:
             if os.path.commonpath([asset_root, image_dir]) != asset_root:
                 raise ValueError("에셋 루트 밖 경로")
@@ -2632,7 +2692,7 @@ class AssetMode:
         if not character or safe_character != character:
             print(f"[ASSET_VIDEO] 참조 목록 캐릭터명 오류: character={character!r}")
             raise ValueError("에셋 캐릭터명이 올바르지 않습니다")
-        char_dir = os.path.join(ASSET_DIR, safe_character)
+        char_dir = os.path.join(self.asset_dir, safe_character)
         if not os.path.isdir(char_dir):
             print(f"[ASSET_VIDEO] 참조 목록 캐릭터 폴더 없음: path={char_dir!r}")
             return []
@@ -2928,7 +2988,7 @@ class AssetMode:
 
     def list_images(self, character: str, outfit: str, expression: str) -> dict:
         img_dir = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3035,7 +3095,7 @@ class AssetMode:
                 "default_outfit": AUTOMATCH_DEFAULT_OUTFIT_DIR,
             }
 
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         other_outfits = []
         if include_existing:
             if os.path.isdir(char_dir):
@@ -3127,7 +3187,7 @@ class AssetMode:
         expression: str = "",
     ) -> str:
         """오토매치 전용 경로가 asset 루트 밖으로 벗어나지 않도록 조립한다."""
-        asset_root = os.path.abspath(ASSET_DIR)
+        asset_root = os.path.abspath(self.asset_dir)
         character_dir = os.path.abspath(os.path.join(
             asset_root,
             self._safe_dirname(character),
@@ -3326,7 +3386,7 @@ class AssetMode:
 
     def set_representative(self, character: str, outfit: str, expression: str, filename: str) -> dict:
         img_dir = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3358,7 +3418,7 @@ class AssetMode:
 
     def get_image_path(self, character: str, outfit: str, expression: str, filename: str) -> Optional[str]:
         path = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3375,7 +3435,7 @@ class AssetMode:
         parts = [self._safe_dirname(name) for name in names]
         if any(part in {".", ".."} for part in parts):
             raise ValueError("삭제할 에셋 폴더 경로가 올바르지 않습니다.")
-        root = Path(ASSET_DIR).resolve()
+        root = Path(self.asset_dir).resolve()
         target = root.joinpath(*parts)
         if target.resolve() != target or not target.is_relative_to(root):
             raise ValueError("삭제할 에셋 폴더 경로가 올바르지 않습니다.")
@@ -3397,7 +3457,7 @@ class AssetMode:
 
     def delete_image(self, character: str, outfit: str, expression: str, filename: str) -> dict:
         img_dir = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3445,7 +3505,7 @@ class AssetMode:
         """외부 이미지를 에셋 폴더에 저장."""
         import re
         img_dir = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3513,7 +3573,7 @@ class AssetMode:
             raise ValueError("이미지 파일을 읽을 수 없습니다.") from exc
 
         img_dir = os.path.join(
-            ASSET_DIR,
+            self.asset_dir,
             self._safe_dirname(character),
             self._safe_dirname(outfit),
             self._safe_dirname(expression),
@@ -3583,7 +3643,7 @@ class AssetMode:
 
     def list_character_gallery(self, character: str) -> list[dict]:
         """캐릭터 폴더의 실제 복장×표정 조합을 스캔하여 반환."""
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
             print(
                 f"[ASSET_MODE] 캐릭터 갤러리 조회 결과 없음: "
@@ -3666,7 +3726,7 @@ class AssetMode:
         """대표이미지가 있는 조합의 실제 파일 경로 목록을 반환."""
         gallery = self.list_character_gallery(character)
         results = []
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
 
         for item in gallery:
             rep_file = item.get("representative", "")
@@ -3693,38 +3753,40 @@ class AssetMode:
 
     # ─── 이름 치환 규칙 ───────────────────────────────────────
     def _load_name_mapping(self) -> dict:
-        if os.path.isfile(NAME_MAPPING_FILE):
+        mapping_file = self.name_mapping_file
+        if os.path.isfile(mapping_file):
             try:
-                with open(NAME_MAPPING_FILE, "r", encoding="utf-8") as f:
+                with open(mapping_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if not isinstance(data, dict):
                     print(
                         f"[ASSET_NAME_MAPPING] 로드 실패: 최상위 값이 객체가 아님 "
-                        f"path={NAME_MAPPING_FILE}, type={type(data).__name__}"
+                        f"path={mapping_file}, type={type(data).__name__}"
                     )
                     return {}
                 return data
             except Exception as e:
-                print(f"[ASSET_NAME_MAPPING] 로드 실패: path={NAME_MAPPING_FILE}, error={e}")
+                print(f"[ASSET_NAME_MAPPING] 로드 실패: path={mapping_file}, error={e}")
                 traceback.print_exc()
         else:
-            print(f"[ASSET_NAME_MAPPING] 매핑 파일 없음, 빈 규칙 사용: {NAME_MAPPING_FILE}")
+            print(f"[ASSET_NAME_MAPPING] 매핑 파일 없음, 빈 규칙 사용: {mapping_file}")
         return {}
 
     def _save_name_mapping(self, data: dict):
+        mapping_file = self.name_mapping_file
         if not isinstance(data, dict):
             print(f"[ASSET_NAME_MAPPING] 저장 거부: data type={type(data).__name__}")
             raise ValueError("이름 치환 데이터는 JSON 객체여야 합니다.")
         try:
-            os.makedirs(os.path.dirname(NAME_MAPPING_FILE), exist_ok=True)
+            os.makedirs(os.path.dirname(mapping_file), exist_ok=True)
         except Exception as e:
             print(
                 f"[ASSET_NAME_MAPPING] 저장 폴더 생성 실패: "
-                f"path={os.path.dirname(NAME_MAPPING_FILE)}, error={e}"
+                f"path={os.path.dirname(mapping_file)}, error={e}"
             )
             traceback.print_exc()
             raise
-        if os.path.isfile(NAME_MAPPING_FILE):
+        if os.path.isfile(mapping_file):
             try:
                 os.makedirs(NAME_MAPPING_BACKUP_DIR, exist_ok=True)
                 stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -3733,22 +3795,22 @@ class AssetMode:
                     NAME_MAPPING_BACKUP_DIR,
                     f"name_mapping_{stamp}_{suffix}.json",
                 )
-                shutil.copy2(NAME_MAPPING_FILE, backup_path)
+                shutil.copy2(mapping_file, backup_path)
                 print(f"[ASSET_NAME_MAPPING] 저장 전 백업 완료: {backup_path}")
             except Exception as e:
                 print(
                     f"[ASSET_NAME_MAPPING] 저장 중단: 백업 실패 "
-                    f"source={NAME_MAPPING_FILE}, error={e}"
+                    f"source={mapping_file}, error={e}"
                 )
                 traceback.print_exc()
                 raise RuntimeError("기존 이름 치환 파일 백업에 실패하여 저장을 중단했습니다.") from e
-        temp_path = f"{NAME_MAPPING_FILE}.{uuid.uuid4().hex}.tmp"
+        temp_path = f"{mapping_file}.{uuid.uuid4().hex}.tmp"
         try:
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(temp_path, NAME_MAPPING_FILE)
+            os.replace(temp_path, mapping_file)
         except Exception as e:
-            print(f"[ASSET_NAME_MAPPING] UTF-8 저장 실패: path={NAME_MAPPING_FILE}, error={e}")
+            print(f"[ASSET_NAME_MAPPING] UTF-8 저장 실패: path={mapping_file}, error={e}")
             traceback.print_exc()
             if os.path.isfile(temp_path):
                 try:
@@ -3761,11 +3823,11 @@ class AssetMode:
                     )
                     traceback.print_exc()
             raise
-        print(f"[ASSET_NAME_MAPPING] UTF-8 저장 완료: {NAME_MAPPING_FILE}")
+        print(f"[ASSET_NAME_MAPPING] UTF-8 저장 완료: {mapping_file}")
 
     def get_character_export_info(self, character: str) -> dict:
         """캐릭터 폴더에서 실제 복장/표정 목록을 스캔하여 이름 치환 규칙과 함께 반환."""
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         outfits = set()
         expressions = set()
         if os.path.isdir(char_dir):
@@ -3895,7 +3957,7 @@ class AssetMode:
             errors.append(self._export_issue("missing_character", "캐릭터 이름이 비어 있습니다."))
             return {"success": False, "errors": errors, "warnings": warnings, "files": files, "file_count": 0}
 
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
             print(f"[ASSET_EXPORT_VALIDATE] 캐릭터 폴더 없음: {char_dir}")
             errors.append(self._export_issue(
@@ -5306,7 +5368,7 @@ class AssetMode:
         """캐릭터/복장 경로에서 표정 프로필 폴더 상태를 스캔.
         tags.json의 표정 목록과 실제 폴더를 비교하여 상태 반환."""
         expr_list = self.list_expressions()
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         outfit_dir = os.path.join(char_dir, self._safe_dirname(outfit))
         results = []
         for expr_name in expr_list:
@@ -5346,7 +5408,7 @@ class AssetMode:
         expressions가 None이면 tags.json의 모든 표정에 대해 생성."""
         if expressions is None:
             expressions = self.list_expressions()
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         outfit_dir = os.path.join(char_dir, self._safe_dirname(outfit))
         created = []
         skipped = []
@@ -5362,10 +5424,10 @@ class AssetMode:
     # ─── 프리셋매니징: hidden_tags I/O ──────────────────────
     def load_hidden_tags(self):
         """hidden_tags.json 로드"""
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-        if os.path.isfile(HIDDEN_TAGS_FILE):
+        os.makedirs(self.asset_data_dir, exist_ok=True)
+        if os.path.isfile(self.hidden_tags_file):
             try:
-                with open(HIDDEN_TAGS_FILE, "r", encoding="utf-8") as f:
+                with open(self.hidden_tags_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 print(f"[ASSET_MODE] hidden_tags 로드 실패: {e}")
@@ -5374,7 +5436,7 @@ class AssetMode:
 
     def save_hidden_tags(self, data: dict):
         """hidden_tags.json 저장"""
-        write_json_atomic(Path(HIDDEN_TAGS_FILE), data)
+        write_json_atomic(Path(self.hidden_tags_file), data)
 
     def get_hidden_tags(self) -> dict:
         """프리셋매니징용: hidden_tags + 활성 tags 병합 반환"""

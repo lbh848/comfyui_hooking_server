@@ -1,15 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "../../frontend/static/asset_prompt.js";
-import type { AssetRecord } from "../../frontend/static/asset_prompt";
+import type { AssetCapabilities, AssetRecord } from "../../frontend/static/asset_prompt";
 import { assetReferenceSettings } from "./referenceSettings";
 import type { MaskBox } from "./assetMaskRequest";
-export type { AssetRecord };
-export const assetWorkflowTypes = { anima_only: "ANIMA", anima_ilxl: "ANIMA+ILXL" };
-export const assetWorkflowPaths: Record<string, string> = { anima_only: "anima_only_asset_workflow_source_path", anima_ilxl: "anima_asset_workflow_source_path" };
+export type { AssetCapabilities, AssetRecord };
+export const assetWorkflowTypes = { anima_only: "ANIMA", anima_ilxl: "ANIMA+ILXL", moss: "MOSS" };
+export const assetWorkflowPaths: Record<string, string> = {
+  anima_only: "anima_only_asset_workflow_source_path",
+  anima_ilxl: "anima_asset_workflow_source_path",
+  moss: "moss_asset_workflow_source_path",
+};
 export const CHARACTER_UPLOAD_OUTFIT = "참고복장";
 export const CHARACTER_UPLOAD_EXPRESSION = "참고표정";
 export const assetCapabilities = ComfyAssetPrompt.getAssetWorkflowCapabilities;
 export const getAssetPresetValues = ComfyAssetPrompt.getAssetPresetValues;
+export function assetPresetFieldVisible(model: string, capabilities: AssetCapabilities): boolean {
+  if (!model) return true;
+  if (model === "anima") return capabilities.anima || capabilities.moss;
+  return !!capabilities[model as keyof AssetCapabilities];
+}
+export function assetPresetFieldLabel(key: string, defaultLabel: string, capabilities: AssetCapabilities): string {
+  if (capabilities.moss) {
+    if (key === "anima_artist_preset" || key === "raw_anima_artist_tags") return "MOSS 아티스트";
+    if (key === "anima_quality_preset" || key === "raw_anima_quality_tags") return "MOSS 품질";
+    if (key === "anima_negative_preset" || key === "raw_anima_negative_tags") return "MOSS 부정";
+  }
+  return defaultLabel;
+}
 export type AssetSettingsSection = "style" | "character";
 export const assetPresetFields = [
   ["appearance", "외모", "appearances", "raw_appearance_tags", "", "character"],
@@ -34,7 +51,7 @@ export function copyAssetSettings(slot: AssetRecord, section: AssetSettingsSecti
   return structuredClone(Object.fromEntries(keys.map(key => [key, slot[key]])));
 }
 // Model selection is shared by the workroom and batches, never stored in a style.
-const assetStyleValueKeys = ["img_w", "img_h", "seed", "hrf_anima", "hrf_sdxl", "hrf_size", "hrf_restore_size",
+const assetStyleValueKeys = ["img_w", "img_h", "seed", "hrf_anima", "hrf_sdxl", "hrf_moss", "hrf_size", "hrf_restore_size",
   "mask_area_limit_enabled", "mask_box",
   "anima_fd_enabled", "anima_hd_enabled", "anima_ed_enabled", "sdxl_fd_enabled", "sdxl_hd_enabled", "sdxl_ed_enabled", "style_lora_enabled", "style_lora_list"];
 export function copyAssetStyleSettings(defaults: AssetRecord, slot: AssetRecord) {
@@ -179,7 +196,8 @@ export function newAssetSlot(value: AssetRecord = {}): AssetRecord {
     face_crop_top: 2.5, face_crop_bottom: 1, snapref_strength: 0, snapref_mode: "char", snapref_megapixels: 1,
     ref_strength: 0.55, style_ref_strength: 0.55, lora_list: [], face_lora_list: [], style_lora_list: [],
     ref_images: [], style_ref_images: [], snapref_images: [], snapref_face_images: [], snapref_secondary_images: [], ...value,
-    asset_workflow_type: value.asset_workflow_type === "anima_ilxl" || value.asset_workflow_type === "anima" ? "anima_ilxl" : "anima_only",
+    asset_workflow_type: value.asset_workflow_type === "anima_ilxl" || value.asset_workflow_type === "anima"
+      ? "anima_ilxl" : value.asset_workflow_type === "moss" ? "moss" : "anima_only",
     ref_enabled: false, style_ref_enabled: false, pose_enabled: false, hrf_control_net: false, _id: crypto.randomUUID(),
   };
 }

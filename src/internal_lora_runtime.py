@@ -23,6 +23,7 @@ from illustration_model_presets import IllustrationModelPresets
 from settings_internal_lora import allowed_path
 from settings_illustration import allowed_illustration_path, register_illustration_config
 from settings_assets import allowed_asset_path, register_asset_runtime
+from settings_bg_assets import allowed_bg_asset_path, register_bg_asset_runtime
 from settings_illustration_prepare import register_data_preparation
 from comfy_runtime import request_comfy_memory_cleanup
 from external_connection import allowed_external_path, allowed_external_control, register_external_connection_control
@@ -76,14 +77,15 @@ def main() -> None:
             raise web.HTTPForbidden()
         illustration = allowed_illustration_path(request.path, request.method)
         asset = allowed_asset_path(request.path, request.method)
+        bg_asset = allowed_bg_asset_path(request.path, request.method)
         external = allowed_external_path(request.path, request.method)
         control = allowed_external_control(request.path, request.method)
-        if not allowed_path(request.path) and not illustration and not asset and not external and not control:
+        if not allowed_path(request.path) and not illustration and not asset and not bg_asset and not external and not control:
             raise web.HTTPNotFound()
         # Image storage uses only the scoped bot directory and preflight data.
         # Avoid reloading generation settings and API keys for every image.
         image_storage = request.path in {"/api/bot_mode/upload", "/api/bot_mode/upload_preflight"}
-        if not image_storage and (request.method == "POST" or illustration or asset or external):
+        if not image_storage and (request.method == "POST" or illustration or asset or bg_asset or external):
             refresh_config()
         if request.method == "POST" and not image_storage:
             server._load_llm_keys_into_config()
@@ -192,6 +194,7 @@ def main() -> None:
     server.app.on_startup.append(startup)
     register_illustration_config(server)
     register_asset_runtime(server)
+    register_bg_asset_runtime(server)
     register_data_preparation(server, memory_cleanup=cleanup_preparation_memory)
     from settings_illustration_regeneration import (
         register_character_image_regeneration,

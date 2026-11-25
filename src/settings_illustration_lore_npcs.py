@@ -7,7 +7,9 @@ from aiohttp import web
 
 from modes import illustration_context_pipeline as pipeline
 from modes.bot_mode import bot_scope
-from modes.character_lore import format_character_lore, generate_lore_npc_cards, normalize_character_lore
+from modes.character_lore import (
+    classify_lore_images, format_character_lore, generate_lore_npc_cards, normalize_character_lore,
+)
 from modes.illustration_npc import generate_cards, parse_candidates
 from settings_illustration_prepare import prepare_npc_representative
 from settings_illustration_regeneration import render_character_image
@@ -57,6 +59,9 @@ def register_lore_npcs(server):
                     batch_chars=body.get("batch_chars", 20000), toggles=snapshot["illustration_context_toggles"],
                     workshop=workshop)
                 return web.json_response({"candidates": [], **analysis})
+            if request.path.endswith("/classify_images"):
+                classified = await run(body, classify_lore_images, body, bot)
+                return web.json_response({"groups": [], **classified})
 
             entries = normalize_character_lore(body.get("entries"))
             if not entries:
@@ -111,6 +116,7 @@ def register_lore_npcs(server):
 
     server.app.router.add_post("/api/bot_mode/lore_npcs/analyze", handle)
     server.app.router.add_post("/api/bot_mode/lore_npcs/generate", handle)
+    server.app.router.add_post("/api/bot_mode/lore_npcs/classify_images", handle)
     server.app.router.add_post("/api/bot_mode/lore_npcs/register", handle)
     server.app.router.add_post("/api/bot_mode/lore_npcs/create", handle)
     # Cancellation must reach the running task while its bot write lock is held.

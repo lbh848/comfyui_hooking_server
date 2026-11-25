@@ -1,6 +1,7 @@
 """Filename-indexed candidates and routed vision representative selection."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -169,19 +170,7 @@ def checked_row(data, directory, body):
     return row
 
 
-async def select_candidate(group: dict, directory: Path, *, prompt: str = "", metadata: dict | None = None, metadata_sink: dict | None = None) -> dict:
-    candidates = group["candidates"]
-    if not candidates:
-        raise ValueError("대표 이미지 후보가 없습니다.")
-    if group.get("fallback_first"):
-        return {"filename": candidates[0]["filename"], "reason": "검색 색인에 맞는 후보가 없어 첫 번째 이미지를 선택했습니다.", "automatic_first": True}
-    if len(candidates) > 16:
-        raise ValueError("한 프로필의 후보는 최대 16장입니다. 검색 색인을 좁혀 주세요.")
-    if len(candidates) == 1:
-        return {"filename": candidates[0]["filename"], "reason": "후보가 한 장이므로 해당 이미지를 선택했습니다.", "automatic_single": True}
-    from modes.llm_service import callLLMVisionTask, create_llm_execution_context
-    from modes.llm_prompt_edit import parse_llm_json
-
+def _build_comparison_sheet(candidates: list[dict], directory: Path) -> bytes:
     # The local Gemma workflow accepts one image. A labelled comparison sheet
     # keeps every candidate visible in the same inference, including on fallback.
     from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -190,9 +179,10 @@ async def select_candidate(group: dict, directory: Path, *, prompt: str = "", me
     sheet = Image.new("RGB", (columns * width, ((len(candidates) + columns - 1) // columns) * (height + header)), "#e8e8e8")
     draw = ImageDraw.Draw(sheet)
     font = ImageFont.load_default(size=24)
+    resolved_dir = directory.resolve()
     for index, candidate in enumerate(candidates, start=1):
         path = directory / candidate["filename"]
-        if path.resolve().parent != directory.resolve():
+        if path.resolve().parent != resolved_dir:
             raise ValueError("후보 이미지 경로가 올바르지 않습니다.")
         left, top = ((index - 1) % columns) * width, ((index - 1) // columns) * (height + header)
         with Image.open(path) as original:
@@ -204,6 +194,24 @@ async def select_candidate(group: dict, directory: Path, *, prompt: str = "", me
         draw.text((left + 12, top + 6), f"Candidate {index}", font=font, fill="black")
     encoded = BytesIO()
     sheet.save(encoded, format="PNG")
+    return encoded.getvalue()
+
+
+async def select_candidate(group: dict, directory: Path, *, prompt: str = "", metadata: dict | None = None, metadata_sink: dict | None = None) -> dict:
+    candidates = group["candidates"]
+    if not candidates:
+        raise ValueError("대표 이미지 후보가 없습니다.")
+    if group.get("fallback_first"):
+        return {"filename": candidates[0]["filename"], "reason": "검색 색인에 맞는 후보가 없어 첫 번째 이미지를 선택했습니다.", "automatic_first": True}
+    if len(candidates) > 16:
+        raise ValueError("한 프로필의 후보는 최대 16장입니다. 검색 색인을 좁혀 주세요.")
+    if len(candidates) == 1:
+        return {"filename": candidates[0]["filename"], "reason": "후보가 한 장이므로 해당 이미지를 선택했습니다.", "automatic_single": True}
+    from modes.lighbd_service import call_logged_llm_vision_task
+    from modes.llm_service import create_llm_execution_context
+    from modes.llm_prompt_edit import parse_llm_json
+
+    sheet_bytes = await asyncio.to_thread(_build_comparison_sheet, candidates, directory)
     accepted = {}
 
     def validate(raw):
@@ -222,9 +230,14 @@ async def select_candidate(group: dict, directory: Path, *, prompt: str = "", me
 
     messages = [{"role": "system", "content": prompt.strip() or PROMPT_PATH.read_text(encoding="utf-8")},
                 {"role": "user", "content": f"The comparison sheet contains {len(candidates)} separate candidate images of the same character appearance and outfit. Compare the numbered panels, then select exactly one representative. Candidate numbers refer to the labels above the panels. Return only the requested JSON."}]
-    context = create_llm_execution_context(TASK_KEY, call_name="자동 대표 설정", json_mode=True,
+    character = str((metadata or {}).get("character") or "").strip()
+    call_name = f"자동 대표 설정 · {character}" if character else "자동 대표 설정"
+    context = create_llm_execution_context(TASK_KEY, call_name=call_name, json_mode=True,
                                           metadata={**(metadata or {}), "profile_key": group["key"], "candidate_count": len(candidates), "vision_image_count": 1})
-    raw = await callLLMVisionTask(TASK_KEY, messages, image_bytes=encoded.getvalue(), json_mode=True, result_validator=validate, execution_context=context, metadata_sink=metadata_sink)
+    execution_result = await call_logged_llm_vision_task(
+        context, messages, image_bytes=sheet_bytes, result_validator=validate, metadata_sink=metadata_sink,
+    )
+    raw = execution_result.to_legacy()
     valid, error = validate(raw)
     if not valid:
         raise ValueError(f"대표 이미지 선택 실패: {raw or error}")

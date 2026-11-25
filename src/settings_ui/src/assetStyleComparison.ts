@@ -1,10 +1,10 @@
-import { applyAssetStyleSettings, assetCapabilities, assetModelPreset, assetPresetFields, copyAssetStyleSettings, getAssetPresetValues, newAssetSlot, type AssetRecord } from "./asset";
+import { applyAssetStyleSettings, assetCapabilities, assetModelPreset, assetPresetFieldVisible, assetPresetFields, copyAssetStyleSettings, getAssetPresetValues, newAssetSlot, type AssetRecord } from "./asset";
 
 export const assetStyleLabels: Record<string, string> = {
   ...Object.fromEntries(assetPresetFields.filter(field => field[5] === "style").flatMap(([key, label, , raw]) => [[key, `${label} 프리셋`], [raw, `${label} 태그`]])),
   img_w: "이미지 너비", img_h: "이미지 높이", seed: "시드",
   mask_area_limit_enabled: "마스크 영역 제한", mask_box: "마스크 위치와 크기",
-  hrf_anima: "ANIMA 고해상도 보정", hrf_sdxl: "ILXL 고해상도 보정", hrf_size: "확대 배율", hrf_restore_size: "원본 크기 복원",
+  hrf_anima: "ANIMA 고해상도 보정", hrf_sdxl: "ILXL 고해상도 보정", hrf_moss: "MOSS 고해상도 보정", hrf_size: "확대 배율", hrf_restore_size: "원본 크기 복원",
   anima_fd_enabled: "ANIMA 얼굴 보정", anima_hd_enabled: "ANIMA 손 보정", anima_ed_enabled: "ANIMA 눈 보정",
   sdxl_fd_enabled: "ILXL 얼굴 보정", sdxl_hd_enabled: "ILXL 손 보정", sdxl_ed_enabled: "ILXL 눈 보정",
   style_lora_enabled: "스타일 LoRA 사용", style_lora_list: "스타일 LoRA",
@@ -59,7 +59,7 @@ export function compareAssetStyleGeneration(defaults: AssetRecord, slot: AssetRe
     rows.push({ key, before, after, changed: displayStyleValue(before) !== displayStyleValue(after) });
   }
   for (const [key, , category, raw, model, section] of assetPresetFields) {
-    if (section !== "style" || model && !capabilities[model]) continue;
+    if (section !== "style" || !assetPresetFieldVisible(model, capabilities)) continue;
     const values = getAssetPresetValues(tags, category);
     add(raw, defaults[raw] ?? values[defaults[key]] ?? [], current[raw] ?? values[current[key]] ?? []);
   }
@@ -70,9 +70,10 @@ export function compareAssetStyleGeneration(defaults: AssetRecord, slot: AssetRe
     if (assetPresetFields.some(field => field[0] === key || field[3] === key)) continue;
     if ((key.startsWith("anima_") || key === "hrf_anima") && !capabilities.anima) continue;
     if ((key.startsWith("sdxl_") || key === "hrf_sdxl") && !capabilities.ilxl) continue;
+    if (key === "hrf_moss" && !capabilities.moss) continue;
     if (key === "seed" && !capabilities.seed) continue;
     if ((key === "hrf_size" || key === "hrf_restore_size") && ![baseline, current].some(value =>
-      capabilities.anima && value.hrf_anima || capabilities.ilxl && value.hrf_sdxl)) continue;
+      capabilities.anima && value.hrf_anima || capabilities.ilxl && value.hrf_sdxl || capabilities.moss && value.hrf_moss)) continue;
     if (key === "style_lora_list" && !baseline.style_lora_enabled && !current.style_lora_enabled) continue;
     const value = (source: AssetRecord) => {
       if (key.startsWith("hrf_") && key !== "hrf_size" || key.endsWith("_enabled")) return !!source[key];

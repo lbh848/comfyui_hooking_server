@@ -530,6 +530,73 @@
           "style_lora_list": []
         }
       }
+    },
+    {
+      "id": "asset-style-moss",
+      "name": "공방-MOSS용",
+      "settings": {
+        "defaults": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "",
+          "raw_anima_quality_tags": [],
+          "anima_negative_preset": "",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text",
+            "bad anatomy",
+            "extra limbs",
+            "deformed"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": [],
+          "background_preset": "공방-화이트 백그라운드",
+          "raw_background_tags": [
+            "simple background",
+            "white background"
+          ]
+        },
+        "values": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "",
+          "raw_anima_quality_tags": [],
+          "anima_negative_preset": "",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text",
+            "bad anatomy",
+            "extra limbs",
+            "deformed"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": [],
+          "background_preset": "공방-화이트 백그라운드",
+          "raw_background_tags": [
+            "simple background",
+            "white background"
+          ],
+          "asset_model_preset_id": "asset-moss-8step",
+          "asset_workflow_type": "moss",
+          "img_w": 704,
+          "img_h": 1024,
+          "seed": -1,
+          "mask_area_limit_enabled": false,
+          "style_lora_list": []
+        }
+      }
     }
   ]
 }

@@ -22,7 +22,56 @@ export type AssetExportBatchPlan = {
   success: boolean; character_count: number; file_count: number;
   characters: (AssetExportPlan & { character: string })[];
 };
+export type AssetExpressionMappingSummary = {
+  filled: number;
+  total: number;
+  extraFilled: number;
+  totalFilled: number;
+  samples: [string, string][];
+};
+export type AssetExpressionBatchTarget = {
+  expressionMapping: Record<string, string>;
+  changedCount: number;
+  beforeFilled: number;
+  afterFilled: number;
+  total: number;
+};
 const isRecord = (value: unknown): value is AssetRecord => !!value && typeof value === "object" && !Array.isArray(value);
+const invalidExportTokenPattern = /[<>:"/\\|?*\x00-\x1f]/;
+const windowsReservedNames = new Set([
+  "CON", "PRN", "AUX", "NUL",
+  ...Array.from({ length: 9 }, (_, index) => `COM${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `LPT${index + 1}`),
+]);
+
+function validateExportToken(value: string, label: string): string {
+  if (value !== value.trim()) return `${label} 치환값 '${value}'의 앞뒤 공백을 제거하세요.`;
+  if (/[. ]$/.test(value)) return `${label} 치환값 '${value}'은(는) 점이나 공백으로 끝날 수 없습니다.`;
+  if (value === "." || value === ".." || invalidExportTokenPattern.test(value)) {
+    return `${label} 치환값 '${value}'에 파일명으로 사용할 수 없는 문자가 있습니다. 금지 문자: < > : " / \\ | ? *`;
+  }
+  const stem = value.split(".", 1)[0].toUpperCase();
+  if (windowsReservedNames.has(stem)) return `${label} 치환값 '${value}'은(는) Windows 예약 이름이라 사용할 수 없습니다.`;
+  return "";
+}
+
+export function getNameMappingSaveError(mapping: AssetNameMapping): string {
+  if (!Object.values(mapping.naming_enabled).some(Boolean)) {
+    return "캐릭터·복장·표정 파일명 블록을 하나 이상 켜야 합니다.";
+  }
+  if (mapping.export_name) {
+    const error = validateExportToken(mapping.export_name, "캐릭터 이름");
+    if (error) return error;
+  }
+  for (const [category, label] of [["outfit_mapping", "복장"], ["expression_mapping", "표정"]] as const) {
+    for (const [original, mapped] of Object.entries(mapping[category])) {
+      if (!mapped) continue;
+      const error = validateExportToken(mapped, `${label} '${original}'`);
+      if (error) return error;
+    }
+  }
+  return "";
+}
 
 // The portable rule file uses the same fields as the original name-mapping dialog.
 export function assetNameMapping(value: unknown, previous?: AssetNameMapping): AssetNameMapping {
@@ -58,6 +107,64 @@ export async function validateAssetExport(character: string, mapping: AssetNameM
 export async function validateAssetExportBatch(characters: AssetExportCharacter[]): Promise<AssetExportBatchPlan> {
   const response = await assetResponse("asset/export/validate", { characters }, undefined, "POST", [409]);
   return response.json();
+}
+
+export function summarizeExpressionMapping(
+  expressions: string[],
+  expressionMapping: Record<string, string>,
+): AssetExpressionMappingSummary {
+  const selected = new Set(expressions);
+  const selectedSamples: [string, string][] = [];
+  for (const expression of expressions) {
+    const mapped = expressionMapping[expression];
+    if (typeof mapped === "string" && mapped.trim()) selectedSamples.push([expression, mapped.trim()]);
+  }
+  const extraSamples: [string, string][] = [];
+  for (const [expression, mapped] of Object.entries(expressionMapping)) {
+    if (!selected.has(expression) && typeof mapped === "string" && mapped.trim()) {
+      extraSamples.push([expression, mapped.trim()]);
+    }
+  }
+  const filled = selectedSamples.length;
+  const extraFilled = extraSamples.length;
+  return {
+    filled,
+    total: expressions.length,
+    extraFilled,
+    totalFilled: filled + extraFilled,
+    samples: (selectedSamples.length ? selectedSamples : extraSamples).slice(0, 3),
+  };
+}
+
+export function applyExpressionMappingBatch(
+  sourceMapping: Record<string, string>,
+  targetExpressions: string[],
+  targetMapping: Record<string, string>,
+): AssetExpressionBatchTarget {
+  const expressionMapping = { ...targetMapping };
+  let changedCount = 0;
+  let beforeFilled = 0;
+  let afterFilled = 0;
+  for (const expression of targetExpressions) {
+    const previous = typeof targetMapping[expression] === "string" ? targetMapping[expression] : "";
+    if (previous.trim()) beforeFilled += 1;
+    const candidate = sourceMapping[expression];
+    if (typeof candidate === "string" && candidate.trim()) {
+      if (previous !== candidate) {
+        expressionMapping[expression] = candidate;
+        changedCount += 1;
+      }
+    }
+    const next = typeof expressionMapping[expression] === "string" ? expressionMapping[expression] : "";
+    if (next.trim()) afterFilled += 1;
+  }
+  return {
+    expressionMapping,
+    changedCount,
+    beforeFilled,
+    afterFilled,
+    total: targetExpressions.length,
+  };
 }
 
 export function downloadAssetExport(blob: Blob, filename: string) {

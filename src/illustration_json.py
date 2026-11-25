@@ -19,11 +19,19 @@ import workflow_profiles
 
 from illustration_reference_assets import REFERENCE_REFS, reference_stage_delivery
 from modes.prompt_path_normalizer import _CONTROL_BLOCK_HEADER_RE, _normalize_payload_paths
+from style_ref_storage import (
+    STYLE_REF_KEY,
+    default_style_ref,
+    embed_style_ref_images,
+    enabled_style_ref,
+    normalize_style_ref,
+    validate_style_ref,
+)
 
 SCHEMA = "soya.illustration.v2"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 JSON_FIELDS = {"CACHE_PATH", "FACE_ID_DIR", "LORA_DATA", "FACE_LORA_DATA",
-               "STYLE_LORA_DATA", "CHAR_FACE_TAG_INFORM", "MULTI_CHAR", "SNAPREF"}
+               "STYLE_LORA_DATA", "STYLE_REF", "CHAR_FACE_TAG_INFORM", "MULTI_CHAR", "SNAPREF"}
 JSON_FIELDS.update({"ANIMA_FIRST_SAMPLER", "ANIMA_HIRESFIX", "ILXL_HIRESFIX"} | {
     f"{model}_{stage}_DETAILER" for model in ("ANIMA", "ILXL") for stage in ("FACE", "HAND", "EYE")
 })
@@ -444,13 +452,15 @@ def enabled_lora_list(value) -> list[dict]:
 
 
 def enabled_lora_fields(fields: dict) -> dict:
-    """Copy preset fields with switched-off LoRAs removed for generation."""
+    """Copy preset fields with switched-off LoRAs and style references removed for generation."""
     fields = copy.deepcopy(fields)
     if not isinstance(fields, dict):
         return fields
     for key, value in fields.items():
         if _is_lora_data_key(key) and isinstance(value, dict) and isinstance(value.get("list"), list):
             value["list"] = enabled_lora_list(value)
+        elif key == STYLE_REF_KEY and isinstance(value, dict):
+            fields[key] = enabled_style_ref(value)
     return fields
 
 
@@ -567,6 +577,8 @@ def workflow_json_defaults(workflow: dict) -> dict:
         payload = json.loads(source)
         if is_moss_document(payload) or "ANIMA_FIRST_SAMPLER" in keys:
             result["workflow.sequential_offload"] = read_prompt_path(payload, "workflow.sequential_offload") is True
+        if not is_moss_document(payload) and "ANIMA_FIRST_SAMPLER" in keys:
+            result[STYLE_REF_KEY] = normalize_style_ref(read_prompt_path(payload, STYLE_REF_KEY))
         for key, value_type in keys.items():
             settings = read_prompt_path(payload, key, model_fallbacks.get(source_id, {}).get(key))
             if key == "workflow.clip_device":
@@ -612,6 +624,9 @@ def validate_workflow_json_settings(fields: dict, defaults: dict) -> None:
         if isinstance(defaults[key], bool):
             if not isinstance(value, bool):
                 raise ValueError(f"{key}: 켜기 또는 끄기를 선택하세요.")
+            continue
+        if key == STYLE_REF_KEY:
+            validate_style_ref(value)
             continue
         if _is_lora_data_key(key):
             if not isinstance(value, dict) or set(value) != {"list"} or not isinstance(value["list"], list):
@@ -695,6 +710,11 @@ def update_workflow_json_settings(workflow: dict, fields: dict) -> dict:
             for key in ("workflow.clip", "workflow.clip_device", "workflow.sequential_offload"):
                 if key in defaults:
                     fields.setdefault(key, defaults[key])
+            if STYLE_REF_KEY in defaults:
+                if STYLE_REF_KEY not in fields:
+                    fields[STYLE_REF_KEY] = copy.deepcopy(defaults[STYLE_REF_KEY])
+                elif isinstance(fields[STYLE_REF_KEY], dict):
+                    fields[STYLE_REF_KEY] = normalize_style_ref(fields[STYLE_REF_KEY])
     validate_workflow_json_settings(fields, defaults)
     result = copy.deepcopy(workflow)
     _apply_basic_sampling_controls(result, fields.get("ANIMA_FIRST_SAMPLER", {}))
@@ -1143,6 +1163,27 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
     if saved_sampling is not None and not isinstance(saved_sampling, dict):
         raise ValueError("MOSS sampling settings must be an object")
     sampling = {**workflow_defaults.get("workflow.sampling", {}), **(saved_sampling or {})}
+    saved_hiresfix = workflow.get("hiresfix")
+    if saved_hiresfix is not None and not isinstance(saved_hiresfix, dict):
+        raise ValueError("MOSS hiresfix settings must be an object")
+    hiresfix = None
+    if isinstance(saved_hiresfix, dict):
+        default_hrf_sampling = workflow_defaults.get("workflow.hiresfix.sampling")
+        if not isinstance(default_hrf_sampling, dict):
+            default_hrf_sampling = {}
+        saved_hrf_sampling = saved_hiresfix.get("sampling")
+        if saved_hrf_sampling is not None and not isinstance(saved_hrf_sampling, dict):
+            raise ValueError("MOSS hiresfix sampling settings must be an object")
+        hrf_sampling = {**default_hrf_sampling, **(saved_hrf_sampling or {})}
+        if not hrf_sampling and sampling:
+            hrf_sampling = {**sampling, "denoise": 0.25}
+        activate = bool(saved_hiresfix.get("activate"))
+        hiresfix = {
+            "activate": activate,
+            "scale_by": float(saved_hiresfix.get("scale_by", 1.0)) if activate else 1.0,
+            "restore_size": bool(saved_hiresfix.get("restore_size", False)) if activate else False,
+            "sampling": hrf_sampling,
+        }
     model = workflow.get("model") or workflow_defaults.get("workflow.model", "")
     controller = build_controller(
         model=model,
@@ -1157,6 +1198,7 @@ def _moss_regeneration(document: dict, negative: str, workflow_defaults: dict,
         lora_filter=saved_loras.get("filter", ""),
         clip_device=workflow.get("clip_device") or workflow_defaults.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
         sequential_offload=workflow.get("sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
+        hiresfix=hiresfix,
     )
     rebuilt = MossPromptBuilder.build(moss, controller)
     # A replay keeps the source captured with the original request, but the
@@ -1183,7 +1225,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
     """Emit ``{"moss": ..., "workflow": ...}`` for a MOSS workflow."""
     from modes.moss_prompt_builder import (
         MossNpcPromptBuilder, MossPromptBuilder, add_character_lora_triggers,
-        build_controller, build_moss_layout, merge_lora_lists,
+        build_controller, build_moss_hiresfix, build_moss_layout, merge_lora_lists,
         prune_dropped_character_loras,
     )
     assets = assets if isinstance(assets, dict) else {}
@@ -1231,6 +1273,10 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
     controller_loras = fields.get("workflow.loras")
     controller_loras = controller_loras if isinstance(controller_loras, dict) else {}
     seed_value = int(seed) if seed is not None else int(fields.get("SEED") or 0)
+    hiresfix = build_moss_hiresfix(
+        fields, workflow_defaults, fallback_sampling=sampling,
+        default_size=1.5, default_restore_size=False,
+    )
     controller = build_controller(
         model=model, clip=clip, vae=vae, width=width, height=height,
         batch_size=fields.get("workflow.batch_size") or 1, seed=seed_value,
@@ -1239,6 +1285,7 @@ def _moss_document(fields: dict, negative: str, layout, *, workflow_defaults: di
         lora_filter=controller_loras.get("filter", ""),
         clip_device=fields.get("workflow.clip_device") or workflow_defaults.get("workflow.clip_device") or DEFAULT_CLIP_DEVICE,
         sequential_offload=fields.get("workflow.sequential_offload", workflow_defaults.get("workflow.sequential_offload", False)),
+        hiresfix=hiresfix,
     )
     rebuilt = MossPromptBuilder.build(moss, controller)
     add_character_lora_triggers(rebuilt["moss"], controller["loras"])
@@ -1305,6 +1352,12 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
             if read_prompt_path(payload, key) is None:
                 write_prompt_path(payload, key, copy.deepcopy(defaults))
             continue
+        if key == STYLE_REF_KEY:
+            if positive.lstrip().startswith("{"):
+                fields.setdefault(key, default_style_ref())
+            else:
+                fields[key] = copy.deepcopy(defaults)
+            continue
         if _is_lora_data_key(key):
             if positive.lstrip().startswith("{"):
                 # An already structured request is a complete saved generation.
@@ -1366,6 +1419,10 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
         old_embeddings = fields.pop("FACE_EMBEDDINGS", [])
         image_assets = {entry.get(key) for entry in fields.get("SNAPREF", {}).get("references", [])
                         for key in ("asset", "face_asset", "source_asset", "face_source_asset")}
+        image_assets.update(
+            entry.get("asset") for entry in fields.get(STYLE_REF_KEY, {}).get("references", [])
+            if isinstance(entry, dict)
+        )
         image_assets.add(fields.get("REGION_MASK"))
         for entry in old_embeddings:
             if entry.get("asset") not in image_assets:
@@ -1462,6 +1519,7 @@ def build_illustration_json(positive: str, negative: str, *, input_dir,
                         snapref["references"].append({"CHAR": entry["CHAR"], "asset": embed(second),
                                                       "role": secondary})
     preprocess_reference_images(payload)
+    embed_style_ref_images(payload)
     multi = fields.get("MULTI_CHAR", {})
     if multi.get("enable") and "REGION_MASK" not in fields:
         directory = input_path(mask_location)

@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "bg-asset-style-anima",
+      "name": "공방-배경 애니마용",
+      "settings": {
+        "defaults": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "공방-anima2",
+          "raw_anima_quality_tags": [
+            "score_7",
+            "masterpiece",
+            "best quality"
+          ],
+          "anima_negative_preset": "공방-anima-애니풍",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text",
+            "english text",
+            "letterboxed",
+            "outside border",
+            "white border",
+            "unfinished",
+            "work-in-progress",
+            "construction lines",
+            "monochrome",
+            "greyscale"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": []
+        },
+        "values": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "공방-anima2",
+          "raw_anima_quality_tags": [
+            "score_7",
+            "masterpiece",
+            "best quality"
+          ],
+          "anima_negative_preset": "공방-anima-애니풍",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text",
+            "english text",
+            "letterboxed",
+            "outside border",
+            "white border",
+            "unfinished",
+            "work-in-progress",
+            "construction lines",
+            "monochrome",
+            "greyscale"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": [],
+          "img_w": 1280,
+          "img_h": 720,
+          "seed": -1,
+          "hrf_anima": false,
+          "hrf_sdxl": false,
+          "hrf_size": 2,
+          "hrf_restore_size": true,
+          "style_lora_enabled": false,
+          "style_lora_list": []
+        }
+      }
+    },
+    {
+      "id": "bg-asset-style-moss",
+      "name": "공방-배경 MOSS용",
+      "settings": {
+        "defaults": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "",
+          "raw_anima_quality_tags": [],
+          "anima_negative_preset": "",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": []
+        },
+        "values": {
+          "anima_artist_preset": "공방-빈 아티스트",
+          "raw_anima_artist_tags": [],
+          "anima_quality_preset": "",
+          "raw_anima_quality_tags": [],
+          "anima_negative_preset": "",
+          "raw_anima_negative_tags": [
+            "worst quality",
+            "low quality",
+            "blurry",
+            "jpeg artifacts",
+            "watermark",
+            "signature",
+            "text"
+          ],
+          "raw_artist_tags": [],
+          "raw_quality_tags": [],
+          "raw_negative_tags": [],
+          "img_w": 1280,
+          "img_h": 720,
+          "seed": -1,
+          "hrf_anima": false,
+          "hrf_sdxl": false,
+          "hrf_size": 2,
+          "hrf_restore_size": true,
+          "style_lora_enabled": false,
+          "style_lora_list": []
+        }
+      }
+    }
+  ]
+}

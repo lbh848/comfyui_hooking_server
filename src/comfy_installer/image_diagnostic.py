@@ -988,6 +988,7 @@ def _workflow_binding(
         "anima_ilxl": "anima_asset_workflow_source_path",
         "anima": "anima_asset_workflow_source_path",
         "anima_only": "anima_only_asset_workflow_source_path",
+        "moss": "moss_asset_workflow_source_path",
     }
     binding = mapping.get(workflow_type, "anima_only_asset_workflow_source_path")
     try:

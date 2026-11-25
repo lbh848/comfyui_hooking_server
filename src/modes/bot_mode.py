@@ -1746,9 +1746,11 @@ class BotMode:
                     return await self._bulk_set_main_rep(data, body)
                 elif action == "auto_batch_apply":
                     from modes.bot_auto_batch import checked_row, apply_items
-                    row = checked_row(data, Path(BOT_DIR), body)
+                    row = await asyncio.to_thread(checked_row, data, Path(BOT_DIR), body)
                     items = apply_items(row, body.get("selections"))
-                    return await self._bulk_set_main_rep(data, {**body, "items": items, "mode": "push"})
+                    return await self._bulk_set_main_rep(
+                        data, {**body, "items": items, "mode": "push"}, include_bots=False,
+                    )
                 elif action == "update_eye_prompt":
                     return await self._update_eye_prompt(data, body)
                 elif action == "update_char_loras":
@@ -2234,7 +2236,7 @@ class BotMode:
         print(f"[BOT_MODE] 대표 이미지 순서 변경: {bot_name}/{char_name}/{filename} {direction}")
         return _json_ok({"bots": data["bots"]})
 
-    async def _bulk_set_main_rep(self, data, body):
+    async def _bulk_set_main_rep(self, data, body, *, include_bots: bool = True):
         """캐릭터 카드별 메인 대표 지정과 새 카드 생성을 한 번에 저장한다.
 
         기존 호출의 ``items:[{char_name, filename}]`` 형식은 첫 번째 카드 대상으로
@@ -2469,27 +2471,34 @@ class BotMode:
                         char.pop("rep_images", None)
                 else:
                     store_visual_cards(char, cards)
-            _save_bot_data(data)
-        return _json_ok({
-            "bots": data["bots"],
+            await asyncio.to_thread(_save_bot_data, data)
+        response = {
             "updated": updated,
             "removed": removed,
             "skipped": skipped,
-        })
+        }
+        if include_bots:
+            response["bots"] = data["bots"]
+        return _json_ok(response)
 
     async def handle_auto_batch(self, request):
         from modes.bot_auto_batch import TASK_KEY, preview, checked_row, select_candidate
         try:
             body = await request.json()
-            data = _load_bot_data()
             if body.get("operation", "preview") == "preview":
                 from modes.llm_service import routing_primary_max_concurrency
-                result = preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters"), body.get("exclude_indices"))
+                def _run_preview():
+                    data = _load_bot_data()
+                    return preview(data, str(body.get("bot_name") or ""), Path(BOT_DIR), body.get("indices"), body.get("characters"), body.get("exclude_indices"))
+                result = await asyncio.to_thread(_run_preview)
                 result["max_concurrency"] = routing_primary_max_concurrency(TASK_KEY)
                 return _json_ok(result)
             if body.get("operation") != "select":
                 raise ValueError("자동 대표 설정 작업을 확인하세요.")
-            row = checked_row(data, Path(BOT_DIR), body)
+            def _load_checked_row():
+                data = _load_bot_data()
+                return checked_row(data, Path(BOT_DIR), body)
+            row = await asyncio.to_thread(_load_checked_row)
             group = next((group for group in row["groups"] if group["key"] == body.get("key")), None)
             if group is None:
                 raise ValueError("선택할 프로필을 찾을 수 없습니다.")
@@ -8128,6 +8137,7 @@ DEFAULT_ILLUST_SETTINGS = {
     "hrf_size": 1.5,
     "hrf_restore_size": False,
     "anima_hrf_activate": False,
+    "moss_hrf_activate": False,
     "img_w": 756,
     "img_h": 756,
     # Manga has its own size/seed block: the page size the model picks from its

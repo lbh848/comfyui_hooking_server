@@ -533,6 +533,345 @@
       },
       "id": "46554b2ff97f46ba83e990b8d75e5392",
       "name": "공방-애니마 투명배경"
+    },
+    {
+      "id": "asset-moss-8step",
+      "name": "공방-MOSS-8step",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_8STEP_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "workflow.model": "moss_image_sft_8stepdmd_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 10,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 8,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.6,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset-moss-4step",
+      "name": "공방-MOSS-4step",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_4STEP_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.6,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset-moss-50step",
+      "name": "공방-MOSS 50STEP",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_50STEP_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 50,
+              "cfg": 3,
+              "sampler_name": "euler",
+              "scheduler": "sgm_uniform",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 20,
+              "cfg": 3,
+              "sampler_name": "euler",
+              "scheduler": "sgm_uniform",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.6,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "e5e981ef64e84821844c31ae6f15c1af",
+      "name": "공방-MOSS-4step 8GB",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA_V4.json",
+          "anima_ilxl": "data/comfy/user/default/workflows/배포_공방_에셋_ANIMA+ILXL_V4.json",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_4STEP_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": true,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "flux2-vae_small.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        },
+        "anima_only": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "ANIMA_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 26,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_DIFFUSION_MODEL": "Anima-2.9B-preview-v1.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        },
+        "anima_ilxl": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 32,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "KSampler",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.15
+            },
+            "ILXL_HAND_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ILXL_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ILXL_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "simple",
+              "denoise": 0.1
+            },
+            "ANIMA_FACE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "ANIMA_EYE_DETAILER": {
+              "steps": 16,
+              "cfg": 5,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
+            "ANIMA_DIFFUSION_MODEL": "anima_baseV10.safetensors",
+            "ILXL_CHECKPOINT": "rinAnim8drawIllustrious_v31.safetensors",
+            "STYLE_LORA_DATA": {
+              "list": []
+            }
+          }
+        }
+      }
     }
   ]
 }

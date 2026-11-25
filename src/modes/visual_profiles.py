@@ -9,6 +9,7 @@ ID; there is intentionally no nested outfit axis or separate profile data file.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import os
 import re
 import traceback
@@ -82,7 +83,16 @@ def normalize_tag_entries(values, *, field: str = "tags") -> list[dict]:
     if values is None:
         return []
     if isinstance(values, str):
-        values = [part.strip() for part in values.split(",") if part.strip()]
+        stripped = values.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                decoded = json.loads(stripped)
+            except Exception:
+                decoded = None
+            if isinstance(decoded, list):
+                values = decoded
+        if isinstance(values, str):
+            values = [part.strip() for part in values.split(",") if part.strip()]
     if not isinstance(values, list):
         error = f"{field}는 배열 또는 쉼표 구분 문자열이어야 합니다: {type(values).__name__}"
         print(f"[CHARACTER_CARD] 태그 검증 실패: {error}")

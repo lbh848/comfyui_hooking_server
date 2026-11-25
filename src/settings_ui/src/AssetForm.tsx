@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import "../../frontend/static/bot_batch.js";
-import { ArrowRight, Copy, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowRight, Copy, Plus, Save, Settings2, Trash2 } from "lucide-react";
 import { Modal } from "./components";
 import { TagTextarea } from "./TagTextarea";
 import { SearchableSelect } from "./SearchableSelect";
 import { normalizePresetName, presetRequest, type PresetCatalog } from "./presets";
 import { IllustLoras } from "./IllustLoras";
 import type { Resources } from "./useResources";
-import { assetCapabilities, assetPresetFields, assetRequest, getAssetPresetValues, type AssetRecord, type AssetSettingsSection } from "./asset";
+import { assetCapabilities, assetPresetFieldLabel, assetPresetFieldVisible, assetPresetFields, assetRequest, getAssetPresetValues, type AssetRecord, type AssetSettingsSection } from "./asset";
 import { AssetReferences } from "./AssetReferences";
 import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 import { assetModelPreset, assetStyleMaskBox, assetStyleValues, loadAssetCharacterSettings } from "./asset";
 import { AssetMaskCanvas } from "./AssetMaskCanvas";
 import { AssetGroupedOptions, AssetScopeControls, type AssetScopeAction } from "./AssetScopeControls";
 import { assetBatchSelectValue, assetBatchSkip } from "./assetBatch";
+import { PresetManagementLink } from "./PresetManagementLink";
 
 export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disabled = false, section, mode = "combined", defaults, onApplyDefaults, field, beforeCharacterChange, onCharacterSelect, onBusyChange, stylePresets, characterReadOnly = false, builtinUnlockToken = "", showReferenceOptions = true, showPresetSelectors = true, showTagEditors = true, batchPatch }: {
   slot: AssetRecord; tags: AssetRecord; onChange: (patch: AssetRecord) => void; reloadTags: () => void; inventory: Resources; disabled?: boolean;
@@ -57,9 +58,10 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
   const number = (key: string, label: string, min: number, max: number, step = 1) => <label className="field" key={key}>{label}<input type="number" min={min} max={max} step={step} value={slot[key] ?? ""} onChange={event => onChange({ [key]: event.target.value === "" ? "" : Number(event.target.value) })} /></label>;
   const toggle = (key: string, label: string) => <label className="asset-check" key={key}><input type="checkbox" checked={!!slot[key]} onChange={event => onChange({ [key]: event.target.checked })} />{label}</label>;
   function presetFields(group: AssetSettingsSection) {
-    const fields = assetPresetFields.filter(([key, , , , model, fieldSection]) => shows(key) && fieldSection === group && (!model || capabilities[model]));
+    const fields = assetPresetFields.filter(([key, , , , model, fieldSection]) => shows(key) && fieldSection === group && assetPresetFieldVisible(model, capabilities));
     if (!fields.length) return null;
-    return <div className={`asset-fields${mode !== "combined" ? " asset-preset-fields" : ""}`}>{fields.map(([key, label, category, raw]) => {
+    return <div className={`asset-fields${mode !== "combined" ? " asset-preset-fields" : ""}`}>{fields.map(([key, defaultLabel, category, raw]) => {
+      const label = assetPresetFieldLabel(key, defaultLabel, capabilities);
       const values = getAssetPresetValues(tags, category);
       const value = slot[raw] ?? values[slot[key]] ?? [];
       const text = Array.isArray(value) ? value.join(", ") : String(value);
@@ -80,15 +82,20 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
       return <div className="asset-preset-field" key={key}>
         {mode === "inline" ? <div className="asset-inline-preset-selection">{select}{saveButton}</div> : mode !== "values" && select}
         {mode === "presets" ? <p className="asset-preset-preview">{text || "태그 없음"}</p> : showTagEditors && (mode === "combined" ? <details><summary>태그 편집</summary>{editor}</details> : editor)}
-        {mode === "presets" && onApplyDefaults && <button type="button" className="button asset-send-button" aria-label={`${label} 원본 태그 적용값으로 보내기`}
-          onClick={() => onApplyDefaults({ [key]: slot[key] || "", [raw]: structuredClone(value) })}><span>원본 태그 적용값으로 보내기</span><ArrowRight size={15} aria-hidden="true" /></button>}
+        {mode === "presets" && onApplyDefaults && <div className="asset-send-actions">
+          <PresetManagementLink category={category} className="button secondary asset-preset-manage-link" ariaLabel={`${label} 프리셋 관리`} title={`${label} 프리셋 이름 변경·삭제·숨김은 프리셋 관리에서 할 수 있습니다.`}>
+            <Settings2 size={14} aria-hidden="true" />프리셋 관리
+          </PresetManagementLink>
+          <button type="button" className="button asset-send-button" aria-label={`${label} 원본 태그 적용값으로 보내기`}
+            onClick={() => onApplyDefaults({ [key]: slot[key] || "", [raw]: structuredClone(value) })}><span>원본 태그 적용값으로 보내기</span><ArrowRight size={15} aria-hidden="true" /></button>
+        </div>}
       </div>;
     })}</div>;
   }
   function loras(prefixes: string[]) {
     return prefixes.map(prefix => <div className="asset-options" key={prefix}>
       {toggle(`${prefix}_enabled`, prefix === "lora" ? "캐릭터 LoRA" : prefix === "face_lora" ? "Face LoRA" : "스타일 LoRA")}
-      {slot[`${prefix}_enabled`] && <IllustLoras context="asset" profile={capabilities.type === "anima_only" ? "v3_anima" : capabilities.type === "ilxl" ? "ilxl" : "v3"} character inventory={inventory} value={slot[`${prefix}_list`] || []}
+      {slot[`${prefix}_enabled`] && <IllustLoras context="asset" profile={capabilities.type === "moss" ? "moss" : capabilities.type === "anima_only" ? "v3_anima" : capabilities.type === "ilxl" ? "ilxl" : "v3"} character inventory={inventory} value={slot[`${prefix}_list`] || []}
         onChange={value => onChange({ [`${prefix}_list`]: value.map(item => item.source === "library" ? { ...item, source: "external" } : item) })} />}
     </div>);
   }
@@ -168,8 +175,8 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
               disabled={disabled || busy} onDraw={(_, box) => onChange({ mask_box: box })} /></div>
           </> : <p className="field-help">캐릭터 영역을 그리려면 이미지 너비와 높이를 입력하세요.</p>}
         </div>}
-        <div className="asset-fields">{capabilities.anima && toggle("hrf_anima", "ANIMA 고해상도 보정")}{capabilities.ilxl && toggle("hrf_sdxl", "ILXL 고해상도 보정")}</div>
-        {(slot.hrf_anima || slot.hrf_sdxl) && <div className="asset-fields">{number("hrf_size", "확대 배율", 1, 8, 0.1)}{toggle("hrf_restore_size", "원본 크기 복원")}</div>}
+        <div className="asset-fields">{capabilities.anima && toggle("hrf_anima", "ANIMA 고해상도 보정")}{capabilities.ilxl && toggle("hrf_sdxl", "ILXL 고해상도 보정")}{capabilities.moss && toggle("hrf_moss", "MOSS 고해상도 보정")}</div>
+        {(capabilities.anima && slot.hrf_anima || capabilities.ilxl && slot.hrf_sdxl || capabilities.moss && slot.hrf_moss) && <div className="asset-fields">{number("hrf_size", "확대 배율", 1, 8, 0.1)}{toggle("hrf_restore_size", "원본 크기 복원")}</div>}
         <div className="asset-fields">{[...(capabilities.anima ? ["anima"] : []), ...(capabilities.ilxl ? ["sdxl"] : [])].map(prefix => <div className="asset-options" key={prefix}><strong>{prefix === "anima" ? "ANIMA" : "ILXL"} 디테일러</strong>{toggle(`${prefix}_fd_enabled`, "얼굴 보정")}{toggle(`${prefix}_hd_enabled`, "손 보정")}{toggle(`${prefix}_ed_enabled`, "눈 보정")}</div>)}</div>
       </details>}
       {shows("style_lora") && <details open><summary>스타일 LoRA</summary>{loras(["style_lora"])}</details>}
@@ -195,9 +202,14 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
     {mode !== "values" && <label className="field">{mode !== "inline" && "자연어 프리셋"}<SearchableSelect aria-label="자연어 프리셋" value={assetBatchSelectValue(batchPatch, ["natural_language_preset", "natural_language"], slot.natural_language_preset || "")} onChange={event => onChange(event.target.value === assetBatchSkip ? { natural_language_preset: undefined, natural_language: undefined } : { natural_language_preset: event.target.value, natural_language: tags.natural_language_presets?.[event.target.value] || "" })}>
       {batchPatch && <option value={assetBatchSkip}>적용 안 함</option>}<option value="" disabled hidden>자연어 프리셋 선택</option>{tagOptions(tags.natural_language_presets || {}, "natural_language_presets")}</SearchableSelect></label>}
     <label className="field">{mode !== "inline" && "자연어"}<textarea aria-label="자연어" rows={3} value={slot.natural_language || ""} onChange={event => onChange({ natural_language: event.target.value, natural_language_preset: "" })} /></label>
+    {mode === "presets" && <div className="asset-send-actions">
+      <PresetManagementLink category="natural_language_presets" className="button secondary asset-preset-manage-link" ariaLabel="자연어 프리셋 관리" title="자연어 프리셋 이름 변경·삭제·숨김은 프리셋 관리에서 할 수 있습니다.">
+        <Settings2 size={14} aria-hidden="true" />프리셋 관리
+      </PresetManagementLink>
+    </div>}
     </>}
-    {shows("references") && <details open><summary>참조 이미지</summary>
-      {capabilities.anima && <AssetReferences slot={slot} onChange={onChange} tags={tags} showOptions={showReferenceOptions} batchPatch={batchPatch} />}
+    {shows("references") && capabilities.anima && <details open><summary>참조 이미지</summary>
+      <AssetReferences slot={slot} onChange={onChange} tags={tags} showOptions={showReferenceOptions} batchPatch={batchPatch} />
     </details>}
     {shows("lora") && <details open><summary>캐릭터 LoRA</summary>{loras(["lora"])}</details>}
     {shows("face_lora") && capabilities.faceLora && <details open><summary>Face LoRA</summary>{loras(["face_lora"])}
@@ -220,6 +232,7 @@ export function AssetForm({ slot, tags, onChange, reloadTags, inventory, disable
           </select></label>
           {dialog.scope === "builtin" && <AssetScopeControls unlocked={!!presetUnlockToken} disabled={busy} onAction={presetScopeAction} />}
           <TagTextarea value={dialog.text} onChange={text => setDialog({ ...dialog, text })} disabled={busy} rows={6} label="태그" />
+          <p className="field-help">프리셋 이름 변경·삭제·숨김은 <PresetManagementLink category={dialog.category} className="asset-inline-link" disabled={busy} onNavigate={() => setDialog(null)}>프리셋 관리</PresetManagementLink>에서 할 수 있습니다.</p>
         </>}
         {(characterNameError || error) && <p className="settings-feedback error" role="alert">{characterNameError || error}</p>}<div className="asset-actions"><button type="button" className="button" disabled={busy} onClick={() => setDialog(null)}>취소</button><button className="button primary" disabled={busy || !dialog.name.trim() || !!characterNameError || !dialog.character && dialog.scope === "builtin" && !presetUnlockToken}>{busy ? "저장 중…" : "저장"}</button></div>
       </form>}

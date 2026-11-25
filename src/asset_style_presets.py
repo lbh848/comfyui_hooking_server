@@ -23,7 +23,7 @@ STYLE_RAW_KEYS = {"raw_background_tags"} | {
     for prefix in ("", "anima_") for kind in ("artist", "quality", "negative")
 }
 STYLE_BOOLEAN_KEYS = {
-    "hrf_anima", "hrf_sdxl", "hrf_restore_size", "style_lora_enabled", "mask_area_limit_enabled",
+    "hrf_anima", "hrf_sdxl", "hrf_moss", "hrf_restore_size", "style_lora_enabled", "mask_area_limit_enabled",
     *(f"{model}_{part}_enabled" for model in ("anima", "sdxl") for part in ("fd", "hd", "ed")),
 }
 STYLE_NUMBER_RANGES = {
@@ -65,8 +65,8 @@ def validate_style_settings(settings):
                          and value["x"] + value["width"] <= 1 + 1e-9 and value["y"] + value["height"] <= 1 + 1e-9)
             if not valid:
                 raise ValueError(f"그림체 설정 값을 확인하세요: {key}")
-        if "asset_workflow_type" in slot and slot["asset_workflow_type"] not in {"anima_only", "anima_ilxl"}:
-            raise ValueError("ANIMA 또는 ANIMA+ILXL 그림 모델을 선택하세요.")
+        if "asset_workflow_type" in slot and slot["asset_workflow_type"] not in {"anima_only", "anima_ilxl", "moss"}:
+            raise ValueError("ANIMA, ANIMA+ILXL 또는 MOSS 그림 모델을 선택하세요.")
     json.dumps(settings, allow_nan=False)
     return copy.deepcopy(settings)
 
@@ -76,6 +76,10 @@ class AssetStylePresets:
         self.path = PRESET_LOCATIONS["asset_style"].local_path(config_file=config_file)
         self.builtin_file = Path(builtin_file) if builtin_file else PRESET_LOCATIONS["asset_style"].builtin_path()
         self.lock = AssetPresetLock()
+
+    @staticmethod
+    def _validate(settings):
+        return validate_style_settings(settings)
 
     def _read_file(self, path):
         try:
@@ -94,7 +98,7 @@ class AssetStylePresets:
                 raise ValueError("같은 이름의 그림체 프리셋이 있습니다.")
             identities.add(preset["id"])
             names.add(name.casefold())
-            validate_style_settings(preset.get("settings"))
+            self._validate(preset.get("settings"))
         return document
 
     def read(self):
@@ -157,10 +161,10 @@ class AssetStylePresets:
                 if any(item["scope"] == original_scope and item["name"].casefold() == name.casefold() and (action == "create" or item is not preset) for item in presets):
                     raise ValueError("같은 이름의 그림체 프리셋이 있습니다.")
             if action == "create":
-                preset = {"id": uuid.uuid4().hex, "name": name, "settings": validate_style_settings(body.get("settings")), "scope": "local"}
+                preset = {"id": uuid.uuid4().hex, "name": name, "settings": self._validate(body.get("settings")), "scope": "local"}
                 presets.append(preset)
             elif action == "save":
-                preset["settings"] = validate_style_settings(body.get("settings"))
+                preset["settings"] = self._validate(body.get("settings"))
             elif action == "rename":
                 preset["name"] = name
             elif action == "scope":

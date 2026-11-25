@@ -1,8 +1,35 @@
+import type { ImportedGlobalNote } from "./charxImages";
+
 export type CharacterLoreEntry = {
   entry_id: string; source: string; title: string; content: string;
   keys: string[]; secondary_keys: string[];
   enabled: boolean; constant: boolean; selective: boolean; use_regex: boolean;
 };
+
+const ASSET_INSTRUCTION_LORE_RE = /<img\s+src|\{\{(?:img|raw)::|\bimage\s+tag|\basset\s+prompt|inserting\s+character\s+visual|image\s+output\s+(?:setting|instruction|guidance|format|rule)|image\s+command\s+instruction|에셋\s*출력|이미지\s*태그|이미지\s*출력/i;
+
+export function extractLoreAssetInstructions(entries: readonly CharacterLoreEntry[]): ImportedGlobalNote[] {
+  const bySource = new Map<string, CharacterLoreEntry[]>();
+  for (const entry of entries) {
+    if (!entry.enabled || !entry.constant) continue;
+    const content = entry.content.trim();
+    if (!content) continue;
+    if (entry.title.includes("__ASSET_MAID_DATA__") || /^\s*@@dont_activate\b/i.test(content)) continue;
+    if (!ASSET_INSTRUCTION_LORE_RE.test(`${entry.title}\n${content}`)) continue;
+    const list = bySource.get(entry.source) || [];
+    list.push(entry);
+    bySource.set(entry.source, list);
+  }
+  const notes: ImportedGlobalNote[] = [];
+  for (const [source, matched] of bySource.entries()) {
+    const titles = matched.map(entry => entry.title.trim()).filter(Boolean).slice(0, 4);
+    notes.push({
+      source: `${source} · 로어북 에셋 지침${titles.length ? ` (${titles.join(", ")})` : ""}`,
+      content: matched.map(entry => entry.content.trim()).join("\n\n"),
+    });
+  }
+  return notes;
+}
 
 function loreKeys(value: unknown): string[] {
   const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];

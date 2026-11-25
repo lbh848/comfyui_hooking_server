@@ -1028,6 +1028,205 @@ def _repair_json_closing_brackets(text: str) -> str:
     return text if in_string or closers else "".join(out)
 
 
+_MISSING_KEY_QUOTE_RE = re.compile(
+    r'"([A-Za-z_][A-Za-z0-9_-]*):(?=\s*(?:\[|\{|"|-?\d|true\b|false\b|null\b))'
+)
+_NEXT_ARRAY_OBJECT_RE = re.compile(r"\}\s*,\s*\{")
+
+
+def _scan_json_string_end(text: str, start: int) -> int:
+    """Return index of the closing quote for a JSON string starting at start, or -1."""
+    i = start + 1
+    n = len(text)
+    escaped = False
+    while i < n:
+        ch = text[i]
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            return i
+        i += 1
+    return -1
+
+
+def _peek_non_ws(text: str, pos: int) -> int:
+    n = len(text)
+    while pos < n and text[pos] in " \t\r\n":
+        pos += 1
+    return pos
+
+
+def _repair_json_syntax(text: str) -> str:
+    """Repair narrow, unambiguous LLM JSON quote/comma slips using container context.
+
+    Handles:
+    - Missing closing quote on an object key before ':' (e.g. "face_tags:["a"]).
+    - Stray opening quote right before '[' or '{' in value position
+      (e.g. "face_tags":"["a","b"] or "face_tags":"["a","b"]").
+    - Trailing commas immediately before '}' or ']'.
+    """
+    out = []
+    stack = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r\n":
+            out.append(ch)
+            i += 1
+            continue
+        top = stack[-1] if stack else None
+        if ch == '"':
+            if top and top["type"] == "object" and top["expect"] == "key":
+                match = _MISSING_KEY_QUOTE_RE.match(text, i)
+                if match:
+                    str_end = _scan_json_string_end(text, i)
+                    after_idx = _peek_non_ws(text, str_end + 1) if str_end != -1 else n
+                    if str_end == -1 or after_idx >= n or text[after_idx] != ":":
+                        out.append(f'"{match.group(1)}":')
+                        top["expect"] = "value"
+                        i = match.end()
+                        continue
+            elif top and top["expect"] == "value" and i + 1 < n and text[i + 1] in "[{":
+                str_end = _scan_json_string_end(text, i)
+                after_idx = _peek_non_ws(text, str_end + 1) if str_end != -1 else n
+                after_ch = text[after_idx] if after_idx < n else ""
+                if str_end == -1 or after_ch not in (",", "}", "]", ""):
+                    container = text[i + 1]
+                    out.append(container)
+                    top["expect"] = "comma"
+                    stack.append({
+                        "type": "array" if container == "[" else "object",
+                        "expect": "value" if container == "[" else "key",
+                        "stray_close_quote": True,
+                    })
+                    i += 2
+                    continue
+            str_end = _scan_json_string_end(text, i)
+            if str_end == -1:
+                out.append(text[i:])
+                break
+            out.append(text[i:str_end + 1])
+            if top:
+                top["expect"] = "colon" if (top["type"] == "object" and top["expect"] == "key") else "comma"
+            i = str_end + 1
+            continue
+        if ch == ":":
+            out.append(ch)
+            if top and top["type"] == "object":
+                top["expect"] = "value"
+            i += 1
+            continue
+        if ch == ",":
+            nxt = _peek_non_ws(text, i + 1)
+            if nxt < n and text[nxt] in "}]":
+                i += 1
+                continue
+            out.append(ch)
+            if top:
+                top["expect"] = "key" if top["type"] == "object" else "value"
+            i += 1
+            continue
+        if ch == "{":
+            out.append(ch)
+            if top:
+                top["expect"] = "comma"
+            stack.append({"type": "object", "expect": "key", "stray_close_quote": False})
+            i += 1
+            continue
+        if ch == "[":
+            out.append(ch)
+            if top:
+                top["expect"] = "comma"
+            stack.append({"type": "array", "expect": "value", "stray_close_quote": False})
+            i += 1
+            continue
+        if ch in "}]":
+            out.append(ch)
+            popped = stack.pop() if stack else None
+            i += 1
+            if popped and popped["stray_close_quote"] and i < n and text[i] == '"':
+                after_idx = _peek_non_ws(text, i + 1)
+                if after_idx >= n or text[after_idx] in ",}]":
+                    i += 1
+            continue
+        out.append(ch)
+        if top and top["expect"] == "value":
+            top["expect"] = "comma"
+        i += 1
+    return "".join(out)
+
+
+def salvage_json_array_objects(raw: str, array_keys: tuple[str, ...]) -> tuple[list[dict], int]:
+    """Recover intact dict rows from a damaged JSON array response.
+
+    Returns (recovered_objects, skipped_count). Only skips elements whose JSON
+    syntax remains unreadable after local repair so a single broken row does not
+    discard an entire batch.
+    """
+    if not raw or not isinstance(raw, str):
+        return [], 0
+    text = raw.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    text = _repair_json_syntax(_repair_json_escapes(text))
+
+    start = -1
+    for key in array_keys:
+        match = re.search(rf'"{re.escape(key)}"\s*:\s*\[', text)
+        if match:
+            start = match.end()
+            break
+    if start == -1:
+        bracket = text.find("[")
+        if bracket == -1:
+            return [], 0
+        start = bracket + 1
+
+    decoder = json.JSONDecoder()
+    recovered = []
+    skipped = 0
+    pos = start
+    n = len(text)
+    while pos < n:
+        pos = _peek_non_ws(text, pos)
+        while pos < n and text[pos] == ",":
+            pos = _peek_non_ws(text, pos + 1)
+        if pos >= n or text[pos] == "]":
+            break
+        if text[pos] != "{":
+            next_brace = text.find("{", pos)
+            if next_brace == -1:
+                break
+            pos = next_brace
+        try:
+            obj, end = decoder.raw_decode(text, pos)
+        except Exception:
+            skipped += 1
+            boundary = _NEXT_ARRAY_OBJECT_RE.search(text, pos + 1)
+            if not boundary:
+                break
+            candidate_slice = text[pos:boundary.start() + 1]
+            balanced = _repair_json_closing_brackets(candidate_slice)
+            if balanced != candidate_slice:
+                try:
+                    repaired_obj = json.loads(balanced)
+                except Exception:
+                    repaired_obj = None
+                if isinstance(repaired_obj, dict):
+                    recovered.append(repaired_obj)
+                    skipped -= 1
+            pos = boundary.end() - 1
+            continue
+        if isinstance(obj, dict):
+            recovered.append(obj)
+        pos = end
+    return recovered, skipped
+
+
 def parse_llm_json(raw: str, *, repair_closing_brackets: bool = False):
     """Parse LLM JSON after removing fences and repairing invalid tag escapes.
 
@@ -1068,16 +1267,29 @@ def parse_llm_json(raw: str, *, repair_closing_brackets: bool = False):
         return json.loads(repaired)
     except Exception as exc:
         error = exc
+
+    # 4차: 명백한 키/배열 따옴표 오타·후행 쉼표 복구 후 재시도
+    syntax_repaired = _repair_json_syntax(repaired)
+    if syntax_repaired != repaired:
+        try:
+            parsed = json.loads(syntax_repaired)
+        except Exception as exc:
+            error = exc
+        else:
+            print("[LLM_EDIT] parse_llm_json: 손상된 JSON 구문(따옴표/쉼표) 복구 완료")
+            return parsed
+
     if repair_closing_brackets:
-        balanced = _repair_json_closing_brackets(repaired)
-        if balanced != repaired:
-            try:
-                parsed = json.loads(balanced)
-            except Exception as exc:
-                error = exc
-            else:
-                print("[LLM_EDIT] parse_llm_json: 누락된 내부 닫는 괄호 복구 완료")
-                return parsed
+        for candidate in (syntax_repaired, repaired):
+            balanced = _repair_json_closing_brackets(candidate)
+            if balanced != candidate:
+                try:
+                    parsed = json.loads(balanced)
+                except Exception as exc:
+                    error = exc
+                else:
+                    print("[LLM_EDIT] parse_llm_json: 누락된 내부 닫는 괄호 복구 완료")
+                    return parsed
     print(f"[LLM_EDIT] parse_llm_json: JSON 파싱 실패: {error}\n"
           f"  repaired(앞 300자): {repaired[:300]!r}")
     return None

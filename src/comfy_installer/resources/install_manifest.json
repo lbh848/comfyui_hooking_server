@@ -545,12 +545,12 @@
       "url": "https://civitai.com/api/download/models/3201770?fileId=3083049"
     },
     {
-      "id": "snapref-v2a-pre2",
+      "id": "snapref-v2s-pre1",
       "license": "CircleStone Labs Non-Commercial License",
-      "relative_path": "models/loras/snapref_v2a_pre2.safetensors",
-      "sha256": "1c9794ac626551654aa0bf08028e70a451eda4229878a7ea00490b4cc72edaa8",
-      "size": 381821960,
-      "url": "https://huggingface.co/0ppxnhximxr/snapref-v2a-pre2/resolve/50defbc0454738cdfc5ee104ff9e9649dd64c71e/snapref_v2a_pre2.safetensors"
+      "relative_path": "models/loras/snapref_v2s_pre1.safetensors",
+      "sha256": "95f91797827cbf5efd86e29fac5b2646df1505d46acb20f913877b3c9a429609",
+      "size": 543395968,
+      "url": "https://huggingface.co/0ppxnhximxr/snapref-v2s/resolve/c6545c1c278fe15018c5a8bf3a23c6e99810a6cb/snapref_v2s_pre1.safetensors"
     },
     {
       "id": "snapref-v1b",
@@ -874,6 +874,7 @@
           "noobai-canny-controlnet",
           "rin-anim8draw-v3.1",
           "snapref-v1b",
+          "snapref-v2s-pre1",
           "suujiniku-style"
         ]
       },
@@ -910,7 +911,8 @@
           "hand-yolov8s",
           "ix7-style",
           "small-head-anima",
-          "snapref-v1b"
+          "snapref-v1b",
+          "snapref-v2s-pre1"
         ]
       },
       {
@@ -927,7 +929,7 @@
           "eyebrow-segmentation",
           "face-yolov8m",
           "hand-yolov8s",
-          "snapref-v2a-pre2"
+          "snapref-v2s-pre1"
         ]
       },
       {
@@ -960,7 +962,7 @@
           "eyebrow-segmentation",
           "face-yolov8m",
           "hand-yolov8s",
-          "snapref-v2a-pre2"
+          "snapref-v2s-pre1"
         ]
       },
       {
@@ -1043,7 +1045,7 @@
           "eyebrow-segmentation",
           "face-yolov8m",
           "hand-yolov8s",
-          "snapref-v2a-pre2"
+          "snapref-v2s-pre1"
         ]
       },
       {
@@ -1061,7 +1063,7 @@
           "eyebrow-segmentation",
           "face-yolov8m",
           "hand-yolov8s",
-          "snapref-v2a-pre2"
+          "snapref-v2s-pre1"
         ]
       },
       {
@@ -1091,6 +1093,47 @@
           "moss-4step-akhaliq-v2",
           "moss-image-sft-int8",
           "moss-charref-v2",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.asset_moss_8step",
+        "name": "배포_공방_에셋_MOSS_8STEP_V1.json",
+        "archive_name": "workflows/배포_공방_에셋_MOSS_8STEP_V1.json",
+        "bindings": [
+          "moss_asset_workflow_source_path",
+          "workflow_pack_extra_paths.asset_moss_8step"
+        ],
+        "model_ids": [
+          "flux2-vae-small",
+          "moss-image-sft-8step-dmd-int8",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.asset_moss_4step",
+        "name": "배포_공방_에셋_MOSS_4STEP_V1.json",
+        "archive_name": "workflows/배포_공방_에셋_MOSS_4STEP_V1.json",
+        "bindings": [
+          "workflow_pack_extra_paths.asset_moss_4step"
+        ],
+        "model_ids": [
+          "flux2-vae-small",
+          "moss-4step-akhaliq-v2",
+          "moss-image-sft-int8",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.asset_moss_50step",
+        "name": "배포_공방_에셋_MOSS_50STEP_V1.json",
+        "archive_name": "workflows/배포_공방_에셋_MOSS_50STEP_V1.json",
+        "bindings": [
+          "workflow_pack_extra_paths.asset_moss_50step"
+        ],
+        "model_ids": [
+          "flux2-vae-small",
+          "moss-image-sft-int8",
           "qwen35-9b-w4a8"
         ]
       },
@@ -1170,6 +1213,10 @@
       "workflow_pack_extra_paths.illustration_dual_vae",
       "workflow_pack_extra_paths.illustration_moss_8step",
       "workflow_pack_extra_paths.illustration_moss_4step",
+      "moss_asset_workflow_source_path",
+      "workflow_pack_extra_paths.asset_moss_8step",
+      "workflow_pack_extra_paths.asset_moss_4step",
+      "workflow_pack_extra_paths.asset_moss_50step",
       "workflow_pack_extra_paths.lora_training_anima_v2",
       "workflow_pack_extra_paths.lora_training_anima_v2_1",
       "workflow_pack_extra_paths.style_lora_training_anima_v2",

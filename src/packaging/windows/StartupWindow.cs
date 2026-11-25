@@ -114,7 +114,20 @@ internal sealed class StartupWindow : Form
             if (divider >= 0) line = line.Substring(divider + 1);
         }
         bool follow = !output.Focused || output.SelectionStart + output.SelectionLength >= output.TextLength;
-        if (output.TextLength > 180000) { output.Select(0, output.TextLength - 120000); output.SelectedText = ""; }
+        if (output.TextLength > 180000)
+        {
+            // RichTextBox rejects SelectedText = "" while ReadOnly is true and triggers a system beep.
+            output.ReadOnly = false;
+            try
+            {
+                output.Select(0, output.TextLength - 120000);
+                output.SelectedText = "";
+            }
+            finally
+            {
+                output.ReadOnly = true;
+            }
+        }
         output.SelectionStart = output.TextLength;
         output.SelectionLength = 0;
         output.SelectionColor = error ? Color.FromArgb(255, 167, 180) : output.ForeColor;

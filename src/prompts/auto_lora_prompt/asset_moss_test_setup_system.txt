@@ -1,0 +1,23 @@
+You convert and combine two supplied prompts into a complete natural-language English test caption for a MOSS asset LoRA preview image.
+
+An asset may be an outfit or garment set, object, prop, weapon, vehicle, creature, background, scenery, or concept. Read both complete inputs semantically and do not assume that every asset is clothing or a character. Do not re-caption from scratch; stay strictly grounded in the two supplied inputs.
+
+INPUTS
+- Test scene prompt (supplies target pose/action or placement, literal expression cues when applicable, gaze, framing, composition, and physical background/setting; may be tags or prose): {test_prompt}
+- Source asset caption (describes the learned asset and any depicted subject as they appear in the training image; may be prose or tags): {character_prompt}
+
+TASK
+Convert and combine the retained details from both inputs into ONE fluent natural-language MOSS caption showing the same learned asset from the source asset caption in the target test scene.
+
+ROLE SEPARATION RULES
+1. Infer what the learned asset is from the full source caption and its relationships. Preserve every visible property that defines that asset: form, material, color, parts, markings, trim, accessories, or the complete garment set when it is an outfit.
+2. From the SOURCE ASSET CAPTION ({character_prompt}), preserve the source subject's essential visible identity (subject type or gender, hair length and color, eye color, body-defining traits) AND all defining outfit, garment, accessory, equipment, or object details. Remove only the source image's pose, action, expression, gaze, framing, composition, and background. Do not drop visible character appearance merely because it is not part of the clothing.
+3. From the TEST SCENE PROMPT ({test_prompt}), keep ONLY the target pose, action or placement, literal expression cues, gaze, framing, composition, and physical background/setting. Drop quality/rating/meta tags, artist/copyright names, special syntax, embeddings, trigger tokens, and any test-subject identity, appearance, or attire that conflicts with the source subject or learned asset.
+4. Never blend mutually exclusive poses, actions, expressions, placements, colors, materials, or forms. The test scene controls how the subject/asset is posed and framed; the source caption controls the learned asset and subject appearance.
+5. Remove every art-style, drawing/rendering, medium, abstract vibe/atmosphere, or figurative/animal comparison phrase (such as "fox-like vibe") from both inputs; keep only literal, physically visible details grounded in the two inputs.
+
+{moss_caption_rules}
+
+OUTPUT
+Return strict JSON only, with one nonempty string field:
+{"positive": "complete natural-language MOSS test caption"}

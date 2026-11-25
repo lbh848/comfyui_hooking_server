@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Check, ChevronDown, Images, LoaderCircle, Power, Settings, Sparkles, Layers, Blend, WandSparkles } from "lucide-react";
+import { Check, ChevronDown, Images, LoaderCircle, Mountain, Power, Settings, Sparkles, Layers, Blend, WandSparkles } from "lucide-react";
 import { Modal } from "./components";
 import { disabledWorkshops, useWorkshopNavigation, type Workshop } from "./WorkshopNavigation";
 import { collectUnsavedChanges, type UnsavedChange } from "./unsavedChanges";
@@ -10,6 +10,7 @@ const workspaces = [
   { id: "illust", label: "삽화", description: "삽화 백업 · 그림 모델 · 봇", href: "/illust/", icon: Images },
   { id: "emotion", label: "감정 삽화", description: "감정 삽화 · 배경 합성 모드", href: "/emotion/", icon: Blend },
   { id: "asset", label: "에셋", description: "에셋 생성 · 에셋 일괄 생성", href: "/asset/", icon: Layers },
+  { id: "bg-asset", label: "배경 에셋", description: "배경 생성 · 배경 일괄 생성 · 익스포트", href: "/bg-asset/", icon: Mountain },
   { id: "lora", label: "로라", description: "에셋 · 봇 · 그림체 LoRA", href: "/lora/", icon: WandSparkles },
 ] as const;
 

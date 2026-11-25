@@ -41,12 +41,14 @@ ILLUSTRATION_PROFILE_LABELS = {
 ASSET_ILXL = "ilxl"
 ASSET_ANIMA_ILXL = "anima_ilxl"
 ASSET_ANIMA_ONLY = "anima_only"
-ASSET_WORKFLOW_TYPES = (ASSET_ILXL, ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY)
+ASSET_MOSS = "moss"
+ASSET_WORKFLOW_TYPES = (ASSET_ILXL, ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY, ASSET_MOSS)
 
 ASSET_PROFILE_LABELS = {
     ASSET_ILXL: "ILXL 에셋 생성 워크플로우",
     ASSET_ANIMA_ILXL: "ANIMA+ILXL 에셋 생성 워크플로우",
     ASSET_ANIMA_ONLY: "ONLY ANIMA 에셋 생성 워크플로우",
+    ASSET_MOSS: "MOSS 에셋 생성 워크플로우",
 }
 
 _LEGACY_ASSET_TYPES = {
@@ -257,11 +259,12 @@ def asset_capabilities(workflow_type: str) -> dict:
     return {
         "ilxl": workflow_type in (ASSET_ILXL, ASSET_ANIMA_ILXL),
         "anima": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
+        "moss": workflow_type == ASSET_MOSS,
         "dual": workflow_type == ASSET_ANIMA_ILXL,
         "pose": workflow_type == ASSET_ILXL,
         "ipadapter": workflow_type == ASSET_ILXL,
         "face_lora": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
-        "seed": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY),
+        "seed": workflow_type in (ASSET_ANIMA_ILXL, ASSET_ANIMA_ONLY, ASSET_MOSS),
     }
 
 

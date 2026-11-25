@@ -449,6 +449,7 @@ class CharacterMakerService:
             "eye_tags": "",
             "hrf_sdxl": False,
             "hrf_anima": False,
+            "hrf_moss": False,
             "hrf_size": 2.0,
             "hrf_restore_size": True,
             "hrf_control_net": False,
@@ -1050,6 +1051,7 @@ class CharacterMakerService:
             "face_lora_enabled",
             "hrf_sdxl",
             "hrf_anima",
+            "hrf_moss",
             "hrf_restore_size",
             "hrf_control_net",
             "sdxl_fd_enabled",
@@ -1526,7 +1528,42 @@ class CharacterMakerService:
         branch_id: str = "",
         current_message_id: str = "",
         image_manifest: list[dict[str, Any]] | None = None,
+        model_family: str = "anima",
     ) -> list[dict[str, str]]:
+        if str(model_family or "").strip().lower() == "moss":
+            model_guidance = (
+                "Target model guidance for MOSS-Image (which uses a Qwen3.5 text encoder and "
+                "combines concise visual tags with natural language inside one summary caption): "
+                "This asset workflow primarily generates a single character. Keep appearance, "
+                "outfit, expression, and composition as concise lowercase visual tags without "
+                "Danbooru emphasis weights such as (tag:1.3), and omit quality/score/year, "
+                "rating, artist, and LoRA trigger tags (style and triggers are added separately). "
+                "Keep a single subject count tag (such as 1girl or 1boy) in appearance, avoid "
+                "contradictory generic+specific duplicates (for example, prefer very long hair "
+                "over both long hair and very long hair), and do not emit layout JSON, "
+                "coordinates, or bounding boxes. "
+                "Use natural_language for clear English sentences describing pose, framing, "
+                "expression nuance, lighting/mood, and physical interactions that short tags "
+                "cannot express accurately. "
+                "If the user requests an interaction involving another person's minimal partial "
+                "body part (such as a hand patting the character's head, holding their chin, or "
+                "an arm reaching from off-screen), keep the character as the sole full subject: "
+                "do NOT add a second full person or a second person-count tag (avoid 2girls, "
+                "1girl 1boy, multiple people) or a separate identity; instead describe only the "
+                "anonymous partial limb entering from the frame edge and its exact physical "
+                "contact point in expression/composition and natural_language (e.g. 'an "
+                "off-screen hand gently patting the top of her head from the right edge'). "
+            )
+        else:
+            model_guidance = (
+                "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
+                "and understands descriptive sentences well): prefer at least 2 descriptive "
+                "sentences; use natural language for mood, composition, and emotional intent that "
+                "pure tags cannot convey (e.g. 'a large blue peony flower covering half of her face'); "
+                "name a character first then describe their basic appearance; layer the prompt as "
+                "quality -> subject -> specific details -> atmosphere -> mood; natural language may "
+                "be interleaved with tags in any order. "
+            )
         system = (
             "You are a collaborative character-design editor for an image-generation UI. "
             "Reason from the world context, provided checkpoint/branch conversation, current "
@@ -1562,14 +1599,8 @@ class CharacterMakerService:
             "weather effects unless the user explicitly asks for them. "
             "natural_language is free-form descriptive text inserted into the image prompt; it "
             "may be empty. "
-            "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
-            "and understands descriptive sentences well): prefer at least 2 descriptive "
-            "sentences; use natural language for mood, composition, and emotional intent that "
-            "pure tags cannot convey (e.g. 'a large blue peony flower covering half of her face'); "
-            "name a character first then describe their basic appearance; layer the prompt as "
-            "quality -> subject -> specific details -> atmosphere -> mood; natural language may "
-            "be interleaved with tags in any order. "
-            "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
+            + model_guidance
+            + "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
             "natural_language. "
             "fields must contain exactly appearance/outfit/expression/composition string arrays. "
             "natural_language is a TOP-LEVEL key (sibling of fields and rag_queries), NEVER a key "
@@ -2012,6 +2043,7 @@ class CharacterMakerService:
         *,
         image_path: str | None = None,
         reference_images: list[dict[str, Any]] | None = None,
+        model_family: str = "anima",
     ) -> dict:
         """Use the configured editor and logs without mutating the legacy singleton session."""
         fields = _normalize_fields({field: values.get(f"raw_{field}_tags", []) for field in EDITABLE_FIELDS})
@@ -2093,7 +2125,10 @@ class CharacterMakerService:
                 ),
             })
         images = vision_images or None
-        messages = self._revision_messages(session, message, rag_enabled=False, image_manifest=manifest)
+        messages = self._revision_messages(
+            session, message, rag_enabled=False, image_manifest=manifest,
+            model_family=model_family,
+        )
         return await self._call_revision_llm(
             "character_maker_feedback" if images else "character_maker_draft",
             messages, images, require_queries=False, call_label="에셋 캐릭터 메이커",

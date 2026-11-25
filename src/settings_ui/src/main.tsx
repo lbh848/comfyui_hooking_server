@@ -5,6 +5,7 @@ import App from "./App";
 import IllustApp from "./IllustApp";
 import EmotionApp from "./EmotionApp";
 import AssetApp from "./AssetApp";
+import BgAssetApp from "./BgAssetApp";
 import LoraApp from "./LoraApp";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ModalWorkspace } from "./ModalWorkspace";
@@ -31,6 +32,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <WorkshopScreen workshop="illust"><IllustApp /></WorkshopScreen>
         <WorkshopScreen workshop="emotion"><EmotionApp /></WorkshopScreen>
         <WorkshopScreen workshop="asset"><AssetApp /></WorkshopScreen>
+        <WorkshopScreen workshop="bg-asset"><BgAssetApp /></WorkshopScreen>
         <WorkshopScreen workshop="lora"><LoraApp /></WorkshopScreen>
       </ModalWorkspace></WorkshopNavigation>
     </ErrorBoundary>

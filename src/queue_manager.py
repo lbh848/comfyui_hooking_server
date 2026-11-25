@@ -435,6 +435,7 @@ class QueueManager:
         self.notify_frontend = None  # async def(event_type, data)
         self.get_config = None       # def() -> dict
         self.asset_mode = None       # AssetMode 인스턴스
+        self.bg_asset_mode = None    # BgAssetMode 인스턴스
         self.asset_tool = None       # AssetToolMode 인스턴스 (analyze_image용)
         self.qwen_edit_mode = None   # QwenEditMode 인스턴스
         self.video_mode = None       # VideoMode 인스턴스
@@ -1353,8 +1354,14 @@ class QueueManager:
             snapshot.params = {key: value for key, value in item.params.items()
                                if key not in {"body", "presets", "asset_model_preset"}}
             body = item.params.get("body")
-            if isinstance(body, dict) and "asset_chain_slot_id" in body:
-                snapshot.params["body"] = {"asset_chain_slot_id": body["asset_chain_slot_id"]}
+            if isinstance(body, dict):
+                summary = {
+                    key: body[key]
+                    for key in ("asset_chain_slot_id", "asset_workspace")
+                    if key in body
+                }
+                if summary:
+                    snapshot.params["body"] = summary
         data = snapshot.to_dict()
         execution_area, provider = self._item_execution_area(item)
         data["execution_area"] = execution_area
@@ -4305,10 +4312,14 @@ class QueueManager:
         )
         snapref_enabled = bool(body.get("snapref_enabled", False) and workflow_profiles.asset_capabilities(asset_profile)["anima"])
 
+        workspace = body.get("asset_workspace") or params.get("asset_workspace") or "asset"
+        target_asset_mode = self.bg_asset_mode if workspace == "bg_asset" else self.asset_mode
+        if target_asset_mode is None:
+            raise RuntimeError("배경 에셋 모드가 초기화되지 않았습니다." if workspace == "bg_asset" else "에셋 모드가 초기화되지 않았습니다.")
         execution_asset_mode = (
-            self.asset_mode.fork_for_execution()
-            if callable(getattr(self.asset_mode, "fork_for_execution", None))
-            else self.asset_mode
+            target_asset_mode.fork_for_execution()
+            if callable(getattr(target_asset_mode, "fork_for_execution", None))
+            else target_asset_mode
         )
         async def on_asset_progress(value, maximum):
             await self._notify_progress(item, {
@@ -4336,6 +4347,7 @@ class QueueManager:
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
             anima_hrf_activate=body.get("anima_hrf_activate", False),
+            moss_hrf_activate=body.get("moss_hrf_activate", False),
             hrf_size=float(body.get("hrf_size", 2.0)),
             hrf_restore_size=body.get("hrf_restore_size", True),
             hrf_control_net=body.get("hrf_control_net", False),
@@ -4411,11 +4423,12 @@ class QueueManager:
             result.setdefault("outfit", body.get("outfit", ""))
             result.setdefault("expression", body.get("expression", ""))
 
-        # 완료 알림 (기존 에셋 탭 UI 갱신용)
+        # 완료 알림 (에셋/배경 에셋 UI 갱신용)
         if self.notify_frontend:
             await self.notify_frontend("asset_generation_completed", {
                 "status": "success" if result.get("success") else "error",
                 "item_id": item.id,
+                "asset_workspace": workspace,
                 "result": result,
             })
 

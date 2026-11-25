@@ -18,6 +18,19 @@ export interface PresetCatalog {
   capabilities?: { delete_presets?: boolean; replace_scope_conflicts?: boolean };
 }
 export const presetKey = (entry: PresetEntry) => JSON.stringify([entry.scope, entry.category, entry.state, entry.name]);
+export function presetCategoryFromSearch(search: string) {
+  const category = new URLSearchParams(search).get("category") || "";
+  return Object.hasOwn(presetCategories, category) ? category : "";
+}
+export function presetManagementSearch(category?: string) {
+  return category && Object.hasOwn(presetCategories, category)
+    ? `category=${encodeURIComponent(category)}`
+    : "";
+}
+export function presetManagementPath(category?: string) {
+  const search = presetManagementSearch(category);
+  return `/setting/${search ? `?${search}` : ""}#presets`;
+}
 // Match preset_catalog.normalize_preset_name before checking for a save conflict.
 export const normalizePresetName = (name: string) => name.trim()
   .replace(/^SDstudio-80종\s*공유용2[/\\_-]/, "SD-80_")

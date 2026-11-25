@@ -7,6 +7,7 @@ import { resourceDisplayName, useResources, type Resources } from "./useResource
 import { isDualVaeWorkflow, isMossWorkflow, useIllustrationModels, workflowPathKey } from "./illustrationModels";
 import { ResourceThumbnail } from "./ResourceThumbnail";
 import { IllustLoras } from "./IllustLoras";
+import { IllustStyleRef } from "./IllustStyleRef";
 import { defaultSamplingOptions } from "./comfySampling";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { useIllustrationSaveReport } from "./IllustrationSaveStatus";
@@ -15,6 +16,7 @@ import { useModelSettingsRequest, useModelSettingsResource, useModelSettingsScop
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 const stageLabels: Record<string, string> = {
   "workflow.sampling": "MOSS · 기본 생성",
+  "workflow.hiresfix.sampling": "MOSS · 고해상도 보정",
   MOSS_FIRST_SAMPLER: "MOSS · 기본 생성",
   ANIMA_FIRST_SAMPLER: "ANIMA · 기본 생성", ANIMA_HIRESFIX: "ANIMA · 고해상도 보정", ILXL_HIRESFIX: "ILXL · 고해상도 보정",
   ANIMA_FACE_DETAILER: "ANIMA · 얼굴 보정", ANIMA_HAND_DETAILER: "ANIMA · 손 보정", ANIMA_EYE_DETAILER: "ANIMA · 눈 보정",
@@ -45,7 +47,7 @@ const loraSetLabels: Record<string, { label: string; description: string }> = {
 function groupSamplingStages(fields: IllustrationData) {
   const groups = new Map<string, { key: string; label: string; stages: [string, IllustrationData][] }>();
   const stages = Object.entries(fields)
-    .filter(([key, value]) => !isLoraDataKey(key) && value && typeof value === "object" && !Array.isArray(value))
+    .filter(([key, value]) => !isLoraDataKey(key) && key !== "STYLE_REF" && value && typeof value === "object" && !Array.isArray(value))
     .sort(([a], [b]) => (stageOrder.get(a) ?? stageOrder.size) - (stageOrder.get(b) ?? stageOrder.size));
   for (const [key, value] of stages) {
     const detailerModel = /^(ANIMA|ILXL)_(?:FACE|HAND|EYE)_DETAILER$/.exec(key)?.[1];
@@ -87,7 +89,7 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
   // workflow file for presets saved before that selection existed. MOSS keeps
   // the ANIMA workflow profile but appears as its own model choice.
   const family = scope.familyKey ? String(draft?.[scope.familyKey] || "") : "";
-  const moss = !!scope.familyKey && profile === "v3_anima"
+  const moss = !!scope.familyKey && !hybrid && profile === "v3_anima"
     && (family === "moss" || (!family && isMossWorkflow(path)));
   const selection = moss ? "moss" : draft?.[scope.typeKey];
   const model = catalog.models.find(item => item.profile === selection)
@@ -158,14 +160,18 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
       // The illustration workshop never edits a DUAL_VAE workflow; the preset
       // picker keeps those presets in the emotion workshop instead.
       const visible = showsWorkflow(current);
-      return <div key={`${value}:${current}`} hidden={profile !== value || workflowPathKey(path) !== workflowPathKey(current)}>
-        {current && visible && <WorkflowEditor presetId={preset.active_id} readOnly={readOnly} builtinUnlockToken={builtinUnlockToken} profile={value} path={current} inventory={inventory} onPendingChange={onEditorPending} />}
+      const selected = profile === value && workflowPathKey(path) === workflowPathKey(current);
+      const modelKey = scope.familyKey && value === scope.modelAliases.moss
+        && (selected ? moss : isMossWorkflow(current))
+        ? "moss" : value;
+      return <div key={`${value}:${current}`} hidden={!selected}>
+        {current && visible && <WorkflowEditor presetId={preset.active_id} readOnly={readOnly} builtinUnlockToken={builtinUnlockToken} profile={value} modelKey={modelKey} path={current} inventory={inventory} onPendingChange={onEditorPending} />}
       </div>;
     })}
   </div>;
 }
 
-function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, readOnly, builtinUnlockToken }: { presetId: string; profile: string; path: string; inventory: Resources; onPendingChange: (profile: string, pending: boolean) => void; readOnly: boolean; builtinUnlockToken: string }) {
+function WorkflowEditor({ presetId, profile, modelKey, path, inventory, onPendingChange, readOnly, builtinUnlockToken }: { presetId: string; profile: string; modelKey: string; path: string; inventory: Resources; onPendingChange: (profile: string, pending: boolean) => void; readOnly: boolean; builtinUnlockToken: string }) {
   const scope = useModelSettingsScope();
   const request = useModelSettingsRequest();
   const resource = useModelSettingsResource(path ? `workflow?profile=${enc(profile)}&preset_id=${enc(presetId)}` : null);
@@ -188,7 +194,8 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
     if (loraSet) throw new Error(`${loraSetLabels[loraSet[0]]?.label || loraSet[0]}의 list에는 JSON 객체를 입력하세요.`);
     fields = parsed;
   } catch (e) { error = (e as Error).message; } }
-  const autosave = useWorkflowAutosave({ label: `${scope.labels[profile] || profile} · ${(resource.data?.path || path).split(/[\\/]/).pop()}`, value: text, dirty, validation: readOnly ? "배포 프리셋은 읽기 전용입니다." : error, form, save: async () => {
+  const name = scope.labels[modelKey] || modelKey;
+  const autosave = useWorkflowAutosave({ label: `${name} · ${(resource.data?.path || path).split(/[\\/]/).pop()}`, value: text, dirty, validation: readOnly ? "배포 프리셋은 읽기 전용입니다." : error, form, save: async () => {
     const snapshot = text;
     const result = await request(`${scope.prefix}/workflow`, { preset_id: presetId, profile, path: resource.data!.path, revision, fields, builtin_unlock_token: builtinUnlockToken });
     const stored = pretty(result.fields);
@@ -211,15 +218,23 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
     {!(value in clipDeviceLabels) && <option value={value}>{value ? `${value} · 현재 설정` : "선택하세요"}</option>}
     {Object.entries(clipDeviceLabels).map(([option, text]) => <option key={option} value={option}>{text}</option>)}
   </select><span className="field-help">{clipDeviceHelp}</span></label>;
-  const name = scope.labels[profile] || profile;
+  const hasStyleRef = !!fields && "STYLE_REF" in fields;
+  const activeSection = section === "style_ref" && !hasStyleRef ? "models" : section;
+  const tabs: Record<string, string> = {
+    models: "모델",
+    loras: loraSets.length > 1 ? "LoRA" : "공통 LoRA",
+    ...(hasStyleRef ? { style_ref: "STYLE_REF" } : {}),
+    sampling: "샘플링",
+    json: "JSON",
+  };
   return <Panel title={`${name} · 모델·샘플링·LoRA`} aside={<div className="illust-actions"><span role="status"><Badge tone={autosave.error || autosave.inputError ? "rose" : undefined}>{autosave.status}</Badge></span><button className="button" disabled={dirty || autosave.busy} onClick={resource.reload}><RefreshCw size={14} />다시 불러오기</button></div>}><div className="illust-body">
     {!path ? <Empty title="그림 모델을 선택하세요">그림 모델과 워크플로우를 선택하면 세부 설정을 불러옵니다.</Empty> : !resource.data ? <IllustrationLoading error={resource.error} retry={resource.reload} /> : <form ref={form} noValidate className="illust-form" onSubmit={event => { event.preventDefault(); void autosave.retry(); }}><fieldset className="illust-form">
       <p className="field-help">{readOnly ? "배포 프리셋은 읽기 전용입니다. 복제하거나 배포 풀기를 눌러 편집하세요." : "변경 사항은 현재 프리셋에 자동 저장되며, 다음 생성부터 적용됩니다."}</p>
-      <SettingsTabs label={`${name} 설정 항목`} values={{ models: "모델", loras: loraSets.length > 1 ? "LoRA" : "공통 LoRA", sampling: "샘플링", json: "JSON" }} value={section} onChange={setSection} />
+      <SettingsTabs label={`${name} 설정 항목`} values={tabs} value={activeSection} onChange={setSection} />
       <IllustrationFeedback error={error || inventory.error} />
-      <div hidden={section !== "json"}><label className="field">워크플로우 설정 JSON<textarea className="illust-prompt-editor" readOnly={readOnly} rows={24} spellCheck={false} value={text} onChange={event => setText(event.target.value)} /></label></div>
+      <div hidden={activeSection !== "json"}><label className="field">워크플로우 설정 JSON<textarea className="illust-prompt-editor" readOnly={readOnly} rows={24} spellCheck={false} value={text} onChange={event => setText(event.target.value)} /></label></div>
       {fields && <>
-        <div hidden={section !== "models"}><div className="illust-form">
+        <div hidden={activeSection !== "models"}><div className="illust-form">
           <div className="illust-actions"><p className="field-help">설정의 모델 관리에 등록된 모델을 선택합니다.</p><button type="button" className="button" disabled={inventory.loading} onClick={() => void inventory.refresh()}><RefreshCw size={14} />모델 목록 새로고침</button></div>
           <div className="illust-fields">{Object.entries(fields).filter(([key, value]) => typeof value === "string" && key !== "workflow.clip_device").map(([key, value]) => {
             const kind = key === "workflow.clip" ? "Text encoder" : key === "workflow.vae" ? "VAE" : key.includes("CHECKPOINT") ? "Checkpoint" : "Diffusion";
@@ -244,7 +259,7 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
           })}</div>
           {!("workflow.clip" in fields) && typeof fields["workflow.clip_device"] === "string" && <div className="illust-fields">{clipDeviceControl(fields["workflow.clip_device"])}</div>}
         </div></div>
-        <div hidden={section !== "sampling"}><fieldset className="illust-form" disabled={readOnly}>
+        <div hidden={activeSection !== "sampling"}><fieldset className="illust-form" disabled={readOnly}>
           {"workflow.sequential_offload" in fields && <div className="field">
             <span>모델 순차 오프로딩</span>
             <div className="illust-actions"><Toggle label="모델 순차 오프로딩" checked={fields["workflow.sequential_offload"] === true} onChange={enabled => update("workflow.sequential_offload", enabled)} /><span>{fields["workflow.sequential_offload"] === true ? "켜짐" : "꺼짐"}</span></div>
@@ -275,15 +290,18 @@ function WorkflowEditor({ presetId, profile, path, inventory, onPendingChange, r
             </div>
           </details>)}
         </fieldset></div>
-        <div hidden={section !== "loras"}><fieldset className="illust-form" disabled={readOnly}>{loraSets.map(key => {
+        <div hidden={activeSection !== "loras"}><fieldset className="illust-form" disabled={readOnly}>{loraSets.map(key => {
           const labels = loraSetLabels[key] || { label: key, description: "이 워크플로우에 적용할 LoRA입니다." };
           return <section className="illust-lora-set" key={key}>
             {loraSets.length > 1 && <h3>{labels.label}</h3>}
-            <IllustLoras context={scope.prefix === "asset" ? "asset" : undefined} profile={isMossWorkflow(path) ? "moss" : profile} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} toggleable />
+            <IllustLoras context={scope.prefix === "asset" ? "asset" : undefined} profile={modelKey} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} toggleable />
           </section>;
         })}</fieldset></div>
+        {hasStyleRef && <div hidden={activeSection !== "style_ref"}>
+          <IllustStyleRef value={fields.STYLE_REF} readOnly={readOnly} inventory={inventory} onChange={next => update("STYLE_REF", next)} />
+        </div>}
       </>}
-      <IllustrationFeedback error={autosave.error || (!error ? autosave.inputError : "")} /><div className="illust-actions">{autosave.error && <><button type="button" className="button" disabled={autosave.busy || !!autosave.inputError} onClick={() => void autosave.retry()}><RefreshCw size={14} />자동 저장 다시 시도</button><button type="button" className="button" disabled={autosave.busy} onClick={() => { setText(baseline); resource.reload(); }}>저장된 설정 다시 불러오기</button></>}<button type="button" className="button" disabled={!dirty || autosave.busy} onClick={() => setText(baseline)}>저장 전 변경 취소</button><button type="button" className="button" disabled={!!error} onClick={() => { const url = URL.createObjectURL(new Blob([text], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = `${scope.prefix}-${profile}-settings.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}><Download size={14} />설정 JSON 다운로드</button></div>
+      <IllustrationFeedback error={autosave.error || (!error ? autosave.inputError : "")} /><div className="illust-actions">{autosave.error && <><button type="button" className="button" disabled={autosave.busy || !!autosave.inputError} onClick={() => void autosave.retry()}><RefreshCw size={14} />자동 저장 다시 시도</button><button type="button" className="button" disabled={autosave.busy} onClick={() => { setText(baseline); resource.reload(); }}>저장된 설정 다시 불러오기</button></>}<button type="button" className="button" disabled={!dirty || autosave.busy} onClick={() => setText(baseline)}>저장 전 변경 취소</button><button type="button" className="button" disabled={!!error} onClick={() => { const url = URL.createObjectURL(new Blob([text], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = `${scope.prefix}-${modelKey}-settings.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}><Download size={14} />설정 JSON 다운로드</button></div>
     </fieldset></form>}
   </div></Panel>;
 }

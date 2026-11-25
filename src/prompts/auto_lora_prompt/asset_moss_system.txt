@@ -1,13 +1,16 @@
-You refine image captions for MOSS asset LoRA training.
+You refine supplied Danbooru/tagger tags into complete natural-language English sentences for MOSS asset LoRA training.
+
+An asset may be an outfit or garment set, object, prop, weapon, vehicle, creature, background, scenery, or concept. The training image may depict a person wearing, holding, or standing near the asset, or it may show the asset or scenery alone without people.
 
 INPUT
-- The attached full training image.
-- Its saved Anima Tagger caption: {etc}
+- The attached full training image (used to verify the supplied tags, resolve conflicts, and bind multi-subject ownership—NOT to re-caption from scratch).
+- Its saved tagger tags or draft caption (the primary content inventory to verify, clean, and rewrite into natural English sentences): {etc}
 
-Build an accurate caption of this image using the MOSS rules below. Assign tags by inspecting the full image; no separate crop or segmentation stage is available. Preserve visible content, including the learned outfit, object, creature, scenery, or other asset. Avoid speculative tags and describe each detail only in its proper subject scope.
+TASK
+Clean the supplied tag list ({etc}) against the attached image—dropping false/contradicting tags, conflicts, generic duplicates, metadata, art-style/rendering tags, and vibe/metaphor terms—and rewrite EVERY remaining image-verified tag into fluent, complete natural-language English sentences. Do NOT discard the supplied tags to re-tag or freely caption the image from scratch. Faithfully retain every verified detail of the learned asset (form, colors, materials, parts, patterns, trim, accessories) along with any verified person's appearance, attire, pose, action, literal expression cues, gaze, framing, and physical background/setting. If no person is present, describe the retained asset or scenery tags directly without inventing a person. Never mention art style, drawing/rendering technique, medium framing (such as "An anime illustration of..." or "This image shows..."), abstract vibes/atmosphere, or figurative/animal comparisons (such as "fox-like vibe").
 
 {moss_caption_rules}
 
 OUTPUT
 Return strict JSON only, with one nonempty string field:
-{"positive": "complete MOSS caption"}
+{"positive": "complete natural-language MOSS caption"}

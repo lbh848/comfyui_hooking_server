@@ -493,3 +493,47 @@ def register_model_preset_runtime(server, prefix, presets, on_change=None, works
     server.app.router.add_get(f"/api/{prefix}/workflow", workflow)
     server.app.router.add_post(f"/api/{prefix}/workflow", workflow)
 
+    async def style_ref_upload(request: web.Request) -> web.Response:
+        from style_ref_storage import MAX_STYLE_REF_IMAGES, save_style_ref_image
+        try:
+            reader = await request.multipart()
+            uploaded = []
+            async for part in reader:
+                if part.name != "image":
+                    continue
+                if len(uploaded) >= MAX_STYLE_REF_IMAGES:
+                    raise ValueError(f"STYLE_REF 이미지는 한 번에 최대 {MAX_STYLE_REF_IMAGES}장까지 업로드할 수 있습니다.")
+                data = await part.read()
+                if data:
+                    uploaded.append(save_style_ref_image(data, part.filename or "style_ref.png"))
+            if not uploaded:
+                raise ValueError("업로드할 이미지 파일을 선택하세요.")
+            return web.json_response({"images": uploaded}, headers={"Cache-Control": "no-store"})
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def style_ref_import(request: web.Request) -> web.Response:
+        from style_ref_storage import import_style_ref_images
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) - {"images"}:
+                raise ValueError("가져올 이미지 요청을 확인하세요.")
+            imported = await asyncio.to_thread(import_style_ref_images, body.get("images"))
+            return web.json_response({"images": imported}, headers={"Cache-Control": "no-store"})
+        except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def style_ref_image(request: web.Request) -> web.StreamResponse:
+        from style_ref_storage import style_ref_image_path
+        try:
+            path = style_ref_image_path(request.match_info["image_id"])
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        if not path.is_file():
+            return web.json_response({"error": "STYLE_REF 이미지를 찾을 수 없습니다."}, status=404)
+        return web.FileResponse(path, headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+    server.app.router.add_post(f"/api/{prefix}/style-ref/upload", style_ref_upload)
+    server.app.router.add_post(f"/api/{prefix}/style-ref/import", style_ref_import)
+    server.app.router.add_get(f"/api/{prefix}/style-ref/image/{{image_id}}", style_ref_image)
+

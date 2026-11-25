@@ -221,22 +221,28 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
         detail_key = ("detail_manga" if moss_manga else
                       "detail_moss" if moss else
                       "composite_detail" if composite else "call2_detail")
-        detail_parts = ((role_context, prompts[detail_key]) if moss_manga
-                        else (role_context, explicit, prompts[detail_key]))
-        detail_system = prompt_join("\n\n", (part for part in detail_parts if part))
+        detail_system = builders.detail_system_prompt(
+            protected, "_input_", prompts[detail_key],
+            explicit_policy=explicit, moss_manga=moss_manga,
+            genre=toggles.get("genre", ""),
+            genre_prompt=prompts.get("genre", ""),
+            genre_work_title=toggles.get("genre_work_title", ""),
+            genre_secondary_prompt=prompts.get("genre_secondary", ""),
+        )
         detail_inputs = dict(past_text="_input_", segmented="_input_", toggles=toggles,
                              prior_status=prior_status, prior_time_place=prior_time_place, registered_names=names,
                              plan_profiles=[], tracking=tracking, time_place=time_place, segment_slots={"C001": 0})
+        detail_shared_parts = [compatibility_part, *genre_parts] if moss_manga else shared_parts
         stage("detail", "DETAIL-MANGA · MOSS 만화 페이지 작성" if moss_manga else "DETAIL-MOSS · 이미지 크기 기반 bbox 레이아웃 작성" if moss else "DETAIL 합성 삽화 · 배경·캐릭터·가로 위치 작성" if composite else "DETAIL-MANGA · 만화 페이지 작성" if manga else "DETAIL · 이미지 태그 작성",
-              "각 페이지를 공간을 나눠 갖는 2~5개의 주 컷과 선택적 cross-panel actors로 작성합니다. 작은 인셋은 주 컷으로 세지 않으며 1컷은 명시적인 전면 컷 요청에만 사용합니다." if moss_manga else
+              "각 페이지를 공간을 나눠 갖는 3~5개의 주 컷과 선택적 cross-panel actors로 작성합니다. 2컷은 금지되며 1컷은 명시적인 전면 컷 요청에만 사용합니다." if moss_manga else
               "각 장면에 배정된 원문·프로필·상태와 이미지 크기로 MOSS bbox 레이아웃을 작성합니다." if moss else
               "각 장면에 배정된 원문·프로필·상태로 이미지 태그를 작성합니다.",
               ["page plan·panel inventory·cross-panel actors", "패널·캐릭터·사물·말풍선 절대 bbox"] if moss_manga else
               ["장면별 MOSS 레이아웃", "캐릭터·사물 bbox"] if moss else
               ["카메라·장면 태그", "캐릭터별 긍정 태그", "보충 묘사 태그"],
-              shared_parts + ([] if moss_manga else [explicit_part]) + [prompt_part(detail_key, "MOSS 만화 페이지 작성 지침" if moss_manga else "MOSS 레이아웃 작성 지침" if moss else "합성 삽화 묘사 지침" if composite else "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL-MANGA" if moss_manga else "DETAIL-MOSS" if moss else "DETAIL 합성 삽화" if composite else "DETAIL-MANGA" if manga else "DETAIL")],
+              detail_shared_parts + ([] if moss_manga else [explicit_part]) + [prompt_part(detail_key, "MOSS 만화 페이지 작성 지침" if moss_manga else "MOSS 레이아웃 작성 지침" if moss else "합성 삽화 묘사 지침" if composite else "만화 페이지 묘사 지침" if manga else "이미지 태그 작성 지침", "DETAIL-MANGA" if moss_manga else "DETAIL-MOSS" if moss else "DETAIL 합성 삽화" if composite else "DETAIL-MANGA" if manga else "DETAIL")],
               builders.detail_messages(detail_system, batch, [], canvas_sizes={"solo": (756, 756), "group": (1152, 768)}, **detail_inputs),
-              notes=("MOSS 만화 페이지는 모델이 page(hierarchy/flow/boundaries/instruction/caption) + panels(panelId·shape·camera·focus·actors·objects·dialogue) + cross_panel_actors를 출력하고, 서버가 이를 multi_panel MOSS items로 평면화합니다. 기본 2~5개의 주 컷이며 1컷은 명시적인 전면 컷 요청에만 사용합니다. 컷·인물 bbox는 모델이 abs_centralized/yxyx 절대 좌표로 계산합니다. 서버는 좌표를 클램프하고, 정확히 맞닿는 직선 경계에 검은 구분선 항목을 추가합니다. 컷을 넘는 몸은 원래 컷의 시점과 배율을 유지합니다."
+              notes=("MOSS 만화 페이지는 모델이 page(hierarchy/flow/boundaries/instruction/caption) + panels(panelId·shape·camera·focus·actors·objects·dialogue) + cross_panel_actors를 출력하고, 서버가 이를 multi_panel MOSS items로 평면화합니다. 기본 3~5개의 주 컷(2컷 금지)이며 1컷은 명시적인 전면 컷 요청에만 사용합니다. 컷·인물 bbox는 모델이 abs_centralized/yxyx 절대 좌표로 계산합니다. 서버는 좌표를 클램프하고, 정확히 맞닿는 직선 경계에 검은 구분선 항목을 추가합니다. 컷을 넘는 몸은 원래 컷의 시점과 배율을 유지합니다."
                      if moss_manga else
                      "MOSS는 장면마다 image_size를 입력받아 abs_centralized/yxyx 절대 bbox로 레이아웃을 출력합니다. "
                      "이미지 중심이 (0,0)이며 y는 아래로, x는 오른쪽으로 증가합니다. 캐릭터뿐 아니라 위치가 중요한 사물도 object item으로 bbox화합니다."
@@ -260,13 +266,18 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                  "outputs": ["장면별 공통 프롬프트", "캐릭터별 프롬프트·영역"],
                  "notes": "DETAIL 본문에 마스크 지침을 합치고 출력 계약은 MULTI-CHAR-MASK 형식 하나만 사용합니다. 기존 DETAIL 출력 형식은 포함하지 않습니다. 작업 흐름의 마스크 위치에는 자체 생성 결과를 표시하며 별도 LLM은 호출하지 않습니다."}]
         if not emotion:
-            keyvis_system = pipeline.render_call2_prompt(prompts["call2_keyvis_manga"] if moss_manga else "\n\n".join([
-                "" if moss else prompts.get("call2_jailbreak", ""),
-                prompts.get("call2_job", ""),
-                prompts.get("call2_common", ""),
-                "" if moss else explicit,
-                prompts.get("call2_keyvis", ""),
-            ]), toggles, include_scene_count_limit=False, include_server_limits=False)
+            keyvis_system = pipeline.render_call2_prompt(
+                builders.keyvis_system_prompt(
+                    prompts, explicit_policy=explicit, moss=moss, moss_manga=moss_manga,
+                    combined_in_detail=False,
+                ),
+                toggles, include_scene_count_limit=False, include_server_limits=False)
+            combined_keyvis_system = pipeline.render_call2_prompt(
+                builders.keyvis_system_prompt(
+                    prompts, explicit_policy=explicit, moss=moss, moss_manga=moss_manga,
+                    combined_in_detail=True,
+                ),
+                toggles, include_scene_count_limit=False, include_server_limits=False)
             keyvis_messages = builders.keyvis_context_messages(keyvis_system, "_input_", [], tracking, "_input_", "_input_", time_place=time_place,
                                                              prior_status=prior_status, prior_time_place=prior_time_place, toggles=toggles,
                                                              genre_prompt=prompts.get("genre", ""),
@@ -285,8 +296,9 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                                   rendered=pipeline.render_call2_prompt(prompts["call2_keyvis"], toggles, include_server_limits=False)),
                       *([] if keyvis_inline else genre_parts)],
                   keyvis_messages, condition="대표 이미지 설정 ON · 일반 PLAN·DETAIL과 독립적으로 병렬",
-                  notes="SYSTEM의 공용·전용 지침을 순서대로 연결합니다. lb-xnai.lb.extra 시스템 프롬프트는 이 호출에서는 USER에 들어가며, 시점별 프로필·상태·과거 문맥·현재 원문·작업 요청과 순서대로 연결합니다.",
-                  user_parts=[lb_extra_part])
+                  notes=("MOSS 만화 모드에서는 DETAIL-MANGA와 함께 작성하며 lb-xnai.lb.extra 시스템 프롬프트를 포함하지 않습니다." if moss_manga else
+                         "SYSTEM의 공용·전용 지침을 순서대로 연결합니다. lb-xnai.lb.extra 시스템 프롬프트는 이 호출에서는 USER에 들어가며, 시점별 프로필·상태·과거 문맥·현재 원문·작업 요청과 순서대로 연결합니다."),
+                  user_parts=[] if moss_manga else [lb_extra_part])
             keyvis_stage = stages[-1]
             keyvis_stage["condition"] = "대표 이미지 ON · DETAIL 통합 예측 OFF일 때 별도 호출"
             for variant_mask_inline, variant_key, label in (
@@ -297,7 +309,7 @@ def build_prompt_structure(prompts=None, *, toggles=None, provider="comfy", work
                     # DETAIL-MOSS has no V3 mask variant.
                     break
                 combined_context = builders.keyvis_context_messages(
-                    keyvis_system, "_input_", [], tracking, "_input_", "_input_",
+                    combined_keyvis_system, "_input_", [], tracking, "_input_", "_input_",
                     time_place=time_place, prior_status=prior_status, prior_time_place=prior_time_place,
                     toggles={**toggles, "keyvis_in_detail_enabled": True},
                     genre_prompt=prompts.get("genre", ""),

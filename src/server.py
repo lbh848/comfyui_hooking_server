@@ -1624,12 +1624,26 @@ print(f"[ENHANCE_MODE] 초기화: enabled={enhance_mode.enabled}, prompt_file={e
 asset_mode.workflow_source_path = app_config.get("asset_workflow_source_path", "")
 asset_mode.anima_workflow_source_path = app_config.get("anima_asset_workflow_source_path", "")
 asset_mode.anima_only_workflow_source_path = app_config.get("anima_only_asset_workflow_source_path", "")
+asset_mode.moss_workflow_source_path = app_config.get("moss_asset_workflow_source_path", "")
 asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
     app_config.get("asset_workflow_type")
 )
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
+
+# ─── 배경 에셋 생성 모드 초기화 ───
+from bg_asset_presets import BgAssetMode
+
+bg_asset_mode = BgAssetMode(shared_style_tags_func=asset_mode.get_tags)
+bg_asset_mode.workflow_source_path = asset_mode.workflow_source_path
+bg_asset_mode.anima_workflow_source_path = asset_mode.anima_workflow_source_path
+bg_asset_mode.anima_only_workflow_source_path = asset_mode.anima_only_workflow_source_path
+bg_asset_mode.moss_workflow_source_path = asset_mode.moss_workflow_source_path
+bg_asset_mode.workflow_type = asset_mode.workflow_type
+bg_asset_mode.mode_log_func = mode_logger.log
+bg_asset_mode.load_tags()
+print(f"[BG_ASSET_MODE] 초기화: themes={len(bg_asset_mode.list_themes())}")
 
 # ─── Qwen 마스크 편집 모드 초기화 ───
 qwen_edit_mode = QwenEditMode(asset_mode=asset_mode)
@@ -5435,6 +5449,7 @@ def init_queue_manager():
     # re-read and normalize the entire settings file for every candidate item.
     queue_manager.get_config = lambda: app_config
     queue_manager.asset_mode = asset_mode
+    queue_manager.bg_asset_mode = bg_asset_mode
     queue_manager.asset_tool = asset_tool
     queue_manager.qwen_edit_mode = qwen_edit_mode
     queue_manager.video_mode = video_mode
@@ -5740,6 +5755,12 @@ asset_mode.submit_workflow_func = lambda workflow, progress_callback=None, input
     input_paths=input_paths,
 )
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
+# 배경 에셋 생성 모드 함수 의존성 설정 (에셋 생성 파이프라인 공유)
+bg_asset_mode.notify_frontend_func = notify_frontend
+bg_asset_mode.convert_workflow_func = asset_mode.convert_workflow_func
+bg_asset_mode.compute_hash_func = asset_mode.compute_hash_func
+bg_asset_mode.submit_workflow_func = asset_mode.submit_workflow_func
+bg_asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
 # Qwen 편집 모드 함수 의존성 설정
 qwen_edit_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
     workflow,
@@ -23642,24 +23663,31 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 enhance_mode.enhance_prompt_file = str(body["enhance_prompt_file"])
 
             # 에셋 생성 모드 설정 업데이트
-            if "asset_workflow_source_path" in body:
-                asset_mode.workflow_source_path = str(body["asset_workflow_source_path"])
-                asset_mode._asset_api_workflow = None
-                asset_mode._asset_hash = ""
-            if "anima_asset_workflow_source_path" in body:
-                asset_mode.anima_workflow_source_path = str(body["anima_asset_workflow_source_path"])
-                asset_mode._asset_api_workflow = None
-                asset_mode._asset_hash = ""
-            if "anima_only_asset_workflow_source_path" in body:
-                asset_mode.anima_only_workflow_source_path = str(
-                    body["anima_only_asset_workflow_source_path"]
-                )
-                asset_mode._asset_api_workflow = None
-                asset_mode._asset_hash = ""
-            if "asset_workflow_type" in body:
-                asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
-                    body["asset_workflow_type"]
-                )
+            for mode_target in (asset_mode, bg_asset_mode):
+                if "asset_workflow_source_path" in body:
+                    mode_target.workflow_source_path = str(body["asset_workflow_source_path"])
+                    mode_target._asset_api_workflow = None
+                    mode_target._asset_hash = ""
+                if "anima_asset_workflow_source_path" in body:
+                    mode_target.anima_workflow_source_path = str(body["anima_asset_workflow_source_path"])
+                    mode_target._asset_api_workflow = None
+                    mode_target._asset_hash = ""
+                if "anima_only_asset_workflow_source_path" in body:
+                    mode_target.anima_only_workflow_source_path = str(
+                        body["anima_only_asset_workflow_source_path"]
+                    )
+                    mode_target._asset_api_workflow = None
+                    mode_target._asset_hash = ""
+                if "moss_asset_workflow_source_path" in body:
+                    mode_target.moss_workflow_source_path = str(
+                        body["moss_asset_workflow_source_path"]
+                    )
+                    mode_target._asset_api_workflow = None
+                    mode_target._asset_hash = ""
+                if "asset_workflow_type" in body:
+                    mode_target.workflow_type = workflow_profiles.normalize_asset_workflow_type(
+                        body["asset_workflow_type"]
+                    )
 
             # 에셋툴 모드 설정 업데이트
             if "tag_analysis_workflow_source_path" in body:
@@ -25616,24 +25644,31 @@ def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
             current_api_workflow = None
             current_conversion_info = {}
 
-        if "asset_workflow_source_path" in bindings:
-            asset_mode.workflow_source_path = str(
-                bindings["asset_workflow_source_path"]
-            )
-            asset_mode._asset_api_workflow = None
-            asset_mode._asset_hash = ""
-        if "anima_asset_workflow_source_path" in bindings:
-            asset_mode.anima_workflow_source_path = str(
-                bindings["anima_asset_workflow_source_path"]
-            )
-            asset_mode._asset_api_workflow = None
-            asset_mode._asset_hash = ""
-        if "anima_only_asset_workflow_source_path" in bindings:
-            asset_mode.anima_only_workflow_source_path = str(
-                bindings["anima_only_asset_workflow_source_path"]
-            )
-            asset_mode._asset_api_workflow = None
-            asset_mode._asset_hash = ""
+        for mode_target in (asset_mode, bg_asset_mode):
+            if "asset_workflow_source_path" in bindings:
+                mode_target.workflow_source_path = str(
+                    bindings["asset_workflow_source_path"]
+                )
+                mode_target._asset_api_workflow = None
+                mode_target._asset_hash = ""
+            if "anima_asset_workflow_source_path" in bindings:
+                mode_target.anima_workflow_source_path = str(
+                    bindings["anima_asset_workflow_source_path"]
+                )
+                mode_target._asset_api_workflow = None
+                mode_target._asset_hash = ""
+            if "anima_only_asset_workflow_source_path" in bindings:
+                mode_target.anima_only_workflow_source_path = str(
+                    bindings["anima_only_asset_workflow_source_path"]
+                )
+                mode_target._asset_api_workflow = None
+                mode_target._asset_hash = ""
+            if "moss_asset_workflow_source_path" in bindings:
+                mode_target.moss_workflow_source_path = str(
+                    bindings["moss_asset_workflow_source_path"]
+                )
+                mode_target._asset_api_workflow = None
+                mode_target._asset_hash = ""
         if "tag_analysis_workflow_source_path" in bindings:
             asset_tool.workflow_source_path = str(
                 bindings["tag_analysis_workflow_source_path"]
@@ -25660,6 +25695,7 @@ def _image_comparison_asset_source_path(workflow_type: str) -> str:
             workflow_profiles.ASSET_ILXL: asset_mode.workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ILXL: asset_mode.anima_workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ONLY: asset_mode.anima_only_workflow_source_path,
+            workflow_profiles.ASSET_MOSS: asset_mode.moss_workflow_source_path,
         }[normalized]
         or ""
     )
@@ -27989,6 +28025,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
             anima_hrf_activate=body.get("anima_hrf_activate", False),
+            moss_hrf_activate=body.get("moss_hrf_activate", False),
             hrf_size=float(body.get("hrf_size", 2.0)),
             hrf_restore_size=body.get("hrf_restore_size", True),
             hrf_control_net=body.get("hrf_control_net", False),
@@ -29235,6 +29272,15 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
     """LLM으로 선택 범위의 이름 매핑을 최소 수정하거나 전면 재작성한다."""
     try:
         body = await request.json()
+    except Exception as e:
+        return web.json_response({"success": False, "error": f"요청 본문을 읽지 못했습니다: {e}"}, status=400)
+    return await run_asset_name_mapping_llm(body, target_mode=asset_mode)
+
+
+async def run_asset_name_mapping_llm(body: dict, *, target_mode=None) -> web.Response:
+    """LLM으로 선택 범위의 이름 매핑을 최소 수정하거나 전면 재작성한다."""
+    mode_store = target_mode or asset_mode
+    try:
         character, raw_outfits, raw_expressions, current_mapping = _asset_name_mapping_request_parts(body)
         mode = body.get("mode", "")
         if mode not in ("auto_fix", "full"):
@@ -29244,7 +29290,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                 "error": "mode는 auto_fix 또는 full이어야 합니다.",
             }, status=400)
 
-        info = asset_mode.get_character_export_info(character)
+        info = mode_store.get_character_export_info(character)
         available_outfits = set(info.get("outfits", []))
         available_expressions = set(info.get("expressions", []))
         outfits = list(info.get("outfits", [])) if raw_outfits is None else list(dict.fromkeys(raw_outfits))
@@ -29274,7 +29320,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                 ],
             }, status=409)
 
-        current_plan = asset_mode.build_character_export_plan(
+        current_plan = mode_store.build_character_export_plan(
             character,
             outfits,
             expressions,
@@ -29297,7 +29343,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                 f"[ASSET_NAME_MAPPING_LLM] 호출 전 설정 오류: "
                 f"character={character!r}, errors={configuration_errors}"
             )
-            public_plan = asset_mode.public_export_plan(current_plan)
+            public_plan = mode_store.public_export_plan(current_plan)
             return web.json_response({
                 "success": False,
                 "error": (
@@ -29311,7 +29357,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             if mode == "auto_fix"
             else "asset_name_mapping_full"
         )
-        normalized_current = asset_mode._coerce_export_mapping(current_mapping)
+        normalized_current = mode_store._coerce_export_mapping(current_mapping)
         current_outfit_mapping = normalized_current.get("outfits") or {}
         current_expression_mapping = normalized_current.get("expressions") or {}
         if mode == "auto_fix":
@@ -29358,7 +29404,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                         "현재 켜진 파일명 블록만으로는 충돌한 이미지를 구분할 수 없습니다. "
                         "충돌 원본을 구분하는 복장 또는 표정 블록을 먼저 켜세요."
                     ),
-                    "validation": asset_mode.public_export_plan(current_plan),
+                    "validation": mode_store.public_export_plan(current_plan),
                 }, status=409)
             target_outfits.discard("")
             target_expressions.discard("")
@@ -29387,7 +29433,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                         "현재 문제는 빈 태그 또는 수정 가능한 충돌 태그가 아닙니다. "
                         "파일명 블록 설정이나 잘못된 이름을 직접 확인하세요."
                     ),
-                    "validation": asset_mode.public_export_plan(current_plan),
+                    "validation": mode_store.public_export_plan(current_plan),
                 }, status=409)
             print(
                 f"[ASSET_NAME_MAPPING_LLM] 자동 수정 대상 없음: "
@@ -29403,7 +29449,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
                     "outfit_mapping": {},
                     "expression_mapping": {},
                 },
-                "validation": asset_mode.public_export_plan(current_plan),
+                "validation": mode_store.public_export_plan(current_plan),
             })
 
         chunks = _chunk_asset_name_mapping_items(llm_outfits, llm_expressions)
@@ -29430,7 +29476,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             ]
             if mode == "auto_fix" else []
         )
-        validation_public = asset_mode.public_export_plan(current_plan)
+        validation_public = mode_store.public_export_plan(current_plan)
 
         print(
             f"[ASSET_NAME_MAPPING_LLM] 호출 시작: task={task_key}, character={character!r}, "
@@ -29536,7 +29582,7 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             "outfits": {**current_outfit_mapping, **generated_outfits},
             "expressions": {**current_expression_mapping, **generated_expressions},
         }
-        result_plan = asset_mode.build_character_export_plan(
+        result_plan = mode_store.build_character_export_plan(
             character,
             outfits,
             expressions,
@@ -29558,10 +29604,10 @@ async def handle_api_asset_mode_name_mapping_llm(request: web.Request) -> web.Re
             return web.json_response({
                 "success": False,
                 "error": f"LLM 결과를 합친 뒤 이름 충돌 또는 잘못된 이름이 발견됐습니다: {reason}",
-                "validation": asset_mode.public_export_plan(result_plan),
+                "validation": mode_store.public_export_plan(result_plan),
             }, status=422)
 
-        public_plan = asset_mode.public_export_plan(result_plan)
+        public_plan = mode_store.public_export_plan(result_plan)
         print(
             f"[ASSET_NAME_MAPPING_LLM] 완료: task={task_key}, "
             f"chunks={len(chunks)}, files={public_plan.get('file_count', 0)}"
@@ -31827,6 +31873,7 @@ def _build_character_maker_illustration_prompt(
         ).strip(),
         "hrf_activate": bool(settings.get("hrf_sdxl", False)),
         "anima_hrf_activate": bool(settings.get("hrf_anima", False)),
+        "moss_hrf_activate": bool(settings.get("hrf_moss", False)),
         "hrf_size": float(settings.get("hrf_size", 2.0)),
         "hrf_restore_size": bool(settings.get("hrf_restore_size", True)),
         "fd_activate": bool(settings.get("sdxl_fd_enabled", False)),

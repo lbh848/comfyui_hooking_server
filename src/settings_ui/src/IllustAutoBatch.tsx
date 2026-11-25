@@ -65,9 +65,11 @@ function IndexExample({ botName, characters, character, onCharacterChange, indic
   </section>;
 }
 
+export type AutoBatchChange = { deletedCharacter?: string; appliedCharacters?: string[] };
+
 export function IllustAutoBatch({ botName, characters, readOnly, initialIndices = "", onClose, onChanged, onBusyChange }: {
   botName: string; characters: IllustrationData[]; readOnly: boolean; initialIndices?: string; onClose: () => void;
-  onChanged: (deletedCharacter?: string) => void; onBusyChange: (busy: boolean) => void;
+  onChanged: (change: AutoBatchChange) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const api = useBotApi();
   const [step, setStep] = useState<Step>(1);
@@ -135,6 +137,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
     setProgress({ done: 0, total: targets.length });
     setBusy(true); setRunning(true); setError(""); setMessage(""); setStopping(false); stop.current = false;
     let completed = 0, failed = 0;
+    const appliedCharacters: string[] = [];
     const states = targets.map(row => ({ row, selections: [] as Selection[], failed: false, applied: false }));
     setResults(current => ({ ...current, ...Object.fromEntries(targets.map(row => [row.character, {}])) }));
     setStatuses(current => ({ ...current, ...Object.fromEntries(targets.map(row => [row.character, "대기 중"])) }));
@@ -163,9 +166,9 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
           if (result.skipped?.length) throw new Error(result.skipped.map((item: IllustrationData) => item.reason).join(" · "));
           completed++;
           state.applied = true;
+          appliedCharacters.push(row.character);
           setApplied(current => new Set([...current, row.character]));
           setStatuses(current => ({ ...current, [row.character]: row.groups[0]?.fallback_first ? `적용 완료 · ${manualSelections[row.character] ? "직접 선택한 이미지" : "첫 번째 이미지"}` : `적용 완료 · 프로필 ${row.groups.length}개` }));
-          onChanged();
         } catch (error) {
           if (!state.failed) {
             state.failed = true;
@@ -178,7 +181,11 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
       if (stop.current) setStatuses(current => ({ ...current, ...Object.fromEntries(states
         .filter(state => !state.applied && !state.failed).map(state => [state.row.character, "중단됨 · 적용하지 않음"])) }));
       setMessage(`${completed}명 적용 완료${failed ? ` · ${failed}명 실패` : ""}${stop.current ? " · 중단됨" : ""}`);
-    } finally { setBusy(false); setRunning(false); setStopping(false); }
+    } finally {
+      setBusy(false); setRunning(false); setStopping(false);
+      // Refresh parent catalogs once per batch so mid-run reloads cannot starve the worker pool.
+      if (appliedCharacters.length) onChanged({ appliedCharacters });
+    }
   }
 
   async function removeCharacter() {
@@ -192,7 +199,7 @@ export function IllustAutoBatch({ botName, characters, readOnly, initialIndices 
       setSelected(current => { const next = new Set(current); next.delete(character); return next; });
       if (exampleCharacter === character) setExampleCharacter(String(remainingCharacters.find(item => item.name !== character)?.name || ""));
       setDeleteTarget("");
-      onChanged(character);
+      onChanged({ deletedCharacter: character });
     } catch (error) { setDeleteError((error as Error).message); }
     finally { setBusy(false); }
   }

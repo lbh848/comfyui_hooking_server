@@ -16,7 +16,13 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
 }) {
   const api = useBotApi();
   const initialCharacters = useRef(characters);
-  const [rows, setRows] = useState<RepBatchRow[]>([]);
+  const createInitialRows = (): RepBatchRow[] => initialCharacters.current.map(character => ({ charName: character.name as string, profiles: [], baseOrder: [], loaded: false, error: "", maxCards: 0 }));
+  const [rows, setRows] = useState<RepBatchRow[]>(createInitialRows);
+  const rowsRef = useRef<RepBatchRow[]>(rows);
+  rowsRef.current = rows;
+  const loadedBotRef = useRef(botName);
+  const pendingReloadRef = useRef<Set<string>>(new Set());
+  const [reloadRevision, setReloadRevision] = useState(0);
   const [commonSearch, setCommonSearch] = useState("");
   const [mode, setMode] = useState<Mode>("protect");
   const [busy, setBusy] = useState(false);
@@ -54,16 +60,28 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
     } catch (error) { return { ...row, loaded: true, error: error instanceof Error ? error.message : String(error) }; }
   }
   useEffect(() => {
+    if (loadedBotRef.current !== botName) {
+      loadedBotRef.current = botName;
+      const initialRows = createInitialRows();
+      rowsRef.current = initialRows;
+      pendingReloadRef.current = new Set();
+      setRows(initialRows);
+    }
+    // Pause hidden manual-tab row fetches while automatic setup is active so its
+    // LLM and apply requests do not queue behind character-card/image polling.
+    if (view === "auto") return;
+    const targets = rowsRef.current.filter(row => !row.loaded || pendingReloadRef.current.has(row.charName));
+    if (!targets.length) return;
     const controller = new AbortController();
-    const initialRows = initialCharacters.current.map(character => ({ charName: character.name as string, profiles: [], baseOrder: [], loaded: false, error: "", maxCards: 0 }));
-    setRows(initialRows);
-    void ComfyRepBatch.runLimited(initialRows.map(row => async () => {
+    void ComfyRepBatch.runLimited(targets.map(row => async () => {
       if (controller.signal.aborted) return;
       const loaded = await loadRow(row, controller.signal);
-      if (!controller.signal.aborted) setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
-    }), 10);
+      if (controller.signal.aborted) return;
+      pendingReloadRef.current.delete(row.charName);
+      setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
+    }), 4);
     return () => controller.abort();
-  }, [botName]);
+  }, [botName, view, reloadRevision]);
 
   const searchFor = (profile: RepBatchProfile) => (profile.useOwnSearch ? profile.ownSearch : commonSearch).trim().toLowerCase();
   const protectedProfile = (profile: RepBatchProfile) => !profile.removePending && !profile.isNew && mode === "protect" && !!profile.rep0 && !profile.manualTarget;
@@ -229,18 +247,18 @@ export function IllustRepresentativeBatch({ botName, characters, readOnly, onClo
       <div className="illust-actions illust-dialog-actions illust-rep-batch-footer"><button type="button" className="button primary" disabled={busy || loading || readOnly || !plan.items.length} onClick={requestApply}><Save size={14} />{busy ? "적용 중…" : "일괄 설정 적용"}</button></div>
       </div>
       {autoBatch && <div className="illust-rep-batch-tab-panel" role="tabpanel" id={`${tabsId}-panel-auto`} aria-labelledby={`${tabsId}-tab-auto`} hidden={view !== "auto"}>
-        <IllustAutoBatch key={autoBatch.characters.map(character => character.name).join("|") + ":" + autoBatch.indices} botName={botName} characters={autoBatch.characters} initialIndices={autoBatch.indices} readOnly={readOnly} onClose={onClose} onBusyChange={setAutoBusy} onChanged={deletedCharacter => {
+        <IllustAutoBatch key={autoBatch.characters.map(character => character.name).join("|") + ":" + autoBatch.indices} botName={botName} characters={autoBatch.characters} initialIndices={autoBatch.indices} readOnly={readOnly} onClose={onClose} onBusyChange={setAutoBusy} onChanged={({ deletedCharacter, appliedCharacters }) => {
           onChanged();
           if (deletedCharacter) {
             initialCharacters.current = initialCharacters.current.filter(character => character.name !== deletedCharacter);
+            pendingReloadRef.current.delete(deletedCharacter);
             setRows(current => current.filter(row => row.charName !== deletedCharacter));
             return;
           }
-          const names = new Set(autoBatch.characters.map(character => character.name));
-          void ComfyRepBatch.runLimited(rows.filter(row => names.has(row.charName)).map(row => async () => {
-            const loaded = await loadRow(row);
-            setRows(current => current.map(item => item.charName === row.charName ? loaded : item));
-          }), 10);
+          if (appliedCharacters?.length) {
+            for (const name of appliedCharacters) pendingReloadRef.current.add(name);
+            setReloadRevision(value => value + 1);
+          }
         }} />
       </div>}
       {api.scope === "illust" && <div className="illust-rep-batch-tab-panel" role="tabpanel" id={`${tabsId}-panel-merge`} aria-labelledby={`${tabsId}-tab-merge`} hidden={view !== "merge"}>

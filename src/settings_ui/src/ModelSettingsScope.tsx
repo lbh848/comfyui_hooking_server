@@ -5,7 +5,7 @@ import { assetRequest, assetWorkflowPaths, assetWorkflowTypes } from "./asset";
 // The workshop name selects the server-side preset file, so the illustration
 // and emotion tabs have independent presets and independent active selections.
 const illustrationScope = {
-  prefix: "illustration", workshop: "illustration", title: "삽화", category: "삽화",
+  prefix: "illustration", apiPrefix: "/api/illust", workshop: "illustration", title: "삽화", category: "삽화",
   typeKey: "illustration_workflow_type", pathsKey: "illustration_workflow_source_paths",
   configKeys: ["illustration_workflow_type", "illustration_workflow_source_paths", "chansub_workflow_type", "illustration_model_family"],
   profiles: ["v3", "v3_anima"], labels: { v3: "ANIMA+ILXL", v3_anima: "ANIMA", moss: "MOSS" } as Record<string, string>,
@@ -22,8 +22,8 @@ const emotionScope: typeof illustrationScope = {
   description: "선택한 프리셋은 감정 삽화(배경 합성) 생성에만 적용됩니다.",
 };
 const assetScope: typeof illustrationScope = {
-  prefix: "asset", workshop: "", title: "에셋", category: "에셋", typeKey: "asset_workflow_type", pathsKey: "asset_workflow_source_paths",
-  configKeys: ["asset_workflow_type", "asset_workflow_source_paths"], profiles: ["anima_only", "anima_ilxl"],
+  prefix: "asset", apiPrefix: "/api/asset", workshop: "", title: "에셋", category: "에셋", typeKey: "asset_workflow_type", pathsKey: "asset_workflow_source_paths",
+  configKeys: ["asset_workflow_type", "asset_workflow_source_paths"], profiles: ["anima_only", "anima_ilxl", "moss"],
   labels: assetWorkflowTypes, modelAliases: {}, familyKey: "", bindings: assetWorkflowPaths, allowChansub: false, request: assetRequest,
   description: "선택한 프리셋은 에셋 생성과 에셋 일괄 생성의 모든 슬롯에 공통으로 적용됩니다.",
 };

@@ -551,10 +551,64 @@ def merge_lora_lists(*groups) -> list[dict]:
     return merged
 
 
+def _truthy_flag(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
+
+
+def build_moss_hiresfix(fields: dict, settings: dict, *,
+                        fallback_sampling: dict | None = None,
+                        default_size: float = 2.0,
+                        default_restore_size: bool = True) -> dict:
+    """Build the shared ``workflow.hiresfix`` controller block for MOSS runs."""
+    activate = _truthy_flag(fields.get("MOSS_HRF_ACTIVATE"), False)
+    raw_size = fields.get("HRF_SIZE", default_size)
+    if raw_size is None or raw_size == "":
+        hrf_size = float(default_size)
+    elif isinstance(raw_size, bool):
+        raise ValueError("고해상도 보정 확대 배율은 숫자여야 합니다.")
+    else:
+        try:
+            hrf_size = float(raw_size)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("고해상도 보정 확대 배율은 숫자여야 합니다.") from exc
+    if not math.isfinite(hrf_size) or not 1.0 <= hrf_size <= 8.0:
+        raise ValueError("고해상도 보정 확대 배율은 1.0~8.0 사이여야 합니다.")
+    restore_size = _truthy_flag(fields.get("HRF_RESTORE_SIZE"), default_restore_size)
+    raw_sampling = (
+        fields.get("workflow.hiresfix.sampling")
+        or settings.get("workflow.hiresfix.sampling")
+    )
+    if raw_sampling is not None and not isinstance(raw_sampling, dict):
+        raise ValueError("MOSS hiresfix sampling settings must be an object")
+    if isinstance(raw_sampling, dict) and raw_sampling:
+        hiresfix_sampling = copy.deepcopy(raw_sampling)
+    else:
+        base = fallback_sampling if isinstance(fallback_sampling, dict) else {}
+        hiresfix_sampling = {
+            "steps": base.get("steps", 8),
+            "cfg": base.get("cfg", 1.5),
+            "sampler_name": base.get("sampler_name", "euler"),
+            "scheduler": base.get("scheduler", "simple"),
+            "denoise": 0.25,
+        }
+    return {
+        "activate": activate,
+        "scale_by": hrf_size if activate else 1.0,
+        "restore_size": restore_size if activate else False,
+        "sampling": hiresfix_sampling,
+    }
+
+
 def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
                      batch_size=1, seed=0, negative="", sampling=None,
                      lora_list=None, lora_filter="", clip_device="gpu",
-                     sequential_offload=False) -> dict:
+                     sequential_offload=False, hiresfix=None) -> dict:
     """Build the workflow controller object shared by every MOSS V2 wrapper."""
     from illustration_json import normalize_clip_device
 
@@ -563,7 +617,7 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
         loras = [item for item in loras
                  if _text(item.get("lora_path")).replace("\\", "/").split("/")[-1].casefold()
                  != MOSS_CHARREF_LORA.casefold()]
-    return {
+    controller = {
         "model": _text(model),
         "clip": _text(clip),
         "clip_device": normalize_clip_device(clip_device),
@@ -581,6 +635,9 @@ def build_controller(*, model="", clip="", vae="", width=1024, height=1024,
             "filter": _text(lora_filter),
         },
     }
+    if hiresfix is not None:
+        controller["hiresfix"] = copy.deepcopy(hiresfix)
+    return controller
 
 
 def apply_character_card_names(moss: dict, characters: list,

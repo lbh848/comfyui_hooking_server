@@ -42,7 +42,7 @@ READ_PATHS = {
 }
 WRITE_PATHS = {
     "bot_mode/lore_npcs/analyze", "bot_mode/lore_npcs/create", "illustration/lore_npcs/cancel",
-    "bot_mode/lore_npcs/generate", "bot_mode/lore_npcs/register",
+    "bot_mode/lore_npcs/generate", "bot_mode/lore_npcs/register", "bot_mode/lore_npcs/classify_images",
     "bot_mode/character_lore_auto_link",
     "bot_mode/archive",
     "bot_mode/suggest_name_tag",
@@ -70,10 +70,11 @@ WRITE_PATHS = {
     "bot_mode/emotion_assets", "bot_mode/emotion_upload",
     "bot_mode/postprocess_vn", "bot_mode/postprocess_bubble", "bot_mode/postprocess_subtitle", "bot_mode/postprocess_manga_text",
     "postprocess/settings", "postprocess/preview", "postprocess/font/upload", "postprocess/font/delete", "illustration/workflow", "illustration/presets",
+    "illustration/style-ref/upload", "illustration/style-ref/import",
     "illustration/background-presets", "illustration/background-bots", "illustration/background-cards",
     "llm_edit_prompt_template",
 }
-MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image|bot_mode/archive|illustration/background-image)"
+MEDIA_PATTERN = r"/api/(?:backup_(?:image|poster|raw)/[^/]+|bot_mode/image/[^/]+/[^/]+/[^/]+|bot_mode/emotion_image|bot_mode/archive|illustration/background-image|illustration/style-ref/image/[a-f0-9]{24}\.png)"
 
 
 def illustration_media_path(path: str) -> bool:

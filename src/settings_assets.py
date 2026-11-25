@@ -8,6 +8,7 @@ from aiohttp import web
 CONFIG_KEYS = {
     "asset_workflow_type", "asset_workflow_source_path",
     "anima_asset_workflow_source_path", "anima_only_asset_workflow_source_path",
+    "moss_asset_workflow_source_path",
 }
 READ_PATHS = {
     "asset/character-maker", "asset/edit-options",
@@ -17,7 +18,7 @@ READ_PATHS = {
 }
 WRITE_PATHS = {
     "asset/character-maker", "asset/character-upload",
-    "asset/presets", "asset/style-presets", "asset/character-presets", "asset/workflow", "asset/preview",
+    "asset/presets", "asset/style-presets", "asset/character-presets", "asset/workflow", "asset/style-ref/upload", "asset/style-ref/import", "asset/preview",
     "asset/config", "asset/enqueue", "asset_mode/tags", "asset_mode/upload_reference",
     "asset_mode/compute_ref_hash", "asset_mode/set_representative", "asset_mode/delete_image", "asset_mode/delete_combination",
     "asset_mode/qwen_edit/enqueue", "asset_mode/qwen_edit/translate",
@@ -26,7 +27,7 @@ WRITE_PATHS = {
     "asset_mode/export", "asset/export", "asset/export/validate",
     "chain_presets/save", "chain_presets/delete", "chain_presets/manage",
 }
-MEDIA_PATTERN = r"/api/(?:asset/character-maker/image|asset_mode/characters/[^/]+/outfits/[^/]+/expressions/[^/]+/images/[^/]+|asset_mode/qwen_edit/composite_items/[^/]+\.[pP][nN][gG])"
+MEDIA_PATTERN = r"/api/(?:asset/character-maker/image|asset/style-ref/image/[a-f0-9]{24}\.png|asset_mode/characters/[^/]+/outfits/[^/]+/expressions/[^/]+/images/[^/]+|asset_mode/qwen_edit/composite_items/[^/]+\.[pP][nN][gG])"
 
 
 def allowed_asset_path(path: str, method: str) -> bool:
@@ -99,7 +100,10 @@ def register_asset_runtime(server) -> None:
         return web.json_response({key: server.app_config.get(key, server.DEFAULT_CONFIG.get(key, "")) for key in CONFIG_KEYS})
 
     def prepare_job(job, style_presets):
-        from asset_json import asset_document, prepare_asset_mask_document, prepare_asset_references
+        from asset_json import (
+            asset_document, build_asset_moss_document,
+            prepare_asset_mask_document, prepare_asset_references,
+        )
         if not isinstance(job.get("character"), str) or not job["character"].strip():
             raise ValueError("캐릭터를 선택하세요.")
         # Preset names only organize output files. The prompt already contains applied values.
@@ -121,6 +125,16 @@ def register_asset_runtime(server) -> None:
         if not isinstance(document, dict) or not isinstance(document.get("fields"), dict) or not document["fields"]:
             raise ValueError("프롬프트 JSON의 fields를 확인하세요.")
         document = asset_document(json.dumps(document, ensure_ascii=False, allow_nan=False))
+        if profile == "moss":
+            from modes.moss_prompt_builder import MossPromptBuilder
+            document = build_asset_moss_document(document, snapshot)
+            job["snapref_enabled"] = False
+            job["snapref_embedded"] = True
+            job["prompt_json"] = document
+            job["positive_prompt"] = MossPromptBuilder.dumps(document)
+            job["negative_prompt"] = ""
+            job.update(face_id_enabled=False, style_ref_enabled=False, pose_enabled=False, hrf_control_net=False)
+            return snapshot
         document = apply_asset_preset(document, snapshot)
         document = prepare_asset_mask_document(document)
         if document["fields"].get("MULTI_CHAR", {}).get("layout"):
@@ -171,8 +185,8 @@ def register_asset_runtime(server) -> None:
         for index, job in enumerate(jobs):
             if not isinstance(job, dict):
                 return web.json_response({"error": f"슬롯 {index + 1}: 생성할 에셋을 확인하세요."}, status=400)
-            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl"}:
-                return web.json_response({"error": f"슬롯 {index + 1}: ANIMA 또는 ANIMA+ILXL 워크플로우를 선택하세요."}, status=400)
+            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl", "moss"}:
+                return web.json_response({"error": f"슬롯 {index + 1}: ANIMA, ANIMA+ILXL 또는 MOSS 워크플로우를 선택하세요."}, status=400)
             try:
                 snapshot = prepare_job(job, style_presets)
                 snapshots.append(snapshot)
@@ -214,8 +228,8 @@ def register_asset_runtime(server) -> None:
             if not isinstance(metadata, dict) or not isinstance(metadata.get("job"), dict):
                 raise ValueError("업로드 프롬프트 설정을 확인하세요.")
             job = dict(metadata["job"])
-            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl"}:
-                raise ValueError("ANIMA 또는 ANIMA+ILXL 워크플로우를 선택하세요.")
+            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl", "moss"}:
+                raise ValueError("ANIMA, ANIMA+ILXL 또는 MOSS 워크플로우를 선택하세요.")
             character = job.get("character")
             if not isinstance(character, str) or not character.strip():
                 raise ValueError("캐릭터를 선택하세요.")

@@ -7,11 +7,34 @@ import { CharacterImportedLore } from "./IllustCharacterLore";
 import { readCharacterArchives } from "./characterArchiveReader";
 import type { CharacterLoreEntry } from "./characterLore";
 import { saveBotArchives } from "./botArchives";
+import {
+  cancelLoreNpcOperation, LORE_BATCH_CHAR_OPTIONS, mergeLoreNpcCandidates, requestLoreNpc,
+  type AnalysisWarning, type LoreNpc, type LoreNpcCard, type LoreOperation,
+} from "./loreNpcShared";
 
-type LoreNpcCard = { gender_tag: string; appearance: string[]; default_outfit: string[]; face_tags: string[]; eye_tags: string[]; visual_context: string };
-type LoreNpc = { name: string; aliases: string[]; description: string; entry_indexes: number[]; card: LoreNpcCard };
-type AnalysisWarning = { batch: number; source: string; title: string; issues: string[] };
-type Operation = { controller: AbortController; requestId: string };
+export function LoreBatchCharsSelect({ value, disabled, onChange }: {
+  value: number; disabled: boolean; onChange: (value: number) => void;
+}) {
+  return <label className="field">한 번에 분석할 글자 수<select value={value} disabled={disabled} onChange={event => onChange(Number(event.target.value))}>
+    {LORE_BATCH_CHAR_OPTIONS.map(size => <option key={size} value={size}>{size.toLocaleString()}자</option>)}
+  </select></label>;
+}
+
+export function LoreBatchWarnings({ warnings }: { warnings: AnalysisWarning[] }) {
+  if (!warnings.length) return null;
+  return <details className="illust-lore-entry" open><summary>확인할 분석 결과 · {warnings.length}묶음</summary>
+    {warnings.map((item, index) => <div key={`${item.source}-${item.batch}-${index}`}><strong>{item.batch}번째 묶음 · {item.source} · {item.title}부터</strong>
+      <ul>{item.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>)}
+  </details>;
+}
+
+export function LoreNpcCardDetails({ card }: { card: LoreNpcCard }) {
+  return <details><summary>외형 카드</summary>
+    <p>{[card.gender_tag, ...card.appearance, ...card.default_outfit,
+      ...card.face_tags, ...card.eye_tags].join(", ")}</p>
+    {card.visual_context && <p>{card.visual_context}</p>}
+  </details>;
+}
 
 export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBatchCharsChange, existingNames, busy, onBusyChange, onAdded, onClose }: {
   botName: string; botFiles: File[]; moduleFiles: File[]; existingNames: Set<string>; busy: boolean;
@@ -28,7 +51,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<AnalysisWarning[]>([]);
   const [createErrors, setCreateErrors] = useState(new Map<string, string>());
-  const active = useRef<Operation | null>(null);
+  const active = useRef<LoreOperation | null>(null);
   const [stopping, setStopping] = useState(false);
   const registered = new Set(Array.from(existingNames, name => name.toLowerCase()));
   const pending = candidates.filter(({ name }) => selected.includes(name) && !registered.has(name.toLowerCase()) && !results.has(name));
@@ -42,27 +65,15 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
   function finish() {
     active.current = null; setStopping(false); onBusyChange(false);
   }
-  async function request(operation: Operation, action: "generate" | "register", body: Record<string, unknown>) {
-    operation.controller.signal.throwIfAborted();
-    operation.requestId = crypto.randomUUID();
-    try {
-      // Keep the response open so Stop can return already analyzed candidates.
-      return await api.request(`bot_mode/lore_npcs/${action}`, { ...body, bot_name: botName, operation_id: operation.requestId });
-    } finally { operation.requestId = ""; }
+  function request(operation: LoreOperation, action: "generate" | "register", body: Record<string, unknown>) {
+    return requestLoreNpc(api, botName, operation, action, body);
   }
   async function stop() {
     const operation = active.current;
     if (!operation || stopping) return;
     setStopping(true);
-    operation.controller.abort();
-    const id = operation.requestId;
     try {
-      // A request can still be waiting for the bot write lock when Stop is pressed.
-      while (id && active.current === operation && operation.requestId === id) {
-        const data = await api.request("illustration/lore_npcs/cancel", { bot_name: botName, operation_id: id });
-        if (data.found) break;
-        await new Promise(resolve => window.setTimeout(resolve, 500));
-      }
+      await cancelLoreNpcOperation(api, botName, operation, active);
     } catch (err) {
       if (active.current === operation) {
         setStopping(false); setError(`중지 요청 실패 · ${err instanceof Error ? err.message : String(err)}`);
@@ -85,16 +96,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
       setWarnings(issues);
       const interrupted = data.cancelled || operation.controller.signal.aborted;
       const previous = new Map(candidates.map(candidate => [candidate.name.toLowerCase(), candidate]));
-      const merged = interrupted || issues.length ? new Map(previous) : new Map<string, LoreNpc>();
-      for (const candidate of found) {
-        const key = candidate.name.toLowerCase();
-        const old = merged.get(key);
-        merged.set(key, old ? { ...candidate, name: old.name,
-          aliases: [...new Set([...old.aliases, ...candidate.aliases])],
-          entry_indexes: [...new Set([...old.entry_indexes, ...candidate.entry_indexes])],
-        } : candidate);
-      }
-      const visible = [...merged.values()];
+      const visible = mergeLoreNpcCandidates(candidates, found, interrupted || issues.length > 0);
       setCandidates(visible);
       setSelected(visible.filter(({ name }) => !registered.has(name.toLowerCase()) &&
         (!previous.has(name.toLowerCase()) || selected.includes(previous.get(name.toLowerCase())!.name))).map(({ name }) => name));
@@ -142,17 +144,12 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
   return <>
     <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || !botFiles.length && !moduleFiles.length}
       onClick={() => void generateLoreNpcCards()}><Sparkles size={14} />로어북 기반 NPC 생성</button>
-      <label className="field">한 번에 분석할 글자 수<select value={batchChars} disabled={busy} onChange={event => onBatchCharsChange(Number(event.target.value))}>
-        {[5000, 10000, 20000, 40000, 80000].map(size => <option key={size} value={size}>{size.toLocaleString()}자</option>)}
-      </select></label>
+      <LoreBatchCharsSelect value={batchChars} disabled={busy} onChange={onBatchCharsChange} />
       {active.current && <button type="button" className="button danger" disabled={stopping} onClick={() => void stop()}>
         <Square size={14} />{stopping ? "중지 중…" : "중지"}</button>}</div>
     {progress && <p className="field-help" role="status">{progress}</p>}
     <IllustrationFeedback error={error} />
-    {warnings.length > 0 && <details className="illust-lore-entry" open><summary>확인할 분석 결과 · {warnings.length}묶음</summary>
-      {warnings.map(item => <div key={item.batch}><strong>{item.batch}번째 묶음 · {item.source} · {item.title}부터</strong>
-        <ul>{item.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>)}
-    </details>}
+    <LoreBatchWarnings warnings={warnings} />
     {!!candidates.length && <Panel title="등록할 NPC" className="illust-character-import-group">
       <div className="illust-form illust-character-import-body">
         {candidates.map(candidate => {
@@ -164,11 +161,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
               <strong>{name}</strong>{status && <span>{status}</span>}</label>
             {candidate.aliases.length > 0 && <p className="field-help">{candidate.aliases.join(" · ")}</p>}
             <p className="illust-lore-text">{candidate.description}</p>
-            <details><summary>외형 카드</summary>
-              <p>{[candidate.card.gender_tag, ...candidate.card.appearance, ...candidate.card.default_outfit,
-                ...candidate.card.face_tags, ...candidate.card.eye_tags].join(", ")}</p>
-              {candidate.card.visual_context && <p>{candidate.card.visual_context}</p>}
-            </details>
+            <LoreNpcCardDetails card={candidate.card} />
             {!status && createErrors.has(name) && <IllustrationFeedback error={createErrors.get(name)} />}
             <CharacterImportedLore entries={candidate.entry_indexes.map(index => entries[index])} />
           </div>;

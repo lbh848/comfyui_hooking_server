@@ -98,6 +98,7 @@ globalThis.ComfyBotBatch = (() => {
         const uploads = entries.filter(entry => entry.action !== 'unchanged');
         const total = names.length + uploads.length;
         let completed = 0;
+        let imagesCompleted = 0;
         let lastProgress = -Infinity;
         const progress = (message) => {
             const now = Date.now();
@@ -105,7 +106,12 @@ globalThis.ComfyBotBatch = (() => {
             // for every response. Always report stage changes and completion.
             if (!message && completed !== total && now - lastProgress < 100) return;
             lastProgress = now;
-            onProgress?.(message || `처리 ${completed}/${total} · 동일 이미지 ${result.skipped}장 건너뜀`, {completed, total});
+            const defaultMessage = uploads.length
+                ? `이미지 업로드 ${imagesCompleted.toLocaleString()}/${uploads.length.toLocaleString()}장${result.skipped ? ` · 동일 이미지 ${result.skipped.toLocaleString()}장 건너뜀` : ''}`
+                : result.skipped
+                    ? `동일 이미지 ${result.skipped.toLocaleString()}장 건너뜀`
+                    : `처리 ${completed.toLocaleString()}/${total.toLocaleString()}`;
+            onProgress?.(message || defaultMessage, {completed, total});
         };
         const failedNames = new Set();
         progress();
@@ -123,12 +129,13 @@ globalThis.ComfyBotBatch = (() => {
                 errors.push(error.message || String(error));
             }
             completed += names.length;
+            lastProgress = -Infinity;
             progress();
         }
 
         const groups = new Map();
         for (const entry of uploads) {
-            if (failedNames.has(entry.name)) { completed++; continue; }
+            if (failedNames.has(entry.name)) { imagesCompleted++; completed++; continue; }
             const key = `${entry.name}\u0000${(entry.existingFilename || entry.file.name).toLowerCase()}`;
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(entry);
@@ -152,6 +159,7 @@ globalThis.ComfyBotBatch = (() => {
                         else if (data.action === 'replaced') result.replaced++;
                         else result.uploaded++;
                     } catch (error) { errors.push(`${entry.file.name}: ${error.message || String(error)}`); }
+                    imagesCompleted++;
                     completed++;
                     progress();
                 }

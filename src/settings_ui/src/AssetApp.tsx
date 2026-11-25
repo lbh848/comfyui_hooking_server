@@ -3,7 +3,8 @@ import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, Chevr
 import { Badge, Empty, Modal, Panel } from "./components";
 import { BackgroundModals, ModalPage, useModalWorkspace } from "./ModalWorkspace";
 import { ProgramShutdown, WorkshopSwitcher } from "./WorkshopControls";
-import { useWorkshopNavigation, useWorkshopScreen } from "./WorkshopNavigation";
+import { useWorkshopScreen } from "./WorkshopNavigation";
+import { PresetManagementLink } from "./PresetManagementLink";
 import { WorkQueuePage } from "./WorkQueuePage";
 import { LlmLogsPage } from "./LlmLogsPage";
 import { ProgramLogsPage } from "./ProgramLogsPage";
@@ -55,7 +56,6 @@ export default function AssetApp() {
 function AssetAppContent() {
   const modelSelection = useIllustrationModelSelection();
   const { hash, active, navigate } = useWorkshopScreen();
-  const workshop = useWorkshopNavigation();
   const legacyMakerSection = hash === "style-maker" ? "style" : hash === "character-maker" ? "character" : null;
   const info = pages.find(page => page.id === (legacyMakerSection || hash)) || pages[0];
   const [makers, setMakers] = useState({ style: false, character: false });
@@ -335,7 +335,7 @@ function AssetAppContent() {
         <summary>{group.label}<ChevronRight size={13} /></summary><div className="nav-group-items">{pages.filter(page => group.ids.includes(page.id)).map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined} onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}><Icon size={18} /><span>{label}</span>{id === "batch" && <small>{chains.length}</small>}</a>)}</div>
       </details>)}
       <details className="nav-group" open><summary>{workNavigation.group}<ChevronRight size={13} /></summary><div className="nav-group-items">{workNavigation.items.map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined} onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}><Icon size={18} /><span>{label}</span>{(id === "work-queue" || id === "llm-logs") && <WorkActivityCount page={id} />}</a>)}</div></details>
-      <button className="nav-item" onClick={() => workshop.navigate("setting", "presets")}><Settings2 size={18} />프리셋 관리</button>
+      <PresetManagementLink className="nav-item" onNavigate={() => setMenu(false)}><Settings2 size={18} /><span>프리셋 관리</span></PresetManagementLink>
     </nav><div className="sidebar-bottom"><div className="sidebar-version">Comfy공방 V6</div></div></aside>
     <div className="workspace" inert={mobile && menu}><main id="asset-main" tabIndex={-1}>
       <div className="page-heading">
@@ -379,7 +379,7 @@ function AssetAppContent() {
             keyboardEnabled={galleryKeyboardEnabled} onKeyboardChange={setGalleryKeyboardEnabled}
             disabled={busy || characterMaker.busy || makerTargetBusy || modelSelection.disabled}
             styleDisabled={stylePresets.busy} characterDisabled={characterSettings.scopeBusy}
-            styleLocked={stylePresets.locked} characterLocked={characterSettings.locked} characterUnlocked={characterSettings.unlocked} /></div></>} /></div>
+            styleLocked={stylePresets.locked} characterLocked={characterSettings.locked} /></div></>} /></div>
         </ModalPage>
         {(["style", "character"] as const).map(section => <ModalPage key={section} page={section} pageTitle={section === "style" ? "그림체 설정" : "캐릭터 설정"} active={info.id === section} onNavigate={changePage} keepMounted>
           <AssetPresetSettings {...formProps} disabled={busy || characterMaker.busy || makerTargetBusy} section={section} slot={draft.slot} defaults={draft.defaults} onChange={changeSlot} onDefaultsChange={changeDefaults} characterSettings={characterSettings} stylePresets={stylePresets} maker={characterMaker}

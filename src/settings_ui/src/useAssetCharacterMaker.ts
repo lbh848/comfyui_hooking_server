@@ -91,7 +91,8 @@ export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType
       const { files, ...extraPayload } = extra;
       const payload = {
         action, name, settings, revision: action === "reset" ? data?.revision : latest.revision, character_revision: latest.character_revision,
-        builtin_unlock_token: character.unlockToken, ...extraPayload, generation_job: generationJob,
+        builtin_unlock_token: character.unlockToken, asset_workflow_type: generationJob?.asset_workflow_type || draft.slot.asset_workflow_type,
+        ...extraPayload, generation_job: generationJob,
       };
       let requestBody: AssetRecord | FormData = payload;
       if (Array.isArray(files) && files.length) {

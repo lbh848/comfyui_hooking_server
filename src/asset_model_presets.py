@@ -7,10 +7,12 @@ from pathlib import Path
 from illustration_model_presets import IllustrationModelPresets
 from illustration_json import merge_shared_style_loras
 from preset_locations import PRESET_LOCATIONS
+from style_ref_storage import STYLE_REF_KEY, enabled_style_ref
 
 ASSET_WORKFLOW_PATHS = {
     "anima_only": "anima_only_asset_workflow_source_path",
     "anima_ilxl": "anima_asset_workflow_source_path",
+    "moss": "moss_asset_workflow_source_path",
 }
 
 
@@ -39,7 +41,7 @@ class AssetModelPresets(IllustrationModelPresets):
         paths = candidate.get(self.paths_key)
         if (candidate.get(self.type_key) not in self.local_profiles or not isinstance(paths, dict)
                 or set(paths) - set(self.local_profiles) or not all(isinstance(path, str) for path in paths.values())):
-            raise ValueError("ANIMA 또는 ANIMA+ILXL 그림 모델과 워크플로우를 선택하세요.")
+            raise ValueError("ANIMA, ANIMA+ILXL 또는 MOSS 그림 모델과 워크플로우를 선택하세요.")
 
 
 def apply_asset_preset(document, preset):
@@ -49,7 +51,9 @@ def apply_asset_preset(document, preset):
     settings = preset["workflows"][profile]["fields"]
     fields = document["fields"]
     for key, value in settings.items():
-        if key != "STYLE_LORA_DATA":
+        if key == STYLE_REF_KEY:
+            fields[key] = enabled_style_ref(value)
+        elif key != "STYLE_LORA_DATA":
             fields[key] = copy.deepcopy(value)
     if not fields.get("STYLE_LORA_ACTIVATE"):
         fields["STYLE_LORA_DATA"] = {"list": []}

@@ -120,17 +120,23 @@ class InternalLoraRuntime:
                 await asyncio.to_thread(self.stop)
                 raise
 
-    async def request(self, request: web.Request, *, illustration: bool = False, external: bool = False, asset: bool = False) -> web.StreamResponse:
-        path = request.path if external else "/api/" + request.match_info["path"]
+    async def request(self, request: web.Request, *, illustration: bool = False, external: bool = False, asset: bool = False, bg_asset: bool = False) -> web.StreamResponse:
+        path = (
+            request.path if external
+            else "/api/bg-asset/" + request.match_info["path"] if bg_asset
+            else "/api/" + request.match_info["path"]
+        )
         from settings_illustration import allowed_illustration_path
         from settings_assets import allowed_asset_path
+        from settings_bg_assets import allowed_bg_asset_path
         from external_connection import allowed_external_path
         allowed = (allowed_external_path(path, request.method) if external else
+                   allowed_bg_asset_path(path, request.method) if bg_asset else
                    allowed_asset_path(path, request.method) if asset else
                    allowed_illustration_path(path, request.method) if illustration else allowed_path(path))
         if not allowed:
             raise web.HTTPNotFound()
-        if not asset and path.startswith("/api/asset_mode/") and request.method != "GET":
+        if not asset and not bg_asset and path.startswith("/api/asset_mode/") and request.method != "GET":
             raise web.HTTPMethodNotAllowed(request.method, ["GET"])
         if (request.method == "GET" and path == "/api/queue/status"
                 and request.query.get("monitor") == "1"
@@ -154,8 +160,10 @@ class InternalLoraRuntime:
                                                "/api/bot_mode/character_lore_auto_link",
                                                "/api/bot_mode/lore_npcs/analyze", "/api/bot_mode/lore_npcs/create",
                                                "/api/bot_mode/lore_npcs/generate", "/api/bot_mode/lore_npcs/register",
+                                               "/api/bot_mode/lore_npcs/classify_images",
                                                "/api/bot_mode/archive",
-                                               "/api/asset_mode/qwen_edit/translate"} else self.session.timeout)
+                                               "/api/asset_mode/qwen_edit/translate",
+                                               "/api/bg-asset/name_mapping/llm"} else self.session.timeout)
             async with self.session.request(request.method, self.url + path, params=request.query,
                                             headers=headers, data=request.content if request.can_read_body else None,
                                             timeout=timeout, allow_redirects=False) as upstream:

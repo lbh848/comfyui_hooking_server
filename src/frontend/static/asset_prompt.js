@@ -4,7 +4,7 @@ globalThis.ComfyAssetPrompt = (() => {
             const normalized = String(value || '').trim().toLowerCase();
             if (normalized === 'regular') return 'ilxl';
             if (normalized === 'anima') return 'anima_ilxl';
-            if (['ilxl', 'anima_ilxl', 'anima_only'].includes(normalized)) return normalized;
+            if (['ilxl', 'anima_ilxl', 'anima_only', 'moss'].includes(normalized)) return normalized;
             if (normalized) console.error('[ASSET] 알 수 없는 에셋 워크플로우 타입:', value);
             return 'ilxl';
         }
@@ -15,10 +15,11 @@ globalThis.ComfyAssetPrompt = (() => {
                 type: normalized,
                 ilxl: normalized === 'ilxl' || normalized === 'anima_ilxl',
                 anima: normalized === 'anima_ilxl' || normalized === 'anima_only',
+                moss: normalized === 'moss',
                 dual: normalized === 'anima_ilxl',
                 pose: normalized === 'ilxl',
                 ipadapter: normalized === 'ilxl',
-                faceLora: normalized !== 'ilxl',
+                faceLora: normalized === 'anima_ilxl' || normalized === 'anima_only',
                 seed: normalized !== 'ilxl',
             };
         }
@@ -26,6 +27,8 @@ globalThis.ComfyAssetPrompt = (() => {
         function filterAssetLorasForCapabilities(items, capabilities = getAssetWorkflowCapabilities()) {
             return (Array.isArray(items) ? items : []).filter(item => {
                 const base = String(item?.BASE || 'anima').trim().toLowerCase();
+                if (capabilities.moss) return base === 'moss';
+                if (base === 'moss') return false;
                 return (base === 'sdxl' || base === 'ilxl') ? capabilities.ilxl : capabilities.anima;
             });
         }
@@ -53,6 +56,7 @@ globalThis.ComfyAssetPrompt = (() => {
             ], capabilities);
             const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const mossLoraTriggerWords = triggerSrc.filter(l => String(l.BASE || '').trim().toLowerCase() === 'moss').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const artistTags = Array.isArray(slot.raw_artist_tags)
                 ? slot.raw_artist_tags
@@ -93,7 +97,7 @@ globalThis.ComfyAssetPrompt = (() => {
             const animaNTags = Array.isArray(slot.raw_anima_negative_tags)
                 ? slot.raw_anima_negative_tags
                 : ((slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || []);
-            return { loraTriggerWords, animaLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, backgroundTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
+            return { loraTriggerWords, animaLoraTriggerWords, mossLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, backgroundTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
         }
 
         async function buildAssetPromptData(slot, assetTags, loadPose, resolveLoraPath = defaultLoraPath) {
@@ -101,17 +105,20 @@ globalThis.ComfyAssetPrompt = (() => {
             const t = _resolveAssetPromptSlotTags(slot, assetTags);
             const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
             const isAnima = capabilities.anima;
+            const isMoss = capabilities.moss;
+            const isStructured = isAnima || isMoss;
             const isDual = capabilities.dual;
             const poseEnabled = capabilities.pose && (slot.pose_enabled || false);
+            const primaryLoraTriggerWords = isMoss ? t.mossLoraTriggerWords : t.animaLoraTriggerWords;
 
             let positiveTags = '';
-            if (isAnima) {
+            if (isStructured) {
                 const animaQuality = t.animaQTags.filter(v => v.trim());
                 const animaArtist = t.animaArtistTags.filter(v => v.trim());
                 const sdxlQuality = t.qTags.filter(v => v.trim());
                 const sdxlArtist = t.artistTags.filter(v => v.trim());
                 const section1Rest = [
-                    ...(t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : []),
+                    ...(primaryLoraTriggerWords ? [primaryLoraTriggerWords] : []),
                     ...t.animaArtistTags, ...t.animaQTags,
                     ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags, ...t.backgroundTags,
                     ...(t.naturalLanguage ? [t.naturalLanguage] : []),
@@ -161,9 +168,9 @@ globalThis.ComfyAssetPrompt = (() => {
             const compatibleStyleLoras = filterAssetLorasForCapabilities(slot.style_lora_list, capabilities);
             const loraActive = slot.lora_enabled && compatibleRegularLoras.length > 0;
             const styleLoraActive = slot.style_lora_enabled && compatibleStyleLoras.length > 0;
-            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            if (isAnima) {
+            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || (isMoss ? 'moss' : 'anima')}));
+            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || (isMoss ? 'moss' : 'anima')}));
+            if (isStructured) {
                 positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
             } else {
@@ -193,9 +200,9 @@ globalThis.ComfyAssetPrompt = (() => {
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
+            // Style(그림체) LoRA — ANIMA·MOSS는 별도 토큰(분리 로더).
             // ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
-            if (isAnima) {
+            if (isStructured) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
             }
@@ -213,6 +220,7 @@ globalThis.ComfyAssetPrompt = (() => {
             }
             positiveFull += `\n[HRF_ACTIVATE]\n${capabilities.ilxl && slot.hrf_sdxl ? 'true' : 'false'}`;
             if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
+            if (isMoss) positiveFull += `\n[MOSS_HRF_ACTIVATE]\n${slot.hrf_moss ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
@@ -226,13 +234,13 @@ globalThis.ComfyAssetPrompt = (() => {
             positiveFull += `\n[FD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_fd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_hd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_ed_enabled ? 'true' : 'false'}`;
-            if (isAnima) {
+            if (capabilities.seed) {
                 positiveFull += `\n[SEED]\n${slot.seed ?? -1}`;
             }
             positiveFull += '\n[END]';
 
             let negative;
-            if (isAnima) {
+            if (isStructured) {
                 const animaNegParts = [...t.cnTags, ...t.animaNTags].filter(v => v.trim());
                 const sdxlNegParts = [...t.cnTags, ...t.nTags].filter(v => v.trim());
                 // ANIMA-only 워크플로도 이 구분자를 ANIMA 부정 프롬프트의 끝 표식으로 사용한다.
@@ -243,7 +251,7 @@ globalThis.ComfyAssetPrompt = (() => {
             }
 
             let document;
-            if (isAnima) {
+            if (isStructured) {
                 const fields = {};
                 const removed = new Set(['END', 'POSE_ACTIVATE', 'POSE_DATA', 'HRF_CONTROL_NET',
                     'FACE_ID_ACTIVATE', 'FACE_ID_STR', 'FACE_ID_DIR', 'STYLE_ACTIVATE', 'STYLE_STR', 'STYLE_DIR']);
@@ -258,7 +266,7 @@ globalThis.ComfyAssetPrompt = (() => {
                         : key.endsWith('_DATA') || ['CHAR_FACE_TAG_INFORM', 'SNAPREF'].includes(key) ? JSON.parse(value)
                         : value;
                 }
-                fields.ANIMA_CONTENT = [t.animaLoraTriggerWords, ...t.animaArtistTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags, ...t.backgroundTags, t.naturalLanguage].filter(value => typeof value === 'string' && value.trim()).join(', ');
+                fields.ANIMA_CONTENT = [primaryLoraTriggerWords, ...t.animaArtistTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags, ...t.backgroundTags, t.naturalLanguage].filter(value => typeof value === 'string' && value.trim()).join(', ');
                 delete fields.ANIMA;
                 if ('SDXL' in fields) { fields.SDXL_CONTENT = fields.SDXL; delete fields.SDXL; }
                 const [animaNegative, sdxlNegative = ''] = negative.split('[SDXL]');
@@ -287,7 +295,7 @@ globalThis.ComfyAssetPrompt = (() => {
             if (!Array.isArray(slots) || slots.length < 1 || slots.length > 3 || layout.regions?.length !== slots.length) throw new Error('영역과 캐릭터를 1~3개 지정하세요.');
             const composition = layout.composition_prompt?.trim() || '';
             const documents = await Promise.all(slots.map(slot => buildAssetPromptData(slot, assetTags, async () => ({}))));
-            if (documents.some(value => !value?.document)) throw new Error('마스크 기반 생성은 ANIMA 또는 ANIMA+ILXL 모델을 사용하세요.');
+            if (documents.some(value => !value?.document)) throw new Error('마스크 기반 생성은 ANIMA, ANIMA+ILXL 또는 MOSS 모델을 사용하세요.');
             const document = structuredClone(documents[0].document);
             const fields = document.fields;
             const parts = slots.map(slot => _resolveAssetPromptSlotTags(slot, assetTags));
@@ -301,10 +309,16 @@ globalThis.ComfyAssetPrompt = (() => {
             if (styleMask && !inform[0] && !regionalText[0]) inform[0] = 'character';
             if (inform.some((value, index) => !value && !regionalText[index])) throw new Error('각 영역의 외모·복장·표정 또는 자연어를 입력하세요.');
             const names = layout.regions.map(region => region.name);
-            const styleTriggers = unique(filterAssetLorasForCapabilities(slots[0].style_lora_enabled ? slots[0].style_lora_list : [], getAssetWorkflowCapabilities(slots[0].asset_workflow_type))
-                .filter(item => (item.BASE || 'anima') === 'anima').map(item => item.trigger));
-            const triggers = slots.map(slot => unique([...filterAssetLorasForCapabilities(slot.lora_enabled ? slot.lora_list : [], getAssetWorkflowCapabilities(slot.asset_workflow_type))
-                .filter(item => (item.BASE || 'anima') === 'anima').map(item => item.trigger), ...styleTriggers]));
+            const primaryCapabilities = getAssetWorkflowCapabilities(slots[0].asset_workflow_type);
+            const primaryBase = primaryCapabilities.moss ? 'moss' : 'anima';
+            const styleTriggers = unique(filterAssetLorasForCapabilities(slots[0].style_lora_enabled ? slots[0].style_lora_list : [], primaryCapabilities)
+                .filter(item => String(item.BASE || 'anima').trim().toLowerCase() === primaryBase).map(item => item.trigger));
+            const triggers = slots.map(slot => {
+                const slotCapabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
+                const slotBase = slotCapabilities.moss ? 'moss' : 'anima';
+                return unique([...filterAssetLorasForCapabilities(slot.lora_enabled ? slot.lora_list : [], slotCapabilities)
+                    .filter(item => String(item.BASE || 'anima').trim().toLowerCase() === slotBase).map(item => item.trigger), ...styleTriggers]);
+            });
             const shared = unique([...parts[0].animaArtistTags, ...parts[0].animaQTags, background]);
             fields.CHAR_LIST = names;
             fields.MULTI_CHAR = { enable: true, char_num: names.length, char_name_list: names, char_inform: inform,
@@ -320,7 +334,7 @@ globalThis.ComfyAssetPrompt = (() => {
                     composition, ...inform.map((value, index) => clean([...triggers[index], value]).join(', '))]).join(', ');
                 fields.NEGATIVE_ANIMA = unique([...parts[0].animaNTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
                 fields.NEGATIVE_SDXL = unique([...parts[0].nTags, ...parts.flatMap(part => part.cnTags)]).join(', ');
-                if (getAssetWorkflowCapabilities(slots[0].asset_workflow_type).dual) {
+                if (primaryCapabilities.dual) {
                     fields.SDXL_CONTENT = unique([...parts[0].artistTags, ...parts[0].qTags, background,
                         composition, ...parts.map((part, index) => clean([part.sdxlLoraTriggerWords, inform[index]]).join(', '))]).join(', ');
                 }
@@ -331,7 +345,7 @@ globalThis.ComfyAssetPrompt = (() => {
                         .map(item => ({ ...item, CHAR: names[index] }))) };
                 if (activeKey) fields[activeKey] = fields[dataKey].list.length > 0;
             }
-            fields.SNAPREF = { ...fields.SNAPREF, enabled: slots.some(slot => slot.snapref_enabled), references: [] };
+            fields.SNAPREF = { ...fields.SNAPREF, enabled: primaryCapabilities.anima && slots.some(slot => slot.snapref_enabled), references: [] };
             delete fields.SNAPREF.dir;
             return document;
         }

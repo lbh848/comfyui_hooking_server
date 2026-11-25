@@ -29,7 +29,8 @@ from manga_page_vocabulary import (
     ACTOR_PANEL_RELATION, BALLOON, BALLOON_TAIL, BOUNDARY_PHRASES,
     PAGE_BOUNDARIES, PANEL_CAMERA_ANGLE, SHARED_DIVIDER_PREFIX,
     PANEL_CAMERA_DISTANCE, PANEL_EDGE, PANEL_FOCUS, PANEL_SHAPE, balloon_caption,
-    normalize_choice, panel_caption,
+    describe_actor_visual, describe_speaker_target, normalize_choice,
+    panel_caption, resolve_balloon_tail,
 )
 
 
@@ -615,22 +616,57 @@ def _manga_object_item(number: int, obj: dict, field: str, width: int, height: i
     }
 
 
-def _manga_dialogue_item(number: int, dialogue: dict, field: str,
-                         width: int, height: int) -> dict | None:
+def _manga_dialogue_item(
+    number: int,
+    dialogue: dict,
+    field: str,
+    width: int,
+    height: int,
+    *,
+    panel_actors: list[dict] | None = None,
+    panel_bbox: list[int] | None = None,
+    camera_distance: str | None = None,
+) -> dict | None:
     spoken = pipeline.multi_char_mask._prompt_text(
         dialogue.get("text"), f"{field}.text", required=False)
     if not spoken:
         raise ValueError(f"DETAIL-MANGA {field}.text가 비어 있습니다")
     balloon = normalize_choice(dialogue.get("balloon"), BALLOON, "oval", "balloon")
-    tail = normalize_choice(dialogue.get("tail"), BALLOON_TAIL, "none", "tail")
-    speaker = _manga_actor_name(dialogue.get("speaker"))
-    owner = f"Speaker: {speaker}. " if speaker and balloon != "narration" else ""
+    raw_tail = normalize_choice(dialogue.get("tail"), BALLOON_TAIL, "none", "tail")
     bbox = _moss_bbox(dialogue.get("bbox"), f"{field}.bbox", width, height)
     if bbox is None:
         return None
+    speaker = _manga_actor_name(dialogue.get("speaker"))
+    actors = panel_actors or []
+    speaker_actor = next(
+        (actor for actor in actors
+         if speaker and str(actor.get("name") or "").casefold() == speaker.casefold()),
+        None,
+    )
+    distance = camera_distance or "medium"
+    if balloon == "narration" or (balloon != "thought" and raw_tail == "none"):
+        tail = "none"
+        target = ""
+    elif speaker_actor is not None:
+        tail = resolve_balloon_tail(
+            bbox,
+            speaker_actor["bbox"],
+            fallback_tail=raw_tail,
+            camera_distance=distance,
+            panel_bbox=panel_bbox,
+        )
+        target = describe_speaker_target(
+            speaker_actor,
+            actors,
+            panel_bbox=panel_bbox,
+            camera_distance=distance,
+        )
+    else:
+        tail = raw_tail
+        target = ""
     return {
         "label": "text",
-        "caption": f"PANEL {number}. {owner}{balloon_caption(balloon, tail)}",
+        "caption": f"PANEL {number}. {balloon_caption(balloon, tail, target=target)}",
         "text": spoken,
         "bbox": bbox,
     }
@@ -722,6 +758,7 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
     cross_entries = cross_entries if isinstance(cross_entries, list) else []
     cross_names: set[str] = set()
     cross_panels: dict[str, set[int]] = {}
+    cross_panel_actors_by_panel: dict[int, list[dict]] = {}
     cross_items: list[dict] = []
     foreground_overlays: dict[int, list[str]] = {}
     for index, entry in enumerate(cross_entries):
@@ -768,8 +805,9 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                     "The foreground silhouette occludes the crossed inset edge: its ink line "
                     "stops at the body contour and resumes beyond it, never crossing the skin or clothing. "
                     "Separate figures inside the inset pictures remain independent shots.")
+            actor_visual = describe_actor_visual(instruction)
             for panel_id in linked[1:]:
-                foreground_overlays.setdefault(panel_ids[panel_id], []).append(name)
+                foreground_overlays.setdefault(panel_ids[panel_id], []).append(actor_visual)
         else:
             lead = (f"One continuous body crossing {span_text}; the shared dividing line "
                     "passes behind the body.")
@@ -783,21 +821,28 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
         # A page overlay owns its home shot; crossed inset pictures may show
         # independent occurrences of the same character at other instants.
         owned = linked[:1] if relation == "page_foreground_overlay" else linked
-        cross_panels[key] = {panel_ids[panel_id] for panel_id in owned}
+        owned_numbers = {panel_ids[panel_id] for panel_id in owned}
+        cross_panels[key] = owned_numbers
+        actor_record = {"name": name, "bbox": bbox, "instruction": instruction}
+        for panel_number in owned_numbers:
+            cross_panel_actors_by_panel.setdefault(panel_number, []).append(actor_record)
 
     items: list[dict] = []
     for index, panel in enumerate(panels):
         number = index + 1
         panel_item = _manga_panel_item(number, panel, width, height, panel_ids,
                                        boundaries=boundaries)
+        panel_bbox = panel_item["bbox"] if panel_item is not None else None
         if panel_item is not None:
-            for name in foreground_overlays.get(number, []):
+            for actor_visual in foreground_overlays.get(number, []):
                 panel_item["caption"] += (
-                    f" This inset picture lies BEHIND {name}'s continuous foreground body. "
+                    f" This inset picture lies BEHIND the continuous foreground body of {actor_visual}. "
                     "Hide the inset artwork and border wherever that body overlaps; the border "
                     "ends at the foreground silhouette and resumes beyond it."
                 )
             items.append(panel_item)
+        panel_actors: list[dict] = []
+        panel_actor_keys: set[str] = set()
         actors = panel.get("actors")
         if isinstance(actors, list):
             for actor_index, actor in enumerate(actors):
@@ -812,6 +857,16 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                     number, actor, f"panels[{index}].actors[{actor_index}]", width, height)
                 if actor_item is not None:
                     items.append(actor_item)
+                    panel_actors.append({
+                        "name": actor_item["name"],
+                        "bbox": actor_item["bbox"],
+                        "instruction": str(actor.get("instruction") or "").strip(),
+                    })
+                    panel_actor_keys.add(actor_item["name"].casefold())
+        for cross_actor in cross_panel_actors_by_panel.get(number, []):
+            if cross_actor["name"].casefold() not in panel_actor_keys:
+                panel_actors.append(cross_actor)
+                panel_actor_keys.add(cross_actor["name"].casefold())
         objects = panel.get("objects")
         if isinstance(objects, list):
             for object_index, obj in enumerate(objects):
@@ -827,7 +882,15 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                 if not isinstance(dialogue, dict):
                     raise ValueError(f"DETAIL-MANGA panels[{index}].dialogue[{dialogue_index}]가 object가 아닙니다")
                 dialogue_item = _manga_dialogue_item(
-                    number, dialogue, f"panels[{index}].dialogue[{dialogue_index}]", width, height)
+                    number,
+                    dialogue,
+                    f"panels[{index}].dialogue[{dialogue_index}]",
+                    width,
+                    height,
+                    panel_actors=panel_actors,
+                    panel_bbox=panel_bbox,
+                    camera_distance=panel.get("camera_distance"),
+                )
                 if dialogue_item is not None:
                     items.append(dialogue_item)
     if boundaries == "touching":
@@ -2116,16 +2179,17 @@ async def build_from_context(
                             extra_costume or extra_reference, visual_profiles),
                     })
             # Preserve independent Key Visual prompt/decoder/routing; ordinary
-            # DETAIL's tiny scene input is not used here. The combined MOSS call
-            # already carries the compatibility envelope and explicit policy
-            # from DETAIL, so KEYVIS contributes only its own instructions.
-            keyvis_system = p.render_call2_prompt(prompts["call2_keyvis_manga"] if moss_manga else "\n\n".join([
-                "" if moss else prompts.get("call2_jailbreak", ""),
-                prompts.get("call2_job", ""),
-                prompts.get("call2_common", ""),
-                "" if moss else explicit_policy,
-                prompts.get("call2_keyvis", ""),
-            ]), toggles, include_scene_count_limit=False, include_server_limits=False)
+            # DETAIL's tiny scene input is not used here. Combined DETAIL+KEYVIS
+            # calls already carry the compatibility envelope, explicit policy,
+            # and shared rules from DETAIL, so KEYVIS contributes only its own
+            # role instructions.
+            keyvis_system = p.render_call2_prompt(
+                prompt_builders.keyvis_system_prompt(
+                    prompts, explicit_policy=explicit_policy,
+                    moss=moss, moss_manga=moss_manga,
+                    combined_in_detail=keyvis_in_detail,
+                ),
+                toggles, include_scene_count_limit=False, include_server_limits=False)
             keyvis_messages = prompt_builders.keyvis_context_messages(
                 keyvis_system, lb_extra_system_prompt, keyvis_profiles, tracking, past_text, segmented,
                 time_place=time_place_tracking, segment_slots=segment_slots,
@@ -2204,9 +2268,14 @@ async def build_from_context(
         detail_prompt_key = ("detail_manga" if moss_manga else
                              "detail_moss" if moss else
                              "composite_detail" if composite else "call2_detail")
-        detail_parts = ((role_context, prompts[detail_prompt_key]) if moss_manga
-                        else (role_context, explicit_policy, prompts[detail_prompt_key]))
-        detail_system = prompt_join("\n\n", (part for part in detail_parts if part))
+        detail_system = prompt_builders.detail_system_prompt(
+            protected, lb_extra_system_prompt, prompts[detail_prompt_key],
+            explicit_policy=explicit_policy, moss_manga=moss_manga,
+            genre=toggles.get("genre", ""),
+            genre_prompt=prompts.get("genre", ""),
+            genre_work_title=toggles.get("genre_work_title", ""),
+            genre_secondary_prompt=prompts.get("genre_secondary", ""),
+        )
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
             nonlocal keyvis_descriptor, keyvis_output

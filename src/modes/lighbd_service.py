@@ -17,6 +17,7 @@ import time
 import asyncio
 import datetime
 import hashlib
+import threading
 import traceback
 from copy import deepcopy
 
@@ -220,6 +221,7 @@ def _get_server_globals():
 
 
 LIGHBD_HISTORY_PATH = os.path.join(LOG_DIR, "lighbd_history.jsonl")
+_LIGHBD_HISTORY_LOCK = threading.Lock()
 # 일반 LLM 호출(품질 검사 포함)은 최근 300건을 보존하고 다중 캐릭터 마스크
 # 호출은 별도 100건을 보존한다. 사람이 평가한 품질 검사 사례와 그 사례가
 # 참조하는 LLM 흐름은 이 회전 한도 밖에서 계속 보존한다.
@@ -314,6 +316,48 @@ def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
     return [line for index, line in enumerate(lines) if index in keep]
 
 
+def _write_lighbd_history_locked(record: dict, history_path=None) -> None:
+    history_path = os.fspath(history_path or LIGHBD_HISTORY_PATH)
+    with _LIGHBD_HISTORY_LOCK:
+        try:
+            os.makedirs(os.path.dirname(history_path), exist_ok=True)
+            history_backup_dir = os.path.join(
+                os.path.dirname(history_path),
+                "backups",
+            )
+            os.makedirs(history_backup_dir, exist_ok=True)
+            backup_path = os.path.join(history_backup_dir, os.path.basename(history_path) + ".bak")
+
+            existing_lines = []
+            if os.path.exists(history_path):
+                try:
+                    with open(history_path, "r", encoding="utf-8") as f:
+                        existing_lines = f.readlines()
+                    # 백업
+                    with open(backup_path, "w", encoding="utf-8") as bf:
+                        bf.writelines(existing_lines)
+                except Exception as e:
+                    print(f"[LIGHBD] history 읽기/백업 실패: {e}")
+                    existing_lines = []
+
+            # append 시점의 ts로 덮어쓴다: 호출자가 함수 진입(시작) 시각으로 고정한 ts가
+            # 그대로 영속화되면, 재시도 끝에 성공한 최종 OK 레코드가 자기 자신의 attempt
+            # 실패 기록보다 더 과거 ts를 가져 정렬 시 ERROR 위로 올라가는 버그가 생긴다.
+            # 영속화 순간(= 호출 완료 시각)으로 갱신해 append 순서 = ts 순서를 보장한다.
+            # 원본 객체는 부작용을 피해 변경하지 않는다.
+            stamped = dict(record)
+            stamped["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+            line = json.dumps(stamped, ensure_ascii=False) + "\n"
+            existing_lines.append(line)
+            existing_lines = _trim_lighbd_history_lines(existing_lines)
+
+            with open(history_path, "w", encoding="utf-8") as f:
+                f.writelines(existing_lines)
+        except Exception as e:
+            print(f"[LIGHBD] history 쓰기 실패: {e}")
+            traceback.print_exc()
+
+
 def _log_lighbd_history(record: dict, *, history_path=None) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
     일반 호출 최근 300개와 다중 분리 호출 최근 100개를 유지하며 사람 평가
@@ -328,47 +372,27 @@ def _log_lighbd_history(record: dict, *, history_path=None) -> None:
             f"output_len={len(str(record.get('output') or ''))}"
         )
         return
-    history_path = os.fspath(history_path or LIGHBD_HISTORY_PATH)
-    try:
-        os.makedirs(os.path.dirname(history_path), exist_ok=True)
-        history_backup_dir = os.path.join(
-            os.path.dirname(history_path),
-            "backups",
+    _write_lighbd_history_locked(record, history_path=history_path)
+
+
+_DEFAULT_LOG_LIGHBD_HISTORY = _log_lighbd_history
+
+
+async def _log_lighbd_history_async(record: dict, *, history_path=None) -> None:
+    if _log_lighbd_history is not _DEFAULT_LOG_LIGHBD_HISTORY:
+        _log_lighbd_history(record)
+        return
+    if _consume_manual_race_success_suppression(record):
+        print(
+            f"[LIGHBD] 병렬 경쟁 승자 일반 OK 중복 기록 생략: "
+            f"call_name={record.get('call_name')!r}, "
+            f"output_len={len(str(record.get('output') or ''))}"
         )
-        os.makedirs(history_backup_dir, exist_ok=True)
-        backup_path = os.path.join(history_backup_dir, os.path.basename(history_path) + ".bak")
-
-        existing_lines = []
-        if os.path.exists(history_path):
-            try:
-                with open(history_path, "r", encoding="utf-8") as f:
-                    existing_lines = f.readlines()
-                # 백업
-                with open(backup_path, "w", encoding="utf-8") as bf:
-                    bf.writelines(existing_lines)
-            except Exception as e:
-                print(f"[LIGHBD] history 읽기/백업 실패: {e}")
-                existing_lines = []
-
-        # append 시점의 ts로 덮어쓴다: 호출자가 함수 진입(시작) 시각으로 고정한 ts가
-        # 그대로 영속화되면, 재시도 끝에 성공한 최종 OK 레코드가 자기 자신의 attempt
-        # 실패 기록보다 더 과거 ts를 가져 정렬 시 ERROR 위로 올라가는 버그가 생긴다.
-        # 영속화 순간(= 호출 완료 시각)으로 갱신해 append 순서 = ts 순서를 보장한다.
-        # 원본 객체는 부작용을 피해 변경하지 않는다.
-        stamped = dict(record)
-        stamped["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
-        line = json.dumps(stamped, ensure_ascii=False) + "\n"
-        existing_lines.append(line)
-        existing_lines = _trim_lighbd_history_lines(existing_lines)
-
-        with open(history_path, "w", encoding="utf-8") as f:
-            f.writelines(existing_lines)
-    except Exception as e:
-        print(f"[LIGHBD] history 쓰기 실패: {e}")
-        traceback.print_exc()
+        return
+    await asyncio.to_thread(_write_lighbd_history_locked, record, history_path)
 
 
-async def call_logged_llm_task(context, messages, *, result_validator, retry_messages):
+async def _run_logged_llm_task(context, call_fn, input_messages, *, metadata_sink: dict | None = None):
     """Keep each routed attempt's original text available in the LLM log detail."""
     from modes import llm_service
 
@@ -376,18 +400,29 @@ async def call_logged_llm_task(context, messages, *, result_validator, retry_mes
     attempt = None
     started = 0.0
 
-    def finish(status, raw="", reason=""):
+    def build_record(status, raw="", reason=""):
         nonlocal attempt
         if attempt is None:
-            return
+            return None
         elapsed = time.monotonic() - started
         if status == "ok":
             llm_service._fill_usage_sink_fallback(usage, raw, attempt["input"])
-        _log_lighbd_history({**attempt, **usage, "elapsed": elapsed, "status": status,
-                             "output": str(raw or ""), "error": reason})
+        if metadata_sink is not None:
+            metadata_sink.clear()
+            metadata_sink.update(usage)
+        record = {
+            **attempt, **usage, "elapsed": elapsed, "status": status,
+            "output": str(raw or ""), "error": reason,
+        }
         attempt = None
+        return record
 
-    def observe(event):
+    def finish_sync(status, raw="", reason=""):
+        record = build_record(status, raw, reason)
+        if record is not None:
+            _log_lighbd_history(record)
+
+    async def observe(event):
         nonlocal attempt, started
         if event["type"] == "attempt_start":
             usage.clear()
@@ -401,24 +436,70 @@ async def call_logged_llm_task(context, messages, *, result_validator, retry_mes
                 "attempt": event["attempt"], "total_attempts": event["total_attempts"],
                 "llm_slot": slot, "service": llm_service._base_config_get(f"llm_service{suffix}", "openai"),
                 "model": llm_service._base_config_get(f"llm_model{suffix}", ""),
-                "input": deepcopy(retry_messages),
+                "input": deepcopy(input_messages()),
             }
         elif event["type"] in {"attempt_success", "attempt_failure"}:
             raw = event["raw_response"]
             cancelled = isinstance(raw, llm_service.ManualCancelledText)
-            finish("cancelled" if cancelled else "ok" if event["accepted"] else "error",
-                   raw, event["reason"] or event["error"])
+            record = build_record(
+                "cancelled" if cancelled else "ok" if event["accepted"] else "error",
+                raw,
+                event["reason"] or event["error"],
+            )
+            if record is not None:
+                await _log_lighbd_history_async(record)
 
     try:
-        return await llm_service.callLLMTaskResult(context.task_key, messages, json_mode=context.json_mode,
-            result_validator=result_validator, retry_messages=retry_messages, metadata_sink=usage,
-            execution_context=context, execution_observer=observe)
+        return await call_fn(usage, observe)
     except asyncio.CancelledError:
-        finish("cancelled")
+        finish_sync("cancelled")
         raise
     except Exception as exc:
-        finish("error", reason=str(exc))
+        finish_sync("error", reason=str(exc))
         raise
+
+
+async def call_logged_llm_task(context, messages, *, result_validator, retry_messages, metadata_sink=None):
+    """Keep each routed attempt's original text available in the LLM log detail."""
+    from modes import llm_service
+
+    return await _run_logged_llm_task(
+        context,
+        lambda usage, observe: llm_service.callLLMTaskResult(
+            context.task_key, messages, json_mode=context.json_mode,
+            result_validator=result_validator, retry_messages=retry_messages,
+            metadata_sink=usage, execution_context=context, execution_observer=observe,
+        ),
+        lambda: retry_messages,
+        metadata_sink=metadata_sink,
+    )
+
+
+async def call_logged_llm_vision_task(
+    context,
+    messages,
+    *,
+    image_bytes=None,
+    image_b64=None,
+    image_mime: str = "image/webp",
+    images=None,
+    result_validator=None,
+    metadata_sink: dict | None = None,
+):
+    """Keep each routed vision attempt's original text available in the LLM log detail."""
+    from modes import llm_service
+
+    return await _run_logged_llm_task(
+        context,
+        lambda usage, observe: llm_service.callLLMVisionTaskResult(
+            context.task_key, messages, image_b64=image_b64, image_mime=image_mime,
+            json_mode=context.json_mode, result_validator=result_validator, images=images,
+            image_bytes=image_bytes, metadata_sink=usage,
+            execution_context=context, execution_observer=observe,
+        ),
+        lambda: messages,
+        metadata_sink=metadata_sink,
+    )
 
 
 def _log_manual_parallel_race(event: dict) -> None:
@@ -576,71 +657,72 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
             f"value={updates_by_id!r}"
         )
         return 0
-    if not os.path.exists(LIGHBD_HISTORY_PATH):
-        print(
-            f"[LIGHBD] history 갱신 실패: 파일이 없음 path={LIGHBD_HISTORY_PATH}, "
-            f"ids={list(updates_by_id)}"
-        )
-        return 0
-    try:
-        with open(LIGHBD_HISTORY_PATH, "r", encoding="utf-8") as f:
-            original_lines = f.readlines()
-
-        matched_ids = set()
-        rewritten_lines = []
-        for line in original_lines:
-            stripped = line.strip()
-            if not stripped:
-                rewritten_lines.append(line)
-                continue
-            try:
-                record = json.loads(stripped)
-            except Exception as e:
-                print(
-                    f"[LIGHBD] history 갱신 중 JSON 파싱 실패, 원본 줄 유지: "
-                    f"error={type(e).__name__}: {e}, line={stripped[:200]!r}"
-                )
-                traceback.print_exc()
-                rewritten_lines.append(line)
-                continue
-            history_id = str(record.get("history_id") or "")
-            updates = updates_by_id.get(history_id)
-            if isinstance(updates, dict):
-                record.update(updates)
-                matched_ids.add(history_id)
-            rewritten_lines.append(json.dumps(record, ensure_ascii=False) + "\n")
-
-        missing_ids = sorted(set(updates_by_id) - matched_ids)
-        if missing_ids:
+    with _LIGHBD_HISTORY_LOCK:
+        if not os.path.exists(LIGHBD_HISTORY_PATH):
             print(
-                f"[LIGHBD] history 갱신 대상 일부를 찾지 못함: "
-                f"missing={missing_ids}, matched={len(matched_ids)}"
+                f"[LIGHBD] history 갱신 실패: 파일이 없음 path={LIGHBD_HISTORY_PATH}, "
+                f"ids={list(updates_by_id)}"
             )
-        if not matched_ids:
             return 0
+        try:
+            with open(LIGHBD_HISTORY_PATH, "r", encoding="utf-8") as f:
+                original_lines = f.readlines()
 
-        history_backup_dir = os.path.join(
-            os.path.dirname(LIGHBD_HISTORY_PATH),
-            "backups",
-        )
-        os.makedirs(history_backup_dir, exist_ok=True)
-        backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
-        with open(backup_path, "w", encoding="utf-8") as backup_file:
-            backup_file.writelines(original_lines)
-        with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as history_file:
-            history_file.writelines(rewritten_lines)
-        print(
-            f"[LIGHBD] history 레코드 갱신 완료: "
-            f"matched={len(matched_ids)}, requested={len(updates_by_id)}"
-        )
-        return len(matched_ids)
-    except Exception as e:
-        print(
-            f"[LIGHBD] history 레코드 갱신 실패: "
-            f"path={LIGHBD_HISTORY_PATH}, ids={list(updates_by_id)}, error={e}"
-        )
-        traceback.print_exc()
-        return 0
+            matched_ids = set()
+            rewritten_lines = []
+            for line in original_lines:
+                stripped = line.strip()
+                if not stripped:
+                    rewritten_lines.append(line)
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except Exception as e:
+                    print(
+                        f"[LIGHBD] history 갱신 중 JSON 파싱 실패, 원본 줄 유지: "
+                        f"error={type(e).__name__}: {e}, line={stripped[:200]!r}"
+                    )
+                    traceback.print_exc()
+                    rewritten_lines.append(line)
+                    continue
+                history_id = str(record.get("history_id") or "")
+                updates = updates_by_id.get(history_id)
+                if isinstance(updates, dict):
+                    record.update(updates)
+                    matched_ids.add(history_id)
+                rewritten_lines.append(json.dumps(record, ensure_ascii=False) + "\n")
+
+            missing_ids = sorted(set(updates_by_id) - matched_ids)
+            if missing_ids:
+                print(
+                    f"[LIGHBD] history 갱신 대상 일부를 찾지 못함: "
+                    f"missing={missing_ids}, matched={len(matched_ids)}"
+                )
+            if not matched_ids:
+                return 0
+
+            history_backup_dir = os.path.join(
+                os.path.dirname(LIGHBD_HISTORY_PATH),
+                "backups",
+            )
+            os.makedirs(history_backup_dir, exist_ok=True)
+            backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
+            with open(backup_path, "w", encoding="utf-8") as backup_file:
+                backup_file.writelines(original_lines)
+            with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as history_file:
+                history_file.writelines(rewritten_lines)
+            print(
+                f"[LIGHBD] history 레코드 갱신 완료: "
+                f"matched={len(matched_ids)}, requested={len(updates_by_id)}"
+            )
+            return len(matched_ids)
+        except Exception as e:
+            print(
+                f"[LIGHBD] history 레코드 갱신 실패: "
+                f"path={LIGHBD_HISTORY_PATH}, ids={list(updates_by_id)}, error={e}"
+            )
+            traceback.print_exc()
+            return 0
 
 
 def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX, *, history_path=None, strict: bool = False) -> list:

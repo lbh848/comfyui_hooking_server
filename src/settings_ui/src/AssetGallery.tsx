@@ -136,7 +136,8 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
         if (stopped) return;
         const value = JSON.parse(event.data);
         if (((value.type === "asset_generation_completed" || value.type === "qwen_edit_completed")
-          && value.data?.status === "success" && value.data.storage_group !== "character_maker")
+          && value.data?.status === "success" && value.data.storage_group !== "character_maker"
+          && value.data.asset_workspace !== "bg_asset")
           || (value.type === "tag_analysis_progress" && value.data?.source === "asset_character_upload"
             && value.data?.phase === "completed")) refresh();
       };

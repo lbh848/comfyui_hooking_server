@@ -210,14 +210,35 @@ function StyleImageBatch({ context, test, search, offset, cache, children, onLoa
   return rows ? children(rows) : <div style={{ minHeight: 1200 }}><p role="status">이미지를 불러오는 중입니다…</p></div>;
 }
 
-export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource = "asset" }: { context: LoraContext; allowBot: boolean; onClose: () => void; onAdd: (rows: LoraData[], source: string) => Promise<void>; initialSource?: "asset" | "bot" }) {
+export function ImagePicker({
+  context,
+  allowBot = true,
+  onClose,
+  onAdd,
+  initialSource = "asset",
+  title = "이미지 추가",
+  maxSelect,
+  backgroundable = true,
+}: {
+  context?: LoraContext;
+  allowBot?: boolean;
+  onClose: () => void;
+  onAdd: (rows: LoraData[], source: string) => Promise<void>;
+  initialSource?: "asset" | "bot";
+  title?: string;
+  maxSelect?: number;
+  backgroundable?: boolean;
+}) {
   const [source, setSource] = useState<string>(initialSource); const [owners, setOwners] = useState<LoraData[]>([]); const [owner, setOwner] = useState(""); const [botChar, setBotChar] = useState("");
-  const [gallery, setGallery] = useState<LoraData>({}); const [group, setGroup] = useState<LoraData | null>(null); const [images, setImages] = useState<LoraData[]>([]); const [selected, setSelected] = useState<LoraData[]>([]); const [search, setSearch] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const [gallery, setGallery] = useState<LoraData>({}); const [group, setGroup] = useState<LoraData | null>(null); const [images, setImages] = useState<LoraData[]>([]); const [selected, setSelected] = useState<LoraData[]>([]); const [search, setSearch] = useState(""); const [loadError, setLoadError] = useState(""); const [actionError, setActionError] = useState(""); const [busy, setBusy] = useState(false);
   const [ownersLoading, setOwnersLoading] = useState(true); const [loading, setLoading] = useState(false);
   const [groupFilter, setGroupFilter] = useState<string | null>(null); const [ownerSearch, setOwnerSearch] = useState("");
   const [representatives, setRepresentatives] = useState<LoraData>({});
   const [imageRevision, setImageRevision] = useState(0);
-  const fixedBotCharacter = context.category === "bot" ? context.character?.name || "" : "";
+  const isBotContext = context?.category === "bot";
+  const botProjectName = isBotContext ? context?.project.bot || "" : "";
+  const visualCardId = isBotContext ? context?.character?.visual_card_id || "" : "";
+  const fixedBotCharacter = isBotContext ? context?.character?.name || "" : "";
   const activeBotCharacter = fixedBotCharacter || botChar;
   const botCharacters: LoraData[] = owners.find(item => item.name === owner)?.characters || [];
   const scrollArea = useRef<HTMLDivElement>(null);
@@ -226,7 +247,7 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
   const key = (r: LoraData) => JSON.stringify([r.type, r.bot, r.character, r.outfit, r.expression, r.filename]);
   useEffect(() => {
     const controller = new AbortController();
-    setOwnersLoading(true); setError(""); setOwners([]); setOwner(""); setGroup(null); setGallery({}); setImages([]); setSelected([]); setSearch("");
+    setOwnersLoading(true); setLoadError(""); setActionError(""); setOwners([]); setOwner(""); setGroup(null); setGallery({}); setImages([]); setSelected([]); setSearch("");
     setGroupFilter(null); setOwnerSearch(""); setRepresentatives({}); setBotChar("");
     const request: Promise<LoraData> = source === "asset" ? Promise.all([
       assetRequest("asset/character-presets", undefined, controller.signal),
@@ -237,14 +258,14 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
       const rows = source === "asset" ? Object.entries(r.characters).map(([name, character]) => ({ name, id: name, group: (character as LoraData).group || "", scope: r.scopes[name] }))
         .sort((a, b) => a.name.localeCompare(b.name, "ko")) : r.bots;
       setOwners(rows); setRepresentatives(r.representatives || {});
-      setOwner(source === "asset" ? "" : context.category === "bot" ? context.project.bot || "" : rows[0]?.name || "");
-    }).catch(e => { if (!controller.signal.aborted) setError(e.message); }).finally(() => { if (!controller.signal.aborted) setOwnersLoading(false); });
+      setOwner(source === "asset" ? "" : isBotContext ? botProjectName : rows.find((bot: LoraData) => bot.characters?.length)?.name || rows[0]?.name || "");
+    }).catch(e => { if (!controller.signal.aborted) setLoadError(e.message); }).finally(() => { if (!controller.signal.aborted) setOwnersLoading(false); });
     return () => controller.abort();
-  }, [source, context.category, context.project.bot]);
+  }, [source, isBotContext, botProjectName]);
   useEffect(() => {
     setImages([]); setGallery({});
     if (!owner || ownersLoading) { setLoading(false); return; }
-    const controller = new AbortController(); setError(""); setLoading(true);
+    const controller = new AbortController(); setLoadError(""); setLoading(true);
     async function load() {
       try {
         if (source === "asset") {
@@ -258,8 +279,8 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
           }));
         } else {
           const bot = owners.find(o => o.name === owner);
-          const characters: LoraData[] = (bot?.characters || []).filter((c: LoraData) => context.category !== "bot" || c.name === fixedBotCharacter);
-          const params = query({ visual_card_id: context.category === "bot" ? context.character?.visual_card_id || "" : "", summary: 1 });
+          const characters: LoraData[] = (bot?.characters || []).filter((c: LoraData) => !isBotContext || c.name === fixedBotCharacter);
+          const params = query({ visual_card_id: visualCardId, summary: 1 });
           const batches: LoraData[][] = new Array(characters.length);
           let next = 0;
           // Limit concurrent reads when a bot has many characters; filtering stays local.
@@ -269,7 +290,7 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
               const name = characters[index].name;
               try {
                 const result = await loraRequest(`bot_lora/char_available_images/${enc(owner)}/${enc(name)}?${params}`, undefined, controller.signal);
-                batches[index] = (result.images || []).filter((img: LoraData) => context.category !== "bot" || img.source !== "face")
+                batches[index] = (result.images || []).filter((img: LoraData) => !isBotContext || img.source !== "face")
                   .map((img: LoraData) => ({ filename: img.filename, is_representative: img.is_representative, type: "bot", bot: owner, character: name, url: `${apiRoot}/bot_lora/char_image/${enc(owner)}/${enc(name)}/${enc(img.filename)}?${params}` }));
               } catch (cause) {
                 next = characters.length;
@@ -279,11 +300,11 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
           }));
           if (!controller.signal.aborted) setImages(batches.flat());
         }
-      } catch (e) { if (!controller.signal.aborted) setError((e as Error).message); }
+      } catch (e) { if (!controller.signal.aborted) setLoadError((e as Error).message); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     }
     void load(); return () => controller.abort();
-  }, [owner, source, owners, ownersLoading, group, context.category, fixedBotCharacter, context.character?.visual_card_id, imageRevision]);
+  }, [owner, source, owners, ownersLoading, group, isBotContext, fixedBotCharacter, visualCardId, imageRevision]);
   const normalizedSearch = normalizeImageSearch(search);
   const visible = images.filter(i => (source !== "bot" || i.character === activeBotCharacter)
     && matchesImageSearch(i.filename, normalizedSearch))
@@ -304,54 +325,72 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
   const regionLabel = browsingCharacters || browsingBotCharacters ? "캐릭터 목록" : browsingGroups ? "복장·표정 목록" : "이미지 목록";
   const pending = loading || ownersLoading;
   const galleryScope = JSON.stringify([source, owner, activeBotCharacter, group, normalizedSearch]);
+  const overLimit = maxSelect !== undefined && selected.length > maxSelect;
   function selectImages(rows: LoraData[], checked: boolean) {
     const rowKeys = new Set(rows.map(key));
+    if (!checked) {
+      setActionError("");
+      setSelected(current => current.filter(img => !rowKeys.has(key(img))));
+      return;
+    }
+    const additions = rows.filter(img => !selectedKeys.has(key(img)));
+    if (maxSelect !== undefined && selected.length + additions.length > maxSelect) {
+      setActionError(`최대 ${maxSelect}장까지 선택할 수 있습니다. 폴더를 열어 필요한 이미지를 직접 선택하세요.`);
+      return;
+    }
+    setActionError("");
     setSelected(current => {
       const currentKeys = new Set(current.map(key));
-      return checked ? [...current, ...rows.filter(img => !currentKeys.has(key(img)))] : current.filter(img => !rowKeys.has(key(img)));
+      return [...current, ...rows.filter(img => !currentKeys.has(key(img)))];
     });
   }
   function imageChoices(rows: LoraData[]) {
-    return <div className="internal-lora-images">{rows.map(img => <label className={`internal-lora-image internal-lora-image-choice${selectedKeys.has(key(img)) ? " selected" : ""}`} key={key(img)}><img src={mediaUrl(img.url)} alt={img.filename} loading="lazy" decoding="async" /><span className="internal-lora-image-caption">{img.is_representative && <Badge tone="rose">대표 이미지</Badge>}<span className="internal-lora-check"><input type="checkbox" aria-label={`${source === "bot" ? `${img.character} · ` : ""}${img.filename} 선택`} disabled={busy} checked={selectedKeys.has(key(img))} onChange={e => selectImages([img], e.target.checked)} /><span>{img.filename}</span></span></span></label>)}</div>;
+    return <div className="internal-lora-images">{rows.map(img => {
+      const checked = selectedKeys.has(key(img));
+      const limitReached = maxSelect !== undefined && selected.length >= maxSelect && !checked;
+      return <label className={`internal-lora-image internal-lora-image-choice${checked ? " selected" : ""}`} key={key(img)}><img src={mediaUrl(img.url)} alt={img.filename} loading="lazy" decoding="async" /><span className="internal-lora-image-caption">{img.is_representative && <Badge tone="rose">대표 이미지</Badge>}<span className="internal-lora-check"><input type="checkbox" aria-label={`${source === "bot" ? `${img.character} · ` : ""}${img.filename} 선택`} disabled={busy || limitReached} checked={checked} onChange={e => selectImages([img], e.target.checked)} /><span>{img.filename}</span></span></span></label>;
+    })}</div>;
   }
-  return <Modal title="이미지 추가" onClose={onClose} closeDisabled={busy} className="internal-lora-modal internal-lora-picker-modal"><div className="internal-lora-form">
+  return <Modal title={title} backgroundable={backgroundable} onClose={onClose} closeDisabled={busy} className="internal-lora-modal internal-lora-picker-modal"><div className="internal-lora-form">
     {source === "bot" && activeBotCharacter && <nav className="internal-lora-location" aria-label="봇 이미지 탐색 경로">
-      {context.category !== "bot" ? <button type="button" className="button" disabled={busy} onClick={() => { setBotChar(""); setSearch(""); setError(""); }}><ArrowLeft size={14} />{owner} · 캐릭터 목록</button> : <span>{owner}</span>}<strong>{activeBotCharacter}</strong>
+      {!isBotContext ? <button type="button" className="button" disabled={busy} onClick={() => { setBotChar(""); setSearch(""); setActionError(""); }}><ArrowLeft size={14} />{owner} · 캐릭터 목록</button> : <span>{owner}</span>}<strong>{activeBotCharacter}</strong>
     </nav>}
     {source === "asset" && owner && <div className="internal-lora-location">
-      <button type="button" className="button" disabled={busy} onClick={() => { setOwner(""); setGroup(null); setSearch(""); setError(""); }}><ArrowLeft size={14} />캐릭터 목록</button>
-      {group ? <><button type="button" className="button" disabled={busy} onClick={() => { setGroup(null); setSearch(""); setError(""); }}>{owner} · 복장·표정 목록</button><strong>{group.outfit} / {group.expression}</strong></> : <strong>{owner}</strong>}
+      <button type="button" className="button" disabled={busy} onClick={() => { setOwner(""); setGroup(null); setSearch(""); setLoadError(""); setActionError(""); }}><ArrowLeft size={14} />캐릭터 목록</button>
+      {group ? <><button type="button" className="button" disabled={busy} onClick={() => { setGroup(null); setSearch(""); setLoadError(""); setActionError(""); }}>{owner} · 복장·표정 목록</button><strong>{group.outfit} / {group.expression}</strong></> : <strong>{owner}</strong>}
     </div>}
     <div className="internal-lora-picker-fields">
       <label className="field">이미지 출처<select value={source} disabled={busy} onChange={event => setSource(event.target.value)}><option value="asset">에셋</option><option value="bot" disabled={!allowBot}>봇</option></select></label>
       {browsingCharacters && <label className="field">캐릭터 그룹<select value={JSON.stringify(groupFilter)} disabled={busy || ownersLoading} onChange={event => setGroupFilter(JSON.parse(event.target.value))}>
         {[null, ...characterGroups, ""].map(value => <option key={JSON.stringify(value)} value={JSON.stringify(value)}>{value === null ? "전체" : value || "미지정"} ({value === null ? owners.length : owners.filter(item => (item.group || "") === value).length}명)</option>)}
       </select></label>}
-      {browsingBotCharacters && <label className="field">봇<select value={owner} disabled={busy || ownersLoading || context.category === "bot"} onChange={event => { setOwner(event.target.value); setBotChar(""); setSearch(""); setError(""); }}><option value="">선택하세요</option>{owners.map(bot => <option key={bot.name} value={bot.name}>{bot.name} ({bot.characters?.length || 0}명)</option>)}</select></label>}
+      {browsingBotCharacters && <label className="field">봇<select value={owner} disabled={busy || ownersLoading || isBotContext} onChange={event => { setOwner(event.target.value); setBotChar(""); setSearch(""); setLoadError(""); setActionError(""); }}><option value="">선택하세요</option>{owners.map(bot => <option key={bot.name} value={bot.name}>{bot.name} ({bot.characters?.length || 0}명)</option>)}</select></label>}
       {browsingCharacters && <label className="field">캐릭터 검색<span className="search-field"><Search size={16} /><input type="search" disabled={busy || ownersLoading} placeholder="캐릭터 이름" value={ownerSearch} onChange={event => setOwnerSearch(event.target.value)} /></span></label>}
       {!browsingCharacters && <label className="field">{browsingBotCharacters ? "캐릭터 검색" : browsingGroups ? "복장·표정 검색" : "이미지 검색"}<span className="search-field"><Search size={16} /><input type="search" disabled={busy} placeholder={browsingBotCharacters ? "캐릭터 이름" : browsingGroups ? "복장 또는 표정 이름" : "파일 이름"} value={search} onChange={e => setSearch(e.target.value)} /></span></label>}
     </div>
-    {source === "bot" && context.category !== "bot" && <p className="field-help">캐릭터 전체 선택 후 제외할 캐릭터의 체크를 해제하세요. 폴더를 열면 이미지를 개별 선택할 수 있습니다. 봇이나 폴더를 바꿔도 선택은 유지됩니다.</p>}
-    {error && <div className="internal-lora-actions"><p className="field-error" role="alert">{error}</p>{owner && <button className="button" disabled={busy || pending} onClick={() => setImageRevision(value => value + 1)}>이미지 다시 불러오기</button>}</div>}
+    {maxSelect !== undefined ? <p className="field-help">최대 {maxSelect}장까지 선택할 수 있습니다. 폴더를 열어 원하는 이미지를 선택하세요. {source === "bot" ? "봇이나 폴더를 바꿔도 선택은 유지됩니다." : "캐릭터나 폴더를 바꿔도 선택은 유지됩니다."}</p>
+      : source === "bot" && !isBotContext && <p className="field-help">캐릭터 전체 선택 후 제외할 캐릭터의 체크를 해제하세요. 폴더를 열면 이미지를 개별 선택할 수 있습니다. 봇이나 폴더를 바꿔도 선택은 유지됩니다.</p>}
+    {loadError && <div className="internal-lora-actions"><p className="field-error" role="alert">{loadError}</p>{owner && <button className="button" disabled={busy || pending} onClick={() => setImageRevision(value => value + 1)}>이미지 다시 불러오기</button>}</div>}
+    {actionError && <p className="field-error" role="alert">{actionError}</p>}
     <div className="internal-lora-picker-scroll" ref={scrollArea} tabIndex={0} role="region" aria-label={regionLabel} aria-busy={pending}>
-    {pending ? <p role="status">{regionLabel}을 불러오는 중입니다…</p> : !error && (browsingBotCharacters ? <>
+    {pending ? <p role="status">{regionLabel}을 불러오는 중입니다…</p> : !loadError && (browsingBotCharacters ? <>
       <ImageSelection total={folderImages.length} selected={folderImages.filter(img => selectedKeys.has(key(img))).length} disabled={busy} label={normalizedSearch ? "검색된 캐릭터 전체 선택" : "캐릭터 전체 선택"} onChange={checked => selectImages(folderImages, checked)} />
       <div className="internal-lora-picker-folders">{shownBotCharacters.map(character => {
         const rows = botImageGroups.get(character.name) || [];
         const count = rows.filter(img => selectedKeys.has(key(img))).length;
         return <div className={`internal-lora-picker-folder${count ? " selected" : ""}`} key={character.name}>
           <label className="internal-lora-picker-folder-check"><input type="checkbox" aria-label={`${character.name} 전체 선택`} checked={rows.length > 0 && count === rows.length} ref={input => { if (input) input.indeterminate = count > 0 && count < rows.length; }} disabled={busy || !rows.length} onChange={event => selectImages(rows, event.target.checked)} /></label>
-          <button type="button" disabled={busy} aria-label={`${character.name} 폴더 열기`} onClick={() => { setBotChar(character.name); setSearch(""); }}><FolderOpen size={36} /><strong>{character.name}</strong><small>{rows.length ? `${count} / ${rows.length}장 선택` : "이미지 없음"}</small></button>
+          <button type="button" disabled={busy} aria-label={`${character.name} 폴더 열기`} onClick={() => { setBotChar(character.name); setSearch(""); setActionError(""); }}><FolderOpen size={36} /><strong>{character.name}</strong><small>{rows.length ? `${count} / ${rows.length}장 선택` : "이미지 없음"}</small></button>
         </div>;
       })}</div>
       {!shownBotCharacters.length && <Empty title={normalizedSearch ? "검색 결과가 없습니다" : !owner ? "봇을 선택하세요" : "캐릭터가 없습니다"}>{normalizedSearch ? "다른 캐릭터 이름으로 검색하세요." : "이미지를 가져올 봇을 선택하세요."}</Empty>}
     </> : browsingCharacters ? <AssetCharacterFolders
       names={owners.map(item => item.name)} tags={{ characters: Object.fromEntries(owners.map(item => [item.name, item])) }} representatives={representatives}
       search={ownerSearch} filter={groupFilter} busy={busy} readOnly builtinUnlocked={false} error=""
-      onOpen={name => { setOwner(name); setGroup(null); setSearch(""); }} onDelete={() => {}} onAction={async () => false}
+      onOpen={name => { setOwner(name); setGroup(null); setSearch(""); setActionError(""); }} onDelete={() => {}} onAction={async () => false}
     /> : !owner ? <Empty title="봇을 선택하세요">이미지를 가져올 대상을 선택하세요.</Empty> : browsingGroups ? <>
       <AssetOutfitFolders character={owner} data={gallery} search={search} busy={busy} readOnly
-        onOpen={item => { setGroup(item); setSearch(""); }} onDelete={() => {}} onAction={async () => false} />
+        onOpen={item => { setGroup(item); setSearch(""); setActionError(""); }} onDelete={() => {}} onAction={async () => false} />
       {!gallery.gallery?.length && <Empty title="에셋 이미지가 없습니다">다른 캐릭터를 선택하거나 에셋에서 이미지를 생성하세요.</Empty>}
     </> : <>
       <ImageSelection total={visible.length} selected={visibleSelected} disabled={busy} label={normalizedSearch ? "검색된 이미지 전체 선택" : "이 폴더 이미지 전체 선택"} onChange={checked => selectImages(visible, checked)} />
@@ -359,7 +398,7 @@ export function ImagePicker({ context, allowBot, onClose, onAdd, initialSource =
       {!visible.length && <Empty title={normalizedSearch ? "검색 결과가 없습니다" : "이미지가 없습니다"}>{normalizedSearch ? "다른 파일 이름으로 검색하세요." : "다른 복장·표정이나 캐릭터를 선택하세요."}</Empty>}
     </>)}
     </div>
-    <div className="internal-lora-picker-footer"><div className="internal-lora-selection-summary"><strong role="status">{source === "bot" ? `${selectedCharacters}명 · ` : ""}총 {selected.length}장 선택</strong><button className="button" disabled={busy || !selected.length} onClick={() => setSelected([])}>전체 선택 해제</button></div><div className="internal-lora-actions"><button className="button" disabled={busy} onClick={onClose}>취소</button><button className="button primary" disabled={busy || !selected.length} onClick={async () => { setBusy(true); setError(""); try { await onAdd(selected, source); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "추가 중…" : `${selected.length}장 추가`}</button></div></div>
+    <div className="internal-lora-picker-footer"><div className="internal-lora-selection-summary"><strong role="status">{source === "bot" ? `${selectedCharacters}명 · ` : ""}총 {selected.length}{maxSelect !== undefined ? ` / 최대 ${maxSelect}` : ""}장 선택</strong><button className="button" disabled={busy || !selected.length} onClick={() => { setSelected([]); setActionError(""); }}>전체 선택 해제</button></div><div className="internal-lora-actions"><button className="button" disabled={busy} onClick={onClose}>취소</button><button className="button primary" disabled={busy || !selected.length || overLimit} onClick={async () => { setBusy(true); setActionError(""); try { await onAdd(selected, source); } catch (e) { setActionError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "추가 중…" : `${selected.length}장 추가`}</button></div></div>
   </div></Modal>;
 }
 

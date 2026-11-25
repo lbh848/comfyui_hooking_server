@@ -1,22 +1,24 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, LockKeyhole, LockKeyholeOpen, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { PresetImport } from "./PresetImport";
 import { PresetVisibility } from "./PresetVisibility";
 import { TagTextarea } from "./TagTextarea";
-import { presetCategories, visibilityCategories, presetEntries, presetKey, presetRequest, valueText, type PresetCatalog, type PresetEntry, type PresetValue } from "./presets";
+import { presetCategories, presetCategoryFromSearch, visibilityCategories, presetEntries, presetKey, presetRequest, valueText, type PresetCatalog, type PresetEntry, type PresetValue } from "./presets";
 import type { LlmSlot } from "./llm";
 import "./presets.css";
 import { useUnsavedChanges } from "./unsavedChanges";
+import { useWorkshopScreen } from "./WorkshopNavigation";
 
 type View = "edit" | "hide" | "import";
 type TraceMatch = { character: string; outfit: string; expression: string; image_file: string; match_count: number; prompt_data: unknown };
 export function PresetsPage({ notify, llms, isSaved }: { notify: (message: string) => void; llms: LlmSlot[]; isSaved: boolean }) {
+  const { active, search, replaceSearch } = useWorkshopScreen();
   const [catalog, setCatalog] = useState<PresetCatalog | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<View>("edit");
-  const [category, setCategory] = useState("appearances");
+  const [category, setCategory] = useState(() => presetCategoryFromSearch(search) || "appearances");
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState("all");
   const [state, setState] = useState("all");
@@ -60,6 +62,52 @@ export function PresetsPage({ notify, llms, isSaved }: { notify: (message: strin
     finally { setBusy(false); }
   }
   useEffect(() => { void reload(); }, []);
+  const latestState = useRef({ dirty, busy, deleteDialog, unlockDialog, view, category, selected, search });
+  latestState.current = { dirty, busy, deleteDialog, unlockDialog, view, category, selected, search };
+  useEffect(() => {
+    if (!active) return;
+    const requestedCategory = presetCategoryFromSearch(search);
+    if (!requestedCategory) return;
+    const nextParams = new URLSearchParams(search);
+    nextParams.delete("category");
+    replaceSearch(nextParams.toString());
+    const current = latestState.current;
+    if (current.dirty || current.busy || current.deleteDialog || current.unlockDialog) return;
+    if (current.view !== "edit") setView("edit");
+    if (current.category !== requestedCategory) {
+      setCategory(requestedCategory);
+      setSelected(null); setName(""); setText(""); setCompareKey(""); setChecked([]); setTrace(null);
+      setTargetScope("local"); setQuery("");
+    }
+  }, [active, search, replaceSearch]);
+  const wasActive = useRef(active);
+  useEffect(() => {
+    const returned = !wasActive.current && active;
+    wasActive.current = active;
+    if (!returned) return;
+    const current = latestState.current;
+    const requestedCategory = presetCategoryFromSearch(current.search);
+    if (current.dirty || current.busy || current.deleteDialog || current.unlockDialog) return;
+    if (!requestedCategory && current.view === "import") return;
+    const keepSelection = !requestedCategory || current.category === requestedCategory && current.view === "edit";
+    const selectedKey = keepSelection && current.selected ? presetKey(current.selected) : "";
+    const controller = new AbortController();
+    setBusy(true); setError("");
+    void presetRequest<PresetCatalog>("", undefined, undefined, controller.signal)
+      .then(next => {
+        setCatalog(next);
+        if (!selectedKey) return;
+        const refreshed = presetEntries(next).find(entry => presetKey(entry) === selectedKey);
+        setSelected(refreshed || null);
+        setName(refreshed?.name || "");
+        setText(refreshed ? valueText(refreshed.value) : "");
+        setTargetScope(refreshed?.scope || "local");
+        if (!refreshed) { setCompareKey(""); setTrace(null); }
+      })
+      .catch(err => { if (err.name !== "AbortError") setError((err as Error).message); })
+      .finally(() => setBusy(false));
+    return () => controller.abort();
+  }, [active]);
   useEffect(() => () => {
     if (builtinUnlockToken) void presetRequest("lock", { builtin_unlock_token: builtinUnlockToken }).catch(() => {});
   }, [builtinUnlockToken]);
