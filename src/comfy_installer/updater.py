@@ -17,7 +17,7 @@ from threading import Event
 from typing import Callable
 
 from .configurator import backup_current_config
-from .operations import CommandError, run_command
+from .operations import CommandError, git_config_args, run_command, windows_long_path
 from update_policy import replace_distribution_files, validate_release_storage
 
 
@@ -237,8 +237,10 @@ def _prepare_untracked_quarantine(
                     f"예상하지 못한 미추적 디렉터리 항목입니다: {relative}"
                 )
             destination = files_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, destination)
+            Path(windows_long_path(destination.parent)).mkdir(
+                parents=True, exist_ok=True
+            )
+            os.replace(windows_long_path(source), windows_long_path(destination))
             moved.append(relative)
             _emit(f"미추적 파일 격리: {relative.as_posix()}", log)
         _remove_empty_source_parents(root, entries)
@@ -363,7 +365,7 @@ def _restore_untracked_quarantine(
             )
             continue
         try:
-            os.replace(source, destination)
+            os.replace(windows_long_path(source), windows_long_path(destination))
             _emit(f"미추적 파일 복원: {relative.as_posix()}", log)
         except Exception as exc:
             restore_failed = True
@@ -410,7 +412,7 @@ def _restore_untracked_quarantine(
 
 
 def _run_git_capture(root: Path, *arguments: str) -> bytes:
-    command = ["git", "-c", f"safe.directory={root.resolve().as_posix()}", *arguments]
+    command = ["git", *git_config_args(root), *arguments]
     try:
         completed = subprocess.run(
             command,
@@ -604,7 +606,7 @@ def _tracked_change_paths(root: Path) -> tuple[Path, ...]:
 
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open(windows_long_path(path), "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -749,8 +751,10 @@ def _backup_and_restore_tracked_changes(
                     f"지원하지 않는 로컬 수정 파일 형식입니다: {relative}"
                 )
 
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            Path(windows_long_path(destination.parent)).mkdir(
+                parents=True, exist_ok=True
+            )
+            shutil.copy2(windows_long_path(source), windows_long_path(destination))
             source_hash = _file_sha256(source)
             backup_hash = _file_sha256(destination)
             if source_hash != backup_hash:
@@ -767,7 +771,7 @@ def _backup_and_restore_tracked_changes(
                     "path": relative.as_posix(),
                     "state": "copied",
                     "backup_path": (Path("files") / relative).as_posix(),
-                    "size": destination.stat().st_size,
+                    "size": os.stat(windows_long_path(destination)).st_size,
                     "sha256": backup_hash,
                 }
             )

@@ -20,7 +20,7 @@ from .node_compatibility import (
     apply_minimax_h3_teacache_reset_compatibility,
     remove_minimax_h3_teacache_reset_compatibility,
 )
-from .operations import CommandError, run_command
+from .operations import CommandError, run_command, windows_long_path
 from .updater import checkout_detached_ref, tracked_change_status
 
 
@@ -161,7 +161,7 @@ def _extract_zip_safely(archive_path: Path, destination: Path) -> None:
                     raise NodeInstallError(
                         f"노드 압축 파일의 심볼릭 링크를 허용하지 않습니다: {info.filename}"
                     )
-                target = destination.joinpath(*member.parts)
+                target = Path(windows_long_path(destination.joinpath(*member.parts)))
                 if info.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                     continue

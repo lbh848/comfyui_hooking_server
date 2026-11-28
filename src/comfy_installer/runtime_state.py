@@ -19,6 +19,7 @@ from .manager_dependencies import (
     installed_manager_versions,
 )
 from .manifest import InstallManifest
+from .operations import git_config_args, windows_long_path
 from .updater import backup_and_restore_tracked_changes
 
 
@@ -172,7 +173,7 @@ def _restore_comfy_database(
 def _git_value(path: Path, *arguments: str) -> str:
     try:
         completed = subprocess.run(
-            ["git", "-c", f"safe.directory={path.resolve().as_posix()}", *arguments],
+            ["git", *git_config_args(path), *arguments],
             cwd=path,
             check=True,
             capture_output=True,
@@ -559,7 +560,11 @@ def create_runtime_transaction(
         if venv.is_dir():
             if log:
                 log(f"[트랜잭션] Comfy .venv 백업 시작: {venv_backup}")
-            shutil.copytree(venv, venv_backup, symlinks=True)
+            shutil.copytree(
+                windows_long_path(venv),
+                windows_long_path(venv_backup),
+                symlinks=True,
+            )
         receipt = load_runtime_receipt(root)
 
         comfy_tracked_backup = backup_and_restore_tracked_changes(
@@ -615,6 +620,15 @@ def create_runtime_transaction(
             log(f"[트랜잭션] 승격 전 상태 보관 완료: {transaction_id}")
         return snapshot
     except Exception as exc:
+        if venv_backup.exists():
+            try:
+                _remove_tree_force_writable(venv_backup)
+            except Exception as cleanup_exc:
+                print(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 실패한 트랜잭션 .venv "
+                    f"부분 백업 정리 실패: path={venv_backup}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
         restore_errors: list[str] = []
         for path, patch, label in reversed(cleaned_worktrees):
             try:
@@ -646,7 +660,7 @@ def _checkout_exact(path: Path, ref: str, label: str) -> None:
     try:
         subprocess.run(
             [
-                "git", "-c", f"safe.directory={path.resolve().as_posix()}",
+                "git", *git_config_args(path),
                 "checkout", "--detach", "--force", ref,
             ],
             cwd=path,
@@ -675,8 +689,8 @@ def _checkout_exact(path: Path, ref: str, label: str) -> None:
 def _remove_tree_force_writable(path: Path) -> None:
     def make_writable_and_retry(function, target, exc_info) -> None:
         try:
-            os.chmod(target, stat.S_IWRITE)
-            function(target)
+            os.chmod(windows_long_path(target), stat.S_IWRITE)
+            function(windows_long_path(target))
         except Exception as retry_exc:
             print(
                 "[COMFY_INSTALL][RUNTIME_STATE] 읽기 전용 롤백 파일 삭제 실패: "
@@ -685,7 +699,7 @@ def _remove_tree_force_writable(path: Path) -> None:
             traceback.print_exc()
             raise
 
-    shutil.rmtree(path, onexc=make_writable_and_retry)
+    shutil.rmtree(windows_long_path(path), onexc=make_writable_and_retry)
 
 
 def _emit_transaction_cleanup_log(
@@ -716,7 +730,7 @@ def _is_link_or_reparse_point(path: Path, details: os.stat_result) -> bool:
 def _tree_logical_file_bytes(path: Path) -> int:
     total = 0
     for current_root, directory_names, file_names in os.walk(
-        path,
+        windows_long_path(path),
         topdown=True,
         followlinks=False,
     ):
@@ -1026,7 +1040,7 @@ def _restore_worktree_patch(
     try:
         completed = subprocess.run(
             [
-                "git", "-c", f"safe.directory={path.resolve().as_posix()}",
+                "git", *git_config_args(path),
                 "apply", "--whitespace=nowarn", "-",
             ],
             cwd=path,
@@ -1141,8 +1155,12 @@ def rollback_runtime_transaction(
             if venv.exists():
                 if venv.resolve().parent != root or venv.name != ".venv":
                     raise RuntimeStateError(f"안전하지 않은 .venv 삭제 대상입니다: {venv}")
-                shutil.rmtree(venv)
-            shutil.copytree(venv_backup, venv, symlinks=True)
+                _remove_tree_force_writable(venv)
+            shutil.copytree(
+                windows_long_path(venv_backup),
+                windows_long_path(venv),
+                symlinks=True,
+            )
             result["restored"].append("venv")
 
         database_state = snapshot.get("database")
@@ -1207,9 +1225,9 @@ def complete_runtime_transaction(
     database_backup = transaction_root / "database"
     try:
         if venv_backup.is_dir():
-            shutil.rmtree(venv_backup)
+            _remove_tree_force_writable(venv_backup)
         if database_backup.is_dir():
-            shutil.rmtree(database_backup)
+            _remove_tree_force_writable(database_backup)
         if log:
             log(f"[트랜잭션] 승격 확정 완료: {transaction_id}")
         return result

@@ -24,6 +24,24 @@ class CommandCancelled(CommandError):
 LogCallback = Callable[[str], None]
 
 
+def windows_long_path(path: str | os.PathLike[str]) -> str:
+    """Return a Windows extended-length path so deep trees bypass MAX_PATH."""
+    text = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or text.startswith(("\\\\?\\", "\\\\.\\")):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
+def git_config_args(workdir: Path) -> list[str]:
+    """Return per-command Git config overrides without mutating user config."""
+    args = ["-c", f"safe.directory={workdir.resolve().as_posix()}"]
+    if os.name == "nt":
+        args.extend(["-c", "core.longpaths=true"])
+    return args
+
+
 def isolated_subprocess_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ)
     for key in (
@@ -58,10 +76,10 @@ def run_command(
     if not workdir.is_dir():
         raise CommandError(f"명령 작업 폴더가 없습니다: {workdir}")
     if Path(command[0]).name.casefold() in {"git", "git.exe"}:
-        # Copied installations may retain another Windows user's ownership.
-        # Trust only this command's working directory, without writing Git config.
+        # Copied installations may retain another Windows user's ownership, and
+        # Windows users without LongPathsEnabled need Git long-path support too.
         command = [
-            command[0], "-c", f"safe.directory={workdir.as_posix()}", *command[1:]
+            command[0], *git_config_args(workdir), *command[1:]
         ]
     cancel = cancel_event or Event()
     safe_display = subprocess.list2cmdline(command)
