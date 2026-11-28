@@ -781,7 +781,7 @@ class AssetMode:
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
                     continue
-                if outfit_dir_name == "Lora":
+                if outfit_dir_name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR):
                     continue
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
@@ -790,9 +790,21 @@ class AssetMode:
                     rep_path = os.path.join(expr_path, "_representative.json")
                     if os.path.isfile(rep_path):
                         try:
-                            with open(rep_path, "r", encoding="utf-8") as f:
-                                rep_file = json.load(f).get("filename", "")
-                            if rep_file:
+                            with open(rep_path, "r", encoding="utf-8-sig") as f:
+                                rep_data = json.load(f)
+                            rep_file = (
+                                rep_data.get("filename", "")
+                                if isinstance(rep_data, dict)
+                                else ""
+                            )
+                            if (
+                                isinstance(rep_file, str)
+                                and rep_file
+                                and os.path.basename(rep_file) == rep_file
+                                and self.get_image_path(
+                                    char_name, outfit_dir_name, expr_dir_name, rep_file
+                                )
+                            ):
                                 result[char_name] = {
                                     "outfit": outfit_dir_name,
                                     "expression": expr_dir_name,

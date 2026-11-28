@@ -21,6 +21,7 @@ from .node_compatibility import (
     remove_minimax_h3_teacache_reset_compatibility,
 )
 from .operations import CommandError, run_command
+from .updater import checkout_detached_ref, tracked_change_status
 
 
 class NodeInstallError(RuntimeError):
@@ -385,10 +386,7 @@ def install_git_node(
                 f"name={name}, expected={target}, actual={head}, origin={origin}"
             )
 
-        status = run_command(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=destination,
-        )
+        status = tracked_change_status(destination)
         if status:
             raise NodeInstallError(
                 f"노드에 로컬 변경이 있어 업데이트하지 않습니다: {name}: "
@@ -401,9 +399,9 @@ def install_git_node(
             log=log,
         )
         if head != fetched:
-            run_command(
-                ["git", "checkout", "--detach", "FETCH_HEAD"],
-                cwd=destination,
+            checkout_detached_ref(
+                destination,
+                "FETCH_HEAD",
                 cancel_event=cancel_event,
                 log=log,
             )
@@ -661,10 +659,7 @@ def update_git_node(
                 log=log,
             )
             return destination
-        status = run_command(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=destination,
-        )
+        status = tracked_change_status(destination)
         if status:
             raise NodeInstallError(
                 f"노드에 로컬 변경이 있어 업데이트하지 않습니다: {name}: "
@@ -687,9 +682,9 @@ def update_git_node(
                 source_label = f"origin/{target}" if tracks_branch else target[:12]
                 log(f"[노드 업데이트] 이미 최신: {name} {source_label} {head[:12]}")
             return destination
-        run_command(
-            ["git", "checkout", "--detach", "FETCH_HEAD"],
-            cwd=destination,
+        checkout_detached_ref(
+            destination,
+            "FETCH_HEAD",
             cancel_event=cancel_event,
             log=log,
         )

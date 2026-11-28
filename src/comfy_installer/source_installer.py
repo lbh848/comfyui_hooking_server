@@ -12,6 +12,7 @@ from .source_compatibility import (
     apply_comfy_system_stats_compatibility,
     managed_comfy_system_stats_update,
 )
+from .updater import checkout_detached_ref, tracked_change_status
 
 
 class SourceInstallError(RuntimeError):
@@ -198,10 +199,7 @@ def update_comfy_source(
                     "ComfyUI 원격 저장소가 설치 매니페스트와 달라 업데이트하지 "
                     f"않습니다: expected={repository}, actual={actual_origin}"
                 )
-            status = run_command(
-                ["git", "status", "--porcelain", "--untracked-files=no"],
-                cwd=target,
-            )
+            status = tracked_change_status(target)
             if status:
                 raise SourceInstallError(
                     "ComfyUI 소스에 로컬 변경이 있어 업데이트하지 않습니다: "
@@ -224,9 +222,9 @@ def update_comfy_source(
                 log=log,
                 timeout=900,
             )
-            run_command(
-                ["git", "checkout", "--detach", "FETCH_HEAD"],
-                cwd=target,
+            checkout_detached_ref(
+                target,
+                "FETCH_HEAD",
                 cancel_event=cancel_event,
                 log=log,
             )

@@ -45,6 +45,13 @@ class _TrackedChangesBackup:
     patch_path: Path | None
 
 
+@dataclass(frozen=True)
+class _TrackedChangeInspection:
+    changes: list[str]
+    paths: tuple[Path, ...]
+    eol_only_paths: tuple[str, ...]
+
+
 def _emit(message: str, log: LogCallback | None) -> None:
     print(f"[COMFY_INSTALL][UPDATE] {message}")
     if log:
@@ -427,23 +434,80 @@ def _run_git_capture(root: Path, *arguments: str) -> bytes:
         ) from exc
 
 
-def _tracked_change_paths(root: Path) -> tuple[Path, ...]:
-    raw_output = _run_git_capture(root, "diff", "--name-only", "-z", "HEAD", "--")
-    try:
-        decoded = raw_output.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        print(
-            "[COMFY_INSTALL][UPDATE] 추적 변경 파일 경로 UTF-8 해석 실패: "
-            f"root={root}, error={exc}"
-        )
-        traceback.print_exc()
-        raise HookingServerUpdateError(
-            "로컬 수정 파일 경로를 UTF-8로 해석하지 못해 업데이트를 중단합니다."
-        ) from exc
+def _parse_porcelain_z(raw_output: bytes) -> list[tuple[str, str, str | None]]:
+    """Parse ``git status --porcelain=v1 -z --untracked-files=no`` output."""
+    tokens = raw_output.split(b"\0")
+    records: list[tuple[str, str, str | None]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token:
+            continue
+        if len(token) < 4 or token[2:3] != b" ":
+            raise HookingServerUpdateError(
+                f"Git 추적 변경 상태 형식을 해석하지 못했습니다: {token!r}"
+            )
+        xy = token[:2].decode("ascii", errors="replace")
+        try:
+            path = token[3:].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            print(
+                "[COMFY_INSTALL][UPDATE] 추적 변경 파일 경로 UTF-8 해석 실패: "
+                f"token={token!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise HookingServerUpdateError(
+                "로컬 수정 파일 경로를 UTF-8로 해석하지 못해 업데이트를 중단합니다."
+            ) from exc
+        orig_path: str | None = None
+        if xy[0] in ("R", "C") or xy[1] in ("R", "C"):
+            if index < len(tokens) and tokens[index]:
+                try:
+                    orig_path = tokens[index].decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    print(
+                        "[COMFY_INSTALL][UPDATE] 추적 변경 원본 경로 UTF-8 해석 실패: "
+                        f"token={tokens[index]!r}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    raise HookingServerUpdateError(
+                        "로컬 수정 파일 경로를 UTF-8로 해석하지 못해 업데이트를 중단합니다."
+                    ) from exc
+                index += 1
+        records.append((xy, path, orig_path))
+    return records
 
+
+def _is_eol_only_worktree_change(root: Path, xy: str, raw_path: str) -> bool:
+    """Return True when a tracked file only differs by CR/LF line endings.
+
+    Upstream repositories sometimes commit CRLF blobs while declaring
+    ``text eol=lf`` in ``.gitattributes``. On Windows, Git keeps reporting
+    `` M <path>`` even immediately after ``git restore``.
+    """
+    if xy != " M":
+        return False
+    if _run_git_capture(root, "diff", "--cached", "--no-ext-diff", "--", raw_path):
+        return False
+    return not _run_git_capture(
+        root,
+        "diff",
+        "--ignore-cr-at-eol",
+        "--no-ext-diff",
+        "HEAD",
+        "--",
+        raw_path,
+    )
+
+
+def _validate_tracked_change_paths(
+    root: Path,
+    raw_paths: list[str],
+) -> tuple[Path, ...]:
     entries: list[Path] = []
     seen: set[Path] = set()
-    for raw_path in decoded.split("\0"):
+    for raw_path in raw_paths:
         if not raw_path:
             continue
         posix_path = PurePosixPath(raw_path)
@@ -474,6 +538,67 @@ def _tracked_change_paths(root: Path) -> tuple[Path, ...]:
             entries.append(relative)
             seen.add(relative)
     return tuple(entries)
+
+
+def _inspect_tracked_changes(root: Path) -> _TrackedChangeInspection:
+    raw_output = _run_git_capture(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=no",
+    )
+    records = _parse_porcelain_z(raw_output)
+    changes: list[str] = []
+    raw_paths: list[str] = []
+    eol_only_paths: list[str] = []
+    for xy, path, orig_path in records:
+        if _is_eol_only_worktree_change(root, xy, path):
+            eol_only_paths.append(path)
+            continue
+        if orig_path is not None:
+            changes.append(f"{xy} {orig_path} -> {path}")
+            raw_paths.append(orig_path)
+            raw_paths.append(path)
+        else:
+            changes.append(f"{xy} {path}")
+            raw_paths.append(path)
+    return _TrackedChangeInspection(
+        changes=changes,
+        paths=_validate_tracked_change_paths(root, raw_paths),
+        eol_only_paths=tuple(eol_only_paths),
+    )
+
+
+def tracked_change_status(repository_root: str | os.PathLike[str]) -> list[str]:
+    """Return tracked Git modifications excluding pure CR/LF normalization noise."""
+    return _inspect_tracked_changes(Path(repository_root).resolve()).changes
+
+
+def has_eol_only_tracked_changes(repository_root: str | os.PathLike[str]) -> bool:
+    """Return True when the repository has only pure CR/LF tracked status noise."""
+    inspection = _inspect_tracked_changes(Path(repository_root).resolve())
+    return not inspection.changes and bool(inspection.eol_only_paths)
+
+
+def checkout_detached_ref(
+    repository_root: str | os.PathLike[str],
+    ref: str,
+    *,
+    cancel_event: Event | None = None,
+    log: LogCallback | None = None,
+) -> None:
+    """Checkout a detached ref, bypassing pure CR/LF normalization noise only."""
+    root = Path(repository_root).resolve()
+    command = ["git", "checkout", "--detach"]
+    if has_eol_only_tracked_changes(root):
+        command.append("--force")
+    command.append(ref)
+    run_command(command, cwd=root, cancel_event=cancel_event, log=log)
+
+
+def _tracked_change_paths(root: Path) -> tuple[Path, ...]:
+    return _inspect_tracked_changes(root).paths
 
 
 def _file_sha256(path: Path) -> str:
@@ -531,6 +656,8 @@ def _backup_and_restore_tracked_changes(
     log: LogCallback | None,
     backup_root: Path | None = None,
     log_label: str = "후킹 서버 업데이트",
+    entries: tuple[Path, ...] | None = None,
+    eol_only_paths: tuple[str, ...] = (),
 ) -> _TrackedChangesBackup:
     def emit(message: str) -> None:
         print(f"[COMFY_INSTALL][UPDATE] {message}")
@@ -538,14 +665,19 @@ def _backup_and_restore_tracked_changes(
             log(f"[{log_label}] {message}")
 
     if not changes:
+        if eol_only_paths:
+            print(
+                "[COMFY_INSTALL][UPDATE] 순수 줄바꿈(EOL) 불일치 추적 파일 무시: "
+                f"root={root}, paths={eol_only_paths!r}"
+            )
         emit("영구 백업할 Git 추적 파일의 로컬 수정 없음")
         return _TrackedChangesBackup(path=None, entries=(), patch_path=None)
 
     backup_path: Path | None = None
-    entries: tuple[Path, ...] = ()
+    resolved_entries: tuple[Path, ...] = ()
     try:
-        entries = _tracked_change_paths(root)
-        if not entries:
+        resolved_entries = entries if entries is not None else _tracked_change_paths(root)
+        if not resolved_entries:
             print(
                 "[COMFY_INSTALL][UPDATE] Git status에는 추적 변경이 있지만 "
                 f"백업할 경로를 찾지 못했습니다: changes={changes!r}"
@@ -562,11 +694,11 @@ def _backup_and_restore_tracked_changes(
         files_root.mkdir()
         emit(
             "Git 추적 파일의 로컬 수정 영구 백업 시작: "
-            f"count={len(entries)}, path={backup_path}"
+            f"count={len(resolved_entries)}, path={backup_path}"
         )
 
         file_records: list[dict[str, object]] = []
-        for relative in entries:
+        for relative in resolved_entries:
             _assert_no_symlink_parent(root, relative)
             source = root / relative
             destination = files_root / relative
@@ -640,7 +772,19 @@ def _backup_and_restore_tracked_changes(
             )
             emit(f"수정된 추적 파일 백업: {relative.as_posix()}")
 
-        patch_bytes = _run_git_capture(root, "diff", "--binary", "--full-index", "HEAD", "--")
+        if eol_only_paths:
+            patch_bytes = _run_git_capture(
+                root,
+                "diff",
+                "--binary",
+                "--full-index",
+                "HEAD",
+                "--",
+                ".",
+                *(f":(exclude,literal){path}" for path in eol_only_paths),
+            )
+        else:
+            patch_bytes = _run_git_capture(root, "diff", "--binary", "--full-index", "HEAD", "--")
         patch_text = patch_bytes.decode("utf-8")
         patch_path = backup_path / "local_changes.patch"
         with patch_path.open("w", encoding="utf-8", newline="\n") as stream:
@@ -680,10 +824,7 @@ def _backup_and_restore_tracked_changes(
             ],
             cwd=root,
         )
-        remaining = run_command(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=root,
-        )
+        remaining = tracked_change_status(root)
         if remaining:
             print(
                 "[COMFY_INSTALL][UPDATE] 백업 후 Git 추적 파일 원본 복구 "
@@ -695,11 +836,11 @@ def _backup_and_restore_tracked_changes(
             )
         emit(
             "Git 추적 파일 원본 복구 완료; 수정본은 자동 복구하지 않음: "
-            f"count={len(entries)}, path={backup_path}"
+            f"count={len(resolved_entries)}, path={backup_path}"
         )
         return _TrackedChangesBackup(
             path=backup_path,
-            entries=entries,
+            entries=resolved_entries,
             patch_path=patch_path,
         )
     except Exception as exc:
@@ -746,22 +887,26 @@ def backup_and_restore_tracked_changes(
         raise HookingServerUpdateError(
             f"추적 변경을 백업할 Git 저장소가 없습니다: {root}"
         )
-    changes = run_command(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        cwd=root,
-    )
-    if not changes:
+    inspection = _inspect_tracked_changes(root)
+    if not inspection.changes:
+        if inspection.eol_only_paths:
+            print(
+                "[COMFY_INSTALL][UPDATE] 순수 줄바꿈(EOL) 불일치 추적 파일 무시: "
+                f"root={root}, paths={inspection.eol_only_paths!r}"
+            )
         return None
     head = _git_value(root, "rev-parse", "HEAD").lower()
     saved = _backup_and_restore_tracked_changes(
         root,
-        changes=changes,
+        changes=inspection.changes,
         head=head,
         log=log,
         backup_root=(
             Path(backup_root).resolve() if backup_root is not None else None
         ),
         log_label=log_label,
+        entries=inspection.paths,
+        eol_only_paths=inspection.eol_only_paths,
     )
     if saved.path is None:
         return None
@@ -773,7 +918,7 @@ def backup_and_restore_tracked_changes(
         "automatic_restore": False,
         "repository_root": str(root),
         "head": head,
-        "git_status": changes,
+        "git_status": inspection.changes,
     }
 
 
@@ -814,10 +959,7 @@ def update_hooking_server(
             )
         remote = target_ref or fetch_hooking_commit(root, cancel_event=cancel_event, log=log)
         validate_release_storage(root, remote)
-        changes = run_command(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=root,
-        )
+        inspection = _inspect_tracked_changes(root)
         before = _git_value(root, "rev-parse", "HEAD").lower()
         if config_backup is None:
             config_backup = backup_current_config(
@@ -827,10 +969,12 @@ def update_hooking_server(
             )
         tracked_backup = _backup_and_restore_tracked_changes(
             root,
-            changes=changes,
+            changes=inspection.changes,
             head=before,
             log=log,
             backup_root=data_root(root) / _TRACKED_BACKUP_ROOT_NAME,
+            entries=inspection.paths,
+            eol_only_paths=inspection.eol_only_paths,
         )
         if log:
             log(
@@ -842,13 +986,28 @@ def update_hooking_server(
             backup_root=data_root(root) / _TRACKED_BACKUP_ROOT_NAME / "untracked",
         )
         try:
-            run_command(
-                ["git", "merge", "--ff-only", remote],
-                cwd=root,
-                cancel_event=cancel_event,
-                log=log,
-                timeout=900,
-            )
+            if has_eol_only_tracked_changes(root):
+                run_command(
+                    ["git", "merge-base", "--is-ancestor", "HEAD", remote],
+                    cwd=root,
+                    cancel_event=cancel_event,
+                    log=log,
+                )
+                run_command(
+                    ["git", "reset", "--hard", remote],
+                    cwd=root,
+                    cancel_event=cancel_event,
+                    log=log,
+                    timeout=900,
+                )
+            else:
+                run_command(
+                    ["git", "merge", "--ff-only", remote],
+                    cwd=root,
+                    cancel_event=cancel_event,
+                    log=log,
+                    timeout=900,
+                )
         except Exception as update_exc:
             try:
                 _restore_untracked_quarantine(root, quarantine, log=log)
