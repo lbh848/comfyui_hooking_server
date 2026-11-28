@@ -58,7 +58,7 @@ export function defaultBgAssetPostprocessSettings(): BgAssetPostprocessSettings 
   return {
     blur: {
       enabled: false,
-      radius: 6.0,
+      radius: 4.0,
     },
   };
 }

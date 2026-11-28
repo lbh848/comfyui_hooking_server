@@ -42,9 +42,8 @@ const OUTLINE_COLOR_SWATCHES = [
 
 const BLUR_PRESETS = [
   { radius: 2, label: "약하게 (2px)" },
-  { radius: 6, label: "보통 (6px)" },
-  { radius: 12, label: "강하게 (12px)" },
-  { radius: 20, label: "매우 강하게 (20px)" },
+  { radius: 4, label: "보통 (4px)" },
+  { radius: 6, label: "강하게 (6px)" },
 ] as const;
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
@@ -697,9 +696,9 @@ export function AssetPostprocessPage<T extends WorkspacePostprocessSettings>({
                     id={`${tabId}-blur-radius`}
                     type="range"
                     min={0.5}
-                    max={30}
+                    max={20}
                     step={0.5}
-                    value={Math.min(30, bgDraft.blur.radius)}
+                    value={Math.min(20, bgDraft.blur.radius)}
                     onChange={event => updateBlur({ radius: clampNumber(Number(event.target.value), 0.5, 50, 1) })}
                   />
                   <input

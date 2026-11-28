@@ -48,7 +48,7 @@ DEFAULT_ASSET_POSTPROCESS_SETTINGS: dict[str, dict[str, Any]] = {
 DEFAULT_BG_ASSET_POSTPROCESS_SETTINGS: dict[str, dict[str, Any]] = {
     "blur": {
         "enabled": False,
-        "radius": 6.0,
+        "radius": 4.0,
     },
 }
 
