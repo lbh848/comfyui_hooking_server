@@ -100,6 +100,10 @@ export function WorkshopScreen({ workshop, children }: { workshop: Workshop; chi
   return <ScreenContext.Provider value={value}><div hidden={!active}>{children}</div></ScreenContext.Provider>;
 }
 
+export function useOptionalWorkshopScreen() {
+  return useContext(ScreenContext);
+}
+
 export function useWorkshopScreen() {
   const screen = useContext(ScreenContext);
   if (!screen) throw new Error("WorkshopScreen is required.");

@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 import uuid
+from collections import Counter
 from copy import deepcopy
 
 
@@ -78,9 +79,66 @@ def _normalize_content(value: str) -> str:
     return text.strip()
 
 
+def _collapsed_content(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
 def _content_hash(value: str) -> str:
     normalized = _normalize_content(value)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _message_features(message: dict, feature_cache: dict | None = None) -> dict:
+    key = id(message)
+    if feature_cache is not None and key in feature_cache:
+        return feature_cache[key]
+    content = str(message.get("content") or "")
+    features = {
+        "role": str(message.get("role") or "user"),
+        "content": content,
+        "full_content_hash": str(message.get("full_content_hash") or _content_hash(content)),
+        "trimmed_prefix_chars": int(message.get("trimmed_prefix_chars") or 0),
+    }
+    if feature_cache is not None:
+        feature_cache[key] = features
+    return features
+
+
+def _collapsed_features(features: dict) -> tuple[str, str]:
+    collapsed = features.get("collapsed_text")
+    if collapsed is None:
+        collapsed = _collapsed_content(features["content"])
+        features["collapsed_text"] = collapsed
+        features["collapsed_hash"] = hashlib.sha256(collapsed.encode("utf-8")).hexdigest()
+    return collapsed, features["collapsed_hash"]
+
+
+def _normalized_text(features: dict) -> str:
+    normalized = features.get("normalized_text")
+    if normalized is None:
+        normalized = _normalize_content(features["content"])
+        features["normalized_text"] = normalized
+    return normalized
+
+
+def _word_features(features: dict) -> tuple[list[str], int, Counter]:
+    words = features.get("words")
+    if words is None:
+        words = _normalized_text(features).split()[-2_000:]
+        features["words"] = words
+        features["word_count"] = len(words)
+        features["word_counter"] = Counter(words)
+    return words, features["word_count"], features["word_counter"]
+
+
+def _char_counter(features: dict) -> tuple[int, Counter]:
+    counter = features.get("char_counter")
+    if counter is None:
+        normalized = _normalized_text(features)
+        counter = Counter(normalized)
+        features["char_count"] = len(normalized)
+        features["char_counter"] = counter
+    return features["char_count"], counter
 
 
 def _snapshot_hash(messages: list[dict]) -> str:
@@ -227,7 +285,71 @@ def save_settings(value: dict, workshop: str = "illustration") -> dict:
             raise
 
 
-def _iter_records_locked(bot_name: str = "") -> list[dict]:
+def _record_signature(stat) -> tuple[int, int, int, int]:
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
+
+
+def _load_valid_record_locked(
+    path: str,
+    name: str,
+    signature: tuple[int, int, int, int],
+) -> tuple[dict | None, str]:
+    record = _load_json(path)
+    if not isinstance(record, dict):
+        print(f"[ILLUST_HISTORY] 손상된 레코드 제외: name={name}")
+        return None, ""
+    history_id = str(record.get("history_id") or "")
+    if not _SAFE_HISTORY_ID.fullmatch(history_id):
+        print(f"[ILLUST_HISTORY] history_id 형식 불일치 레코드 제외: name={name}")
+        return None, ""
+    record_bot = str((record.get("source") or {}).get("bot_name") or "")
+    _RECORD_BOT_INDEX[path] = (signature, record_bot)
+    return record, record_bot
+
+
+def _find_recent_record_locked(
+    bot_name: str,
+) -> tuple[dict | None, str, tuple[int, int, int, int] | None]:
+    """Return the most recently modified record for ``bot_name`` without loading older records."""
+    if not bot_name:
+        return None, "", None
+    _ensure_dirs()
+    candidates = []
+    try:
+        with os.scandir(RECORDS_DIR) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                path = os.path.abspath(entry.path)
+                try:
+                    stat = entry.stat()
+                except OSError:
+                    continue
+                candidates.append((stat.st_mtime_ns, entry.name, path, _record_signature(stat)))
+    except Exception as e:
+        print(f"[ILLUST_HISTORY] 최근 레코드 탐색 실패: bot={bot_name!r}, error={e}")
+        traceback.print_exc()
+        return None, "", None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for _, name, path, signature in candidates:
+        indexed = _RECORD_BOT_INDEX.get(path)
+        if indexed is not None and indexed[0] == signature:
+            record_bot = indexed[1]
+            if record_bot and record_bot != bot_name:
+                continue
+        record, record_bot = _load_valid_record_locked(path, name, signature)
+        if record is None:
+            continue
+        if record_bot and record_bot != bot_name:
+            continue
+        return record, path, signature
+    return None, "", None
+
+
+def _iter_records_locked(
+    bot_name: str = "",
+    preloaded: dict[str, tuple[tuple[int, int, int, int], dict]] | None = None,
+) -> list[dict]:
     _ensure_dirs()
     records = []
     next_index = {}
@@ -250,7 +372,17 @@ def _iter_records_locked(bot_name: str = "") -> list[dict]:
             print(f"[ILLUST_HISTORY] 레코드 파일 정보 읽기 실패: path={path}, bot={bot_name!r}, error={e}")
             traceback.print_exc()
             continue
-        signature = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
+        signature = _record_signature(stat)
+        preloaded_entry = preloaded.get(path) if preloaded else None
+        if preloaded_entry is not None and preloaded_entry[0] == signature:
+            record = preloaded_entry[1]
+            record_bot = str((record.get("source") or {}).get("bot_name") or "")
+            next_index[path] = (signature, record_bot)
+            if bot_name and record_bot and record_bot != bot_name:
+                skipped_other_bots += 1
+                continue
+            records.append(record)
+            continue
         indexed = _RECORD_BOT_INDEX.get(path)
         if indexed is not None and indexed[0] == signature:
             record_bot = indexed[1]
@@ -259,15 +391,9 @@ def _iter_records_locked(bot_name: str = "") -> list[dict]:
                 skipped_other_bots += 1
                 continue
         # First access and externally changed/new files refresh their ownership.
-        record = _load_json(path)
-        if not isinstance(record, dict):
-            print(f"[ILLUST_HISTORY] 손상된 레코드 제외: name={name}")
+        record, record_bot = _load_valid_record_locked(path, name, signature)
+        if record is None:
             continue
-        history_id = str(record.get("history_id") or "")
-        if not _SAFE_HISTORY_ID.fullmatch(history_id):
-            print(f"[ILLUST_HISTORY] history_id 형식 불일치 레코드 제외: name={name}")
-            continue
-        record_bot = str((record.get("source") or {}).get("bot_name") or "")
         next_index[path] = (signature, record_bot)
         if bot_name and record_bot and record_bot != bot_name:
             skipped_other_bots += 1
@@ -284,27 +410,132 @@ def _iter_records_locked(bot_name: str = "") -> list[dict]:
     return records
 
 
+def _messages_exact_match(
+    saved_message: dict,
+    incoming_message: dict,
+    feature_cache: dict | None = None,
+    perf: dict | None = None,
+) -> bool:
+    """Return True when two messages have identical prose (ignoring blank-line/whitespace shifts)."""
+    left = _message_features(saved_message, feature_cache)
+    right = _message_features(incoming_message, feature_cache)
+    if left["role"] != right["role"]:
+        return False
+    if left["full_content_hash"] == right["full_content_hash"]:
+        if perf is not None:
+            perf["exact_hash_matches"] = int(perf.get("exact_hash_matches") or 0) + 1
+        return True
+    left_collapsed, left_collapsed_hash = _collapsed_features(left)
+    right_collapsed, right_collapsed_hash = _collapsed_features(right)
+    if not left_collapsed or not right_collapsed:
+        return False
+    if left["trimmed_prefix_chars"] <= 0:
+        if left_collapsed_hash == right_collapsed_hash:
+            if perf is not None:
+                perf["exact_hash_matches"] = int(perf.get("exact_hash_matches") or 0) + 1
+            return True
+        return False
+    if len(left_collapsed) >= 80 and right_collapsed.endswith(left_collapsed):
+        if perf is not None:
+            perf["exact_hash_matches"] = int(perf.get("exact_hash_matches") or 0) + 1
+        return True
+    return False
+
+
+def _multiset_ratio_upper_bound(
+    left_counter: Counter,
+    left_length: int,
+    right_counter: Counter,
+    right_length: int,
+    min_ratio: float = 0.0,
+) -> float:
+    if not left_length or not right_length:
+        return 0.0
+    total = left_length + right_length
+    length_bound = (2.0 * min(left_length, right_length)) / total
+    if length_bound < min_ratio:
+        return length_bound
+    if len(left_counter) > len(right_counter):
+        left_counter, right_counter = right_counter, left_counter
+    matches = 0
+    for token, count in left_counter.items():
+        other = right_counter.get(token)
+        if other:
+            matches += count if count < other else other
+    return (2.0 * matches) / total
+
+
 def _message_similarity(
     left: dict,
     right: dict,
     perf: dict | None = None,
+    *,
+    min_similarity: float = 0.0,
+    feature_cache: dict | None = None,
 ) -> float:
     started_at = time.perf_counter()
     if perf is not None:
         perf["message_similarity_calls"] = int(perf.get("message_similarity_calls") or 0) + 1
     try:
-        if str(left.get("role") or "user") != str(right.get("role") or "user"):
+        left_features = _message_features(left, feature_cache)
+        right_features = _message_features(right, feature_cache)
+        if left_features["role"] != right_features["role"]:
             return 0.0
-        left_hash = str(left.get("full_content_hash") or _content_hash(left.get("content", "")))
-        right_hash = str(right.get("full_content_hash") or _content_hash(right.get("content", "")))
-        if left_hash == right_hash:
-            if perf is not None:
-                perf["exact_hash_matches"] = int(perf.get("exact_hash_matches") or 0) + 1
+        if _messages_exact_match(left, right, feature_cache, perf):
             return 1.0
-        left_text = _normalize_content(left.get("content", ""))
-        right_text = _normalize_content(right.get("content", ""))
+        left_text = _normalized_text(left_features)
+        right_text = _normalized_text(right_features)
         if not left_text or not right_text:
             return 0.0
+
+        # SequenceMatcher on words is much faster than character-level matching
+        # on long prose while recovering small wording edits and autojunk collapses.
+        word_ratio = 0.0
+        left_words, left_word_count, left_word_counter = _word_features(left_features)
+        right_words, right_word_count, right_word_counter = _word_features(right_features)
+        if left_words and right_words:
+            word_upper = _multiset_ratio_upper_bound(
+                left_word_counter,
+                left_word_count,
+                right_word_counter,
+                right_word_count,
+                min_similarity,
+            )
+            if word_upper > 0.0 and word_upper >= min_similarity:
+                word_started_at = time.perf_counter()
+                word_ratio = difflib.SequenceMatcher(
+                    None,
+                    left_words,
+                    right_words,
+                    autojunk=False,
+                ).ratio()
+                if perf is not None:
+                    perf["word_sequence_calls"] = int(perf.get("word_sequence_calls") or 0) + 1
+                    perf["word_sequence_ms"] = float(
+                        perf.get("word_sequence_ms") or 0.0
+                    ) + (time.perf_counter() - word_started_at) * 1000.0
+                if word_ratio >= 0.95:
+                    return word_ratio
+
+        # Run character-level SequenceMatcher only if its exact multiset upper
+        # bound can beat both min_similarity and word_ratio.
+        char_threshold = max(min_similarity, word_ratio)
+        left_len = len(left_text)
+        right_len = len(right_text)
+        if (2.0 * min(left_len, right_len)) / (left_len + right_len) < char_threshold:
+            return word_ratio
+        left_char_count, left_char_counter = _char_counter(left_features)
+        right_char_count, right_char_counter = _char_counter(right_features)
+        char_upper = _multiset_ratio_upper_bound(
+            left_char_counter,
+            left_char_count,
+            right_char_counter,
+            right_char_count,
+            char_threshold,
+        )
+        if char_upper <= 0.0 or char_upper < char_threshold:
+            return word_ratio
+
         character_started_at = time.perf_counter()
         character_ratio = difflib.SequenceMatcher(
             None,
@@ -319,27 +550,6 @@ def _message_similarity(
             perf["character_sequence_ms"] = float(
                 perf.get("character_sequence_ms") or 0.0
             ) + (time.perf_counter() - character_started_at) * 1000.0
-        if character_ratio >= 0.88:
-            return character_ratio
-        # SequenceMatcher's character-level autojunk heuristic can collapse on
-        # repetitive prose. A capped word-level pass stays linear-sized for long
-        # CHAT entries while recovering small wording edits without keyword rules.
-        left_words = left_text.split()[-2_000:]
-        right_words = right_text.split()[-2_000:]
-        if not left_words or not right_words:
-            return character_ratio
-        word_started_at = time.perf_counter()
-        word_ratio = difflib.SequenceMatcher(
-            None,
-            left_words,
-            right_words,
-            autojunk=False,
-        ).ratio()
-        if perf is not None:
-            perf["word_sequence_calls"] = int(perf.get("word_sequence_calls") or 0) + 1
-            perf["word_sequence_ms"] = float(
-                perf.get("word_sequence_ms") or 0.0
-            ) + (time.perf_counter() - word_started_at) * 1000.0
         return max(character_ratio, word_ratio)
     finally:
         if perf is not None:
@@ -354,6 +564,8 @@ def _tail_alignment(
     perf: dict | None = None,
     *,
     exact_only: bool = False,
+    require_incoming_end: bool = False,
+    feature_cache: dict | None = None,
 ) -> dict | None:
     """Find a contiguous incoming range that matches the end of ``saved``."""
     started_at = time.perf_counter()
@@ -364,7 +576,8 @@ def _tail_alignment(
             return None
         best = None
         saved_end = len(saved) - 1
-        for incoming_end in range(len(incoming)):
+        end_indices = (len(incoming) - 1,) if require_incoming_end else range(len(incoming))
+        for incoming_end in end_indices:
             saved_index = saved_end
             incoming_index = incoming_end
             similarities = []
@@ -372,17 +585,19 @@ def _tail_alignment(
             exact_count = 0
             while saved_index >= 0 and incoming_index >= 0:
                 if exact_only:
-                    left, right = saved[saved_index], incoming[incoming_index]
-                    similarity = float(
-                        str(left.get("role") or "user") == str(right.get("role") or "user")
-                        and (left.get("full_content_hash") or _content_hash(left.get("content", "")))
-                        == (right.get("full_content_hash") or _content_hash(right.get("content", "")))
-                    )
+                    similarity = 1.0 if _messages_exact_match(
+                        saved[saved_index],
+                        incoming[incoming_index],
+                        feature_cache,
+                        perf,
+                    ) else 0.0
                 else:
                     similarity = _message_similarity(
                         saved[saved_index],
                         incoming[incoming_index],
                         perf,
+                        min_similarity=0.88,
+                        feature_cache=feature_cache,
                     )
                 if similarity < 0.88:
                     break
@@ -433,11 +648,36 @@ def _active_base_messages(record: dict) -> list[dict]:
     return [message for message in messages if str(message.get("id") or "") != current_id]
 
 
+def _is_same_current_message(
+    record: dict,
+    incoming_current: dict | None,
+    current_hash: str,
+    feature_cache: dict | None = None,
+) -> bool:
+    active_turn = record.get("active_turn") or {}
+    if str(active_turn.get("current_context_hash") or "") == current_hash:
+        return True
+    if not isinstance(incoming_current, dict):
+        return False
+    current_id = str(active_turn.get("current_message_id") or "")
+    messages = record.get("messages") or []
+    stored_current = next(
+        (msg for msg in reversed(messages) if str(msg.get("id") or "") == current_id),
+        messages[-1] if (messages and not current_id) else None,
+    )
+    if not isinstance(stored_current, dict):
+        return False
+    return _messages_exact_match(stored_current, incoming_current, feature_cache)
+
+
 def _exact_candidate_for_record(
     record: dict,
     incoming_past: list[dict],
     current_hash: str,
     incoming_snapshot_hash: str,
+    *,
+    incoming_current: dict | None = None,
+    feature_cache: dict | None = None,
 ) -> dict | None:
     active_messages = list(record.get("messages") or [])
     if active_messages and _snapshot_hash(active_messages) == incoming_snapshot_hash:
@@ -462,10 +702,12 @@ def _exact_candidate_for_record(
         and str(active_turn.get("base_context_hash") or "") == incoming_snapshot_hash
     ):
         exact_chars = sum(len(str(item.get("content") or "")) for item in incoming_past)
-        active_current_hash = str(active_turn.get("current_context_hash") or "")
+        same_current = _is_same_current_message(
+            record, incoming_current, current_hash, feature_cache,
+        )
         return {
             "record": record,
-            "operation": "duplicate" if active_current_hash == current_hash else "reroll",
+            "operation": "duplicate" if same_current else "reroll",
             "alignment": {
                 "incoming_start": 0,
                 "incoming_end": len(incoming_past),
@@ -480,14 +722,81 @@ def _exact_candidate_for_record(
     return None
 
 
+def _exact_tail_candidate_for_record(
+    record: dict,
+    incoming_past: list[dict],
+    current_hash: str,
+    incoming_snapshot_hash: str,
+    perf: dict | None = None,
+    *,
+    incoming_current: dict | None = None,
+    feature_cache: dict | None = None,
+) -> dict | None:
+    exact = _exact_candidate_for_record(
+        record,
+        incoming_past,
+        current_hash,
+        incoming_snapshot_hash,
+        incoming_current=incoming_current,
+        feature_cache=feature_cache,
+    )
+    if exact is not None:
+        return exact
+
+    active_messages = list(record.get("messages") or [])
+    active_alignment = _tail_alignment(
+        active_messages,
+        incoming_past,
+        perf,
+        exact_only=True,
+        feature_cache=feature_cache,
+    )
+    if active_alignment is not None:
+        return {
+            "record": record,
+            "operation": "append",
+            "alignment": active_alignment,
+            "score": active_alignment["score"] + 500,
+        }
+
+    base_messages = _active_base_messages(record)
+    base_alignment = _tail_alignment(
+        base_messages,
+        incoming_past,
+        perf,
+        exact_only=True,
+        require_incoming_end=True,
+        feature_cache=feature_cache,
+    )
+    if base_alignment is not None and base_alignment["incoming_end"] == len(incoming_past):
+        same_current = _is_same_current_message(
+            record, incoming_current, current_hash, feature_cache,
+        )
+        return {
+            "record": record,
+            "operation": "duplicate" if same_current else "reroll",
+            "alignment": base_alignment,
+            "score": base_alignment["score"] + 300,
+        }
+    return None
+
+
 def _fuzzy_candidate_for_record(
     record: dict,
     incoming_past: list[dict],
     current_hash: str,
     perf: dict | None = None,
+    *,
+    incoming_current: dict | None = None,
+    feature_cache: dict | None = None,
 ) -> dict | None:
     active_messages = list(record.get("messages") or [])
-    active_alignment = _tail_alignment(active_messages, incoming_past, perf)
+    active_alignment = _tail_alignment(
+        active_messages,
+        incoming_past,
+        perf,
+        feature_cache=feature_cache,
+    )
     if active_alignment:
         return {
             "record": record,
@@ -497,12 +806,20 @@ def _fuzzy_candidate_for_record(
         }
 
     base_messages = _active_base_messages(record)
-    base_alignment = _tail_alignment(base_messages, incoming_past, perf)
+    base_alignment = _tail_alignment(
+        base_messages,
+        incoming_past,
+        perf,
+        require_incoming_end=True,
+        feature_cache=feature_cache,
+    )
     if base_alignment and base_alignment["incoming_end"] == len(incoming_past):
-        active_current_hash = str((record.get("active_turn") or {}).get("current_context_hash") or "")
+        same_current = _is_same_current_message(
+            record, incoming_current, current_hash, feature_cache,
+        )
         return {
             "record": record,
-            "operation": "duplicate" if active_current_hash == current_hash else "reroll",
+            "operation": "duplicate" if same_current else "reroll",
             "alignment": base_alignment,
             "score": base_alignment["score"] + 300,
         }
@@ -514,17 +831,30 @@ def _candidate_for_record(
     incoming_past: list[dict],
     current_hash: str,
     perf: dict | None = None,
+    *,
+    incoming_current: dict | None = None,
+    feature_cache: dict | None = None,
 ) -> dict | None:
     """Compatibility helper: exact identity first, then the full fuzzy fallback."""
-    exact = _exact_candidate_for_record(
+    exact = _exact_tail_candidate_for_record(
         record,
         incoming_past,
         current_hash,
         _snapshot_hash(incoming_past),
+        perf,
+        incoming_current=incoming_current,
+        feature_cache=feature_cache,
     )
     if exact:
         return exact
-    return _fuzzy_candidate_for_record(record, incoming_past, current_hash, perf)
+    return _fuzzy_candidate_for_record(
+        record,
+        incoming_past,
+        current_hash,
+        perf,
+        incoming_current=incoming_current,
+        feature_cache=feature_cache,
+    )
 
 
 def _choose_candidate(candidates: list[dict], stage: str) -> dict | None:
@@ -546,12 +876,23 @@ def _choose_candidate(candidates: list[dict], stage: str) -> dict | None:
     return candidates[0]
 
 
+def _alignment_reaches_latest_char(candidate: dict, incoming_past: list[dict]) -> bool:
+    incoming_end = int((candidate.get("alignment") or {}).get("incoming_end") or 0)
+    return not any(
+        str(message.get("role") or "user") == "char"
+        for message in incoming_past[incoming_end:]
+    )
+
+
 def _select_candidate(
     records: list[dict],
     bot_name: str,
     incoming_past: list[dict],
     current_hash: str,
     perf: dict | None = None,
+    *,
+    incoming_current: dict | None = None,
+    feature_cache: dict | None = None,
 ) -> dict | None:
     eligible_records = []
     for record in records:
@@ -571,19 +912,44 @@ def _select_candidate(
             incoming_past,
             current_hash,
             incoming_snapshot_hash,
+            incoming_current=incoming_current,
+            feature_cache=feature_cache,
         )
         if candidate:
             exact_candidates.append(candidate)
-    if perf is not None:
-        perf["exact_pass_ms"] = (time.perf_counter() - exact_started_at) * 1000.0
-        perf["exact_candidates"] = len(exact_candidates)
     if exact_candidates:
         if perf is not None:
+            perf["exact_pass_ms"] = (time.perf_counter() - exact_started_at) * 1000.0
+            perf["exact_candidates"] = len(exact_candidates)
             perf["candidate_strategy"] = "exact"
         return _choose_candidate(exact_candidates, "exact")
 
-    # Exact identity did not resolve continuity. Preserve the previous matching
-    # capability by running the same fuzzy alignment across every eligible record.
+    exact_tail_candidates = []
+    for record in eligible_records:
+        candidate = _exact_tail_candidate_for_record(
+            record,
+            incoming_past,
+            current_hash,
+            incoming_snapshot_hash,
+            perf,
+            incoming_current=incoming_current,
+            feature_cache=feature_cache,
+        )
+        if candidate:
+            exact_tail_candidates.append(candidate)
+    if perf is not None:
+        perf["exact_pass_ms"] = (time.perf_counter() - exact_started_at) * 1000.0
+        perf["exact_candidates"] = len(exact_tail_candidates)
+    if exact_tail_candidates and any(
+        _alignment_reaches_latest_char(candidate, incoming_past)
+        for candidate in exact_tail_candidates
+    ):
+        if perf is not None:
+            perf["candidate_strategy"] = "exact_tail"
+        return _choose_candidate(exact_tail_candidates, "exact_tail")
+
+    # Exact identity did not resolve continuity at the latest turn. Preserve the
+    # full fuzzy alignment across every eligible record using bounded similarity.
     fuzzy_started_at = time.perf_counter()
     fuzzy_candidates = []
     for record in eligible_records:
@@ -592,6 +958,8 @@ def _select_candidate(
             incoming_past,
             current_hash,
             perf,
+            incoming_current=incoming_current,
+            feature_cache=feature_cache,
         )
         if candidate:
             fuzzy_candidates.append(candidate)
@@ -692,54 +1060,85 @@ def prepare_history(
     with _IO_LOCK:
         perf["lock_wait_ms"] = (time.perf_counter() - lock_wait_started_at) * 1000.0
         bot_name = str(bot_name or "")
+        feature_cache: dict = {}
+        incoming_snapshot_hash = _snapshot_hash(incoming_past)
         recent_key = (os.path.abspath(RECORDS_DIR), bot_name)
         recent_id = _LAST_MATCHED_HISTORY.get(recent_key) if bot_name else None
         records = []
         candidate = None
+        recent = None
+        recent_path = ""
+        recent_signature = None
         records_started_at = time.perf_counter()
         if recent_id:
-            recent = _load_json(_record_path(recent_id))
-            perf["records_load_ms"] = (time.perf_counter() - records_started_at) * 1000.0
-            if (isinstance(recent, dict) and recent.get("history_id") == recent_id
-                    and str((recent.get("source") or {}).get("bot_name") or "") in ("", bot_name)):
-                candidate_started_at = time.perf_counter()
-                candidate = _exact_candidate_for_record(
-                    recent, incoming_past, current_hash, _snapshot_hash(incoming_past),
-                )
-                if candidate is None:
-                    alignment = _tail_alignment(
-                        list(recent.get("messages") or []), incoming_past, perf, exact_only=True,
-                    )
-                    if alignment:
-                        candidate = {"record": recent, "operation": "append",
-                                     "alignment": alignment, "score": alignment["score"] + 500}
-                perf["candidate_match_ms"] = (time.perf_counter() - candidate_started_at) * 1000.0
-                # A recent match gets priority only for unchanged source messages.
-                # Edited/approximately matching text still uses the full search.
-                if candidate is not None:
-                    records = [recent]
-                    perf.update(eligible_records=1, exact_candidates=1, candidate_strategy="recent_exact")
-                else:
-                    candidate = None
-                    print(
-                        f"[ILLUST_HISTORY] 최근 히스토리 원문 일치 없음, 봇 전체 탐색: "
-                        f"bot={bot_name!r}, history={recent_id}"
-                    )
+            candidate_path = os.path.abspath(_record_path(recent_id))
+            try:
+                recent_signature = _record_signature(os.stat(candidate_path))
+            except OSError:
+                recent_signature = None
+            loaded = _load_json(candidate_path) if recent_signature is not None else None
+            if (
+                isinstance(loaded, dict)
+                and loaded.get("history_id") == recent_id
+                and str((loaded.get("source") or {}).get("bot_name") or "") in ("", bot_name)
+            ):
+                recent = loaded
+                recent_path = candidate_path
             else:
                 print(
-                    f"[ILLUST_HISTORY] 최근 히스토리 없음 또는 소속 변경, 봇 전체 탐색: "
+                    f"[ILLUST_HISTORY] 최근 히스토리 없음 또는 소속 변경, 최신 레코드 재탐색: "
                     f"bot={bot_name!r}, history={recent_id}"
+                )
+                _LAST_MATCHED_HISTORY.pop(recent_key, None)
+        if recent is None and bot_name:
+            recent, recent_path, recent_signature = _find_recent_record_locked(bot_name)
+        perf["records_load_ms"] = (time.perf_counter() - records_started_at) * 1000.0
+        if recent is not None:
+            recent_history_id = str(recent.get("history_id") or "")
+            candidate_started_at = time.perf_counter()
+            candidate = _exact_tail_candidate_for_record(
+                recent,
+                incoming_past,
+                current_hash,
+                incoming_snapshot_hash,
+                perf,
+                incoming_current=incoming_current,
+                feature_cache=feature_cache,
+            )
+            perf["candidate_match_ms"] = (time.perf_counter() - candidate_started_at) * 1000.0
+            # A recent match gets priority only for unchanged source prose.
+            # Edited/approximately matching text still uses the full search.
+            if candidate is not None:
+                records = [recent]
+                perf.update(eligible_records=1, exact_candidates=1, candidate_strategy="recent_exact")
+            else:
+                print(
+                    f"[ILLUST_HISTORY] 최근 히스토리 원문 일치 없음, 봇 전체 탐색: "
+                    f"bot={bot_name!r}, history={recent_history_id}"
                 )
         else:
             print(f"[ILLUST_HISTORY] 최근 히스토리 참조 없음, 봇 전체 탐색: bot={bot_name!r}")
         if candidate is None:
+            preloaded = (
+                {recent_path: (recent_signature, recent)}
+                if recent is not None and recent_path and recent_signature is not None
+                else None
+            )
             records_started_at = time.perf_counter()
-            records = _iter_records_locked(bot_name)
+            records = _iter_records_locked(bot_name, preloaded=preloaded)
             perf["records_load_ms"] = float(perf.get("records_load_ms") or 0) + (
                 time.perf_counter() - records_started_at
             ) * 1000.0
             candidate_started_at = time.perf_counter()
-            candidate = _select_candidate(records, bot_name, incoming_past, current_hash, perf)
+            candidate = _select_candidate(
+                records,
+                bot_name,
+                incoming_past,
+                current_hash,
+                perf,
+                incoming_current=incoming_current,
+                feature_cache=feature_cache,
+            )
             perf["candidate_match_ms"] = float(perf.get("candidate_match_ms") or 0) + (
                 time.perf_counter() - candidate_started_at
             ) * 1000.0
@@ -1032,6 +1431,10 @@ def finalize_history(plan: dict, result: dict | None = None, error: str = "") ->
         try:
             _atomic_write_json(path, record)
             saved_bot = str(record["source"].get("bot_name") or "")
+            try:
+                _RECORD_BOT_INDEX[os.path.abspath(path)] = (_record_signature(os.stat(path)), saved_bot)
+            except OSError:
+                pass
             if saved_bot:
                 _LAST_MATCHED_HISTORY[(os.path.abspath(RECORDS_DIR), saved_bot)] = history_id
             print(
@@ -1193,6 +1596,10 @@ def delete_history(history_id: str) -> str:
         )
         try:
             shutil.move(path, destination)
+            _RECORD_BOT_INDEX.pop(os.path.abspath(path), None)
+            for key, value in list(_LAST_MATCHED_HISTORY.items()):
+                if value == history_id:
+                    _LAST_MATCHED_HISTORY.pop(key, None)
             print(
                 f"[ILLUST_HISTORY] 히스토리 휴지통 이동 완료: "
                 f"history={history_id}, destination={destination}"

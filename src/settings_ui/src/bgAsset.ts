@@ -26,8 +26,28 @@ export {
 
 export const BG_ASSET_DEFAULT_WIDTH = 1280;
 export const BG_ASSET_DEFAULT_HEIGHT = 720;
+export const BG_I2I_DEFAULT_DENOISE = 0.6;
+export const BG_I2I_MIN_DENOISE = 0.05;
+export const BG_I2I_MAX_DENOISE = 1.0;
+
+export const bgAssetWorkflowTypes: Record<string, string> = {
+  anima_only: "ANIMA",
+  moss: "MOSS",
+};
+
+export const bgAssetWorkflowPaths: Record<string, string> = {
+  anima_only: "bg_anima_only_asset_workflow_source_path",
+  moss: "bg_moss_asset_workflow_source_path",
+};
 
 export type BgAssetSettingsSection = "style" | "theme";
+
+export type BgI2iImage = {
+  name: string;
+  local_path: string;
+  orig_filename: string;
+  preview_url: string;
+};
 
 export type BgTimeData = {
   tags: string[];
@@ -37,6 +57,9 @@ export type BgTimeData = {
 export type BgPlaceData = {
   tags: string[];
   natural_language: string;
+  i2i_enabled: boolean;
+  i2i_denoise: number;
+  i2i_images: BgI2iImage[];
   times: Record<string, BgTimeData>;
 };
 
@@ -47,6 +70,36 @@ export type BgThemeData = {
   lora_enabled: boolean;
   lora_list: AssetRecord[];
   places: Record<string, BgPlaceData>;
+};
+
+export type BgBulkI2iMode = "none" | "missing_only" | "overwrite" | "denoise_only";
+
+export type BgBulkUpdateThemeResult = {
+  theme_name: string;
+  target_place_count: number;
+  times: {
+    added_count: number;
+    removed_count: number;
+    skipped_add_count: number;
+    updated_places: string[];
+    added_combinations: { place: string; time: string }[];
+    removed_combinations: { place: string; time: string }[];
+  };
+  i2i: {
+    mode: BgBulkI2iMode;
+    source_time: string;
+    denoise: number;
+    linked_places: string[];
+    overwritten_places: string[];
+    denoise_updated_places: string[];
+    skipped_places: string[];
+    missing_places: string[];
+    linked_count: number;
+    overwritten_count: number;
+    denoise_updated_count: number;
+    skipped_count: number;
+    missing_count: number;
+  };
 };
 
 export const BG_TIME_TEMPLATES: { name: string; tags: string[]; defaultSelected?: boolean }[] = [
@@ -76,6 +129,40 @@ export function joinBgTags(tags: string[] | undefined): string {
   return Array.isArray(tags) ? tags.join(", ") : "";
 }
 
+const WINDOWS_RESERVED_STEMS = new Set([
+  "CON", "PRN", "AUX", "NUL",
+  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
+]);
+
+export function validateBgFolderName(value: string, label: string): string {
+  const clean = value.trim();
+  if (!clean) return `${label}을(를) 입력하세요.`;
+  if (clean.length > 80) return `${label}은(는) 80자 이하로 입력하세요.`;
+  const invalid = Array.from(new Set(Array.from(clean).filter(ch => !/[\p{L}\p{N} _.-]/u.test(ch))));
+  if (invalid.length) {
+    return `${label}에 사용할 수 없는 문자가 있습니다: ${invalid.join(", ")}. 한글·영문·숫자와 공백, _, -, .만 사용할 수 있습니다.`;
+  }
+  if (clean === "." || clean === ".." || clean.endsWith(".")) {
+    return `${label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다.`;
+  }
+  if (WINDOWS_RESERVED_STEMS.has(clean.split(".")[0].toUpperCase())) {
+    return `${label}에 Windows 예약 이름 '${clean}'을(를) 사용할 수 없습니다.`;
+  }
+  return "";
+}
+
+export function sanitizeBgFolderName(value: string): string {
+  const cleaned = value
+    .replace(/[^\p{L}\p{N} _.-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 80)
+    .replace(/[. ]+$/g, "");
+  if (!cleaned || validateBgFolderName(cleaned, "이름")) return "";
+  return cleaned;
+}
+
 export function emptyBgThemeData(): BgThemeData {
   return {
     group: "",
@@ -94,7 +181,38 @@ export function emptyBgPlaceData(initialTimes: { name: string; tags: string[] }[
       times[item.name.trim()] = { tags: [...item.tags], natural_language: "" };
     }
   }
-  return { tags: [], natural_language: "", times };
+  return {
+    tags: [],
+    natural_language: "",
+    i2i_enabled: false,
+    i2i_denoise: BG_I2I_DEFAULT_DENOISE,
+    i2i_images: [],
+    times,
+  };
+}
+
+export function normalizeBgI2iDenoise(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return BG_I2I_DEFAULT_DENOISE;
+  return Math.round(Math.min(BG_I2I_MAX_DENOISE, Math.max(BG_I2I_MIN_DENOISE, value)) * 10000) / 10000;
+}
+
+function normalizeBgI2iImages(value: unknown): BgI2iImage[] {
+  if (!Array.isArray(value)) return [];
+  const result: BgI2iImage[] = [];
+  for (const item of value.slice(0, 1)) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as AssetRecord;
+    const localPath = typeof record.local_path === "string" ? record.local_path.trim() : "";
+    if (!localPath) continue;
+    const fallbackName = localPath.split(/[\\/]/).pop() || "i2i_reference.png";
+    const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : fallbackName;
+    const origFilename = typeof record.orig_filename === "string" && record.orig_filename.trim() ? record.orig_filename.trim() : name;
+    const previewUrl = typeof record.preview_url === "string" && record.preview_url.trim().startsWith("/api/bg-asset/")
+      ? record.preview_url.trim()
+      : "";
+    result.push({ name, local_path: localPath, orig_filename: origFilename, preview_url: previewUrl });
+  }
+  return result;
 }
 
 function normalizeTagArray(value: unknown): string[] {
@@ -127,6 +245,9 @@ export function normalizeBgThemeData(raw?: AssetRecord | null): BgThemeData {
     places[placeName] = {
       tags: normalizeTagArray(placeObj.tags),
       natural_language: typeof placeObj.natural_language === "string" ? placeObj.natural_language : "",
+      i2i_enabled: !!placeObj.i2i_enabled,
+      i2i_denoise: normalizeBgI2iDenoise(placeObj.i2i_denoise),
+      i2i_images: normalizeBgI2iImages(placeObj.i2i_images),
       times,
     };
   }
@@ -149,6 +270,12 @@ export function countBgThemeCombinations(theme: BgThemeData): { places: number; 
   const placeList = Object.values(theme.places);
   const times = placeList.reduce((sum, place) => sum + Object.keys(place.times).length, 0);
   return { places: placeList.length, times };
+}
+
+export function countBgThemeI2iLinks(theme: BgThemeData): { total: number; linked: number } {
+  const placeList = Object.values(theme.places);
+  const linked = placeList.filter(place => place.i2i_enabled && place.i2i_images.length > 0).length;
+  return { total: placeList.length, linked };
 }
 
 export function pickBgPlaceAndTime(
@@ -212,9 +339,19 @@ export function copyBgAssetStyleSettings(defaults: AssetRecord, slot: AssetRecor
   };
 }
 
+export function bgAssetStyleResolution(preset?: AssetRecord | null): { width: number; height: number } {
+  const values = preset?.settings?.values;
+  const width = Number.isFinite(values?.img_w) && values.img_w > 0 ? values.img_w : BG_ASSET_DEFAULT_WIDTH;
+  const height = Number.isFinite(values?.img_h) && values.img_h > 0 ? values.img_h : BG_ASSET_DEFAULT_HEIGHT;
+  return { width, height };
+}
+
 export function bgAssetStyleValues(preset: AssetRecord): AssetRecord {
+  const { width, height } = bgAssetStyleResolution(preset);
   return {
     ...copyBgAssetStyleSettings({}, newBgAssetSlot(preset.settings.values)).values,
+    img_w: width,
+    img_h: height,
     asset_style_preset_id: preset.id,
   };
 }
@@ -293,7 +430,14 @@ export async function bgAssetRequest(path: string, body?: unknown, signal?: Abor
   return result;
 }
 
-export function useBgAssetResource(path: string | null, interval = 0) {
+export async function uploadBgI2iImages(files: File[]): Promise<BgI2iImage[]> {
+  const form = new FormData();
+  for (const file of files.slice(0, 1)) form.append("image", file);
+  const result = await bgAssetRequest("upload_reference", form);
+  return normalizeBgI2iImages(result.images);
+}
+
+export function useBgAssetResource(path: string | null, interval = 0, pollActive = true) {
   const [data, setData] = useState<AssetRecord | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -302,20 +446,33 @@ export function useBgAssetResource(path: string | null, interval = 0) {
   useEffect(() => {
     if (!path) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
     setError("");
-    async function load() {
-      try {
-        const result = await bgAssetRequest(path!, undefined, controller.signal);
-        if (!controller.signal.aborted) { setData(result); setError(""); }
-      } catch (cause) {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "불러오기 실패");
-      }
-      if (interval && !controller.signal.aborted) timer = setTimeout(() => void load(), interval);
-    }
-    void load();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [path, interval, revision]);
+    void bgAssetRequest(path, undefined, controller.signal).then(result => {
+      if (!controller.signal.aborted) { setData(result); setError(""); }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "불러오기 실패");
+    });
+    return () => { controller.abort(); };
+  }, [path, revision]);
+  useEffect(() => {
+    if (!path || !interval || !pollActive) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      timer = setTimeout(() => {
+        if (!document.hidden) reload();
+        schedule();
+      }, interval);
+    };
+    const onVisibility = () => {
+      if (document.hidden) clearTimeout(timer);
+      else { reload(); schedule(); }
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [path, interval, pollActive, reload]);
   return { data, error, reload, setData };
 }
 
@@ -354,10 +511,15 @@ export function newBgAssetSlot(value: AssetRecord = {}): AssetRecord {
     style_lora_list: [],
     ...cleaned,
     time: cleaned.time ?? cleaned.atmosphere ?? "",
-    asset_workflow_type: cleaned.asset_workflow_type === "anima_ilxl" || cleaned.asset_workflow_type === "anima"
-      ? "anima_ilxl" : cleaned.asset_workflow_type === "moss" ? "moss" : "anima_only",
+    asset_workflow_type: cleaned.asset_workflow_type === "moss" ? "moss" : "anima_only",
     _id: crypto.randomUUID(),
   };
+}
+
+function normalizeBgBatchDraft(raw: unknown): AssetRecord {
+  if (!raw || typeof raw !== "object") return {};
+  const { width: _width, height: _height, ...rest } = raw as AssetRecord;
+  return rest;
 }
 
 export function useBgAssetDraft() {
@@ -372,7 +534,7 @@ export function useBgAssetDraft() {
           themeData: saved.themeData ? normalizeBgThemeData(saved.themeData) : null,
           themeSettingsDirty: !!saved.themeSettingsDirty,
           count: Number.isInteger(saved.count) && saved.count > 0 ? saved.count : 1,
-          batch: saved.batch && typeof saved.batch === "object" ? saved.batch : {},
+          batch: normalizeBgBatchDraft(saved.batch),
         };
       }
     } catch (cause) { console.error("[BG-ASSET] Draft load failed", cause); }
@@ -414,6 +576,12 @@ export async function buildBgAssetRequest(
   const themeData = themeOverride || loadBgThemeData(themeName, tags);
   const labels = bgAssetOutputLabels(slot);
   const resolved = resolveBgThemePromptParts(themeData, slot.place || "", slot.time ?? slot.atmosphere ?? "");
+  const placeI2iEnabled = !!resolved.placeData?.i2i_enabled;
+  const placeI2iDenoise = normalizeBgI2iDenoise(resolved.placeData?.i2i_denoise);
+  const placeI2iImages = placeI2iEnabled ? (resolved.placeData?.i2i_images || []).slice(0, 1) : [];
+  if (placeI2iEnabled && !placeI2iImages.length) {
+    throw new Error("i2i가 켜져 있지만 기준 이미지가 없습니다. 배경 설정에서 기준 이미지를 등록하거나 i2i를 꺼 주세요.");
+  }
 
   const promptSlot: AssetRecord = {
     ...slot,
@@ -474,6 +642,9 @@ export async function buildBgAssetRequest(
     snapref_face_images: [],
     snapref_secondary_images: [],
     snapref_dir: "",
+    i2i_enabled: placeI2iEnabled,
+    i2i_denoise: placeI2iDenoise,
+    i2i_images: placeI2iImages,
     prompt_json: prompt.document,
   };
 }

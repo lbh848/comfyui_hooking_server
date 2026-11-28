@@ -121,8 +121,112 @@ async def illustration_sampling_options(server, task_key="illustration") -> dict
         return {"source": "default"}
 
 
+FORWARDED_EVENTS = frozenset({
+    "queue_updated",
+    "queue_progress",
+    "backup_created",
+    "backup_filter_ready",
+    "bot_selected_changed",
+    "model_presets_changed",
+    "illustration_warning",
+    "reschedule_changed",
+    "reschedule_used",
+    "asset_generation_completed",
+    "qwen_edit_completed",
+    "tag_analysis_progress",
+})
+
+
 def register_illustration(app: web.Application, runtime, schema: str) -> None:
-    connections = set()
+    connections: set[web.WebSocketResponse] = set()
+    clients_changed = asyncio.Event()
+    relay_task: asyncio.Task | None = None
+    shutting_down = False
+    last_reschedule: str | None = None
+    upstream_events_query = ",".join(sorted(FORWARDED_EVENTS))
+
+    async def broadcast(payload: str) -> None:
+        targets = list(connections)
+        if not targets:
+            return
+
+        async def send_one(socket: web.WebSocketResponse) -> None:
+            if socket.closed:
+                connections.discard(socket)
+                return
+            try:
+                await asyncio.wait_for(socket.send_str(payload), timeout=5)
+            except (ConnectionError, RuntimeError, aiohttp.ClientError, asyncio.TimeoutError):
+                connections.discard(socket)
+                try:
+                    await socket.close()
+                except Exception:
+                    pass
+
+        await asyncio.gather(*(send_one(socket) for socket in targets), return_exceptions=True)
+
+    async def run_relay() -> None:
+        nonlocal last_reschedule
+        backoff = 1.0
+        while not shutting_down:
+            if not connections:
+                clients_changed.clear()
+                try:
+                    await asyncio.wait_for(clients_changed.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    if not connections:
+                        last_reschedule = None
+                        return
+                continue
+            upstream = None
+            try:
+                await runtime.start()
+                assert runtime.session is not None
+                upstream = await runtime.session.ws_connect(
+                    runtime.url + "/api/frontend_ws",
+                    params={"events": upstream_events_query},
+                    headers={"X-Internal-Lora": runtime.token},
+                    heartbeat=30,
+                )
+                backoff = 1.0
+                async for message in upstream:
+                    if shutting_down:
+                        break
+                    if message.type == aiohttp.WSMsgType.TEXT:
+                        event = json.loads(message.data)
+                        event_type = event.get("type")
+                        if event_type == "ping":
+                            await upstream.send_json({"type": "pong"})
+                        elif event_type in FORWARDED_EVENTS:
+                            if event_type == "reschedule_changed":
+                                last_reschedule = message.data if (event.get("data") or {}).get("scheduled") else None
+                            elif event_type == "reschedule_used":
+                                last_reschedule = None
+                            if connections:
+                                await broadcast(message.data)
+                    elif message.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        break
+            except asyncio.CancelledError:
+                raise
+            except (RuntimeError, OSError, aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                pass
+            finally:
+                if upstream is not None and not upstream.closed:
+                    try:
+                        await upstream.close()
+                    except Exception:
+                        pass
+            if shutting_down or not connections:
+                continue
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 1.5, 3.0)
+
+    def ensure_relay() -> None:
+        nonlocal relay_task
+        if shutting_down:
+            return
+        if relay_task is None or relay_task.done():
+            relay_task = asyncio.create_task(run_relay())
 
     async def events(request: web.Request) -> web.StreamResponse:
         # Browser WebSockets cannot set fetch headers; the app's loopback
@@ -131,43 +235,34 @@ def register_illustration(app: web.Application, runtime, schema: str) -> None:
             raise web.HTTPConflict(text="삽화 화면을 새로고침해 주세요.")
         try:
             await runtime.start()
-            upstream = await runtime.session.ws_connect(
-                runtime.url + "/api/frontend_ws", headers={"X-Internal-Lora": runtime.token}, heartbeat=30,
-            )
         except (RuntimeError, OSError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             return web.json_response({"error": str(exc)}, status=503)
         socket = web.WebSocketResponse(heartbeat=30)
         await socket.prepare(request)
         connections.add(socket)
-
-        async def receive():
-            async for message in upstream:
-                if message.type == aiohttp.WSMsgType.TEXT:
-                    event = json.loads(message.data)
-                    if event.get("type") == "ping":
-                        await upstream.send_json({"type": "pong"})
-                    elif event.get("type") in {"queue_updated", "queue_progress", "backup_created", "backup_filter_ready", "bot_selected_changed", "illustration_warning", "reschedule_changed", "reschedule_used", "asset_generation_completed", "qwen_edit_completed"}:
-                        await socket.send_json(event)
-
-        async def disconnected():
+        clients_changed.set()
+        ensure_relay()
+        try:
+            if last_reschedule:
+                await socket.send_str(last_reschedule)
             async for _ in socket:
                 pass
-
-        tasks = [asyncio.create_task(receive()), asyncio.create_task(disconnected())]
-        try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
             connections.discard(socket)
-            await upstream.close()
+            clients_changed.set()
             await socket.close()
         return socket
 
     async def shutdown(_app):
+        nonlocal shutting_down
+        shutting_down = True
+        clients_changed.set()
+        if relay_task is not None and not relay_task.done():
+            relay_task.cancel()
+            await asyncio.gather(relay_task, return_exceptions=True)
         for socket in list(connections):
             await socket.close(code=1001, message=b"Server shutdown")
+        connections.clear()
 
     async def gateway(request: web.Request) -> web.StreamResponse:
         path = "/api/" + request.match_info["path"]

@@ -24,13 +24,14 @@ from modes.illustration_prompt_assembly import prompt_join, variable
 from modes import illustration_prompt_builders as prompt_builders
 from modes import illustration_composite
 from modes.moss_prompt_builder import MANGA_META, clamp_centered_bbox
+from modes.moss_prompt_contract import is_moss_natural_detail, select_detail_prompt_key
 from modes.visual_profiles import profile_by_id, resolve_visual_base
 from manga_page_vocabulary import (
     ACTOR_PANEL_RELATION, BALLOON, BALLOON_TAIL, BOUNDARY_PHRASES,
-    PAGE_BOUNDARIES, PANEL_CAMERA_ANGLE, SHARED_DIVIDER_PREFIX,
+    INTERACTION_SPATIAL, PAGE_BOUNDARIES, PANEL_CAMERA_ANGLE, SHARED_DIVIDER_PREFIX,
     PANEL_CAMERA_DISTANCE, PANEL_EDGE, PANEL_FOCUS, PANEL_SHAPE, balloon_caption,
-    describe_actor_visual, describe_speaker_target, normalize_choice,
-    panel_caption, resolve_balloon_tail,
+    compile_interaction_clauses, describe_actor_visual, describe_speaker_target,
+    normalize_choice, panel_caption, resolve_balloon_tail,
 )
 
 
@@ -250,12 +251,14 @@ def previous_time_places(names: list[str], history_plan: dict | None) -> dict:
 
 
 def parse_state(text: str, names: list[str], slots: list[int], *,
-                fields=("outfit", "hair"), stage="OUTFIT", segment_slots=None) -> dict:
+                fields=("outfit", "hair"), stage="OUTFIT", segment_slots=None,
+                optional_initial_names: set[str] | frozenset[str] | None = None) -> dict:
     """Read sparse string checkpoints; Python never interprets their meaning."""
     raw = _json_response(text, stage)
     # A lost OUTFIT checkpoint corrupts every following inherited state. Let
     # the existing routed validator retry the whole call before publishing it.
     warning_only = stage != "OUTFIT"
+    optional_initial = {str(name).casefold() for name in (optional_initial_names or ())}
     aspects = "/".join(fields)
     if not slots:
         _fail(stage, "상태표의 SLOT 목록 없음", slots)
@@ -279,7 +282,12 @@ def parse_state(text: str, names: list[str], slots: list[int], *,
     for name in names:
         state = first.get(name, {}) if isinstance(first, dict) else {}
         if not isinstance(state, dict) or not set(fields) <= state.keys():
-            _fail(stage, f"첫 SLOT의 {aspects} 초기값 누락", {"character": name, "first_slot": slots[0], "input": raw}, warning=warning_only)
+            _fail(
+                stage,
+                f"첫 SLOT의 {aspects} 초기값 누락",
+                {"character": name, "first_slot": slots[0], "input": raw},
+                warning=warning_only or (name.casefold() in optional_initial),
+            )
     return raw
 
 
@@ -437,14 +445,25 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
                 "description": str(candidate.get("description") or "").strip(),
             }
         if tracking is not None:
-            character["state"] = deepcopy(tracking.get(f"SLOT{scene['slot']}", {}).get(name, {}))
+            character_state = deepcopy(tracking.get(f"SLOT{scene['slot']}", {}).get(name, {}))
+            if isinstance(character_state, dict) and isinstance(character_state.get("outfit"), str) and character_state["outfit"].strip():
+                from modes.tag_classifier import resolve_outfit_coverage_conflicts
+                cleaned_outfit = resolve_outfit_coverage_conflicts(character_state["outfit"])
+                if cleaned_outfit != character_state["outfit"]:
+                    print(
+                        f"[ILLUST_CONTEXT:OUTFIT_COVERAGE] 충돌 복장 태그 정리: "
+                        f"character={name!r}, slot={scene['slot']}, "
+                        f"before={character_state['outfit']!r}, after={cleaned_outfit!r}"
+                    )
+                    character_state["outfit"] = cleaned_outfit
+            character["state"] = character_state
         if time_place is not None:
             character["time_place"] = deepcopy(time_place.get(f"SLOT{scene['slot']}", {}).get(name, {}))
         scene["characters"].append(character)
     return scene, bases
 
 
-def _moss_bbox(value, field: str, width: int, height: int) -> list[int] | None:
+def _parse_moss_bbox_numbers(value, field: str) -> list[int]:
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise ValueError(f"DETAIL-MOSS {field}는 [y0,x0,y1,x1] 4개 숫자여야 합니다")
     numbers = []
@@ -458,11 +477,67 @@ def _moss_bbox(value, field: str, width: int, height: int) -> list[int] | None:
         if not math.isfinite(number):
             raise ValueError(f"DETAIL-MOSS {field} 좌표가 유한수가 아닙니다: {entry!r}")
         numbers.append(int(round(number)))
+    return numbers
+
+
+def _moss_bbox(value, field: str, width: int, height: int) -> list[int] | None:
+    numbers = _parse_moss_bbox_numbers(value, field)
     clamped = clamp_centered_bbox(numbers, width, height)
     if clamped is None:
         print(f"[ILLUST_CONTEXT:DETAIL-MOSS] 빈 bbox 항목 제외: "
               f"field={field}, raw={numbers!r}, canvas={width}x{height}")
     return clamped
+
+
+def _fit_axis_to_panel(raw_start: int, raw_end: int, panel_start: int, panel_end: int,
+                       *, min_ratio: float, min_px: int) -> tuple[int, int, bool]:
+    """Keep one coordinate axis inside its owning panel without squashing or dropping it."""
+    low, high = (raw_start, raw_end) if raw_start <= raw_end else (raw_end, raw_start)
+    swapped = raw_start > raw_end
+    panel_span = panel_end - panel_start
+    orig_span = high - low
+    clamped_low = max(panel_start, min(panel_end, low))
+    clamped_high = max(panel_start, min(panel_end, high))
+    clamped_span = clamped_high - clamped_low
+    min_span = min(panel_span, max(min_px, int(round(panel_span * min_ratio))))
+    if clamped_span >= min_span and (
+        clamped_span >= orig_span * 0.5 or clamped_span >= panel_span * 0.5
+    ):
+        return clamped_low, clamped_high, swapped or clamped_low != low or clamped_high != high
+    pad = min(20, max(0, int(round(panel_span * 0.05))))
+    if panel_span - 2 * pad < 1:
+        pad = 0
+    usable_span = panel_span - 2 * pad
+    if orig_span >= min_span:
+        target_span = min(orig_span, usable_span)
+        if high > panel_end and low >= panel_start:
+            return panel_end - pad - target_span, panel_end - pad, True
+        if low < panel_start and high <= panel_end:
+            return panel_start + pad, panel_start + pad + target_span, True
+    return panel_start + pad, panel_end - pad, True
+
+
+def _panel_contained_moss_bbox(value, field: str, width: int, height: int,
+                               panel_bbox: list[int] | None = None,
+                               *, is_actor: bool = True) -> list[int] | None:
+    """Keep ordinary panel actors/objects inside their owning panel without dropping collapsed axes."""
+    if not panel_bbox or len(panel_bbox) != 4:
+        return _moss_bbox(value, field, width, height)
+    numbers = _parse_moss_bbox_numbers(value, field)
+    py0, px0, py1, px1 = panel_bbox
+    if py1 <= py0 or px1 <= px0:
+        return _moss_bbox(value, field, width, height)
+    min_ratio = 0.05 if is_actor else 0.0
+    min_px = 24 if is_actor else 8
+    y0, y1, y_adjusted = _fit_axis_to_panel(
+        numbers[0], numbers[2], py0, py1, min_ratio=min_ratio, min_px=min_px)
+    x0, x1, x_adjusted = _fit_axis_to_panel(
+        numbers[1], numbers[3], px0, px1, min_ratio=min_ratio, min_px=min_px)
+    fitted = clamp_centered_bbox([y0, x0, y1, x1], width, height)
+    if fitted is not None and (y_adjusted or x_adjusted):
+        print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 패널 범위로 bbox 보정: "
+              f"field={field}, raw={numbers!r}, panel={panel_bbox!r}, fitted={fitted!r}")
+    return fitted
 
 
 _MANGA_NON_RECT_FRAME_WORDS = (
@@ -567,6 +642,17 @@ def _manga_panel_item(number: int, panel: dict, width: int, height: int,
                                 "medium", "camera_distance")
     angle = normalize_choice(panel.get("camera_angle"), PANEL_CAMERA_ANGLE,
                              "eye_level", "camera_angle")
+    interactions = panel.get("interactions")
+    if angle == "high_angle" and isinstance(interactions, list) and any(
+        isinstance(entry, dict)
+        and str(entry.get("spatial") or "").strip().lower().replace("-", "_").replace(" ", "_") == "above_on_top"
+        for entry in interactions
+    ):
+        print(
+            f"[ILLUST_CONTEXT:DETAIL-MANGA] above_on_top 패널의 high_angle을 side_view로 보정: "
+            f"panel={number}"
+        )
+        angle = "side_view"
     focus = normalize_choice(panel.get("focus"), PANEL_FOCUS, "deep_focus", "focus")
     attach_note = _manga_attach_note(panel, panel_ids)
     caption = panel_caption(number, panel, shape=shape, camera_distance=distance,
@@ -584,14 +670,16 @@ def _manga_panel_item(number: int, panel: dict, width: int, height: int,
     }
 
 
-def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int) -> dict | None:
+def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: int,
+                      *, panel_bbox: list[int] | None = None) -> dict | None:
     name = _manga_actor_name(actor.get("name") or actor.get("actorId"))
     if not name:
         raise ValueError(f"DETAIL-MANGA {field}.name이 비어 있습니다")
     instruction = str(actor.get("instruction") or "").strip()
     if not instruction:
         raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
-    bbox = _moss_bbox(actor.get("bbox"), f"{field}.bbox", width, height)
+    bbox = _panel_contained_moss_bbox(
+        actor.get("bbox"), f"{field}.bbox", width, height, panel_bbox, is_actor=True)
     if bbox is None:
         return None
     return {
@@ -602,11 +690,13 @@ def _manga_actor_item(number: int, actor: dict, field: str, width: int, height: 
     }
 
 
-def _manga_object_item(number: int, obj: dict, field: str, width: int, height: int) -> dict | None:
+def _manga_object_item(number: int, obj: dict, field: str, width: int, height: int,
+                       *, panel_bbox: list[int] | None = None) -> dict | None:
     instruction = str(obj.get("instruction") or "").strip()
     if not instruction:
         raise ValueError(f"DETAIL-MANGA {field}.instruction이 비어 있습니다")
-    bbox = _moss_bbox(obj.get("bbox"), f"{field}.bbox", width, height)
+    bbox = _panel_contained_moss_bbox(
+        obj.get("bbox"), f"{field}.bbox", width, height, panel_bbox, is_actor=False)
     if bbox is None:
         return None
     return {
@@ -636,6 +726,34 @@ def _manga_dialogue_item(
     bbox = _moss_bbox(dialogue.get("bbox"), f"{field}.bbox", width, height)
     if bbox is None:
         return None
+    # A balloon may intentionally straddle a shared panel border, but a balloon
+    # whose bbox has <25% overlap with its owning panel is a misplaced coordinate
+    # (e.g. landing inside a neighboring panel). Pull it back into its panel.
+    if panel_bbox is not None:
+        by0, bx0, by1, bx1 = bbox
+        py0, px0, py1, px1 = panel_bbox
+        b_area = max(1, (by1 - by0) * (bx1 - bx0))
+        oy = max(0, min(by1, py1) - max(by0, py0))
+        ox = max(0, min(bx1, px1) - max(bx0, px0))
+        if (oy * ox) / b_area < 0.25:
+            contained = _panel_contained_moss_bbox(
+                bbox, field, width, height, panel_bbox, is_actor=False)
+            if contained is not None:
+                bbox = contained
+    # Prevent abnormally tall vertical dialogue towers (e.g. 340x840) that cause
+    # MOSS to duplicate the spoken line at top and bottom of the balloon box.
+    bw = bbox[3] - bbox[1]
+    bh = bbox[2] - bbox[0]
+    max_balloon_h = max(180, int(round(bw * 0.72)))
+    if balloon != "narration" and len(spoken) <= 45 and bh > max_balloon_h:
+        clamped_h = max(110, min(bh, max(160, int(round(bw * 0.55)))))
+        new_y1 = min(height // 2, bbox[0] + clamped_h)
+        if new_y1 > bbox[0]:
+            print(
+                f"[ILLUST_CONTEXT:DETAIL-MANGA] 세로로 긴 말풍선 bbox 보정: "
+                f"field={field}, raw={bbox}, fitted={[bbox[0], bbox[1], new_y1, bbox[3]]}"
+            )
+            bbox = [bbox[0], bbox[1], new_y1, bbox[3]]
     speaker = _manga_actor_name(dialogue.get("speaker"))
     actors = panel_actors or []
     speaker_actor = next(
@@ -827,6 +945,11 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
         for panel_number in owned_numbers:
             cross_panel_actors_by_panel.setdefault(panel_number, []).append(actor_record)
 
+    inset_boxes = [
+        box for index, panel in enumerate(panels)
+        if str(panel.get("shape") or "").strip().lower() == "inset"
+        and (box := _moss_bbox(panel.get("bbox"), f"panels[{index}].bbox", width, height)) is not None
+    ]
     items: list[dict] = []
     for index, panel in enumerate(panels):
         number = index + 1
@@ -843,7 +966,10 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
             items.append(panel_item)
         panel_actors: list[dict] = []
         panel_actor_keys: set[str] = set()
-        actors = panel.get("actors")
+        independent_detail = str(panel.get("actor_binding") or "").strip().lower() == "independent"
+        actors = [] if independent_detail else panel.get("actors")
+        if independent_detail and panel.get("actors"):
+            print(f"[ILLUST_CONTEXT:DETAIL-MANGA] 독립 디테일 패널의 액터 박스 생략: panel={number}")
         if isinstance(actors, list):
             for actor_index, actor in enumerate(actors):
                 if not isinstance(actor, dict):
@@ -854,7 +980,8 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                           f"name={name!r}, panel={number}")
                     continue
                 actor_item = _manga_actor_item(
-                    number, actor, f"panels[{index}].actors[{actor_index}]", width, height)
+                    number, actor, f"panels[{index}].actors[{actor_index}]", width, height,
+                    panel_bbox=panel_bbox)
                 if actor_item is not None:
                     items.append(actor_item)
                     panel_actors.append({
@@ -867,13 +994,43 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
             if cross_actor["name"].casefold() not in panel_actor_keys:
                 panel_actors.append(cross_actor)
                 panel_actor_keys.add(cross_actor["name"].casefold())
+        panel_interactions = panel.get("interactions")
+        if panel_item is not None and isinstance(panel_interactions, list) and panel_interactions:
+            interaction_clause = compile_interaction_clauses(
+                panel_interactions,
+                panel_actors,
+                panel_bbox=panel_bbox,
+                camera_distance=panel.get("camera_distance") or "medium",
+                existing_text=panel_item["caption"],
+            )
+            if interaction_clause:
+                panel_item["caption"] = f"{panel_item['caption']} {interaction_clause}".strip()
+            actors_by_key = {actor["name"].casefold(): actor for actor in panel_actors if actor.get("bbox")}
+            for entry in panel_interactions:
+                if not isinstance(entry, dict):
+                    continue
+                spatial = str(entry.get("spatial") or "").strip().lower().replace("-", "_").replace(" ", "_")
+                if spatial not in {"above_on_top", "straddling_on_top"}:
+                    continue
+                src_actor = actors_by_key.get(str(entry.get("source") or "").strip().casefold())
+                tgt_actor = actors_by_key.get(str(entry.get("target") or "").strip().casefold())
+                if src_actor and tgt_actor:
+                    sy0, sx0, sy1, sx1 = src_actor["bbox"]
+                    ty0, tx0, ty1, tx1 = tgt_actor["bbox"]
+                    if max(sx0, tx0) >= min(sx1, tx1):
+                        print(
+                            f"[ILLUST_CONTEXT:DETAIL-MANGA] 상하 배치 상호작용의 수평 겹침 없음: "
+                            f"panel={number}, spatial={spatial!r}, source={src_actor['name']!r}:{src_actor['bbox']}, "
+                            f"target={tgt_actor['name']!r}:{tgt_actor['bbox']}"
+                        )
         objects = panel.get("objects")
         if isinstance(objects, list):
             for object_index, obj in enumerate(objects):
                 if not isinstance(obj, dict):
                     raise ValueError(f"DETAIL-MANGA panels[{index}].objects[{object_index}]가 object가 아닙니다")
                 object_item = _manga_object_item(
-                    number, obj, f"panels[{index}].objects[{object_index}]", width, height)
+                    number, obj, f"panels[{index}].objects[{object_index}]", width, height,
+                    panel_bbox=panel_bbox)
                 if object_item is not None:
                     items.append(object_item)
         dialogues = panel.get("dialogue")
@@ -892,6 +1049,18 @@ def _flatten_layered_manga_page(layout: dict, width: int, height: int) -> tuple[
                     camera_distance=panel.get("camera_distance"),
                 )
                 if dialogue_item is not None:
+                    if str(panel.get("shape") or "").strip().lower() == "borderless" and inset_boxes:
+                        dy0, dx0, dy1, dx1 = dialogue_item["bbox"]
+                        d_area = max(1, (dy1 - dy0) * (dx1 - dx0))
+                        for ibox in inset_boxes:
+                            oy = max(0, min(dy1, ibox[2]) - max(dy0, ibox[0]))
+                            ox = max(0, min(dx1, ibox[3]) - max(dx0, ibox[1]))
+                            if (oy * ox) / d_area > 0.25:
+                                print(
+                                    f"[ILLUST_CONTEXT:DETAIL-MANGA] 배경 컷 말풍선이 인셋과 겹침: "
+                                    f"panel={number}, balloon={dialogue_item['bbox']}, inset={ibox}"
+                                )
+                                break
                     items.append(dialogue_item)
     if boundaries == "touching":
         items.extend(_manga_shared_dividers(panels, width, height))
@@ -1035,6 +1204,17 @@ def _parse_detail_moss_scene(item: dict, scene: dict, *, canvas_sizes=None,
             caption = layered_caption
     else:
         parsed_items = _parse_flat_moss_items(raw_items, width, height, multi_panel, item["slot"])
+        scene_interactions = layout.get("interactions")
+        if isinstance(scene_interactions, list) and scene_interactions:
+            scene_actors = [
+                {"name": entry["name"], "bbox": entry["bbox"], "instruction": entry["caption"]}
+                for entry in parsed_items
+                if entry.get("label") == "character" and entry.get("name")
+            ]
+            interaction_clause = compile_interaction_clauses(
+                scene_interactions, scene_actors, existing_text=caption)
+            if interaction_clause:
+                caption = f"{caption} {interaction_clause}".strip() if caption else interaction_clause
     if multi_panel and not layered:
         # Layered plans already choose each frame. Rewriting their shapes can
         # contradict shared-edge geometry and a deliberately repeated shot.
@@ -1910,6 +2090,17 @@ async def build_from_context(
             name, active_profile(name, "START", profile_result, visual_profiles, segment_order),
             extra_costume or extra_reference, visual_profiles,
         ) for name in names}
+        candidate_casefold = {
+            str(candidate.get("name") or "").strip().casefold()
+            for candidate in (profile_result.get("npc_candidates") or [])
+            if isinstance(candidate, dict) and str(candidate.get("name") or "").strip()
+        }
+        pending_npc_names = {
+            name for name in names
+            if name.casefold() in candidate_casefold
+            and not baselines.get(name)
+            and name not in prior_status
+        }
         async def track_state():
             if progress:
                 await progress(8, "call1", "OUTFIT 옷·머리 상태 추적")
@@ -1918,13 +2109,15 @@ async def build_from_context(
                 slots=state_slots, slotted=slotted, segment_slots=segment_slots)
             def validate_state(response):
                 try:
-                    parse_state(response, names, state_slots, segment_slots=segment_slots)
+                    parse_state(response, names, state_slots, segment_slots=segment_slots,
+                                optional_initial_names=pending_npc_names)
                     return True, ""
                 except ValueError as exc:
                     return False, str(exc)
             call1_output = await p._call_pipeline_llm("OUTFIT", p._normalize_messages(state_messages),
                                                      stream_notify, result_validator=validate_state, json_mode=True)
-            changes = parse_state(call1_output, names, state_slots, segment_slots=segment_slots)
+            changes = parse_state(call1_output, names, state_slots, segment_slots=segment_slots,
+                                  optional_initial_names=pending_npc_names)
             table = fill_state_table(changes, names, state_slots)
             illustration_flow.record_call1_state_table(table)
             return call1_output, table
@@ -2006,10 +2199,8 @@ async def build_from_context(
         protected = p.render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles,
                                           include_server_limits=False)
         role_context = prompt_builders.role_context(
-            protected, lb_extra_system_prompt, genre=toggles.get("genre", ""),
-            genre_prompt=prompts.get("genre", ""),
-            genre_work_title=toggles.get("genre_work_title", ""),
-            genre_secondary_prompt=prompts.get("genre_secondary", ""))
+            protected, lb_extra_system_prompt,
+            **prompt_builders.genre_role_kwargs(prompts, toggles))
         explicit_policy = ""
         if toggles.get("nsfw"):
             explicit_policy = p.render_call2_prompt(
@@ -2063,6 +2254,37 @@ async def build_from_context(
                 visual_profiles[character["name"]] = character
             extra_names = ",".join(dict.fromkeys([*(name.strip() for name in extra_names.split(",") if name.strip()),
                                                 *(character["name"] for character in npc_result["characters"])]))
+            if state_table is not None and pending_npc_names and state_slots:
+                first_key = f"SLOT{state_slots[0]}"
+                changes = deepcopy(state_table.get("changes") or {})
+                first_entries = changes.get(first_key) if isinstance(changes.get(first_key), dict) else {}
+                backfilled = False
+                for name in pending_npc_names:
+                    existing = first_entries.get(name) if isinstance(first_entries.get(name), dict) else {}
+                    if "outfit" in existing:
+                        continue
+                    npc_profile = profile_for_detail(
+                        name, active_profile(name, "START", profile_result, visual_profiles, segment_order),
+                        extra_costume or extra_reference, visual_profiles,
+                    )
+                    default_outfit = ", ".join(
+                        str(item.get("tag") or "").strip()
+                        for item in (npc_profile.get("default_outfit") or [])
+                        if isinstance(item, dict) and str(item.get("tag") or "").strip()
+                    )
+                    if default_outfit:
+                        changes.setdefault(first_key, {})
+                        if not isinstance(changes[first_key], dict):
+                            changes[first_key] = {}
+                        entry = changes[first_key].get(name)
+                        if not isinstance(entry, dict):
+                            entry = {}
+                            changes[first_key][name] = entry
+                        entry["outfit"] = default_outfit
+                        backfilled = True
+                if backfilled:
+                    state_table = fill_state_table(changes, names, state_slots)
+                    illustration_flow.record_call1_state_table(state_table)
         plan_profiles = []
         for name in names:
             profile_segments = {
@@ -2198,7 +2420,8 @@ async def build_from_context(
                 mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
                 canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""),
                 toggles=toggles, genre_prompt=prompts.get("genre", ""),
-                genre_secondary_prompt=prompts.get("genre_secondary", ""), moss=moss)
+                genre_secondary_prompt=prompts.get("genre_secondary", ""),
+                genre_secondary_crossover_prompt=prompts.get("genre_secondary_crossover", ""), moss=moss)
             if keyvis_in_detail:
                 if not moss:
                     # DETAIL-MOSS writes its own combined keyvis contract.
@@ -2265,16 +2488,14 @@ async def build_from_context(
         detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch),
                         "completed": {}, "scene_workers": {}}
                        for batch in detail_batches]
-        detail_prompt_key = ("detail_manga" if moss_manga else
-                             "detail_moss" if moss else
-                             "composite_detail" if composite else "call2_detail")
+        detail_prompt_key = select_detail_prompt_key(
+            moss=moss, moss_manga=moss_manga, composite=composite, toggles=toggles,
+        )
         detail_system = prompt_builders.detail_system_prompt(
             protected, lb_extra_system_prompt, prompts[detail_prompt_key],
             explicit_policy=explicit_policy, moss_manga=moss_manga,
-            genre=toggles.get("genre", ""),
-            genre_prompt=prompts.get("genre", ""),
-            genre_work_title=toggles.get("genre_work_title", ""),
-            genre_secondary_prompt=prompts.get("genre_secondary", ""),
+            natural=bool(moss and is_moss_natural_detail(toggles)),
+            **prompt_builders.genre_role_kwargs(prompts, toggles),
         )
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
@@ -2706,11 +2927,18 @@ async def build_from_context(
             if tracking is not None:
                 chain = []
                 for slot in state_slots:
-                    status = json.dumps(tracking[f"SLOT{slot}"][name], ensure_ascii=False)
+                    slot_state = tracking[f"SLOT{slot}"].get(name)
+                    if not isinstance(slot_state, dict) or not slot_state:
+                        continue
+                    status = json.dumps(slot_state, ensure_ascii=False)
                     if not chain or chain[-1] != status:
                         chain.append(status)
-                stored["call1_status_history"] = chain
-                stored["call1_status"] = chain[-1]
+                if chain:
+                    stored["call1_status_history"] = chain
+                    stored["call1_status"] = chain[-1]
+                else:
+                    stored.pop("call1_status_history", None)
+                    stored.pop("call1_status", None)
             else:
                 # A pre-CURRENT checkpoint is not an updated current state.
                 stored.pop("call1_status_history", None)

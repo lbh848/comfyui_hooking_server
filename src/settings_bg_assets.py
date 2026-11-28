@@ -16,19 +16,30 @@ from bg_asset_style_presets import (
     extract_bg_style_from_asset_style,
     register_bg_style_preset_runtime,
 )
-from bg_asset_presets import register_bg_theme_preset_runtime
+from bg_asset_presets import (
+    BG_I2I_DEFAULT_DENOISE,
+    _validate_folder_segment,
+    build_bg_i2i_image_entry,
+    register_bg_theme_preset_runtime,
+)
 
 READ_PATHS = {
-    "tags", "themes", "style-presets", "theme-presets", "theme-maker",
+    "tags", "themes", "style-presets", "theme-presets", "theme-maker", "postprocess",
+    "model/presets", "model/workflow", "model/sampling-options",
 }
 WRITE_PATHS = {
     "tags", "style-presets", "style-presets/import-from-asset", "theme-presets", "theme-maker",
+    "postprocess", "postprocess/preview",
+    "theme/bulk-update",
+    "lore-theme/generate", "lore-theme/cancel", "lore-theme/save",
+    "model/presets", "model/workflow", "model/style-ref/upload", "model/style-ref/import",
+    "upload_reference",
     "preview", "enqueue",
-    "set_representative", "delete_image", "delete_combination",
+    "set_representative", "delete_image", "delete_combination", "delete_place",
     "name_mapping", "name_mapping/validate", "name_mapping/llm",
     "export", "export/validate",
 }
-MEDIA_PATTERN = r"/api/bg-asset/(?:theme-maker/image|themes/[^/]+/places/[^/]+/atmospheres/[^/]+/images/[^/]+)"
+MEDIA_PATTERN = r"/api/bg-asset/(?:theme-maker/image|i2i-reference/[^/]+|model/style-ref/image/[a-f0-9]{24}\.png|themes/[^/]+/places/[^/]+/atmospheres/[^/]+/images/[^/]+)"
 
 _BG_TO_ASSET_BLOCK = {"theme": "character", "place": "outfit", "atmosphere": "expression"}
 _ASSET_TO_BG_BLOCK = {value: key for key, value in _BG_TO_ASSET_BLOCK.items()}
@@ -43,7 +54,7 @@ def allowed_bg_asset_path(path: str, method: str) -> bool:
             name in READ_PATHS
             or bool(re.fullmatch(MEDIA_PATTERN, path))
             or bool(re.fullmatch(
-                r"(?:themes/[^/]+/(?:gallery|places/[^/]+/atmospheres/[^/]+/images)|name_mapping/[^/]+)",
+                r"(?:themes/[^/]+/(?:gallery|places/[^/]+/atmospheres/[^/]+/images)|name_mapping/[^/]+|base-link/[^/]+)",
                 name,
             ))
         )
@@ -82,6 +93,8 @@ def _to_bg_mapping(info: dict) -> dict:
         result["places"] = result.pop("outfits")
     if "expressions" in result:
         result["atmospheres"] = result.pop("expressions")
+    if "outfit_expressions" in result:
+        result["place_atmospheres"] = result.pop("outfit_expressions")
     if "outfit_mapping" in result:
         result["place_mapping"] = result.pop("outfit_mapping")
     if "expression_mapping" in result:
@@ -156,18 +169,38 @@ def register_bg_assets(app: web.Application, runtime, schema: str) -> None:
 
 
 def register_bg_asset_runtime(server) -> None:
-    from asset_model_presets import AssetModelPresets, apply_asset_preset
+    from asset_model_presets import BgAssetModelPresets, apply_asset_preset
+    from asset_postprocess import (
+        BG_ASSET_WORKSPACE,
+        has_active_postprocess,
+        register_postprocess_runtime,
+        render_cached_postprocess_file,
+    )
     from asset_style_presets import AssetStylePresets
+    from illustration_model_presets import register_model_preset_runtime
     from settings_asset_export import build_asset_export_plans, export_asset_zip, public_asset_export_plans
 
-    presets = AssetModelPresets(server.CONFIG_FILE)
+    presets = BgAssetModelPresets(server.CONFIG_FILE)
     asset_styles = AssetStylePresets(server.CONFIG_FILE)
+    register_model_preset_runtime(server, "bg-asset/model", presets)
     bg_styles = register_bg_style_preset_runtime(server)
     register_bg_theme_preset_runtime(server)
     bg_mode = server.bg_asset_mode
+    bg_postprocess_store = register_postprocess_runtime(
+        server, BG_ASSET_WORKSPACE, bg_mode, prefix="/api/bg-asset/postprocess"
+    )
+
+    async def sampling_options(request: web.Request) -> web.Response:
+        from settings_illustration import illustration_sampling_options
+        return web.json_response(
+            await illustration_sampling_options(server, "asset_generation"),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    server.app.router.add_get("/api/bg-asset/model/sampling-options", sampling_options)
 
     def prepare_bg_job(job: dict, style_presets: list[dict]) -> dict:
-        from asset_json import asset_document, build_asset_moss_document
+        from asset_json import asset_document, build_asset_moss_document, prepare_bg_i2i
 
         theme = job.get("theme") or job.get("character") or ""
         if not isinstance(theme, str) or not theme.strip():
@@ -223,6 +256,8 @@ def register_bg_asset_runtime(server) -> None:
             fields["SNAPREF"].pop("dir", None)
         else:
             fields["SNAPREF"] = {"enabled": False, "references": []}
+
+        prepare_bg_i2i(document, job)
 
         if profile == "moss":
             from modes.moss_prompt_builder import MossPromptBuilder
@@ -400,6 +435,23 @@ def register_bg_asset_runtime(server) -> None:
         path = bg_mode.get_image_path(theme, place, atmosphere, filename)
         if not path:
             raise web.HTTPNotFound()
+        if request.query.get("postprocess") == "1":
+            postprocess_settings = await asyncio.to_thread(bg_postprocess_store.read)
+            if has_active_postprocess(BG_ASSET_WORKSPACE, postprocess_settings):
+                image_data, content_type, applied = await asyncio.to_thread(
+                    render_cached_postprocess_file,
+                    path,
+                    BG_ASSET_WORKSPACE,
+                    postprocess_settings,
+                )
+                return web.Response(
+                    body=image_data,
+                    content_type=content_type,
+                    headers={
+                        "Cache-Control": "no-store",
+                        "X-Postprocess-Applied": "1" if applied else "0",
+                    },
+                )
         return web.FileResponse(path, headers={"Cache-Control": "no-store"})
 
     async def set_representative(request: web.Request) -> web.Response:
@@ -440,6 +492,17 @@ def register_bg_asset_runtime(server) -> None:
         except (ValueError, TypeError, OSError) as exc:
             return web.json_response({"success": False, "error": str(exc)}, status=400)
 
+    async def delete_place(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            result = bg_mode.delete_place(
+                body.get("theme", ""),
+                body.get("place", ""),
+            )
+            return web.json_response(result, status=200 if result.get("success") else 400, headers={"Cache-Control": "no-store"})
+        except (ValueError, TypeError, OSError) as exc:
+            return web.json_response({"success": False, "error": str(exc)}, status=400)
+
     async def preview(request: web.Request) -> web.Response:
         try:
             job = await request.json()
@@ -450,11 +513,78 @@ def register_bg_asset_runtime(server) -> None:
         except (ValueError, TypeError, KeyError, OSError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
+    base_link_batches: dict[str, dict] = {}
+    _max_base_link_batches = 50
+
+    def _public_base_link_state(state: dict) -> dict:
+        linked = list(state["linked"])
+        failed = list(state["failed"])
+        pending = list(state["pending"])
+        total = int(state["total"])
+        return {
+            "success": True,
+            "batch_id": state["batch_id"],
+            "theme": state["theme"],
+            "base_time": state["base_time"],
+            "total": total,
+            "linked_count": len(linked),
+            "failed_count": len(failed),
+            "pending_count": len(pending),
+            "completed": len(linked) + len(failed),
+            "done": len(pending) == 0,
+            "linked": linked,
+            "failed": failed,
+            "pending": pending,
+        }
+
+    def _mark_base_link_linked(batch_id: str, place_name: str, image_entry: dict) -> None:
+        state = base_link_batches.get(batch_id)
+        if not state:
+            return
+        if place_name in state["pending"]:
+            state["pending"].remove(place_name)
+        state["linked"] = [entry for entry in state["linked"] if entry.get("place") != place_name]
+        state["linked"].append({
+            "place": place_name,
+            "filename": image_entry["name"],
+            "preview_url": image_entry["preview_url"],
+        })
+
+    def _mark_base_link_failed(batch_id: str, place_name: str, message: str) -> None:
+        state = base_link_batches.get(batch_id)
+        if not state:
+            return
+        if place_name in state["pending"]:
+            state["pending"].remove(place_name)
+        state["failed"] = [entry for entry in state["failed"] if entry.get("place") != place_name]
+        state["failed"].append({
+            "place": place_name,
+            "error": message,
+        })
+
+    async def base_link_status(request: web.Request) -> web.Response:
+        batch_id = unquote(request.match_info.get("batch_id", "")).strip()
+        state = base_link_batches.get(batch_id)
+        if state is None:
+            return web.json_response({"success": False, "error": "베이스 I2I 연결 작업 정보를 찾을 수 없습니다."}, status=404)
+        return web.json_response(_public_base_link_state(state), headers={"Cache-Control": "no-store"})
+
     async def enqueue(request: web.Request) -> web.Response:
+        from pathlib import Path
+        from bg_asset_presets import _normalize_i2i_denoise
+
         body = await request.json()
         jobs = body.get("jobs") if isinstance(body, dict) else None
         if not isinstance(jobs, list) or not jobs:
             return web.json_response({"error": "생성할 배경 에셋이 없습니다."}, status=400)
+        auto_link_i2i = bool(body.get("auto_link_i2i", False)) if isinstance(body, dict) else False
+        raw_link_denoise = body.get("auto_link_i2i_denoise") if isinstance(body, dict) else None
+        link_denoise = None
+        if auto_link_i2i and raw_link_denoise is not None:
+            try:
+                link_denoise = _normalize_i2i_denoise(raw_link_denoise, strict=True)
+            except (ValueError, TypeError) as exc:
+                return web.json_response({"error": str(exc)}, status=400)
         try:
             style_presets = bg_styles.read()["presets"]
         except (ValueError, TypeError, OSError) as exc:
@@ -463,13 +593,28 @@ def register_bg_asset_runtime(server) -> None:
         for index, job in enumerate(jobs):
             if not isinstance(job, dict):
                 return web.json_response({"error": f"항목 {index + 1}: 생성할 배경 에셋을 확인하세요."}, status=400)
-            if job.get("asset_workflow_type") not in {"anima_only", "anima_ilxl", "moss"}:
-                return web.json_response({"error": f"항목 {index + 1}: ANIMA, ANIMA+ILXL 또는 MOSS 워크플로우를 선택하세요."}, status=400)
+            if job.get("asset_workflow_type") not in {"anima_only", "moss"}:
+                return web.json_response({"error": f"항목 {index + 1}: ANIMA 또는 MOSS 배경 워크플로우를 선택하세요."}, status=400)
             try:
                 snapshot = prepare_bg_job(job, style_presets)
                 snapshots.append(snapshot)
             except (ValueError, TypeError, KeyError, OSError) as exc:
                 return web.json_response({"error": f"항목 {index + 1}: {exc}"}, status=400)
+
+        if auto_link_i2i:
+            catalog = bg_mode.theme_presets.catalog()
+            for index, job in enumerate(jobs):
+                theme_name = job["theme"]
+                if theme_name not in catalog["themes"]:
+                    return web.json_response({"error": f"항목 {index + 1}: 테마를 찾을 수 없습니다 ({theme_name})."}, status=400)
+                if catalog["scopes"].get(theme_name) == "builtin":
+                    return web.json_response(
+                        {"error": "배포 테마에는 로컬 I2I 기준 이미지를 저장할 수 없습니다. 새 테마 만들기 또는 사용자 테마를 사용하세요."},
+                        status=400,
+                    )
+                if job["place"] not in (catalog["themes"][theme_name].get("places") or {}):
+                    return web.json_response({"error": f"항목 {index + 1}: 장소를 찾을 수 없습니다 ({job['place']})."}, status=400)
+
         label = body.get("label") or "배경 생성"
         items = await server.queue_manager.add_items_batch([
             {
@@ -480,7 +625,82 @@ def register_bg_asset_runtime(server) -> None:
             }
             for job, snapshot in zip(jobs, snapshots)
         ])
-        return web.json_response({"success": True, "count": len(items), "batch_id": items[0].batch_id})
+        batch_id = items[0].batch_id
+
+        if auto_link_i2i:
+            while len(base_link_batches) >= _max_base_link_batches:
+                base_link_batches.pop(next(iter(base_link_batches)))
+            base_link_batches[batch_id] = {
+                "batch_id": batch_id,
+                "theme": jobs[0]["theme"],
+                "base_time": jobs[0]["time"],
+                "total": len(items),
+                "linked": [],
+                "failed": [],
+                "pending": [job["place"] for job in jobs],
+            }
+
+            def _attach_completion_hook(queue_item, job_snapshot):
+                theme_name = job_snapshot["theme"]
+                place_name = job_snapshot["place"]
+                time_name = job_snapshot["time"]
+
+                def _on_done(fut):
+                    try:
+                        result = fut.result()
+                    except asyncio.CancelledError:
+                        _mark_base_link_failed(batch_id, place_name, "베이스 이미지 생성이 취소되었습니다.")
+                        return
+                    except BaseException as exc:
+                        _mark_base_link_failed(batch_id, place_name, str(exc) or "베이스 이미지 생성에 실패했습니다.")
+                        return
+
+                    if not isinstance(result, dict) or not result.get("success"):
+                        err = (result.get("error") if isinstance(result, dict) else "") or "베이스 이미지 생성에 실패했습니다."
+                        _mark_base_link_failed(batch_id, place_name, str(err))
+                        return
+
+                    filename = str(result.get("filename") or "").strip()
+                    if not filename:
+                        _mark_base_link_failed(batch_id, place_name, "생성된 베이스 이미지 파일명을 확인할 수 없습니다.")
+                        return
+                    local_path = bg_mode.get_image_path(theme_name, place_name, time_name, filename)
+                    if not local_path or not os.path.isfile(local_path):
+                        _mark_base_link_failed(batch_id, place_name, "생성된 베이스 이미지 파일을 찾을 수 없습니다.")
+                        return
+
+                    image_entry = build_bg_i2i_image_entry(
+                        theme_name,
+                        place_name,
+                        time_name,
+                        filename,
+                        local_path,
+                    )
+                    try:
+                        bg_mode.theme_presets.attach_place_i2i_image(
+                            theme_name,
+                            place_name,
+                            image_entry,
+                            enable_i2i=True,
+                            denoise=link_denoise,
+                        )
+                        bg_mode.load_tags()
+                    except Exception as exc:
+                        _mark_base_link_failed(batch_id, place_name, f"I2I 기준 이미지 연결 실패: {exc}")
+                        return
+                    _mark_base_link_linked(batch_id, place_name, image_entry)
+
+                queue_item.completion_future.add_done_callback(_on_done)
+
+            for queue_item, job in zip(items, jobs):
+                _attach_completion_hook(queue_item, job)
+
+        return web.json_response({
+            "success": True,
+            "count": len(items),
+            "batch_id": batch_id,
+            "auto_link_i2i": auto_link_i2i,
+        })
 
     # ─── 배경 이름 치환 & 익스포트 ───
     async def name_mapping_get(request: web.Request) -> web.Response:
@@ -585,7 +805,15 @@ def register_bg_asset_runtime(server) -> None:
             public = _to_bg_plan(public_asset_export_plans(bg_mode, plans))
             if not public["success"] or request.path.endswith("/validate"):
                 return web.json_response(public, status=200 if public["success"] else 409, headers={"Cache-Control": "no-store"})
-            content = await asyncio.to_thread(export_asset_zip, bg_mode, plans)
+            postprocess_settings = None
+            if isinstance(body, dict) and bool(body.get("apply_postprocess", False)):
+                postprocess_settings = await asyncio.to_thread(bg_postprocess_store.read)
+            content = await asyncio.to_thread(
+                export_asset_zip,
+                bg_mode,
+                plans,
+                postprocess_settings=postprocess_settings,
+            )
             filename = f"{plans[0][0]}.zip" if len(plans) == 1 else "배경 에셋 익스포트.zip"
             return web.Response(
                 body=content,
@@ -595,9 +823,178 @@ def register_bg_asset_runtime(server) -> None:
         except (ValueError, TypeError, OSError, RuntimeError) as exc:
             return web.json_response({"success": False, "error": _localize_bg_text(str(exc))}, status=400)
 
+    async def upload_reference(request: web.Request) -> web.Response:
+        import hashlib
+        from io import BytesIO
+        from pathlib import Path
+        import time as _time
+        import uuid as _uuid
+        from PIL import Image, ImageOps
+        from configuration import settings_lock
+        from json_store import write_json_atomic
+
+        max_bytes = 12 * 1024 * 1024
+        try:
+            reader = await request.multipart()
+            images_data: list[tuple[str, bytes]] = []
+            async for part in reader:
+                if part.name != "image":
+                    continue
+                chunks = []
+                size = 0
+                while True:
+                    chunk = await part.read_chunk(64 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ValueError("이미지 한 장은 12MB를 넘을 수 없습니다.")
+                    chunks.append(chunk)
+                raw = b"".join(chunks)
+                if raw:
+                    images_data.append((part.filename or "i2i_reference.png", raw))
+            if not images_data:
+                raise ValueError("업로드할 이미지를 선택하세요.")
+
+            save_dir = Path(bg_mode.asset_data_dir) / "i2i_references"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            hash_file = save_dir / "_upload_hashes.json"
+
+            results = []
+            with settings_lock(hash_file):
+                hash_map = {}
+                if hash_file.is_file():
+                    try:
+                        loaded = json.loads(hash_file.read_text(encoding="utf-8"))
+                        if isinstance(loaded, dict):
+                            hash_map = loaded
+                    except Exception:
+                        hash_map = {}
+
+                changed = False
+                for orig_filename, raw in images_data[:1]:
+                    try:
+                        with Image.open(BytesIO(raw)) as opened:
+                            img = ImageOps.exif_transpose(opened).copy()
+                    except Exception as exc:
+                        raise ValueError("지원하지 않는 이미지 파일입니다. PNG, JPEG, WebP 파일을 선택하세요.") from exc
+
+                    content_hash = hashlib.sha256(img.convert("RGB").tobytes()).hexdigest()
+                    cached_name = hash_map.get(content_hash)
+                    if isinstance(cached_name, str) and cached_name and (save_dir / cached_name).is_file():
+                        stored_name = cached_name
+                    else:
+                        stored_name = f"{int(_time.time())}_{_uuid.uuid4().hex[:6]}.webp"
+                        target_path = save_dir / stored_name
+                        try:
+                            save_img = img if img.mode == "RGBA" else img.convert("RGB")
+                            save_img.save(target_path, format="WEBP", quality=92, method=4)
+                        except Exception:
+                            stored_name = f"{int(_time.time())}_{_uuid.uuid4().hex[:6]}.png"
+                            target_path = save_dir / stored_name
+                            img.convert("RGB").save(target_path, format="PNG")
+                        hash_map[content_hash] = stored_name
+                        changed = True
+
+                    local_path = str((save_dir / stored_name).resolve())
+                    results.append({
+                        "name": stored_name,
+                        "local_path": local_path,
+                        "orig_filename": os.path.basename(orig_filename) or stored_name,
+                        "preview_url": f"/api/bg-asset/i2i-reference/{quote(stored_name)}",
+                    })
+
+                if changed:
+                    write_json_atomic(hash_file, hash_map)
+
+            return web.json_response({"success": True, "images": results}, headers={"Cache-Control": "no-store"})
+        except (ValueError, TypeError, OSError) as exc:
+            return web.json_response({"success": False, "error": str(exc)}, status=400)
+
+    async def i2i_reference_file(request: web.Request) -> web.StreamResponse:
+        from pathlib import Path
+
+        filename = unquote(request.match_info["filename"])
+        if not filename or filename.startswith("_") or "/" in filename or "\\" in filename or ".." in filename:
+            raise web.HTTPNotFound()
+        root = (Path(bg_mode.asset_data_dir) / "i2i_references").resolve()
+        candidate = (root / filename).resolve()
+        if candidate.parent != root or not candidate.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(candidate, headers={"Cache-Control": "no-store"})
+
+    async def bulk_update_theme(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("일괄 설정 요청을 확인하세요.")
+            theme_name = _validate_folder_segment(body.get("theme"), "테마 이름")
+
+            raw_i2i = body.get("i2i")
+            if raw_i2i is None:
+                raw_i2i = {}
+            if not isinstance(raw_i2i, dict):
+                raise ValueError("I2I 일괄 연결 설정 형식을 확인하세요.")
+            i2i_mode = str(raw_i2i.get("mode") or "none").strip()
+            if i2i_mode not in {"none", "missing_only", "overwrite", "denoise_only"}:
+                raise ValueError("I2I 일괄 연결 방식을 확인하세요.")
+            i2i_denoise = raw_i2i.get("denoise", BG_I2I_DEFAULT_DENOISE)
+
+            clean_source_time = ""
+            resolved_entries: dict[str, dict | None] | None = None
+            raw_places = body.get("places")
+
+            if i2i_mode in {"missing_only", "overwrite"}:
+                raw_source_time = raw_i2i.get("source_time", "")
+                if not isinstance(raw_source_time, str) or not raw_source_time.strip():
+                    raise ValueError("기준 시간대를 선택하세요.")
+                clean_source_time = _validate_folder_segment(raw_source_time, "기준 시간대")
+
+                catalog = bg_mode.theme_presets.catalog()
+                if theme_name not in catalog["themes"]:
+                    raise ValueError("테마를 찾을 수 없습니다. 목록을 새로고침하세요.")
+                if catalog["scopes"].get(theme_name) == "builtin":
+                    raise ValueError(
+                        "배포 테마에는 로컬 I2I 기준 이미지를 저장할 수 없습니다. 사용자 테마로 복제하거나 그룹을 변경해 주세요."
+                    )
+
+                places_map = catalog["themes"][theme_name].get("places") or {}
+                if raw_places is None:
+                    target_places = list(places_map.keys())
+                else:
+                    if not isinstance(raw_places, list) or not raw_places:
+                        raise ValueError("적용할 장소를 하나 이상 선택하세요.")
+                    target_places = list(dict.fromkeys(
+                        item.strip() for item in raw_places if isinstance(item, str) and item.strip()
+                    ))
+                resolved_entries = {
+                    place_name: bg_mode.resolve_place_i2i_image(theme_name, place_name, clean_source_time)
+                    for place_name in target_places
+                    if place_name in places_map
+                }
+
+            result = bg_mode.theme_presets.bulk_update_theme(
+                theme_name,
+                places=raw_places,
+                add_times=body.get("add_times"),
+                remove_times=body.get("remove_times"),
+                i2i_mode=i2i_mode,
+                i2i_denoise=i2i_denoise,
+                i2i_place_images=resolved_entries,
+                builtin_unlock_token=body.get("builtin_unlock_token"),
+            )
+            result["i2i"]["source_time"] = clean_source_time
+            bg_mode.load_tags()
+            return web.json_response(result, headers={"Cache-Control": "no-store"})
+        except (ValueError, TypeError, OSError) as exc:
+            return web.json_response({"success": False, "error": str(exc)}, status=400)
+
     server.app.router.add_post("/api/bg-asset/style-presets/import-from-asset", import_style_from_asset)
+    server.app.router.add_post("/api/bg-asset/upload_reference", upload_reference)
+    server.app.router.add_get("/api/bg-asset/i2i-reference/{filename}", i2i_reference_file)
     server.app.router.add_get("/api/bg-asset/tags", tags_handler)
     server.app.router.add_post("/api/bg-asset/tags", tags_handler)
+    server.app.router.add_post("/api/bg-asset/theme/bulk-update", bulk_update_theme)
     server.app.router.add_get("/api/bg-asset/themes", themes_list)
     server.app.router.add_get("/api/bg-asset/themes/{theme}/gallery", theme_gallery)
     server.app.router.add_get("/api/bg-asset/themes/{theme}/places/{place}/atmospheres/{atmosphere}/images", theme_images)
@@ -605,14 +1002,19 @@ def register_bg_asset_runtime(server) -> None:
     server.app.router.add_post("/api/bg-asset/set_representative", set_representative)
     server.app.router.add_post("/api/bg-asset/delete_image", delete_image)
     server.app.router.add_post("/api/bg-asset/delete_combination", delete_combination)
+    server.app.router.add_post("/api/bg-asset/delete_place", delete_place)
     server.app.router.add_post("/api/bg-asset/preview", preview)
     server.app.router.add_post("/api/bg-asset/enqueue", enqueue)
+    server.app.router.add_get("/api/bg-asset/base-link/{batch_id}", base_link_status)
     server.app.router.add_get("/api/bg-asset/name_mapping/{theme}", name_mapping_get)
     server.app.router.add_post("/api/bg-asset/name_mapping", name_mapping_post)
     server.app.router.add_post("/api/bg-asset/name_mapping/validate", name_mapping_validate)
     server.app.router.add_post("/api/bg-asset/name_mapping/llm", name_mapping_llm)
     server.app.router.add_post("/api/bg-asset/export/validate", export_handler)
     server.app.router.add_post("/api/bg-asset/export", export_handler)
+
+    from bg_asset_lore_theme import register_bg_lore_theme_runtime
+    register_bg_lore_theme_runtime(server)
 
     if hasattr(server, "character_maker"):
         from bg_asset_maker import register_bg_theme_maker_runtime

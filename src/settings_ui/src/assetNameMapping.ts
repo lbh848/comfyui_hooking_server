@@ -36,6 +36,21 @@ export type AssetExpressionBatchTarget = {
   afterFilled: number;
   total: number;
 };
+export type AssetSelectionSummary = {
+  selectedCount: number;
+  total: number;
+  samples: string[];
+};
+export type AssetSelectionBatchTarget = {
+  selected: string[];
+  changed: boolean;
+  addedCount: number;
+  removedCount: number;
+  beforeCount: number;
+  afterCount: number;
+  total: number;
+  missingCount: number;
+};
 const isRecord = (value: unknown): value is AssetRecord => !!value && typeof value === "object" && !Array.isArray(value);
 const invalidExportTokenPattern = /[<>:"/\\|?*\x00-\x1f]/;
 const windowsReservedNames = new Set([
@@ -164,6 +179,55 @@ export function applyExpressionMappingBatch(
     beforeFilled,
     afterFilled,
     total: targetExpressions.length,
+  };
+}
+
+export function summarizeAssetSelection(
+  availableItems: string[],
+  selectedItems: string[],
+): AssetSelectionSummary {
+  const uniqueAvailable = [...new Set(availableItems)];
+  const selectedSet = new Set(selectedItems);
+  const selected = uniqueAvailable.filter(item => selectedSet.has(item));
+  return {
+    selectedCount: selected.length,
+    total: uniqueAvailable.length,
+    samples: selected.slice(0, 4),
+  };
+}
+
+export function applyAssetSelectionBatch(
+  sourceSelected: string[],
+  targetAvailable: string[],
+  targetSelected: string[],
+): AssetSelectionBatchTarget {
+  const uniqueTargetAvailable = [...new Set(targetAvailable)];
+  const sourceSet = new Set(sourceSelected);
+  const targetAvailableSet = new Set(uniqueTargetAvailable);
+  const targetSelectedSet = new Set(targetSelected.filter(item => targetAvailableSet.has(item)));
+  const selected = uniqueTargetAvailable.filter(item => sourceSet.has(item));
+  const nextSet = new Set(selected);
+  let addedCount = 0;
+  let removedCount = 0;
+  for (const item of nextSet) {
+    if (!targetSelectedSet.has(item)) addedCount += 1;
+  }
+  for (const item of targetSelectedSet) {
+    if (!nextSet.has(item)) removedCount += 1;
+  }
+  let missingCount = 0;
+  for (const item of sourceSet) {
+    if (!targetAvailableSet.has(item)) missingCount += 1;
+  }
+  return {
+    selected,
+    changed: addedCount > 0 || removedCount > 0,
+    addedCount,
+    removedCount,
+    beforeCount: targetSelectedSet.size,
+    afterCount: selected.length,
+    total: uniqueTargetAvailable.length,
+    missingCount,
   };
 }
 

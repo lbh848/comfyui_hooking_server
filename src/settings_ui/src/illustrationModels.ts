@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { usePageVisible } from "./ModalWorkspace";
 
 type WorkflowItem = { id: string; name: string; filename: string; bindings: string[]; source: string; localPaths: string[] };
 type WorkflowGroup = { category: string; name: string; itemIds: string[] };
@@ -124,9 +125,12 @@ export function useIllustrationModels(configured: Record<string, string>, catego
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [revision]);
+  const pageVisible = usePageVisible();
   useEffect(() => {
-    window.addEventListener("focus", reload);
-    return () => window.removeEventListener("focus", reload);
-  }, [reload]);
+    if (!pageVisible) return;
+    const onFocus = () => { if (!document.hidden) reload(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [pageVisible, reload]);
   return { models: data ? illustrationModels(data.catalog, data.groups, configured, category, labels, bindings) : [], loading, error: error || data?.catalog.folderError || "", reload };
 }

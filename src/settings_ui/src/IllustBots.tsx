@@ -18,6 +18,7 @@ import { CharacterImportedLore } from "./IllustCharacterLore";
 import { IllustLoreLinking, loreLinkingTitle } from "./IllustLoreLinking";
 import { EmotionOutfitDetail, EmotionProfileTree } from "./EmotionProfileTree";
 import { useCharacterImageRegeneration } from "./useCharacterImageRegeneration";
+import { usePageVisible } from "./ModalWorkspace";
 import { useEmotionBulkGeneration, type EmotionBulkMode } from "./useEmotionBulkGeneration";
 import { useEmotionImageRegeneration } from "./useEmotionImageRegeneration";
 import { useEmotionOutfitRegeneration } from "./useEmotionOutfitRegeneration";
@@ -107,12 +108,14 @@ export function IllustBots({ botSelected, addedBot, onBotSelected, onCatalogChan
     if (!requery) return;
     resource.reload(); patchStatus.reload(); setCardRevision(value => value + 1);
   }, [resource.reload, patchStatus.reload]);
+  const pageVisible = usePageVisible();
   const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
-    const refresh = () => refreshCharacterStatus();
+    if (!pageVisible) return;
+    const refresh = () => { if (!document.hidden) refreshCharacterStatus(); };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [refreshCharacterStatus]);
+  }, [pageVisible, refreshCharacterStatus]);
   const isBuiltin = (name: string) => distribution.data?.bots.some((item: IllustrationData) => item.name === name && item.scope === "builtin");
   const isLocked = (name: string) => !distribution.data || (isBuiltin(name) && !builtinUnlockToken);
   const locked = !!bot && isLocked(bot.name);
@@ -299,7 +302,8 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   const [base, setBase] = useState<IllustrationData | null>(null);
   const [index, setIndex] = useState(0);
   const [discard, setDiscard] = useState(false);
-  const [deleteImage, setDeleteImage] = useState<string | null>(null);
+  const [deleteImages, setDeleteImages] = useState<string[] | null>(null);
+  const [selectedImageNames, setSelectedImageNames] = useState<string[]>([]);
   const [deleteCard, setDeleteCard] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [preview, setPreview] = useState<IllustrationData | null>(null);
@@ -419,10 +423,26 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   // LoRAs are card-local; an omitted list on another card must stay empty.
   for (const key of ["face_loras", "loras", "loras_solo", "loras_group", "style_loras"]) render[key] = card?.render_overrides?.[key] || [];
   const allImages: IllustrationData[] = images.data?.images || [];
+  const allGalleryImages = allImages.filter(item => !item.filename.startsWith("_"));
   const referenceNames: string[] = render.rep_images || [];
+  const allRepresentativeNames = new Set<string>(
+    (draft?.profiles || []).flatMap((profile: IllustrationData) =>
+      Array.isArray(profile.render_overrides?.rep_images) ? profile.render_overrides.rep_images : []
+    )
+  );
   const references = referenceNames.map(filename => allImages.find(item => item.filename === filename) || { filename, url: `/api/bot_mode/image/${enc(botName)}/${enc(characterName)}/${enc(filename)}` });
   const face = savedCard && allImages.find(item => item.filename === "_face_image.webp");
-  const galleryImages = allImages.filter(item => !item.filename.startsWith("_") && item.filename.toLocaleLowerCase().includes(imageSearch.toLocaleLowerCase()));
+  const normalizedImageSearch = imageSearch.trim().toLocaleLowerCase();
+  const galleryImages = allGalleryImages.filter(item => item.filename.toLocaleLowerCase().includes(normalizedImageSearch));
+  const visibleImageSet = new Set(galleryImages.map(item => item.filename));
+  const selectedImageSet = new Set(selectedImageNames.filter(name => visibleImageSet.has(name)));
+  const selectedImages = galleryImages.filter(item => selectedImageSet.has(item.filename)).map(item => item.filename);
+  const visibleNonRepresentativeNames = galleryImages
+    .filter(item => !allRepresentativeNames.has(item.filename))
+    .map(item => item.filename);
+  const allNonRepresentativeSelected = visibleNonRepresentativeNames.length > 0
+    && selectedImages.length === visibleNonRepresentativeNames.length
+    && visibleNonRepresentativeNames.every(name => selectedImageSet.has(name));
   useEffect(() => { setPreview(current => current && (allImages.find(item => item.filename === current.filename) || current)); }, [images.data]);
   async function saveCharacter() {
     if (!dirty) return;
@@ -651,7 +671,59 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
   }, [selectedOutfit, outfitSlideBack]);
   const changeProfile = (next: number) => { setIndex(next); setDetail(null); cancelOutfitSlide(); resetOutfitHeight(); setOutfitSlideBack(false); setSelectedOutfit(""); };
   const showGallery = summaryMode ? localGallery : embedded ? gallery : localGallery;
+  useEffect(() => { if (!showGallery) setSelectedImageNames([]); }, [showGallery]);
   const openImages = () => { if (summaryMode || !embedded || !onOpenImages) setLocalGallery(true); else onOpenImages(); };
+  const toggleSelectedImage = (filename: string, checked: boolean) => {
+    setSelectedImageNames(current => {
+      const visible = current.filter(name => visibleImageSet.has(name));
+      return checked
+        ? (visible.includes(filename) ? visible : [...visible, filename])
+        : visible.filter(name => name !== filename);
+    });
+  };
+  const selectNonRepresentativeImages = () => setSelectedImageNames(visibleNonRepresentativeNames);
+  const selectAllVisibleImages = () => setSelectedImageNames(galleryImages.map(item => item.filename));
+  const clearSelectedImages = () => setSelectedImageNames([]);
+  const requestDeleteImages = (filenames: string[]) => {
+    if (!filenames.length || readOnly || savingOrBusy) return;
+    uploadAction.clearError();
+    setDeleteImages(filenames);
+  };
+  const confirmDeleteImages = () => {
+    if (!deleteImages?.length || readOnly || savingOrBusy) return;
+    const targets = deleteImages;
+    void uploadAction.run(async () => {
+      const payload = targets.length === 1
+        ? { bot: botName, character: characterName, filename: targets[0] }
+        : { bot: botName, character: characterName, filenames: targets };
+      const result = await api.request("bot_mode/delete_image", payload);
+      const deletedNames: string[] = Array.isArray(result?.deleted_filenames) ? result.deleted_filenames : targets;
+      const failedItems: IllustrationData[] = Array.isArray(result?.failed) ? result.failed : [];
+      const deletedSet = new Set(deletedNames);
+      if (deletedSet.size) {
+        const clean = (value: IllustrationData | null) => value && ({
+          ...value,
+          profiles: value.profiles.map((profile: IllustrationData) => ({
+            ...profile,
+            render_overrides: {
+              ...profile.render_overrides,
+              rep_images: (profile.render_overrides?.rep_images || []).filter((name: string) => !deletedSet.has(name)),
+            },
+          })),
+        });
+        setDraft(clean);
+        setBase(clean);
+        setSelectedImageNames(current => current.filter(name => !deletedSet.has(name)));
+        setPreview(current => current && deletedSet.has(current.filename) ? null : current);
+      }
+      setDeleteImages(null);
+      images.reload();
+      onReload?.();
+      if (failedItems.length) {
+        throw new Error(`${deletedNames.length}장을 삭제했지만 ${failedItems.length}장은 삭제하지 못했습니다.`);
+      }
+    }, targets.length === 1 ? "이미지를 삭제했습니다." : `선택한 이미지 ${targets.length}장을 삭제했습니다.`);
+  };
   const loraLabels: Record<string, string> = { face_loras: "얼굴 LoRA", loras: "캐릭터 LoRA", loras_solo: "1인 전용 LoRA", loras_group: "다인 전용 LoRA" };
   const tagEditor = draft && card && <IllustCharacterTags key={card.id}
     botName={botName} characterName={characterName} card={card} render={render} index={index} references={references} face={face || undefined}
@@ -678,7 +750,7 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
       <header className="illust-character-heading">
         <div className="illust-actions"><h2>{characterName}</h2>{canRename && <button type="button" className="button secondary small" onClick={() => void flushAndRun(openRename)} disabled={savingOrBusy} aria-label={`${characterName} 캐릭터 이름 변경`}><Pencil size={13} aria-hidden="true" />이름 변경</button>}{npcLifetimeControls}<Badge>{referenceNames.length ? `대표 ${referenceNames.length}/3` : "대표 미설정"}</Badge>{readOnly && <Badge>읽기 전용</Badge>}</div>
         <div className="illust-actions">
-          {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allImages.filter(item => !item.filename.startsWith("_")).length}` : ""}</button>}
+          {showGallery ? <button type="button" className="button secondary" onClick={() => summaryMode || !embedded ? setLocalGallery(false) : onClose()}><ArrowLeft size={14} />캐릭터로 돌아가기</button> : <button type="button" className="button secondary" onClick={openImages}><Images size={14} />전체 이미지 보기{images.data ? ` · ${allGalleryImages.length}` : ""}</button>}
           <button type="button" className="button secondary" disabled={savingOrBusy} onClick={() => void flushAndRun(() => setDetail("tags"))}>캐릭터 태그 편집</button>
           <label className="field illust-gender-field"><span className="sr-only">{characterName} 성별 태그</span><select required aria-label={`${characterName} 성별 태그`} value={render.gender_tag || "1girl"} disabled={readOnly || busy} onChange={event => updateRender({ gender_tag: event.target.value })}>{[...new Set([...ComfyVisualGuide.genderTags, render.gender_tag].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
           {onPersona && <label className="illust-check"><input type="checkbox" checked={persona} disabled={readOnly || busy || personaBusy} onChange={event => onPersona(event.target.checked)} />페르소나</label>}
@@ -711,19 +783,54 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         </div>)}</div></section>
       </div>
       {showGallery && <section className="illust-character-section illust-form" aria-label={`${characterName} 전체 이미지`}>
-        <div className="illust-image-toolbar"><label className="field">이미지 검색<input type="search" value={imageSearch} onChange={event => setImageSearch(event.target.value)} placeholder="파일 이름" /></label><span className="field-help">{card.label} · 대표 {referenceNames.length}/3 · 체크한 순서로 적용</span>
+        <div className="illust-image-toolbar"><label className="field">이미지 검색<input type="search" value={imageSearch} onChange={event => { setImageSearch(event.target.value); setSelectedImageNames([]); }} placeholder="파일 이름" /></label><span className="field-help">{card.label} · 대표 {referenceNames.length}/3 · 체크한 순서로 적용</span>
           <label className={`button illust-upload ${readOnly || busy ? "disabled" : ""}`}><Upload size={14} />이미지 업로드<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" multiple disabled={busy || readOnly} onChange={event => {
             const files = Array.from(event.target.files || []); event.target.value = "";
             void uploadAction.run(async () => { for (const file of files) { const form = new FormData(); form.set("bot", botName); form.set("character", characterName); form.set("file", file); await api.request("bot_mode/upload", form); } images.reload(); }, "이미지를 업로드했습니다.");
           }} /></label>
         </div>
+        {!!allGalleryImages.length && <fieldset className="illust-gallery-selection-bar" disabled={readOnly || savingOrBusy}>
+          <legend className="sr-only">이미지 일괄 선택 및 삭제</legend>
+          <div className="illust-actions">
+            <button type="button" className="button secondary small" disabled={!visibleNonRepresentativeNames.length || allNonRepresentativeSelected} onClick={selectNonRepresentativeImages}>대표 제외 선택</button>
+            <button type="button" className="button secondary small" disabled={!galleryImages.length || selectedImages.length === galleryImages.length} onClick={selectAllVisibleImages}>전체 선택</button>
+            <button type="button" className="button secondary small" disabled={!selectedImages.length} onClick={clearSelectedImages}>선택 해제</button>
+            <span className="illust-gallery-selection-count" role="status">
+              {normalizedImageSearch
+                ? `검색 ${galleryImages.length}장 중 ${selectedImages.length}장 선택`
+                : `전체 ${allGalleryImages.length}장 중 ${selectedImages.length}장 선택`}
+              {` · 대표 제외 ${visibleNonRepresentativeNames.length}장`}
+            </span>
+          </div>
+          <button type="button" className="button danger small illust-gallery-bulk-delete" disabled={readOnly || savingOrBusy || !selectedImages.length} onClick={() => requestDeleteImages(selectedImages)}><Trash2 size={14} aria-hidden="true" />선택 삭제{selectedImages.length ? ` · ${selectedImages.length}장` : ""}</button>
+        </fieldset>}
         <IllustrationFeedback {...uploadAction} />
-        {!images.data ? <IllustrationLoading error={images.error} retry={images.reload} /> : !galleryImages.length ? <Empty title={allImages.length ? "검색된 이미지가 없습니다" : "등록된 이미지가 없습니다"}>이미지를 업로드하거나 검색어를 바꿔보세요.</Empty> : <div className="illust-character-gallery">{galleryImages.map(item => {
+        {!images.data ? <IllustrationLoading error={images.error} retry={images.reload} /> : !galleryImages.length ? <Empty title={allGalleryImages.length ? "검색된 이미지가 없습니다" : "등록된 이미지가 없습니다"}>이미지를 업로드하거나 검색어를 바꿔보세요.</Empty> : <div className="illust-character-gallery">{galleryImages.map(item => {
           const selected = referenceNames.indexOf(item.filename);
-          return <article key={item.filename} className={`illust-gallery-entry ${selected >= 0 ? "selected" : ""}`}>
+          const deleteSelected = selectedImageSet.has(item.filename);
+          const otherCardRepLabels = (draft?.profiles || []).flatMap((profile: IllustrationData, profileIndex: number) =>
+            profileIndex !== index
+            && Array.isArray(profile.render_overrides?.rep_images)
+            && profile.render_overrides.rep_images.includes(item.filename)
+              ? [String(profile.label || "").trim() || `카드 ${profileIndex + 1}`]
+              : []
+          );
+          return <article key={item.filename} className={`illust-gallery-entry${selected >= 0 ? " selected" : ""}${deleteSelected ? " delete-selected" : ""}`}>
+            <div className="illust-gallery-entry-top">
+              <label className="illust-check illust-gallery-delete-check"><input type="checkbox" aria-label={`${item.filename} 삭제 선택`} checked={deleteSelected} disabled={savingOrBusy || readOnly} onChange={event => toggleSelectedImage(item.filename, event.target.checked)} />선택</label>
+              {selected >= 0
+                ? <Badge tone="rose">{selected === 0 ? "메인 대표" : `대표 ${selected + 1}`}</Badge>
+                : otherCardRepLabels.length > 0
+                  ? <span title={`다른 카드 대표: ${otherCardRepLabels.join(", ")}`}><Badge tone="lavender">다른 카드 대표</Badge></span>
+                  : null}
+            </div>
             <button type="button" className="illust-reference-preview" onClick={() => setPreview(item)}><img src={api.media(item.url)} alt={item.filename} loading="lazy" /></button>
-            <label className="illust-check"><input type="checkbox" aria-label={`${item.filename} 대표 이미지`} checked={selected >= 0} disabled={busy || readOnly || (selected < 0 && referenceNames.length >= 3)} onChange={event => updateRender({ rep_images: event.target.checked ? [...referenceNames, item.filename] : referenceNames.filter(name => name !== item.filename) })} />{selected === 0 ? "메인 대표" : selected > 0 ? `대표 ${selected + 1}` : "대표 이미지"}</label>
-            <span title={item.filename}>{item.filename}</span>{regenerateButton(item)}<button type="button" className="button danger" disabled={busy || readOnly} onClick={() => setDeleteImage(item.filename)}>이미지 삭제</button>
+            <label className="illust-check"><input type="checkbox" aria-label={`${item.filename} 대표 이미지`} checked={selected >= 0} disabled={busy || readOnly || (selected < 0 && referenceNames.length >= 3)} onChange={event => {
+              const checked = event.target.checked;
+              updateRender({ rep_images: checked ? [...referenceNames, item.filename] : referenceNames.filter(name => name !== item.filename) });
+              if (checked) setSelectedImageNames(current => current.filter(name => name !== item.filename));
+            }} />{selected === 0 ? "메인 대표" : selected > 0 ? `대표 ${selected + 1}` : "대표 이미지"}</label>
+            <span title={item.filename}>{item.filename}</span>{regenerateButton(item)}<button type="button" className="button danger" disabled={savingOrBusy || readOnly} onClick={() => requestDeleteImages([item.filename])}>이미지 삭제</button>
           </article>;
         })}</div>}
       </section>}
@@ -747,11 +854,30 @@ export function CharacterEditor({ botName, characterName, cardData, onReload, on
         </fieldset><div className="modal-actions"><span className="field-help">변경한 내용은 자동으로 저장됩니다.</span><button type="button" className="button" onClick={() => setDetail(null)}>닫기</button></div>
       </Modal>}
       {deleteCard && <Modal title="현재 카드 삭제" backgroundable={false} onClose={() => setDeleteCard(false)}><p>{characterName}의 {card.label}을 삭제할까요?</p><div className="modal-actions"><button type="button" className="button" onClick={() => setDeleteCard(false)}>취소</button><button type="button" className="button danger" disabled={readOnly || savingOrBusy} onClick={() => { setDraft({ ...draft, profiles: draft.profiles.filter((_: unknown, i: number) => i !== index) }); setIndex(0); setDeleteCard(false); }}>카드 삭제</button></div></Modal>}
-      {deleteImage && <Modal title="이미지 삭제" backgroundable={false} onClose={() => setDeleteImage(null)} closeDisabled={busy}><p>{deleteImage} 이미지를 삭제할까요?</p><IllustrationFeedback error={uploadAction.error} /><div className="modal-actions"><button type="button" className="button" disabled={busy} onClick={() => setDeleteImage(null)}>취소</button><button type="button" className="button danger" disabled={readOnly || busy} onClick={() => void uploadAction.run(async () => {
-        await api.request("bot_mode/delete_image", { bot: botName, character: characterName, filename: deleteImage });
-        const clean = (value: IllustrationData | null) => value && ({ ...value, profiles: value.profiles.map((profile: IllustrationData) => ({ ...profile, render_overrides: { ...profile.render_overrides, rep_images: (profile.render_overrides?.rep_images || []).filter((name: string) => name !== deleteImage) } })) });
-        setDraft(clean); setBase(clean); setDeleteImage(null); images.reload();
-      }, "이미지를 삭제했습니다.")}>삭제 확인</button></div></Modal>}
+      {deleteImages && <Modal title={deleteImages.length === 1 ? "이미지 삭제" : "선택한 이미지 삭제"} backgroundable={false} onClose={() => setDeleteImages(null)} closeDisabled={savingOrBusy}>
+        <div className="illust-form">
+          {deleteImages.length === 1
+            ? <p><strong>{deleteImages[0]}</strong> 이미지를 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.</p>
+            : <p>선택한 이미지 <strong>{deleteImages.length}장</strong>을 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.</p>}
+          {(() => {
+            const deletingRepCount = deleteImages.filter(name => allRepresentativeNames.has(name)).length;
+            if (!deletingRepCount) return null;
+            return <p className="field-error" role="alert">
+              {deleteImages.length === 1
+                ? "대표 이미지로 설정된 항목입니다. 삭제하면 해당 카드의 대표 설정에서도 해제됩니다."
+                : `선택한 항목 중 대표 이미지로 설정된 ${deletingRepCount}장이 포함되어 있습니다. 삭제하면 해당 카드의 대표 설정에서도 해제됩니다.`}
+            </p>;
+          })()}
+          {deleteImages.length > 1 && <ul className="illust-delete-preview-list" aria-label="삭제 대상 이미지 목록">
+            {deleteImages.map(filename => <li key={filename}><span>{filename}</span>{allRepresentativeNames.has(filename) && <Badge tone="rose">대표</Badge>}</li>)}
+          </ul>}
+          <IllustrationFeedback error={uploadAction.error} />
+          <div className="modal-actions">
+            <button type="button" className="button" disabled={savingOrBusy} onClick={() => setDeleteImages(null)}>취소</button>
+            <button type="button" className="button danger" disabled={readOnly || savingOrBusy} onClick={confirmDeleteImages}>{uploadAction.busy ? "삭제 중…" : "삭제 확인"}</button>
+          </div>
+        </div>
+      </Modal>}
     </form>;
   const closeSummaryDetails = () => {
     if (savingOrBusy) return;

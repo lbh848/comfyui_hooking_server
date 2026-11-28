@@ -25,7 +25,11 @@ from comfy_installer.python_runtime import (
     ManagedPythonError,
     repair_relocated_managed_venv,
 )
-from comfy_installer.execution_profile import cpu_launch_args, installed_cpu_runtime
+from comfy_installer.execution_profile import (
+    comfy_launch_env,
+    cpu_launch_args,
+    installed_cpu_runtime,
+)
 from comfy_installer.dependency_installer import install_node_dependencies
 from comfy_installer.manifest import load_install_manifest
 from comfy_installer.runtime_state import load_runtime_receipt
@@ -33,6 +37,22 @@ from comfy_installer.runtime_state import load_runtime_receipt
 
 VALID_VRAM_MODES = {"auto", "highvram", "lowvram", "novram"}
 COMFY_INSTANCE_IDS = (1, 2, 3)
+DEFAULT_COMFY_PORTS: dict[int, int] = {
+    1: 8211,
+    2: 8212,
+    3: 8213,
+}
+LEGACY_DEFAULT_COMFY_PORTS: dict[int, int] = {
+    1: 8188,
+    2: 8187,
+    3: 8186,
+}
+COMFY_PORT_CONFIG_KEYS: dict[int, str] = {
+    1: "comfyui_port",
+    2: "comfyui_port_2",
+    3: "comfyui_port_3",
+}
+COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY = "comfy_launch_port_defaults_migrated"
 MANAGED_COMFY_ARGUMENTS = frozenset(
     {
         "--auto-launch",
@@ -50,10 +70,11 @@ MANAGED_COMFY_ARGUMENTS = frozenset(
         "--port",
     }
 )
+COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY = "comfy_launch_network_defaults_migrated"
 DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
     "auto_start": False,
-    "enable_cors": True,
-    "listen_all": True,
+    "enable_cors": False,
+    "listen_all": False,
     "fast": False,
     "disable_dynamic_vram": False,
     "vram_mode": "auto",
@@ -254,6 +275,121 @@ def normalize_comfy_launch_profiles(value: Any) -> dict[str, dict[str, Any]]:
     }
 
 
+def apply_comfy_launch_network_migration(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], bool, tuple[int, ...]]:
+    """Disable legacy listen_all/enable_cors defaults once for existing configs."""
+
+    if config.get(COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY) is True:
+        return config, False, ()
+    if "comfy_launch_profiles" not in config:
+        return config, False, ()
+    try:
+        profiles = normalize_comfy_launch_profiles(config.get("comfy_launch_profiles"))
+    except ComfyRuntimeValidationError:
+        return config, False, ()
+
+    hardened: list[int] = []
+    for instance_id in COMFY_INSTANCE_IDS:
+        profile = profiles[str(instance_id)]
+        if profile["listen_all"] or profile["enable_cors"]:
+            profile["listen_all"] = False
+            profile["enable_cors"] = False
+            hardened.append(instance_id)
+
+    updated = dict(config)
+    updated["comfy_launch_profiles"] = profiles
+    updated[COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY] = True
+    return updated, True, tuple(hardened)
+
+
+def apply_comfy_launch_port_migration(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], bool, tuple[tuple[int, int, int], ...]]:
+    """Migrate legacy 8188/8187/8186 default ports once to 8211/8212/8213."""
+
+    if config.get(COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY) is True:
+        return config, False, ()
+    if not any(key in config for key in COMFY_PORT_CONFIG_KEYS.values()):
+        return config, False, ()
+
+    candidates: list[tuple[int, str, int, int]] = []
+    reserved_ports: set[int] = set()
+    for instance_id in COMFY_INSTANCE_IDS:
+        key = COMFY_PORT_CONFIG_KEYS[instance_id]
+        raw_value = config.get(key)
+        legacy_port = LEGACY_DEFAULT_COMFY_PORTS[instance_id]
+        new_port = DEFAULT_COMFY_PORTS[instance_id]
+        if key in config and type(raw_value) is int and raw_value == legacy_port:
+            candidates.append((instance_id, key, legacy_port, new_port))
+        else:
+            effective = raw_value if type(raw_value) is int else new_port
+            reserved_ports.add(effective)
+
+    updated = dict(config)
+    migrated: list[tuple[int, int, int]] = []
+    port_map: dict[int, int] = {}
+    for instance_id, key, old_port, new_port in candidates:
+        if new_port in reserved_ports:
+            reserved_ports.add(old_port)
+            continue
+        updated[key] = new_port
+        reserved_ports.add(new_port)
+        migrated.append((instance_id, old_port, new_port))
+        port_map[old_port] = new_port
+
+    legacy_illust_port = updated.get("comfyui_port_illustration")
+    if type(legacy_illust_port) is int and legacy_illust_port in port_map:
+        updated["comfyui_port_illustration"] = port_map[legacy_illust_port]
+
+    updated[COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY] = True
+    return updated, True, tuple(migrated)
+
+
+def read_and_harden_comfy_launch_config(path: str | Path) -> dict[str, Any]:
+    """Read appConfig and run the one-time Comfy network/port hardening migrations."""
+
+    from configuration import read_config, settings_lock, write_config
+
+    target = Path(path)
+    if not target.is_file() and not target.with_name("config.json").is_file():
+        return {}
+    config = read_config(target)
+    needs_network = (
+        config.get(COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY) is not True
+        and "comfy_launch_profiles" in config
+    )
+    needs_ports = (
+        config.get(COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY) is not True
+        and any(key in config for key in COMFY_PORT_CONFIG_KEYS.values())
+    )
+    if not needs_network and not needs_ports:
+        return config
+    with settings_lock(target):
+        config = read_config(target)
+        updated, network_changed, hardened = apply_comfy_launch_network_migration(config)
+        updated, ports_changed, migrated_ports = apply_comfy_launch_port_migration(updated)
+        if not network_changed and not ports_changed:
+            return config
+        write_config(target, updated)
+        if hardened:
+            labels = ", ".join(f"Comfy #{instance_id}" for instance_id in hardened)
+            print(
+                "[COMFY_RUNTIME] 보안 기본값 1회 마이그레이션: "
+                f"{labels}의 외부 접속 허용/CORS 전체 허용을 로컬 전용(OFF)으로 전환했습니다."
+            )
+        if migrated_ports:
+            port_summary = ", ".join(
+                f"Comfy #{instance_id} ({old_port}→{new_port})"
+                for instance_id, old_port, new_port in migrated_ports
+            )
+            print(
+                "[COMFY_RUNTIME] 보안 기본 포트 1회 마이그레이션: "
+                f"{port_summary}로 변경했습니다."
+            )
+        return updated
+
+
 def comfy_launch_profile_extra_args(value: Any) -> tuple[str, ...]:
     """Return profile-specific Comfy arguments without port/network flags."""
 
@@ -384,6 +520,8 @@ class ComfyRuntimeManager:
         ]
         if normalized_profile["listen_all"]:
             command.extend(("--listen", "0.0.0.0"))
+        else:
+            command.extend(("--listen", "127.0.0.1"))
         if normalized_profile["enable_cors"]:
             command.extend(("--enable-cors-header", "*"))
         command.extend(cpu_launch_args(
@@ -678,7 +816,7 @@ class ComfyRuntimeManager:
                     state.append_log(f"[Python] GPU 준비 실패로 CPU를 사용합니다: {exc}\n")
 
             from console_encoding import utf8_subprocess_env
-            env = utf8_subprocess_env()
+            env = comfy_launch_env(utf8_subprocess_env())
             env["PYTHONUNBUFFERED"] = "1"
             env["LORA_MANAGER_PORTABLE"] = "1"
             env["LORA_MANAGER_STANDALONE"] = "0"

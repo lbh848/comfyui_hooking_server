@@ -159,7 +159,7 @@ export async function uploadAssetReferences(files: File[]): Promise<AssetRecord[
   }));
 }
 
-export function useAssetResource(path: string | null, interval = 0) {
+export function useAssetResource(path: string | null, interval = 0, pollActive = true) {
   const [data, setData] = useState<AssetRecord | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -169,16 +169,33 @@ export function useAssetResource(path: string | null, interval = 0) {
   useEffect(() => {
     if (!path) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
     setError("");
-    async function load() {
-      try { const result = await assetRequest(path!, undefined, controller.signal); if (!controller.signal.aborted) { setData(result); setError(""); } }
-      catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "불러오기 실패"); }
-      if (interval && !controller.signal.aborted) timer = setTimeout(() => void load(), interval);
-    }
-    void load();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [path, interval, revision]);
+    void assetRequest(path, undefined, controller.signal).then(result => {
+      if (!controller.signal.aborted) { setData(result); setError(""); }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "불러오기 실패");
+    });
+    return () => { controller.abort(); };
+  }, [path, revision]);
+  useEffect(() => {
+    if (!path || !interval || !pollActive) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      timer = setTimeout(() => {
+        if (!document.hidden) reload();
+        schedule();
+      }, interval);
+    };
+    const onVisibility = () => {
+      if (document.hidden) clearTimeout(timer);
+      else { reload(); schedule(); }
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [path, interval, pollActive, reload]);
   return { data, error, reload, setData };
 }
 

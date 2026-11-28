@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Clock3, Download, FolderOpen, Pencil, RefreshCw, Star, Trash2, UserRound } from "lucide-react";
+import { ChevronRight, Clock3, Download, FolderOpen, Pencil, RefreshCw, Star, Trash2, UserRound, WandSparkles } from "lucide-react";
 import { Empty, Modal, Panel } from "./components";
 import { AssetImageEdit } from "./AssetImageEdit";
 import { AssetCharacterFolders, AssetOutfitFolders, type AssetGallerySortOrder } from "./AssetGalleryGroups";
 import { IllustrationMaskOverlay } from "./IllustrationMaskPreview";
 import { assetMedia, assetOutputLabels, assetRequest, useAssetResource, type AssetRecord } from "./asset";
+import { withAssetPostprocessMedia, type PostprocessPreviewBannerState } from "./assetPostprocess";
 import type { AssetGalleryCombination } from "./assetGallerySelection";
 import { useAssetGalleryKeyboard } from "./useAssetGalleryKeyboard";
+import { usePageVisible } from "./ModalWorkspace";
+import { subscribeWorkshopEvents } from "./workshopEvents";
 
 type DeleteTarget = { image: AssetRecord; character: string; outfit: string; expression: string; url: string };
 type FolderDeleteTarget = { character: string; url?: string } & (
@@ -48,11 +51,12 @@ function imageTime(image: AssetRecord | null) {
   return seconds > 0 && Number.isFinite(date.getTime()) ? { date, label: generatedAt ? "생성 시간" : "파일 저장 시간" } : null;
 }
 
-export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBrowse, newestFirst = false, controls, scrollable = false, keyboardEnabled = false, builtinUnlockToken = "", onCharacterDeleted, className = "" }: {
+export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBrowse, newestFirst = false, controls, scrollable = false, keyboardEnabled = false, builtinUnlockToken = "", onCharacterDeleted, postprocess, className = "" }: {
   tags: AssetRecord; selection?: AssetRecord; focusTarget?: AssetGalleryFocusTarget | null; onPick?: (url: string, image: AssetRecord) => void | Promise<void>; newestFirst?: boolean; controls?: ReactNode; builtinUnlockToken?: string; onCharacterDeleted?: (name: string) => void;
   onBrowse?: (character: string, combination: AssetGalleryCombination | null) => Promise<AssetRecord | void>;
   scrollable?: boolean;
   keyboardEnabled?: boolean;
+  postprocess?: PostprocessPreviewBannerState;
   className?: string;
 }) {
   const internalScroll = !!controls || scrollable || !!onPick;
@@ -86,6 +90,7 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
   const [sortOrder, setSortOrder] = useState<SortOrder>(newestFirst ? "newest" : "name-asc");
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [groupView, setGroupView] = useState(false);
+  const [postprocessPreview, setPostprocessPreview] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const groupWriting = useRef(false);
@@ -100,11 +105,14 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
     setCharacter(selection?.character || "");
     setCombination(selection?.character ? assetOutputLabels(selection) : null);
   }, [selection?.character, selection?.outfit, selection?.expression]);
-  const characters = useAssetResource("asset_mode/characters", 12000);
-  const characterGroups = useAssetResource(!character ? "asset_mode/tags" : null, 12000);
+  const pageVisible = usePageVisible();
+  const pageVisibleRef = useRef(pageVisible);
+  const staleRef = useRef(false);
+  const characters = useAssetResource("asset_mode/characters", 30000, pageVisible);
+  const characterGroups = useAssetResource(!character ? "asset_mode/tags" : null, 30000, pageVisible);
   const characterGroupError = !character ? characterGroups.error : "";
-  const gallery = useAssetResource(character ? `asset_mode/characters/${encodeURIComponent(character)}/gallery` : null, 12000);
-  const images = useAssetResource(character && combination ? `asset_mode/characters/${encodeURIComponent(character)}/outfits/${encodeURIComponent(combination.outfit)}/expressions/${encodeURIComponent(combination.expression)}/images` : null, 8000);
+  const gallery = useAssetResource(character ? `asset_mode/characters/${encodeURIComponent(character)}/gallery` : null, 30000, pageVisible);
+  const images = useAssetResource(character && combination ? `asset_mode/characters/${encodeURIComponent(character)}/outfits/${encodeURIComponent(combination.outfit)}/expressions/${encodeURIComponent(combination.expression)}/images` : null, 30000, pageVisible);
   useEffect(() => {
     if (!focusTarget || focusTarget.token === lastFocusToken.current) return;
     lastFocusToken.current = focusTarget.token;
@@ -121,30 +129,31 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
     setPreview(current => current ? list.find(item => item.filename === current.filename) || current : null);
   }, [images.data]);
   useEffect(() => {
-    let stopped = false;
-    let reconnect: number;
-    let socket: WebSocket | null = null;
+    pageVisibleRef.current = pageVisible;
+    if (pageVisible && staleRef.current) {
+      staleRef.current = false;
+      characters.reload(); gallery.reload(); images.reload();
+    }
+  }, [pageVisible, characters.reload, gallery.reload, images.reload]);
+  useEffect(() => {
     const refresh = () => {
-      if (stopped) return;
+      if (!pageVisibleRef.current || document.hidden) {
+        staleRef.current = true;
+        return;
+      }
+      staleRef.current = false;
       characters.reload(); gallery.reload(); images.reload();
     };
-    const connect = () => {
-      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
-      // Also catch results saved while the event stream was disconnected.
-      socket.onopen = refresh;
-      socket.onmessage = event => {
-        if (stopped) return;
-        const value = JSON.parse(event.data);
+    return subscribeWorkshopEvents(
+      value => {
         if (((value.type === "asset_generation_completed" || value.type === "qwen_edit_completed")
           && value.data?.status === "success" && value.data.storage_group !== "character_maker"
           && value.data.asset_workspace !== "bg_asset")
           || (value.type === "tag_analysis_progress" && value.data?.source === "asset_character_upload"
             && value.data?.phase === "completed")) refresh();
-      };
-      socket.onclose = () => { if (!stopped) reconnect = window.setTimeout(connect, 3000); };
-    };
-    connect();
-    return () => { stopped = true; clearTimeout(reconnect); socket?.close(); };
+      },
+      { onReconnect: refresh },
+    );
   }, [characters.reload, gallery.reload, images.reload]);
   const groupTags = characterGroups.data || tags;
   const names = [...new Set<string>([...Object.keys(groupTags.characters || {}), ...(characters.data?.characters || [])])];
@@ -159,7 +168,10 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
     const byTime = (imageTime(left)?.date.getTime() || 0) - (imageTime(right)?.date.getTime() || 0);
     return sortOrder === "newest" ? -byTime || -byName : byTime || byName;
   });
-  const imageUrl = (image: AssetRecord) => assetMedia(character, combination!.outfit, combination!.expression, image.filename);
+  const showPostprocess = !onPick && !!postprocess?.active && postprocessPreview;
+  const activePostprocessRevision = showPostprocess ? (postprocess?.revision || "1") : "";
+  const rawImageUrl = (image: AssetRecord) => assetMedia(character, combination!.outfit, combination!.expression, image.filename);
+  const imageUrl = (image: AssetRecord) => withAssetPostprocessMedia(rawImageUrl(image), showPostprocess && !image.is_animated, postprocess?.revision);
   useLayoutEffect(() => { scrollArea.current?.scrollTo(0, 0); }, [character, folderSearch, groupFilter, groupView, sortOrder]);
   useLayoutEffect(() => { imageScrollArea.current?.scrollTo(0, 0); }, [character, combination?.outfit, combination?.expression, imageSearch, sortOrder]);
   async function browse(nextCharacter: string, nextCombination: AssetRecord | null = null) {
@@ -291,6 +303,7 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
   return <>
     {controls && <section className="panel asset-generation-toolbar" aria-label="에셋 생성 도구">{controls}{navigation}</section>}
     <Panel className={`asset-gallery-panel${internalScroll ? " asset-gallery-scroll-panel" : ""}${scrollable ? " asset-gallery-bounded" : ""}${className ? ` ${className}` : ""}`} title={onPick ? "에셋 갤러리" : "생성된 에셋"} aside={<div className="asset-gallery-header-actions">
+      {!onPick && postprocess?.active && <button type="button" className="button asset-gallery-postprocess-toggle" aria-pressed={postprocessPreview} title={postprocess.summary || "후처리 실시간 적용 보기"} onClick={() => setPostprocessPreview(value => !value)}><WandSparkles size={14} />후처리 미리보기</button>}
       <select className="asset-gallery-sort" aria-label="에셋 정렬 방식" title="에셋 정렬 방식" value={!character && groupView ? "groups" : sortOrder} disabled={busy} onChange={event => {
         if (event.target.value === "groups") setGroupView(true);
         else { setGroupView(false); setSortOrder(event.target.value as SortOrder); }
@@ -307,8 +320,8 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
     {/* Keep the folder list and its scroll container mounted while viewing images. */}
     <div className="asset-gallery-body" data-keyboard-enabled={keyboardEnabled || undefined} ref={scrollArea} hidden={!!combination} tabIndex={internalScroll ? 0 : undefined} role={internalScroll ? "region" : undefined} aria-label={internalScroll ? "생성된 에셋 목록" : undefined}>
       {feedback}
-      {!character ? <AssetCharacterFolders names={names} tags={groupTags} representatives={characters.data?.representatives || {}} search={folderSearch} filter={groupFilter} busy={busy} readOnly={!!onPick} builtinUnlocked={!!builtinUnlockToken} sortOrder={sortOrder} grouped={groupView} onOpen={name => browse(name)} onDelete={requestDeleteCharacter} onAction={groupAction} error={error} />
-        : <AssetOutfitFolders key={character} character={character} data={gallery.data || {}} search={folderSearch} busy={busy} readOnly={!!onPick} sortOrder={sortOrder} onOpen={item => browse(character, item)} onDelete={requestDeleteCombination} onAction={groupAction} />}
+      {!character ? <AssetCharacterFolders names={names} tags={groupTags} representatives={characters.data?.representatives || {}} search={folderSearch} filter={groupFilter} busy={busy} readOnly={!!onPick} builtinUnlocked={!!builtinUnlockToken} sortOrder={sortOrder} grouped={groupView} postprocessRevision={activePostprocessRevision} onOpen={name => browse(name)} onDelete={requestDeleteCharacter} onAction={groupAction} error={error} />
+        : <AssetOutfitFolders key={character} character={character} data={gallery.data || {}} search={folderSearch} busy={busy} readOnly={!!onPick} sortOrder={sortOrder} postprocessRevision={activePostprocessRevision} onOpen={item => browse(character, item)} onDelete={requestDeleteCombination} onAction={groupAction} />}
       {character && !gallery.data && !gallery.error && <p role="status">에셋을 불러오는 중…</p>}
       {(character ? gallery.data && !gallery.data.gallery?.length : !names.length) && <Empty title="에셋이 없습니다">캐릭터와 프리셋을 선택해 이미지를 생성하세요.</Empty>}
     </div>
@@ -318,7 +331,7 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
             <div className="asset-image-preview"><img loading="lazy" src={imageUrl(image)} alt={image.filename} />{image.is_representative && representativeBadge}</div><span className="asset-image-caption"><span className="asset-image-filename" title={image.filename}>{image.filename}</span>{generationDuration(image) && <span className="asset-image-duration" title={durationHint}><Clock3 size={12} />{generationDuration(image)}</span>}</span></button>
             {!onPick && <div className="asset-image-actions">
               <button type="button" className="button secondary" disabled={busy} aria-pressed={!!image.is_representative} onClick={() => void action("set_representative", image)}><Star size={14} />{image.is_representative ? "대표 해제" : "대표 설정"}</button>
-              <button type="button" className="button secondary" disabled={busy || image.is_animated} title={image.is_animated ? "영상 에셋에는 EDIT 툴을 사용할 수 없습니다" : "EDIT 툴 호출"} onClick={() => { setMessage(""); setEditing({ image, character, outfit: combination!.outfit, expression: combination!.expression, url: imageUrl(image) }); }}><Pencil size={14} />Edit</button>
+              <button type="button" className="button secondary" disabled={busy || image.is_animated} title={image.is_animated ? "영상 에셋에는 EDIT 툴을 사용할 수 없습니다" : "EDIT 툴 호출"} onClick={() => { setMessage(""); setEditing({ image, character, outfit: combination!.outfit, expression: combination!.expression, url: rawImageUrl(image) }); }}><Pencil size={14} />Edit</button>
               <button type="button" className="button danger" disabled={busy} aria-label={`${image.filename} 삭제`} onClick={() => requestDelete(image)}><Trash2 size={14} />삭제</button>
             </div>}
           </div>)}</div>
@@ -336,6 +349,7 @@ export function AssetGallery({ tags, selection, focusTarget = null, onPick, onBr
             year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
           })}</time></> : "생성 시간 정보 없음"}{previewDuration && <span title={durationHint}> · {previewDuration}</span>}</p>
           <div className="asset-actions">
+            {!onPick && postprocess?.active && !preview.is_animated && <button type="button" className="button secondary" aria-pressed={postprocessPreview} title={postprocess.summary || "후처리 실시간 적용 보기"} onClick={() => setPostprocessPreview(value => !value)}><WandSparkles size={14} />{postprocessPreview ? "후처리 적용 중" : "원본 보기 중"}</button>}
             <a className="button secondary" download={preview.filename} href={imageUrl(preview)}><Download size={14} />다운로드</a>
             {!onPick && <button type="button" className="button secondary" disabled={busy} aria-pressed={!!preview.is_representative} onClick={() => void action("set_representative", preview)}><Star size={14} />{preview.is_representative ? "대표 해제" : "대표 설정"}</button>}
             <button type="button" className="button danger" disabled={busy} onClick={() => requestDelete(preview)}><Trash2 size={14} />삭제</button>

@@ -114,6 +114,24 @@ def _dedupe_segments(segments: list[str]) -> list[str]:
     return result
 
 
+def join_moss_caption_parts(parts) -> str:
+    """Join MOSS caption fragments with spaces after sentence-ending punctuation and commas otherwise."""
+    result = ""
+    for raw in parts:
+        if not isinstance(raw, str):
+            continue
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        if not result:
+            result = cleaned
+        elif result.endswith((".", "!", "?")):
+            result = f"{result} {cleaned}"
+        else:
+            result = f"{result}, {cleaned}"
+    return result
+
+
 def build_asset_moss_document(document: dict, preset: dict) -> dict:
     """Convert normalized asset fields and a MOSS model preset into a MOSS document."""
     from modes.moss_prompt_builder import (
@@ -211,7 +229,7 @@ def build_asset_moss_document(document: dict, preset: dict) -> dict:
             ])
             inform = multi["char_inform"][index].strip()
             regional_text = placements[index].strip() if placements is not None else ""
-            caption = ", ".join(part for part in (*region_triggers, inform, regional_text) if part)
+            caption = join_moss_caption_parts((*region_triggers, inform, regional_text))
             items.append({
                 "label": "character",
                 "name": name,
@@ -219,7 +237,7 @@ def build_asset_moss_document(document: dict, preset: dict) -> dict:
                 "bbox": bbox,
             })
         moss = {
-            "summary": {"caption": ", ".join(summary_parts)},
+            "summary": {"caption": join_moss_caption_parts(summary_parts)},
             "items": items,
             "bbox_coord_space": MOSS_BBOX_COORD_SPACE,
             "bbox_format": MOSS_BBOX_FORMAT,
@@ -234,7 +252,7 @@ def build_asset_moss_document(document: dict, preset: dict) -> dict:
             for tag in _split_clean_tags(part)
         }
         missing_common = [tag for tag in common_triggers if tag.casefold() not in existing_keys]
-        summary_caption = ", ".join(part for part in (*missing_common, quality_text, content_text) if part)
+        summary_caption = join_moss_caption_parts((*missing_common, quality_text, content_text))
         moss = {"summary": {"caption": summary_caption}}
 
     sampling = settings.get("workflow.sampling") or {}
@@ -258,7 +276,22 @@ def build_asset_moss_document(document: dict, preset: dict) -> dict:
         sequential_offload=settings.get("workflow.sequential_offload") is True,
         hiresfix=hiresfix,
     )
-    return MossPromptBuilder.build(moss, controller)
+    moss_doc = MossPromptBuilder.build(moss, controller)
+    bg_i2i = fields.get("BG_I2I")
+    if isinstance(bg_i2i, dict):
+        i2i_entry = {
+            "activate": bool(bg_i2i.get("enabled")),
+            "denoise": bg_i2i.get("denoise", 0.6),
+        }
+        asset_id = bg_i2i.get("asset")
+        if i2i_entry["activate"] and isinstance(asset_id, str) and asset_id:
+            i2i_entry["asset"] = asset_id
+            if isinstance(bg_i2i.get("name"), str) and bg_i2i["name"]:
+                i2i_entry["name"] = bg_i2i["name"]
+            if isinstance(document.get("assets"), dict) and asset_id in document["assets"]:
+                moss_doc.setdefault("assets", {})[asset_id] = copy.deepcopy(document["assets"][asset_id])
+        moss_doc["workflow"]["i2i"] = i2i_entry
+    return moss_doc
 
 
 def prepare_asset_mask_document(document: dict) -> dict:
@@ -483,3 +516,47 @@ def merge_tagged_character_prompt(document: dict, tags: list[str], background_ta
         multi["char_composition_list"] = [""]
 
     return merged
+
+
+def prepare_bg_i2i(document: dict, job: dict) -> dict:
+    """Validate and embed optional background place i2i base image into document assets."""
+    from PIL import Image, ImageOps
+
+    enabled = bool(job.get("i2i_enabled", False))
+    raw_denoise = job.get("i2i_denoise", 0.6)
+    if isinstance(raw_denoise, bool) or not isinstance(raw_denoise, (int, float)) or not math.isfinite(float(raw_denoise)):
+        raise ValueError("i2i 변화 강도(denoise) 값을 확인하세요.")
+    denoise = round(float(raw_denoise), 4)
+    if not 0.05 <= denoise <= 1.0:
+        raise ValueError("i2i 변화 강도(denoise)는 0.05~1.0 사이여야 합니다.")
+
+    if not enabled:
+        document["fields"]["BG_I2I"] = {"enabled": False, "denoise": denoise}
+        return document
+
+    images = job.get("i2i_images")
+    if not isinstance(images, list) or not images or not isinstance(images[0], dict):
+        raise ValueError("i2i가 켜져 있지만 기준 이미지가 없습니다. 기준 이미지를 등록하거나 i2i를 꺼 주세요.")
+    if len(images) > 1:
+        raise ValueError("i2i 기준 이미지는 한 장만 선택하세요.")
+
+    path = Path(str(images[0].get("local_path") or ""))
+    if not path.is_file():
+        raise ValueError("i2i 기준 이미지 파일을 찾을 수 없습니다. 이미지를 다시 선택하세요.")
+
+    with Image.open(path) as source:
+        rgba = ImageOps.exif_transpose(source).convert("RGBA")
+        image = Image.new("RGBA", rgba.size, "white")
+        image.alpha_composite(rgba)
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+
+    orig_name = str(images[0].get("orig_filename") or images[0].get("name") or path.name).strip() or (path.stem + ".png")
+    digest = _embed_asset(document, buffer.getvalue(), path.stem + ".png")
+    document["fields"]["BG_I2I"] = {
+        "enabled": True,
+        "denoise": denoise,
+        "asset": digest,
+        "name": orig_name,
+    }
+    return document

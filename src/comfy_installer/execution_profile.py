@@ -6,12 +6,26 @@ import ast
 import json
 import traceback
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from comfy_allocation import COMFY_TASK_WORKFLOW_BINDINGS
 
 
 CPU_LOCAL_TASK_KEYS = frozenset({"tag_analysis", "face_extract", "utility_debug"})
+DEFAULT_CUBLAS_WORKSPACE_CONFIG = ":4096:8"
+
+
+def comfy_launch_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return a ComfyUI subprocess environment with stable CUDA defaults.
+
+    Presetting CUBLAS_WORKSPACE_CONFIG before CUDA/cuBLAS initialization avoids
+    mid-process mutation by ultralytics.YOLO(), which corrupts INT8 ConvRot text
+    encoders on GPU (Comfy-Org/comfy-kitchen#356).
+    """
+    prepared = dict(env)
+    if not str(prepared.get("CUBLAS_WORKSPACE_CONFIG", "")).strip():
+        prepared["CUBLAS_WORKSPACE_CONFIG"] = DEFAULT_CUBLAS_WORKSPACE_CONFIG
+    return prepared
 
 
 def cpu_workflow_bindings() -> frozenset[str]:

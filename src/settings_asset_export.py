@@ -56,10 +56,17 @@ def public_asset_export_plans(mode, plans: list[tuple[str, dict]]) -> dict:
     }
 
 
-def export_asset_zip(mode, plans: list[tuple[str, dict]]) -> bytes:
+def export_asset_zip(
+    mode,
+    plans: list[tuple[str, dict]],
+    *,
+    postprocess_settings: dict | None = None,
+) -> bytes:
     if len(plans) == 1:
         character, plan = plans[0]
-        result = mode.export_character_zip(character, export_plan=plan)
+        result = mode.export_character_zip(
+            character, export_plan=plan, postprocess_settings=postprocess_settings
+        )
         if result is None:
             raise ValueError(f"{character}: 내보낼 대표 이미지가 없습니다.")
         with result:
@@ -67,7 +74,9 @@ def export_asset_zip(mode, plans: list[tuple[str, dict]]) -> bytes:
     result = io.BytesIO()
     with zipfile.ZipFile(result, "w", zipfile.ZIP_DEFLATED) as archive:
         for character, plan in plans:
-            character_zip = mode.export_character_zip(character, export_plan=plan)
+            character_zip = mode.export_character_zip(
+                character, export_plan=plan, postprocess_settings=postprocess_settings
+            )
             if character_zip is None:
                 raise ValueError(f"{character}: 내보낼 대표 이미지가 없습니다.")
             with character_zip, zipfile.ZipFile(character_zip) as source:
@@ -87,8 +96,18 @@ def register_asset_export_runtime(server) -> None:
             public = public_asset_export_plans(server.asset_mode, plans)
             if not public["success"] or request.path.endswith("/validate"):
                 return web.json_response(public, status=200 if public["success"] else 409)
+            postprocess_settings = None
+            if isinstance(body, dict) and bool(body.get("apply_postprocess", False)):
+                store = getattr(server, "asset_postprocess_store", None)
+                if store is not None:
+                    postprocess_settings = await asyncio.to_thread(store.read)
             # Every selected character must validate before creating any ZIP data.
-            content = await asyncio.to_thread(export_asset_zip, server.asset_mode, plans)
+            content = await asyncio.to_thread(
+                export_asset_zip,
+                server.asset_mode,
+                plans,
+                postprocess_settings=postprocess_settings,
+            )
             filename = f"{plans[0][0]}.zip" if len(plans) == 1 else "에셋 익스포트.zip"
             return web.Response(body=content, content_type="application/zip", headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",

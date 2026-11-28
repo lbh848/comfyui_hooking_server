@@ -1,11 +1,11 @@
 import { useId, useState } from "react";
-import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ExternalLink, GripVertical, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, SettingsTabs, Toggle } from "./components";
 import { ResourceThumbnail } from "./ResourceThumbnail";
 import { resourceDisplayName, type Resources } from "./useResources";
 import type { IllustrationData } from "./illustration";
 import { httpUrl } from "./urls";
-import { defaultLoraTrigger as defaultTrigger, incompatibleLora, internalLoraFilterLabels, isInternalLora, loraPath, mergeLoraLibrary, searchLoras, selectedLora, selectedLoraPath, type InternalLoraFilter, type PickerLora } from "./loraPicker";
+import { defaultLoraTrigger as defaultTrigger, groupBotLoras, incompatibleLora, internalLoraFilterLabels, isInternalLora, loraBotName, loraPath, mergeLoraLibrary, searchLoras, selectedLora, selectedLoraPath, type InternalLoraFilter, type PickerLora } from "./loraPicker";
 import { useInternalLoraPicker } from "./useInternalLoraPicker";
 import { mediaUrl } from "./internalLora";
 
@@ -21,6 +21,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
   const [pickerOpen, setPickerOpen] = useState(false);
   const [source, setSource] = useState("external");
   const [internalSource, setInternalSource] = useState<InternalLoraFilter>("style");
+  const [botGroupExpanded, setBotGroupExpanded] = useState<Record<string, boolean>>({});
   const tabsId = useId();
   const internalTabsId = useId();
   const internal = useInternalLoraPicker(pickerOpen && source === "internal", value.some(item => isInternalLora({ path: selectedLoraPath(item) })));
@@ -29,12 +30,36 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const library = mergeLoraLibrary(inventory.loras, internal.loras);
   const results = searchLoras(library, source, query, internalSource);
+  const groupBots = source === "internal" && (internalSource === "bot" || internalSource === "all");
+  const otherResults = groupBots ? results.filter(item => !loraBotName(item)) : results;
+  const botGroups = groupBots ? groupBotLoras(results.filter(item => !!loraBotName(item))) : [];
+  const hasQuery = query.trim().length > 0;
+  const defaultBotGroupOpen = hasQuery || botGroups.length === 1;
+  const isBotGroupExpanded = (botName: string) => botGroupExpanded[botName] ?? defaultBotGroupOpen;
+  const allBotGroupsExpanded = botGroups.length > 0 && botGroups.every(group => isBotGroupExpanded(group.botName));
   const loading = source === "internal" ? internal.loading || inventory.loading : inventory.loading;
   const error = source === "internal" ? [internal.error, inventory.error].filter(Boolean).join("\n") : inventory.error;
   const added = (item: PickerLora) => value.some(current => selectedLoraPath(current) === loraPath(item.path));
   const incompatibleBase = (item: PickerLora) => character ? false : incompatibleLora(item, profile);
   const panelId = source === "internal" ? `${internalTabsId}-panel-${internalSource}` : `${tabsId}-panel-${source}`;
   const panelLabelledBy = source === "internal" ? `${internalTabsId}-tab-${internalSource}` : `${tabsId}-tab-${source}`;
+  function toggleBotGroup(botName: string) {
+    setBotGroupExpanded(current => ({ ...current, [botName]: !(current[botName] ?? defaultBotGroupOpen) }));
+  }
+  function toggleAllBotGroups() {
+    const next = !allBotGroupsExpanded;
+    setBotGroupExpanded(Object.fromEntries(botGroups.map(group => [group.botName, next])));
+  }
+  function renderResultItem(item: PickerLora) {
+    const itemName = resourceDisplayName(item);
+    const isAdded = added(item);
+    const incompatible = incompatibleBase(item);
+    return <li key={item.id}>
+      <div className="illust-lora-thumbnail"><ResourceThumbnail name={itemName} thumbnail={item.thumbnail} /></div>
+      <div className="illust-lora-summary"><strong>{itemName} <LoraPageLink name={itemName} url={item.sourceUrl} /></strong>{item.linked && <div><Badge tone="lavender">LINKED</Badge></div>}<small>{item.family}{incompatible ? ` · ${profile === "ilxl" ? "ANIMA" : "ILXL"} 지원 그림 모델에서 사용` : ""}</small>{isInternalLora(item) && <small>{item.detail || loraPath(item.path)}</small>}<span title={defaultTrigger(item)}>{defaultTrigger(item) || "기본 트리거 없음"}</span></div>
+      <button type="button" className="button" disabled={isAdded || incompatible} aria-label={`${itemName} 선택`} onClick={() => add(item)}><Plus size={14} />{isAdded ? "추가됨" : "선택"}</button>
+    </li>;
+  }
   function refresh() {
     void inventory.refresh();
     if (source === "internal") void internal.refresh();
@@ -62,7 +87,7 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
     <p className="illust-success" role="status">{message}</p>
     <div className="illust-lora-entry-heading">
       <h3 className="illust-lora-heading">적용할 LoRA · {value.length}개</h3>
-      <button type="button" className="button" onClick={() => { setQuery(""); setPickerOpen(true); void inventory.refresh(); }}><Plus size={14} />LoRA 추가</button>
+      <button type="button" className="button" onClick={() => { setQuery(""); setBotGroupExpanded({}); setPickerOpen(true); void inventory.refresh(); }}><Plus size={14} />LoRA 추가</button>
     </div>
     {!value.length && <p className="field-help">LoRA 추가 버튼으로 사용할 LoRA를 선택하세요.</p>}
     {value.length > 1 && <p className="field-help">손잡이를 끌거나 위·아래 버튼으로 순서를 변경하세요.</p>}
@@ -115,27 +140,41 @@ export function IllustLoras({ profile, value, inventory, onChange, character = f
     })}</ol>
     {pickerOpen && <Modal title="LoRA 추가" className="illust-lora-picker-modal" backgroundable={false} onClose={() => setPickerOpen(false)}>
       <div className="illust-form">
-        <SettingsTabs id={tabsId} label="LoRA 검색 위치" values={{ external: "외부 LoRA", internal: "내부 LoRA" }} value={source} onChange={setSource} />
+        <SettingsTabs id={tabsId} label="LoRA 검색 위치" values={{ external: "외부 LoRA", internal: "내부 LoRA" }} value={source} onChange={next => { setSource(next); setBotGroupExpanded({}); }} />
         <div className="illust-form" role="tabpanel" id={panelId} aria-labelledby={panelLabelledBy}>
-        {source === "internal" && <SettingsTabs id={internalTabsId} label="내부 LoRA 종류" values={internalLoraFilterLabels} value={internalSource} onChange={value => setInternalSource(value as InternalLoraFilter)} />}
+        {source === "internal" && <SettingsTabs id={internalTabsId} label="내부 LoRA 종류" values={internalLoraFilterLabels} value={internalSource} onChange={value => { setInternalSource(value as InternalLoraFilter); setBotGroupExpanded({}); }} />}
         <p className="field-help">{source === "internal" ? `프로그램에서 학습한 ${internalSource === "all" ? "에셋·봇·그림체" : internalLoraFilterLabels[internalSource]} LoRA를 검색합니다.` : "외부 LoRA 관리에 설치하거나 업로드한 LoRA를 검색합니다."}</p>
         <div className="illust-lora-search">
-          <label className="field">LoRA 검색<input type="search" value={query} placeholder={source === "internal" ? "이름, 프로젝트, 캐릭터, 트리거로 검색" : "이름, 별칭, 트리거로 검색"} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") event.preventDefault(); }} /></label>
+          <label className="field">LoRA 검색<input type="search" value={query} placeholder={source === "internal" ? "이름, 봇, 프로젝트, 캐릭터, 트리거로 검색" : "이름, 별칭, 트리거로 검색"} onChange={event => { setQuery(event.target.value); setBotGroupExpanded({}); }} onKeyDown={event => { if (event.key === "Enter") event.preventDefault(); }} /></label>
           <button type="button" className="button" disabled={loading} onClick={refresh}><RefreshCw size={14} />LoRA 목록 새로고침</button>
         </div>
         {error && <p className="field-error" role="alert">{error}</p>}
         {loading ? <p role="status">LoRA 목록을 불러오는 중입니다…</p> : <>
-          <p className="field-help">검색 결과 {results.length}개 · 선택하면 기본 트리거가 채워지며 추가 후 수정할 수 있습니다.</p>
-          {results.length ? <ul className="illust-lora-results" aria-label="LoRA 검색 결과">{results.map(item => {
-            const name = resourceDisplayName(item);
-            const isAdded = added(item);
-            const incompatible = incompatibleBase(item);
-            return <li key={item.id}>
-              <div className="illust-lora-thumbnail"><ResourceThumbnail name={name} thumbnail={item.thumbnail} /></div>
-              <div className="illust-lora-summary"><strong>{name} <LoraPageLink name={name} url={item.sourceUrl} /></strong>{item.linked && <div><Badge tone="lavender">LINKED</Badge></div>}<small>{item.family}{incompatible ? ` · ${profile === "ilxl" ? "ANIMA" : "ILXL"} 지원 그림 모델에서 사용` : ""}</small>{isInternalLora(item) && <small>{item.detail || loraPath(item.path)}</small>}<span title={defaultTrigger(item)}>{defaultTrigger(item) || "기본 트리거 없음"}</span></div>
-              <button type="button" className="button" disabled={isAdded || incompatible} aria-label={`${name} 선택`} onClick={() => add(item)}><Plus size={14} />{isAdded ? "추가됨" : "선택"}</button>
-            </li>;
-          })}</ul> : !error && <Empty title="검색된 LoRA가 없습니다">{query.trim() ? "검색어를 바꿔보세요." : source === "internal" ? internalSource === "all" ? "로라 작업 공간에서 학습을 완료한 뒤 목록을 새로고침하세요." : `${internalLoraFilterLabels[internalSource]} LoRA가 없습니다. 다른 탭을 확인하거나 로라 작업 공간에서 학습을 완료한 뒤 새로고침하세요.` : "설정의 외부 LoRA 관리에 LoRA를 등록한 뒤 목록을 새로고침하세요."}</Empty>}
+          <div className="illust-lora-results-toolbar">
+            <p className="field-help">검색 결과 {results.length}개{botGroups.length > 0 ? ` · 봇 ${botGroups.length}개` : ""} · 선택하면 기본 트리거가 채워지며 추가 후 수정할 수 있습니다.</p>
+            {botGroups.length > 1 && <button type="button" className="button small" onClick={toggleAllBotGroups}>{allBotGroupsExpanded ? "모두 접기" : "모두 펼치기"}</button>}
+          </div>
+          {results.length ? botGroups.length > 0 ? <div className="illust-lora-grouped-results" aria-label="LoRA 검색 결과">
+            {otherResults.length > 0 && <ul className="illust-lora-results" aria-label="기타 내부 LoRA 목록">{otherResults.map(renderResultItem)}</ul>}
+            {botGroups.map((group, groupIndex) => {
+              const expanded = isBotGroupExpanded(group.botName);
+              const groupListId = `${internalTabsId}-bot-group-${groupIndex}`;
+              return <section className="illust-lora-bot-group" key={group.botName} aria-label={`${group.botName} 봇 LoRA`}>
+                <h4 className="illust-lora-bot-group-title">
+                  <button type="button" className="illust-lora-bot-toggle" aria-expanded={expanded} aria-controls={expanded ? groupListId : undefined} onClick={() => toggleBotGroup(group.botName)}>
+                    <ChevronDown size={16} className="illust-lora-bot-chevron" aria-hidden="true" />
+                    {internalSource === "all" && <Badge tone="lavender">봇</Badge>}
+                    <span className="illust-lora-bot-heading">
+                      <strong>{group.botName}</strong>
+                      {group.projects.length > 0 && <small>{group.projects.join(" · ")}</small>}
+                    </span>
+                    <Badge>{group.items.length}개</Badge>
+                  </button>
+                </h4>
+                {expanded && <ul id={groupListId} className="illust-lora-results" aria-label={`${group.botName} LoRA 목록`}>{group.items.map(renderResultItem)}</ul>}
+              </section>;
+            })}
+          </div> : <ul className="illust-lora-results" aria-label="LoRA 검색 결과">{results.map(renderResultItem)}</ul> : !error && <Empty title="검색된 LoRA가 없습니다">{query.trim() ? "검색어를 바꿔보세요." : source === "internal" ? internalSource === "all" ? "로라 작업 공간에서 학습을 완료한 뒤 목록을 새로고침하세요." : `${internalLoraFilterLabels[internalSource]} LoRA가 없습니다. 다른 탭을 확인하거나 로라 작업 공간에서 학습을 완료한 뒤 새로고침하세요.` : "설정의 외부 LoRA 관리에 LoRA를 등록한 뒤 목록을 새로고침하세요."}</Empty>}
         </>}
         </div>
         <div className="modal-actions"><button type="button" className="button" onClick={() => setPickerOpen(false)}>취소</button></div>

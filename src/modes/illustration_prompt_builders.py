@@ -6,7 +6,11 @@ from copy import deepcopy
 from manga_page_sizes import MANGA_PAGE_SIZES, parse_manga_page_sizes
 from manga_page_vocabulary import vocabulary as manga_page_vocabulary
 from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_sub, variable
-from modes.moss_prompt_contract import moss_instruction_fields
+from modes.moss_prompt_contract import (
+    is_moss_natural_detail,
+    moss_instruction_fields,
+    moss_manga_explicit_fields,
+)
 
 # DETAIL-MANGA draws a whole manga page as one MOSS multi_panel image. The
 # model first writes a layered page plan (page enums, a panel inventory, and
@@ -14,6 +18,40 @@ from modes.moss_prompt_contract import moss_instruction_fields
 # resolution and composition are independent choices. MANGA_PAGE_SIZES is the
 # full default list; the bot's manga_page_sizes setting narrows the offered
 # options.
+
+
+SECONDARY_BOT_GENRE = "secondary_bot"
+SECONDARY_BOT_CROSSOVER_GENRE = "secondary_bot_crossover"
+_CROSSOVER_WORK_SPLIT_RE = re.compile(r"[,\n，、]+")
+
+
+def is_secondary_bot_genre(genre) -> bool:
+    return str(genre or "").strip() in (SECONDARY_BOT_GENRE, SECONDARY_BOT_CROSSOVER_GENRE)
+
+
+def is_crossover_secondary_genre(genre) -> bool:
+    return str(genre or "").strip() == SECONDARY_BOT_CROSSOVER_GENRE
+
+
+def parse_crossover_works(value) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return list(dict.fromkeys(part.strip() for part in _CROSSOVER_WORK_SPLIT_RE.split(text) if part.strip()))
+
+
+def genre_role_kwargs(prompts, toggles) -> dict:
+    prompts = prompts or {}
+    toggles = toggles or {}
+    return {
+        "genre": toggles.get("genre", ""),
+        "genre_prompt": prompts.get("genre", ""),
+        "genre_work_title": toggles.get("genre_work_title", ""),
+        "genre_secondary_prompt": prompts.get("genre_secondary", ""),
+        "genre_crossover_background": toggles.get("genre_crossover_background", ""),
+        "genre_crossover_works": toggles.get("genre_crossover_works", ""),
+        "genre_secondary_crossover_prompt": prompts.get("genre_secondary_crossover", ""),
+    }
 
 
 def profile_context_for_prompt(value):
@@ -98,10 +136,7 @@ def time_place_messages(prompts, names, prior_state, past_text, segmented,
     anchors = list(segment_slots or {f"C{i + 1:03d}": slot for i, slot in enumerate(slots or [0])})
     return [
         {"role": "system", "content": role_context(
-            prompts["time_place"], "", genre=(toggles or {}).get("genre", ""),
-            genre_prompt=prompts.get("genre", ""),
-            genre_work_title=(toggles or {}).get("genre_work_title", ""),
-            genre_secondary_prompt=prompts.get("genre_secondary", ""))},
+            prompts["time_place"], "", **genre_role_kwargs(prompts, toggles))},
         {"role": "user", "content": "# CURRENT CANONICAL CHARACTERS\n"
          + variable(json.dumps(names, ensure_ascii=False), "현재 대화의 등록 인물")
          + "\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY NARRATIVE TRANSITIONS)\n"
@@ -579,9 +614,10 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
     a cross-panel actor instead of being clipped into a panel.
     """
     manga = (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
+    natural = is_moss_natural_detail(toggles)
     composition_hints = manga and bool((toggles or {}).get("manga_composition_hint_enabled"))
     if not manga:
-        detail_system = moss_instruction_fields(detail_system)
+        detail_system = moss_instruction_fields(detail_system, natural=natural)
     if manga:
         from modes.illustration_context_pipeline import render_call2_prompt
         detail_system = prompt_sub(
@@ -605,7 +641,7 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
             r"(?ms)^OUTPUT FORMAT\s*\n.*?(?=^[A-Z][A-Z &/_-]*[ \t]*$|\Z)", "",
             keyvis_messages[0]["content"])
         if not manga:
-            keyvis_system = moss_instruction_fields(keyvis_system)
+            keyvis_system = moss_instruction_fields(keyvis_system, natural=natural)
         # DETAIL and KEYVIS share some long policy paragraphs. Keep one copy:
         # drop keyvis paragraphs already present verbatim in the scene system.
         keyvis_system = _deduplicate_system_paragraphs(detail_system, keyvis_system)
@@ -634,7 +670,10 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                 "identity and current wardrobe from its selected Profile and state in its " + reference_caption + ", "
                 "including appearance, face_tags, eye_tags, eye_prompt and absolute_tags. Reference pictures "
                 "supplement those settings; they never authorize a shorter appearance summary, omission of "
-                "distinctive tags or a different outfit. Do not write the character's identity name "
+                + ("distinctive visible traits or a different outfit. Express all retained profile and wardrobe "
+                   "traits in fluent natural-language English sentences without Danbooru tags or emphasis weights. "
+                   if natural else "distinctive tags or a different outfit. ")
+                + "Do not write the character's identity name "
                 "in the " + reference_caption + ". Do not add Picture N markers yourself; the server adds them at "
                 "encode time. Characters without a reference keep the ordinary instruction rules."))
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
@@ -787,8 +826,13 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  "one viewpoint and scale across spansPanels, with a tight body bbox. "
                  "Use name for each actor and cross_panel_actors entry, copying the character's supplied "
                  "name verbatim; visibleNames lists those same character names. "
-                 "Keep character tags in actors; apply the system's dialogue length rule to speech. "
-                 "Write all captions and instructions in English, even when the source is Korean. "
+                 + ("Unpack all supplied profile and state appearance/wardrobe tags into fluent "
+                    "natural-language English sentences across page, panel, actor, cross_panel_actors "
+                    "and object descriptions—never copy raw Danbooru/booru tags, underscores, rating labels "
+                    "or emphasis weights; apply the system's dialogue length rule to speech. "
+                    if natural else
+                    "Keep character tags in actors; apply the system's dialogue length rule to speech. ")
+                 + "Write all captions and instructions in English, even when the source is Korean. "
                  "Only dialogue[].text uses the dialogue output language: "
                  + variable((toggles or {}).get("speak_language") or "한국어", "만화 대사 언어") + ". "
                  + ("Slot -1 is the whole-section KEYVIS page in that same scenes array. " if keyvis_messages else "")
@@ -802,6 +846,10 @@ def detail_moss_messages(detail_system, batch, *, toggles=None, canvas_sizes=Non
                  "Include every assigned registered character and each independently depicted source-supported NPC "
                  "as a character item, and every distinct visible object "
                  "whose position matters as an object item. "
+                 + ("Unpack all supplied profile and state appearance/wardrobe tags into fluent "
+                    "natural-language English sentences across summary.caption and every character or object "
+                    "item's caption—never copy raw Danbooru/booru tags, underscores, rating labels "
+                    "or emphasis weights. " if natural else "")
                  + ("Also include the single keyvis object described above. " if keyvis_messages else "")
                  + "No prose outside the JSON.")
     if manga and (toggles or {}).get("nsfw"):
@@ -829,13 +877,15 @@ def lb_extra_system_prompt_block(system_prompt):
 
 
 def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt="",
-                 genre_work_title="", genre_secondary_prompt=""):
+                 genre_work_title="", genre_secondary_prompt="",
+                 genre_crossover_background="", genre_crossover_works="",
+                 genre_secondary_crossover_prompt=""):
     genre = str(genre or "").strip()
     genre_context = (
         "# GENRE AND WORLD SETTING\nDepiction genre: " + variable(genre, "묘사 장르")
         + "\n\n" + genre_prompt
     ) if genre else ""
-    if genre == "secondary_bot":
+    if genre == SECONDARY_BOT_GENRE:
         title = str(genre_work_title or "").strip()
         if not title:
             raise ValueError("2차봇의 작품명을 입력하세요.")
@@ -843,19 +893,35 @@ def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""
             "# GENRE AND WORLD SETTING\nSetting mode: existing fictional work\nSource work: "
             + variable(title, "2차봇 작품명"), genre_prompt, genre_secondary_prompt,
         ) if part))
+    elif genre == SECONDARY_BOT_CROSSOVER_GENRE:
+        background = str(genre_crossover_background or "").strip()
+        works = str(genre_crossover_works or "").strip()
+        header = "# GENRE AND WORLD SETTING\nSetting mode: crossover of existing fictional works"
+        if background:
+            header += "\nBaseline background genre: " + variable(background, "크로스오버 배경 장르")
+        if works:
+            header += (
+                "\nMain featured works (reference hint only; do not insert as background tags): "
+                + variable(works, "크로스오버 주요 등장 작품")
+            )
+        genre_context = prompt_join("\n\n", (part for part in (
+            header, genre_prompt, genre_secondary_crossover_prompt,
+        ) if part))
     return prompt_join("\n\n", (part for part in (protected,
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
         genre_context) if part))
 
 
 def detail_system_prompt(protected, lb_extra_system_prompt, detail_prompt, *,
-                         explicit_policy="", moss_manga=False, genre="",
-                         genre_prompt="", genre_work_title="",
-                         genre_secondary_prompt=""):
+                         explicit_policy="", moss_manga=False, natural=False,
+                         genre="", genre_prompt="", genre_work_title="",
+                         genre_secondary_prompt="", genre_crossover_background="",
+                         genre_crossover_works="", genre_secondary_crossover_prompt=""):
     """Build the shared DETAIL system prompt for both runtime and preview.
 
     DETAIL-MANGA excludes the active bot image policy because that policy targets
-    single-image V3/regional contracts that conflict with multi-panel MOSS pages.
+    single-image V3/regional contracts that conflict with multi-panel MOSS pages,
+    while projecting explicit_policy onto the layered panel contract when NSFW is on.
     """
     context = role_context(
         protected,
@@ -864,8 +930,16 @@ def detail_system_prompt(protected, lb_extra_system_prompt, detail_prompt, *,
         genre_prompt=genre_prompt,
         genre_work_title=genre_work_title,
         genre_secondary_prompt=genre_secondary_prompt,
+        genre_crossover_background=genre_crossover_background,
+        genre_crossover_works=genre_crossover_works,
+        genre_secondary_crossover_prompt=genre_secondary_crossover_prompt,
     )
-    parts = (context, detail_prompt) if moss_manga else (context, explicit_policy, detail_prompt)
+    projected_explicit = (
+        moss_manga_explicit_fields(explicit_policy, natural=natural)
+        if moss_manga and explicit_policy
+        else explicit_policy
+    )
+    parts = (context, projected_explicit, detail_prompt)
     return prompt_join("\n\n", (part for part in parts if part))
 
 
@@ -1170,18 +1244,23 @@ def npc_card_instructions(prompts, toggles):
     # touched. Older installs without the file fall back to the shared prompt.
     instructions = (prompts.get("npc_generation_moss") if moss else "") or prompts.get("npc_generation", "")
     return prompt_join("\n\n", filter(None, [
-        instructions, role_context("", "", genre=toggles.get("genre", ""), genre_prompt=prompts.get("genre", ""),
-            genre_work_title=toggles.get("genre_work_title", ""), genre_secondary_prompt=prompts.get("genre_secondary", "")),
+        instructions, role_context("", "", **genre_role_kwargs(prompts, toggles)),
     ]))
 
 
 def npc_generation_messages(prompts, candidates, past_text, segmented, toggles, *, name_tag_candidates=None):
     from modes.illustration_npc import NPC_GENDER_TAGS
-    secondary_bot = toggles.get("genre") == "secondary_bot"
+    genre = str((toggles or {}).get("genre") or "").strip()
+    secondary_bot = is_secondary_bot_genre(genre)
+    secondary_npc_prompt = (
+        prompts.get("npc_generation_secondary_crossover")
+        if genre == SECONDARY_BOT_CROSSOVER_GENRE
+        else prompts.get("npc_generation_secondary") if genre == SECONDARY_BOT_GENRE else ""
+    )
     return [
         {"role": "system", "content": prompt_join("\n\n", filter(None, [
             npc_card_instructions(prompts, toggles),
-            prompts.get("npc_generation_secondary") if secondary_bot else "",
+            secondary_npc_prompt,
         ]))},
         {"role": "user", "content": prompt_join("\n\n", filter(None, [
             "# NPC CANDIDATES\n" + variable(json.dumps(candidates, ensure_ascii=False), "미등록 등장인물"),
@@ -1458,7 +1537,7 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
 def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profiles, tracking, past_text, slotted,
                             *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None,
                             mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note="", toggles=None,
-                            genre_prompt="", genre_secondary_prompt="", moss=False):
+                            genre_prompt="", genre_secondary_prompt="", genre_secondary_crossover_prompt="", moss=False):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     manga = moss and (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
     combined_in_detail = bool(moss or (toggles or {}).get("keyvis_in_detail_enabled"))
@@ -1468,7 +1547,10 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
         keyvis_system = role_context(
             keyvis_system, "", genre=(toggles or {}).get("genre", ""), genre_prompt=genre_prompt,
             genre_work_title=(toggles or {}).get("genre_work_title", ""),
-            genre_secondary_prompt=genre_secondary_prompt)
+            genre_secondary_prompt=genre_secondary_prompt,
+            genre_crossover_background=(toggles or {}).get("genre_crossover_background", ""),
+            genre_crossover_works=(toggles or {}).get("genre_crossover_works", ""),
+            genre_secondary_crossover_prompt=genre_secondary_crossover_prompt)
     if not combined_in_detail and (mask_inline or (toggles or {}).get("multi_char_mask_enabled", False)):
         generation_system = prompt_join("\n\n", (part for part in (keyvis_system,
             lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "") if part))
@@ -1484,10 +1566,10 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profil
         + ("\n\n# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT\n"
         + tracked_state_timeline(tracking, anchors, "복장·머리 상태 타임라인")
            if tracking is not None else "")
-        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When an outfit/hair checkpoint timeline is supplied, its carried-forward values own the current state: "
+        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there and owns fixed identity, including inherent hair color, eye color and skin tone (do not alter or tint them from atmospheric, poetic, or lighting-sheen prose; override hair color only for an explicit dyeing, bleaching, wig, or literal color-transformation event). When an outfit/hair checkpoint timeline is supplied, its carried-forward values own the current wardrobe and hairstyle/arrangement: "
         + ("choose each panel's supported instant compatible with its own C anchor state, " if manga else
            "choose one supported instant compatible with its own C anchor state, ")
-        + "preserving established items, colors and arrangement. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
+        + "preserving established items, garment colors and hair arrangement while keeping the Profile's inherent hair color. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
     if prior_status:
         keyvis_messages.append({"role": "user", "content": "# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
             + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장")})

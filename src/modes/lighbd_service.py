@@ -287,33 +287,65 @@ def _is_human_review_case_record(record: object) -> bool:
     return isinstance(case_ids, list) and any(str(value or "").strip() for value in case_ids)
 
 
-def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
+_LIGHBD_HISTORY_COMPACT_BATCH = 25
+_LIGHBD_HISTORY_CACHE: dict[str, dict] = {}
+_LIGHBD_HISTORY_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _classify_lighbd_history_record(record: dict) -> str:
+    if _is_human_review_case_record(record):
+        return "protected"
+    if _is_multi_char_history_record(record):
+        return "multi_char"
+    return "general"
+
+
+def _classify_lighbd_history_line(line: str, index: int = 0) -> str:
+    try:
+        record = json.loads(line)
+    except Exception as e:
+        print(
+            f"[LIGHBD] history 보존 분류 중 JSON 파싱 실패, 일반 레코드로 유지: "
+            f"index={index}, error={e}, line={str(line)[:200]!r}"
+        )
+        traceback.print_exc()
+        return "general"
+    return _classify_lighbd_history_record(record)
+
+
+def _trim_lighbd_history_with_kinds(lines: list[str], kinds: list[str]) -> tuple[list[str], list[str]]:
     """Keep reviewed cases permanently, plus the ordinary rolling budgets."""
     general_indices = []
     multi_char_indices = []
     protected_indices = []
-    for index, line in enumerate(lines):
-        try:
-            record = json.loads(line)
-        except Exception as e:
-            print(
-                f"[LIGHBD] history 보존 분류 중 JSON 파싱 실패, 일반 레코드로 유지: "
-                f"index={index}, error={e}, line={str(line)[:200]!r}"
-            )
-            traceback.print_exc()
-            general_indices.append(index)
-            continue
-        if _is_human_review_case_record(record):
+    for index, kind in enumerate(kinds):
+        if kind == "protected":
             protected_indices.append(index)
-            continue
-        if _is_multi_char_history_record(record):
+        elif kind == "multi_char":
             multi_char_indices.append(index)
         else:
             general_indices.append(index)
     keep = set(protected_indices)
     keep.update(general_indices[-LIGHBD_GENERAL_HISTORY_MAX:])
     keep.update(multi_char_indices[-LIGHBD_MULTI_CHAR_HISTORY_MAX:])
-    return [line for index, line in enumerate(lines) if index in keep]
+    trimmed_lines = [line for index, line in enumerate(lines) if index in keep]
+    trimmed_kinds = [kind for index, kind in enumerate(kinds) if index in keep]
+    return trimmed_lines, trimmed_kinds
+
+
+def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
+    """Keep reviewed cases permanently, plus the ordinary rolling budgets."""
+    kinds = [_classify_lighbd_history_line(line, index) for index, line in enumerate(lines)]
+    trimmed_lines, _ = _trim_lighbd_history_with_kinds(lines, kinds)
+    return trimmed_lines
+
+
+def _history_file_stamp(history_path: str) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(history_path)
+        return (stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        return None
 
 
 def _write_lighbd_history_locked(record: dict, history_path=None) -> None:
@@ -321,24 +353,27 @@ def _write_lighbd_history_locked(record: dict, history_path=None) -> None:
     with _LIGHBD_HISTORY_LOCK:
         try:
             os.makedirs(os.path.dirname(history_path), exist_ok=True)
-            history_backup_dir = os.path.join(
-                os.path.dirname(history_path),
-                "backups",
-            )
-            os.makedirs(history_backup_dir, exist_ok=True)
-            backup_path = os.path.join(history_backup_dir, os.path.basename(history_path) + ".bak")
 
-            existing_lines = []
-            if os.path.exists(history_path):
+            stamp = _history_file_stamp(history_path)
+            cached = _LIGHBD_HISTORY_CACHE.get(history_path)
+            if stamp is None:
+                existing_lines: list[str] = []
+                existing_kinds: list[str] = []
+            elif cached is not None and cached.get("stamp") == stamp:
+                existing_lines = cached["lines"]
+                existing_kinds = cached["kinds"]
+            else:
                 try:
                     with open(history_path, "r", encoding="utf-8") as f:
                         existing_lines = f.readlines()
-                    # 백업
-                    with open(backup_path, "w", encoding="utf-8") as bf:
-                        bf.writelines(existing_lines)
+                    existing_kinds = [
+                        _classify_lighbd_history_line(item, index)
+                        for index, item in enumerate(existing_lines)
+                    ]
                 except Exception as e:
-                    print(f"[LIGHBD] history 읽기/백업 실패: {e}")
+                    print(f"[LIGHBD] history 읽기 실패: {e}")
                     existing_lines = []
+                    existing_kinds = []
 
             # append 시점의 ts로 덮어쓴다: 호출자가 함수 진입(시작) 시각으로 고정한 ts가
             # 그대로 영속화되면, 재시도 끝에 성공한 최종 OK 레코드가 자기 자신의 attempt
@@ -348,11 +383,46 @@ def _write_lighbd_history_locked(record: dict, history_path=None) -> None:
             stamped = dict(record)
             stamped["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
             line = json.dumps(stamped, ensure_ascii=False) + "\n"
+            kind = _classify_lighbd_history_record(stamped)
             existing_lines.append(line)
-            existing_lines = _trim_lighbd_history_lines(existing_lines)
+            existing_kinds.append(kind)
 
-            with open(history_path, "w", encoding="utf-8") as f:
-                f.writelines(existing_lines)
+            general_count = sum(1 for item in existing_kinds if item == "general")
+            multi_char_count = sum(1 for item in existing_kinds if item == "multi_char")
+            excess = (
+                max(0, general_count - LIGHBD_GENERAL_HISTORY_MAX)
+                + max(0, multi_char_count - LIGHBD_MULTI_CHAR_HISTORY_MAX)
+            )
+
+            if excess < _LIGHBD_HISTORY_COMPACT_BATCH:
+                # Append one line directly; batch full backup+trim rewrites to avoid
+                # rewriting tens of megabytes on every LLM completion.
+                with open(history_path, "a", encoding="utf-8") as f:
+                    f.write(line)
+            else:
+                history_backup_dir = os.path.join(
+                    os.path.dirname(history_path),
+                    "backups",
+                )
+                os.makedirs(history_backup_dir, exist_ok=True)
+                backup_path = os.path.join(history_backup_dir, os.path.basename(history_path) + ".bak")
+                try:
+                    with open(backup_path, "w", encoding="utf-8") as bf:
+                        bf.writelines(existing_lines[:-1])
+                except Exception as e:
+                    print(f"[LIGHBD] history 백업 실패: {e}")
+
+                existing_lines, existing_kinds = _trim_lighbd_history_with_kinds(
+                    existing_lines, existing_kinds
+                )
+                with open(history_path, "w", encoding="utf-8") as f:
+                    f.writelines(existing_lines)
+
+            _LIGHBD_HISTORY_CACHE[history_path] = {
+                "stamp": _history_file_stamp(history_path),
+                "lines": existing_lines,
+                "kinds": existing_kinds,
+            }
         except Exception as e:
             print(f"[LIGHBD] history 쓰기 실패: {e}")
             traceback.print_exc()
@@ -390,6 +460,21 @@ async def _log_lighbd_history_async(record: dict, *, history_path=None) -> None:
         )
         return
     await asyncio.to_thread(_write_lighbd_history_locked, record, history_path)
+
+
+def _log_lighbd_history_background(record: dict, *, history_path=None) -> None:
+    """Schedule history persistence off the event loop from synchronous callbacks."""
+    if _log_lighbd_history is not _DEFAULT_LOG_LIGHBD_HISTORY:
+        _log_lighbd_history(record)
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _log_lighbd_history(record, history_path=history_path)
+        return
+    task = asyncio.create_task(_log_lighbd_history_async(record, history_path=history_path))
+    _LIGHBD_HISTORY_BG_TASKS.add(task)
+    task.add_done_callback(_LIGHBD_HISTORY_BG_TASKS.discard)
 
 
 async def _run_logged_llm_task(context, call_fn, input_messages, *, metadata_sink: dict | None = None):
@@ -711,6 +796,7 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
                 backup_file.writelines(original_lines)
             with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as history_file:
                 history_file.writelines(rewritten_lines)
+            _LIGHBD_HISTORY_CACHE.pop(os.fspath(LIGHBD_HISTORY_PATH), None)
             print(
                 f"[LIGHBD] history 레코드 갱신 완료: "
                 f"matched={len(matched_ids)}, requested={len(updates_by_id)}"

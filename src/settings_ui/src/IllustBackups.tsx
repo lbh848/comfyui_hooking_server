@@ -8,10 +8,11 @@ import { WorkQueuePage } from "./WorkQueuePage";
 import { flowStatusLabels, useIllustrationFlowHistory } from "./IllustrationFlowHistory";
 import { isFinishedQueueItem, queueHistoryItems } from "./workQueue";
 import { useProgramError } from "./programLogs";
-import { useModalWorkspace } from "./ModalWorkspace";
+import { useModalWorkspace, usePageVisible } from "./ModalWorkspace";
 import { clearWorkSession, manualDrawSession, useWorkSession } from "./illustrationWorkSession";
 import { InfiniteScrollTrigger, WindowedGallery, normalizeImageSearch } from "./ScrollGallery";
 import { enc, illustrationMedia, illustrationRequest, query, useIllustrationAction, useIllustrationResource, type IllustrationData } from "./illustration";
+import { subscribeQueueStatus, subscribeWorkshopEvents } from "./workshopEvents";
 
 export function IllustrationFeedback({ error, message }: { error?: string; message?: string }) {
   useProgramError(error);
@@ -139,6 +140,8 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
     window.addEventListener("illustration-completed", listener);
     return () => { window.clearTimeout(timer); window.removeEventListener("illustration-completed", listener); };
   }, []);
+  const pageVisible = usePageVisible();
+  const wasVisible = useRef(pageVisible);
   useEffect(() => { if (reschedule.data) setScheduledName(reschedule.data.scheduled ? reschedule.data.name : ""); }, [reschedule.data]);
   useEffect(() => {
     const changed = (event: Event) => {
@@ -146,11 +149,23 @@ export function IllustBackups({ botSelected, initialFilter = "all", scope = "ill
       setScheduledName(status.scheduled ? status.name : "");
       reschedule.reload();
     };
-    const timer = window.setInterval(reschedule.reload, 10000);
     window.addEventListener("illustration-reschedule-changed", changed);
-    window.addEventListener("focus", reschedule.reload);
-    return () => { clearInterval(timer); window.removeEventListener("illustration-reschedule-changed", changed); window.removeEventListener("focus", reschedule.reload); };
+    return () => { window.removeEventListener("illustration-reschedule-changed", changed); };
   }, [reschedule.reload]);
+  useEffect(() => {
+    if (!pageVisible) {
+      wasVisible.current = false;
+      return;
+    }
+    if (!wasVisible.current) {
+      wasVisible.current = true;
+      reschedule.reload();
+    }
+    const refresh = () => { if (!document.hidden) reschedule.reload(); };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [pageVisible, reschedule.reload]);
 
   return <>
     <Panel title={<>{emotionScope ? "감정 삽화 백업" : "삽화 백업"} <Badge>{total.toLocaleString()}장</Badge></>} aside={<div className="illust-actions">
@@ -523,38 +538,29 @@ export function IllustrationQueueMonitor() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
-    const controller = new AbortController(); let timer: number;
-    let socket: WebSocket | null = null; let reconnect: number;
-    const receive = (next: IllustrationData) => {
-      const items: IllustrationData[] = next.items || [];
-      if (items.some(item => item.status === "completed" && previous.current.has(item.id) && previous.current.get(item.id) !== "completed")) window.dispatchEvent(new Event("illustration-completed"));
-      previous.current = new Map(items.map(item => [item.id, item.status])); setState(next); setError("");
-      window.dispatchEvent(new CustomEvent("illustration-queue-status", { detail: next }));
-    };
-    const connect = () => {
-      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
-      socket.onmessage = event => {
-        const value = JSON.parse(event.data);
-        if (value.type === "queue_updated") receive(value.data);
-        if (value.type === "queue_progress") window.dispatchEvent(new CustomEvent("illustration-queue-progress", { detail: value.data }));
-        if (value.type === "backup_created") window.dispatchEvent(new Event("illustration-completed"));
-        if (value.type === "backup_filter_ready") window.dispatchEvent(new Event("illustration-backup-filters-ready"));
-        if (value.type === "reschedule_changed" || value.type === "reschedule_used") window.dispatchEvent(new CustomEvent("illustration-reschedule-changed", { detail: value.type === "reschedule_used" ? { scheduled: false } : value.data }));
-        if (value.type === "bot_selected_changed") window.dispatchEvent(new Event("illustration-bots-changed"));
-        if (value.type === "illustration_warning") setMessage(value.data.message || "그리기 설정을 확인하세요.");
-      };
-      socket.onclose = () => { if (!controller.signal.aborted) reconnect = window.setTimeout(connect, 3000); };
-    };
-    connect();
-    const poll = async () => {
-      try {
-        const next = await illustrationRequest("queue/status?monitor=1", undefined, controller.signal);
-        if (controller.signal.aborted) return;
-        receive(next);
-      } catch (e) { if (!controller.signal.aborted) setError((e as Error).message); }
-      finally { if (!controller.signal.aborted) timer = window.setTimeout(poll, 2500); }
-    };
-    void poll(); return () => { controller.abort(); clearTimeout(timer); clearTimeout(reconnect); socket?.close(); };
+    const unsubscribeQueue = subscribeQueueStatus(
+      next => {
+        const items: IllustrationData[] = next.items || [];
+        if (items.some(item => item.status === "completed" && previous.current.has(item.id) && previous.current.get(item.id) !== "completed")) window.dispatchEvent(new Event("illustration-completed"));
+        previous.current = new Map(items.map(item => [item.id, item.status]));
+        setState(next);
+        setError("");
+        window.dispatchEvent(new CustomEvent("illustration-queue-status", { detail: next }));
+      },
+      {
+        activateWorker: true,
+        onError: e => setError(e instanceof Error ? e.message : String(e)),
+      },
+    );
+    const unsubscribeEvents = subscribeWorkshopEvents(value => {
+      if (value.type === "queue_progress") window.dispatchEvent(new CustomEvent("illustration-queue-progress", { detail: value.data }));
+      if (value.type === "backup_created") window.dispatchEvent(new Event("illustration-completed"));
+      if (value.type === "backup_filter_ready") window.dispatchEvent(new Event("illustration-backup-filters-ready"));
+      if (value.type === "reschedule_changed" || value.type === "reschedule_used") window.dispatchEvent(new CustomEvent("illustration-reschedule-changed", { detail: value.type === "reschedule_used" ? { scheduled: false } : value.data }));
+      if (value.type === "bot_selected_changed") window.dispatchEvent(new Event("illustration-bots-changed"));
+      if (value.type === "illustration_warning") setMessage(value.data?.message || "그리기 설정을 확인하세요.");
+    });
+    return () => { unsubscribeQueue(); unsubscribeEvents(); };
   }, []);
   const active = (state?.items || []).filter((item: IllustrationData) => !isFinishedQueueItem(item));
   const failed = queueHistoryItems(state?.items || []).filter(item => item.status === "failed").length;

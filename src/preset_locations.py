@@ -32,6 +32,7 @@ PRESET_LOCATIONS = {
     "asset_model": PresetLocation("src/presets/asset_model_presets.json", "config/asset_model_presets.json"),
     "bg_asset_theme": PresetLocation("src/presets/bg_asset_theme_presets.json", "data/bg_asset_data/tags.json"),
     "bg_asset_style": PresetLocation("src/presets/bg_asset_style_presets.json", "config/bg_asset_style_presets.json"),
+    "bg_asset_model": PresetLocation("src/presets/bg_asset_model_presets.json", "config/bg_asset_model_presets.json"),
     "illustration_model": PresetLocation("src/presets/illustration_model_presets.json", "config/illustration_model_presets.json"),
     "emotion_model": PresetLocation("src/presets/emotion_model_presets.json", "config/emotion_model_presets.json"),
     "illustration_generation": PresetLocation("src/presets/illustration_generation_presets.json", "config/illustration_generation_presets.json"),

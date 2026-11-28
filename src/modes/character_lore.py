@@ -94,7 +94,7 @@ def _parse_lore_npc_candidates(raw, anchors, *, secondary_bot):
     return candidates, issues
 
 
-def _lore_npc_batches(entries, batch_chars):
+def lore_entry_batches(entries, batch_chars):
     if type(batch_chars) is not int or not 5000 <= batch_chars <= 80000:
         raise ValueError("한 번에 분석할 글자 수는 5,000~80,000자 범위에서 선택하세요.")
     batches = [[]]
@@ -121,10 +121,20 @@ def _lore_npc_batches(entries, batch_chars):
     return batches
 
 
+_lore_npc_batches = lore_entry_batches
+
+
 async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=None, workshop="illustration"):
     from modes.illustration_context_pipeline import load_prompt_files
     from modes.illustration_npc import NPC_GENDER_TAGS
-    from modes.illustration_prompt_builders import npc_card_instructions
+    from modes.illustration_prompt_builders import (
+        SECONDARY_BOT_CROSSOVER_GENRE,
+        SECONDARY_BOT_GENRE,
+        is_crossover_secondary_genre,
+        is_secondary_bot_genre,
+        npc_card_instructions,
+        parse_crossover_works,
+    )
     from modes.lighbd_service import call_logged_llm_task
     from modes.llm_service import ManualCancelledText, create_llm_execution_context
 
@@ -134,9 +144,13 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
     batches = _lore_npc_batches(entries, batch_chars)
     prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
     prompt = (prompt_dir / "lore_npc_generation.txt").read_text(encoding="utf-8")
-    secondary_bot = (toggles or {}).get("genre") == "secondary_bot"
-    if secondary_bot:
+    genre = str((toggles or {}).get("genre") or "").strip()
+    secondary_bot = is_secondary_bot_genre(genre)
+    crossover = is_crossover_secondary_genre(genre)
+    if genre == SECONDARY_BOT_GENRE:
         prompt += "\n" + (prompt_dir / "lore_npc_generation_secondary.txt").read_text(encoding="utf-8")
+    elif genre == SECONDARY_BOT_CROSSOVER_GENRE:
+        prompt += "\n" + (prompt_dir / "lore_npc_generation_secondary_crossover.txt").read_text(encoding="utf-8")
     instructions = _strip_npc_output_schema(npc_card_instructions(load_prompt_files(workshop), toggles or {}))
     roster = {character["name"]: list(dict.fromkeys(
         alias for card in character.get("visual_cards", []) for alias in card.get("aliases", [])
@@ -214,7 +228,14 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
             current = candidates.setdefault(name.casefold(), {
                 "name": name, "aliases": [], "descriptions": [], "entry_indexes": [],
             })
-            current["card"] = candidate["card"]
+            previous_card = current.get("card") if isinstance(current.get("card"), dict) else {}
+            merged_card = dict(candidate["card"])
+            if secondary_bot:
+                if not str(merged_card.get("name_tag") or "").strip() and str(previous_card.get("name_tag") or "").strip():
+                    merged_card["name_tag"] = previous_card["name_tag"]
+                if not str(merged_card.get("source_work") or "").strip() and str(previous_card.get("source_work") or "").strip():
+                    merged_card["source_work"] = previous_card["source_work"]
+            current["card"] = merged_card
             indexes = [int(anchor[1:]) - 1 for anchor in candidate["anchors"]]
             for index in indexes:
                 entry = entries[index]
@@ -231,6 +252,36 @@ async def generate_lore_npc_cards(entries, bot, *, batch_chars=20000, toggles=No
             break
     for candidate in candidates.values():
         candidate["description"] = "\n".join(candidate.pop("descriptions"))
+    if secondary_bot and candidates:
+        from modes.bot_name_tags import load_dictionary, lookup_soft_name_tag_candidates
+
+        work_hints = (
+            parse_crossover_works((toggles or {}).get("genre_crossover_works", ""))
+            if crossover
+            else ([str((toggles or {}).get("genre_work_title") or "").strip()]
+                  if str((toggles or {}).get("genre_work_title") or "").strip() else [])
+        )
+        def _lookup_all():
+            _, dictionary_entries = load_dictionary()
+            return {
+                key: lookup_soft_name_tag_candidates(
+                    dictionary_entries,
+                    name=item["name"],
+                    aliases=item.get("aliases") or (),
+                    proposed_tag=(item.get("card") or {}).get("name_tag", ""),
+                    source_work=(item.get("card") or {}).get("source_work", ""),
+                    work_hints=work_hints,
+                )
+                for key, item in candidates.items()
+            }
+
+        try:
+            matches = await asyncio.to_thread(_lookup_all)
+        except (OSError, ValueError) as exc:
+            print(f"[CHARACTER_LORE] 단부루 이름 태그 사전을 읽지 못했습니다: {exc}")
+            matches = {}
+        for key, match in matches.items():
+            candidates[key]["name_tag_match"] = match
     return {"candidates": list(candidates.values()), "warnings": warnings, "cancelled": cancelled,
             "batch_count": len(batches), "processed_batches": number - int(cancelled)}
 

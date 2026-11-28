@@ -1,6 +1,13 @@
 import type { BotBatchFile } from "../../frontend/static/bot_batch.js";
-import { collectCharxImages, imageAssetFilename, imageTypes, maxAssetSize, maxTotalSize, type ImportedGlobalNote } from "./charxImages";
+import {
+  collectCharxImages, imageAssetFilename, imageTypes, maxArchiveSizeGb, maxAssetSize,
+  maxMetadataSize, maxTotalSize, readArchiveSlice, type ImportedGlobalNote,
+} from "./charxImages";
 import { readCharacterLore, type CharacterLoreEntry } from "./characterLore";
+
+const risumBufferSize = 4 * 1024 * 1024;
+const risumMetadataBufferSize = 256 * 1024;
+const yieldIntervalMs = 16;
 
 // RisuAI's legacy RISUM format uses byte substitution, with one record per asset.
 // Format: https://github.com/kwaroran/RisuAI/blob/main/src/ts/process/modules.ts
@@ -24,74 +31,154 @@ const rpackDecodeMap = new Uint8Array([
   246,204,110,185,91,11,150,237,213,233,197,203,8,166,128,64,
 ]);
 
-async function decodeRpack(data: Uint8Array, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
-  const decoded = new Uint8Array(data.length);
+class RisumReader {
+  position = 0;
+  private chunk: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+  private chunkStart = 0;
+
+  constructor(
+    private readonly archive: File,
+    private readonly signal: AbortSignal,
+    private readonly chunkSize: number,
+  ) {}
+
+  private remaining(): number {
+    return this.chunkStart + this.chunk.length - this.position;
+  }
+
+  private async ensure(length: number): Promise<void> {
+    this.signal.throwIfAborted();
+    if (this.position + length > this.archive.size) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
+    if (length <= this.remaining()) return;
+    const end = Math.min(this.archive.size, this.position + Math.max(length, this.chunkSize));
+    const loaded = await readArchiveSlice(this.archive, this.position, end, this.signal);
+    this.chunkStart = this.position;
+    this.chunk = loaded;
+    if (this.chunk.length < length) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
+  }
+
+  async readByte(): Promise<number> {
+    await this.ensure(1);
+    const value = this.chunk[this.position - this.chunkStart];
+    this.position += 1;
+    return value;
+  }
+
+  async readUint32(): Promise<number> {
+    await this.ensure(4);
+    const offset = this.position - this.chunkStart;
+    const value = new DataView(this.chunk.buffer, this.chunk.byteOffset + offset, 4).getUint32(0, true);
+    this.position += 4;
+    return value;
+  }
+
+  async readBytes(length: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; owned: boolean }> {
+    this.signal.throwIfAborted();
+    if (this.position + length > this.archive.size) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
+    if (length === 0) return { bytes: new Uint8Array(0), owned: true };
+    if (length <= this.remaining()) {
+      const offset = this.position - this.chunkStart;
+      const bytes = this.chunk.subarray(offset, offset + length);
+      this.position += length;
+      return { bytes, owned: false };
+    }
+    if (length > this.chunkSize) {
+      this.chunk = new Uint8Array(0);
+      const bytes = await readArchiveSlice(this.archive, this.position, this.position + length, this.signal);
+      this.position += length;
+      this.chunkStart = this.position;
+      return { bytes, owned: true };
+    }
+    await this.ensure(length);
+    const offset = this.position - this.chunkStart;
+    const bytes = this.chunk.subarray(offset, offset + length);
+    this.position += length;
+    return { bytes, owned: false };
+  }
+
+  skip(length: number): void {
+    this.signal.throwIfAborted();
+    if (this.position + length > this.archive.size) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
+    this.position += length;
+    if (this.position >= this.chunkStart + this.chunk.length) {
+      this.chunk = new Uint8Array(0);
+      this.chunkStart = this.position;
+    }
+  }
+}
+
+async function decodeRpack(
+  data: Uint8Array<ArrayBuffer>,
+  signal: AbortSignal,
+  owned = false,
+  yieldState?: { lastYield: number },
+): Promise<Uint8Array<ArrayBuffer>> {
+  const decoded = owned ? data : new Uint8Array(data.length);
   for (let start = 0; start < data.length; start += 1024 * 1024) {
     signal.throwIfAborted();
     const end = Math.min(data.length, start + 1024 * 1024);
     for (let i = start; i < end; i++) decoded[i] = rpackDecodeMap[data[i]];
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (end < data.length || (yieldState && performance.now() - yieldState.lastYield >= yieldIntervalMs)) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (yieldState) yieldState.lastYield = performance.now();
+    }
   }
   signal.throwIfAborted();
   return decoded;
 }
 
 async function collectRisumImages(archive: File, signal: AbortSignal,
-  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[]; cardNames: string[] }> {
   try {
     signal.throwIfAborted();
-    if (archive.size > maxTotalSize) throw new Error("RISUM 파일은 1GB 이하로 선택하세요.");
-    const data = new Uint8Array(await archive.arrayBuffer());
-    signal.throwIfAborted();
-    const view = new DataView(data.buffer);
-    let position = 0;
-    const take = (length: number) => {
-      if (position + length > data.length) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
-      const bytes = data.subarray(position, position + length);
-      position += length;
-      return bytes;
-    };
-    const readRecord = () => {
-      const offset = position;
-      take(4);
-      return take(view.getUint32(offset, true));
-    };
-    if (take(1)[0] !== 111 || take(1)[0] !== 0) throw new Error("지원하지 않는 RISUM 형식입니다.");
-    const metadata = readRecord();
-    if (metadata.length > 5 * 1024 * 1024) throw new Error("모듈 정보가 너무 큽니다.");
+    if (archive.size > maxTotalSize) throw new Error(`RISUM 파일은 ${maxArchiveSizeGb}GB 이하로 선택하세요.`);
+    const reader = new RisumReader(archive, signal, metadataOnly ? risumMetadataBufferSize : risumBufferSize);
+    if ((await reader.readByte()) !== 111 || (await reader.readByte()) !== 0) throw new Error("지원하지 않는 RISUM 형식입니다.");
+    const metadataLength = await reader.readUint32();
+    if (metadataLength > maxMetadataSize) throw new Error("모듈 정보가 너무 큽니다.");
+    const metadata = await reader.readBytes(metadataLength);
     let document;
-    try { document = JSON.parse(new TextDecoder().decode(await decodeRpack(metadata, signal))); }
+    try { document = JSON.parse(new TextDecoder().decode(await decodeRpack(metadata.bytes, signal, metadata.owned))); }
     catch { signal.throwIfAborted(); throw new Error("RISUM 모듈 정보를 읽을 수 없습니다."); }
     if (document?.type !== "risuModule" || !document.module ||
       (document.module.assets != null && !Array.isArray(document.module.assets))) throw new Error("RISUM 모듈 정보 형식이 올바르지 않습니다.");
     const assets = document.module.assets ?? [];
-    if (metadataOnly) return { files: [], skipped: 0, loreEntries: readCharacterLore(document.module.lorebook, archive.name), globalNotes: [] };
+    const moduleName = typeof document.module.name === "string" ? document.module.name.trim() : "";
+    const cardNames = moduleName ? [moduleName] : [];
+    if (metadataOnly) return { files: [], skipped: 0, loreEntries: readCharacterLore(document.module.lorebook, archive.name), globalNotes: [], cardNames };
     const files: BotBatchFile[] = [];
+    const yieldState = { lastYield: performance.now() };
     let skipped = 0;
     let index = 0;
     let totalSize = 0;
     while (true) {
       signal.throwIfAborted();
-      const mark = take(1)[0];
+      const mark = await reader.readByte();
       if (mark === 0) break;
       if (mark !== 1 || index >= assets.length) throw new Error("RISUM 이미지 에셋 목록과 데이터가 일치하지 않습니다.");
-      const encoded = readRecord();
+      const recordLength = await reader.readUint32();
+      if (reader.position + recordLength > archive.size) throw new Error("RISUM 파일이 중간에 잘렸습니다.");
       const asset = assets[index++];
       if (!Array.isArray(asset) || typeof asset[0] !== "string") throw new Error("RISUM 에셋 이름을 읽을 수 없습니다.");
       const extension = typeof asset[2] === "string" ? asset[2].replace(/^\./, "").toLowerCase() : "";
       const ext = imageTypes[extension] ? extension : /\.([^.\/]+)$/.exec(asset[0])?.[1].toLowerCase() || "";
-      if (!imageTypes[ext]) { skipped++; continue; }
+      if (!imageTypes[ext]) {
+        skipped++;
+        reader.skip(recordLength);
+        continue;
+      }
       const filename = imageAssetFilename(asset[0], ext);
-      if (encoded.length > maxAssetSize) throw new Error(`${filename}: 이미지 한 장은 50MB 이하여야 합니다.`);
-      totalSize += encoded.length;
-      if (totalSize > maxTotalSize) throw new Error("선택한 이미지의 전체 크기가 1GB를 넘습니다.");
+      if (recordLength > maxAssetSize) throw new Error(`${filename}: 이미지 한 장은 50MB 이하여야 합니다.`);
+      totalSize += recordLength;
+      if (totalSize > maxTotalSize) throw new Error(`선택한 이미지의 전체 크기가 ${maxArchiveSizeGb}GB를 넘습니다.`);
       onProgress?.(`${archive.name} · 이미지 ${index.toLocaleString()}/${assets.length.toLocaleString()} 읽는 중…`);
-      const bytes = await decodeRpack(encoded, signal);
+      const encoded = await reader.readBytes(recordLength);
+      const bytes = await decodeRpack(encoded.bytes, signal, encoded.owned, yieldState);
       files.push({ file: new File([bytes], filename, { type: imageTypes[ext], lastModified: archive.lastModified }),
         path: `${archive.name}/${filename}` });
     }
-    if (index !== assets.length || position !== data.length) throw new Error("RISUM 이미지 에셋 목록과 데이터가 일치하지 않습니다.");
-    return { files, skipped, loreEntries: readCharacterLore(document.module.lorebook, archive.name), globalNotes: [] };
+    if (index !== assets.length || reader.position !== archive.size) throw new Error("RISUM 이미지 에셋 목록과 데이터가 일치하지 않습니다.");
+    return { files, skipped, loreEntries: readCharacterLore(document.module.lorebook, archive.name), globalNotes: [], cardNames };
   } catch (error) {
     signal.throwIfAborted();
     throw new Error(`${archive.name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -99,10 +186,12 @@ async function collectRisumImages(archive: File, signal: AbortSignal,
 }
 
 export async function collectBotModuleImages(botFiles: readonly File[], moduleFiles: readonly File[], signal: AbortSignal,
-  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[] }> {
+  onProgress?: (message: string) => void, metadataOnly = false): Promise<{ files: BotBatchFile[]; skipped: number; loreEntries: CharacterLoreEntry[]; globalNotes: ImportedGlobalNote[]; botNames: string[]; moduleNames: string[] }> {
   const files: BotBatchFile[] = [];
   const loreEntries: CharacterLoreEntry[] = [];
   const globalNotes: ImportedGlobalNote[] = [];
+  const botNames: string[] = [];
+  const moduleNames: string[] = [];
   let skipped = 0;
   let totalSize = 0;
   for (const [role, archives] of [["봇", botFiles], ["모듈", moduleFiles]] as const) {
@@ -117,13 +206,15 @@ export async function collectBotModuleImages(botFiles: readonly File[], moduleFi
         : await collectCharxImages([archive], signal, onProgress, metadataOnly);
       for (const entry of selected.files) {
         totalSize += entry.file.size;
-        if (totalSize > maxTotalSize) throw new Error("선택한 이미지의 전체 크기가 1GB를 넘습니다.");
+        if (totalSize > maxTotalSize) throw new Error(`선택한 이미지의 전체 크기가 ${maxArchiveSizeGb}GB를 넘습니다.`);
         files.push({ ...entry, path: `${role}/${entry.path}` });
       }
       skipped += selected.skipped;
       loreEntries.push(...selected.loreEntries.map(entry => ({ ...entry, source: `${role}/${entry.source}` })));
       globalNotes.push(...selected.globalNotes.map(note => ({ ...note, source: `${role}/${note.source}` })));
+      if (role === "봇") botNames.push(...selected.cardNames);
+      else moduleNames.push(...selected.cardNames);
     }
   }
-  return { files, skipped, loreEntries, globalNotes };
+  return { files, skipped, loreEntries, globalNotes, botNames, moduleNames };
 }

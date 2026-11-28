@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "bg-asset-anima",
+      "name": "공방-배경 고속 애니마",
+      "config": {
+        "asset_workflow_type": "anima_only",
+        "asset_workflow_source_paths": {
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_배경_ANIMA_V1.json",
+          "moss": "@configured:moss"
+        }
+      },
+      "workflows": {
+        "anima_only": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "STYLE_REF": {
+              "enabled": false,
+              "strength": 1,
+              "fidelity": 1,
+              "megapixels": 1,
+              "apply_to_refiners": true,
+              "images": []
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base.safetensors",
+            "workflow.clip_device": "gpu",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 12,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "SpectrumKSamplerModGuidance",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 8,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "quietframe_v2-step00001000.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": "quietframe"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.5,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "bg-asset-anima-fast-8gb",
+      "name": "공방-배경 고속 애니마 8GB",
+      "config": {
+        "asset_workflow_type": "anima_only",
+        "asset_workflow_source_paths": {
+          "anima_only": "data/comfy/user/default/workflows/배포_공방_배경_ANIMA_V1.json",
+          "moss": "@configured:moss"
+        }
+      },
+      "workflows": {
+        "anima_only": {
+          "fields": {
+            "workflow.sequential_offload": true,
+            "STYLE_REF": {
+              "enabled": false,
+              "strength": 1,
+              "fidelity": 1,
+              "megapixels": 1,
+              "apply_to_refiners": true,
+              "images": []
+            },
+            "ANIMA_DIFFUSION_MODEL": "waiANIMAInt8Mxfp8_waiANIMAV10Mxfp8.safetensors",
+            "workflow.clip": "qwen_3_06b_base_int8.safetensors",
+            "workflow.clip_device": "gpu",
+            "ANIMA_FIRST_SAMPLER": {
+              "steps": 12,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "sampler_mode": "FAST",
+              "spd_scale": 0.5,
+              "spd_sigma": 0.7,
+              "sage_attention": true
+            },
+            "ANIMA_HIRESFIX": {
+              "steps": 8,
+              "cfg": 1.3,
+              "sampler_name": "er_sde",
+              "scheduler": "simple",
+              "denoise": 0.2
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "quietframe_v2-step00001000.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": "quietframe"
+                },
+                {
+                  "lora_path": "flat0521_anima_lora_comfy.safetensors",
+                  "str": 0.6,
+                  "BASE": "anima",
+                  "trigger": ""
+                },
+                {
+                  "lora_path": "Turbo-ANIMA-v4.safetensors",
+                  "str": 1,
+                  "BASE": "anima",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

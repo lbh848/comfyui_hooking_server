@@ -62,10 +62,11 @@ function groupSamplingStages(fields: IllustrationData) {
   return [...groups.values()];
 }
 
-export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetChange, onPendingChange, reloadPresets }: {
+export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetChange, onPendingChange, reloadPresets, workflowSyncVersion = 0, onWorkflowSaved }: {
   preset: IllustrationData; onPresetChange: (data: IllustrationData) => void;
   readOnly: boolean; builtinUnlockToken: string;
   onPendingChange: (pending: boolean) => void; reloadPresets: () => void;
+  workflowSyncVersion?: number; onWorkflowSaved?: (savedAt: string | null, revision: string) => void;
 }) {
   const scope = useModelSettingsScope();
   const request = useModelSettingsRequest();
@@ -165,19 +166,20 @@ export function IllustWorkflow({ preset, readOnly, builtinUnlockToken, onPresetC
         && (selected ? moss : isMossWorkflow(current))
         ? "moss" : value;
       return <div key={`${value}:${current}`} hidden={!selected}>
-        {current && visible && <WorkflowEditor presetId={preset.active_id} readOnly={readOnly} builtinUnlockToken={builtinUnlockToken} profile={value} modelKey={modelKey} path={current} inventory={inventory} onPendingChange={onEditorPending} />}
+        {current && visible && <WorkflowEditor presetId={preset.active_id} readOnly={readOnly} builtinUnlockToken={builtinUnlockToken} profile={value} modelKey={modelKey} path={current} inventory={inventory} onPendingChange={onEditorPending} workflowSyncVersion={workflowSyncVersion} onWorkflowSaved={onWorkflowSaved} />}
       </div>;
     })}
   </div>;
 }
 
-function WorkflowEditor({ presetId, profile, modelKey, path, inventory, onPendingChange, readOnly, builtinUnlockToken }: { presetId: string; profile: string; modelKey: string; path: string; inventory: Resources; onPendingChange: (profile: string, pending: boolean) => void; readOnly: boolean; builtinUnlockToken: string }) {
+function WorkflowEditor({ presetId, profile, modelKey, path, inventory, onPendingChange, readOnly, builtinUnlockToken, workflowSyncVersion = 0, onWorkflowSaved }: { presetId: string; profile: string; modelKey: string; path: string; inventory: Resources; onPendingChange: (profile: string, pending: boolean) => void; readOnly: boolean; builtinUnlockToken: string; workflowSyncVersion?: number; onWorkflowSaved?: (savedAt: string | null, revision: string) => void }) {
   const scope = useModelSettingsScope();
   const request = useModelSettingsRequest();
   const resource = useModelSettingsResource(path ? `workflow?profile=${enc(profile)}&preset_id=${enc(presetId)}` : null);
   const [text, setText] = useState(""); const [baseline, setBaseline] = useState(""); const [revision, setRevision] = useState("");
   const [section, setSection] = useState("models");
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const lastSyncVersionRef = useRef(workflowSyncVersion);
   useIllustrationSaveReport({ savedAt, error: resource.error });
   const form = useRef<HTMLFormElement>(null);
   const sampling = useModelSettingsResource(section === "sampling" ? "sampling-options" : null, true);
@@ -201,8 +203,15 @@ function WorkflowEditor({ presetId, profile, modelKey, path, inventory, onPendin
     const stored = pretty(result.fields);
     setBaseline(stored); setRevision(result.revision);
     setSavedAt(result.saved_at);
+    lastSyncVersionRef.current = workflowSyncVersion;
+    onWorkflowSaved?.(result.saved_at, result.revision);
     setText(current => current === snapshot ? stored : current);
   } });
+  useEffect(() => {
+    if (workflowSyncVersion === lastSyncVersionRef.current || dirty || autosave.busy || !path) return;
+    lastSyncVersionRef.current = workflowSyncVersion;
+    resource.reload();
+  }, [workflowSyncVersion, dirty, autosave.busy, path, resource.reload]);
   useEffect(() => {
     onPendingChange(profile, dirty || autosave.busy);
     return () => onPendingChange(profile, false);
@@ -294,7 +303,7 @@ function WorkflowEditor({ presetId, profile, modelKey, path, inventory, onPendin
           const labels = loraSetLabels[key] || { label: key, description: "이 워크플로우에 적용할 LoRA입니다." };
           return <section className="illust-lora-set" key={key}>
             {loraSets.length > 1 && <h3>{labels.label}</h3>}
-            <IllustLoras context={scope.prefix === "asset" ? "asset" : undefined} profile={modelKey} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} toggleable />
+            <IllustLoras context={scope.prefix === "asset" || scope.prefix === "model" ? "asset" : undefined} profile={modelKey} name={labels.label} description={labels.description} value={loraList(key)} inventory={inventory} onChange={list => update(key, { list })} toggleable />
           </section>;
         })}</fieldset></div>
         {hasStyleRef && <div hidden={activeSection !== "style_ref"}>

@@ -8,12 +8,17 @@ import threading
 
 from comfy_runtime import (
     COMFY_INSTANCE_IDS,
+    COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY,
+    COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY,
+    COMFY_PORT_CONFIG_KEYS,
+    DEFAULT_COMFY_PORTS,
     ComfyRuntimeManager,
     ComfyRuntimeValidationError,
     normalize_comfy_launch_profile,
     normalize_comfy_launch_profiles,
+    read_and_harden_comfy_launch_config,
 )
-from configuration import config_path, read_config, write_config, settings_lock
+from configuration import config_path, write_config, settings_lock
 from settings_store import SettingsConflict
 
 
@@ -25,16 +30,16 @@ class SettingsRuntime:
         self.startup_errors: dict[int, str] = {}
 
     def _read(self) -> dict:
-        return read_config(self.path)
+        return read_and_harden_comfy_launch_config(self.path)
 
     @staticmethod
     def _port_key(instance_id: int) -> str:
-        return "comfyui_port" if instance_id == 1 else f"comfyui_port_{instance_id}"
+        return COMFY_PORT_CONFIG_KEYS[instance_id]
 
     def _configuration(self, config: dict, instance_id: int) -> dict:
         profiles = normalize_comfy_launch_profiles(config.get("comfy_launch_profiles"))
         result = {
-            "port": self.manager._validate_port(config.get(self._port_key(instance_id), 8189 - instance_id)),
+            "port": self.manager._validate_port(config.get(self._port_key(instance_id), DEFAULT_COMFY_PORTS[instance_id])),
             "profile": profiles[str(instance_id)],
         }
         result["revision"] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
@@ -80,6 +85,8 @@ class SettingsRuntime:
             profiles = normalize_comfy_launch_profiles(config.get("comfy_launch_profiles"))
             profiles[str(instance_id)] = profile
             config["comfy_launch_profiles"] = profiles
+            config[COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY] = True
+            config[COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY] = True
             config[self._port_key(instance_id)] = port
             write_config(self.path, config)
             return self._configuration(config, instance_id)

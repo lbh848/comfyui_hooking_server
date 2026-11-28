@@ -14,6 +14,10 @@ ASSET_WORKFLOW_PATHS = {
     "anima_ilxl": "anima_asset_workflow_source_path",
     "moss": "moss_asset_workflow_source_path",
 }
+BG_ASSET_WORKFLOW_PATHS = {
+    "anima_only": "bg_anima_only_asset_workflow_source_path",
+    "moss": "bg_moss_asset_workflow_source_path",
+}
 
 
 class AssetModelPresets(IllustrationModelPresets):
@@ -42,6 +46,38 @@ class AssetModelPresets(IllustrationModelPresets):
         if (candidate.get(self.type_key) not in self.local_profiles or not isinstance(paths, dict)
                 or set(paths) - set(self.local_profiles) or not all(isinstance(path, str) for path in paths.values())):
             raise ValueError("ANIMA, ANIMA+ILXL 또는 MOSS 그림 모델과 워크플로우를 선택하세요.")
+
+
+class BgAssetModelPresets(AssetModelPresets):
+    local_profiles = tuple(BG_ASSET_WORKFLOW_PATHS)
+    local_profile = staticmethod(lambda profile: profile if profile in BG_ASSET_WORKFLOW_PATHS else None)
+
+    def __init__(self, config_file, builtin_file=None):
+        IllustrationModelPresets.__init__(
+            self,
+            config_file,
+            builtin_file or PRESET_LOCATIONS["bg_asset_model"].builtin_path(),
+        )
+        self.path = PRESET_LOCATIONS["bg_asset_model"].local_path(config_file=config_file)
+        self.separates_workshops = False
+
+    @staticmethod
+    def selected_config(config):
+        profile = config.get("asset_workflow_type", "anima_only")
+        paths = config.get("asset_workflow_source_paths", {})
+        return {
+            "asset_workflow_type": profile if profile in BG_ASSET_WORKFLOW_PATHS else "anima_only",
+            "asset_workflow_source_paths": {
+                item_profile: paths.get(item_profile, config.get(key, ""))
+                for item_profile, key in BG_ASSET_WORKFLOW_PATHS.items()
+            },
+        }
+
+    def validate_config(self, candidate):
+        paths = candidate.get(self.paths_key)
+        if (candidate.get(self.type_key) not in self.local_profiles or not isinstance(paths, dict)
+                or set(paths) - set(self.local_profiles) or not all(isinstance(path, str) for path in paths.values())):
+            raise ValueError("ANIMA 또는 MOSS 배경 그림 모델과 워크플로우를 선택하세요.")
 
 
 def apply_asset_preset(document, preset):

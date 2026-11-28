@@ -44,7 +44,20 @@ _history_dirty = set()
 _history_task = None
 HISTORY_SAVE_INTERVAL = 2.0
 _HISTORY_IMAGE_FIELDS = ("_preview_image", "_preview_mask", "_preview_source")
-_HISTORY_STORED_FIELDS = (*_HISTORY_IMAGE_FIELDS, "submitted_prompt", "input", "input_variables", "output")
+_HISTORY_STORED_FIELDS = (
+    *_HISTORY_IMAGE_FIELDS,
+    "submitted_prompt",
+    "input",
+    "input_variables",
+    "output",
+    "attempts",
+    "call1_state_table",
+    "time_place_state_table",
+    "profile_state_table",
+    "emotion_state_table",
+    "validation_warnings",
+)
+_HISTORY_STORED_FIELD_SET = frozenset(_HISTORY_STORED_FIELDS)
 _history_field_cache = {}
 
 
@@ -252,7 +265,7 @@ def _write_history(payloads, retained):
                     node[key] = value
                     continue
                 cached = cache.get((node_id, key))
-                if cached is not None and cached[0] == value:
+                if cached is not None and (cached[0] is value or cached[0] == value):
                     filename = cached[1]
                 else:
                     data = (value if key in _HISTORY_IMAGE_FIELDS else
@@ -299,10 +312,24 @@ async def _persist_history():
         for run_id in dirty & _history.keys():
             run = _history[run_id]
             workshop = run_workshop(run)
-            # Detach mutable containers on the loop; strings and image bytes are
-            # immutable and deepcopy shares them. Encoding and disk I/O stay off it.
-            payload = copy.deepcopy({key: value for key, value in run.items()
-                                     if not key.startswith("_") and key != "publish_pending"})
+            # Detach lightweight metadata on the loop while sharing immutable/replaced
+            # stored field references (images, prompts, state tables, attempts) so
+            # checkpointing does not deep-copy megabytes on the event loop.
+            nodes_snapshot = {}
+            for node_id, node in run["nodes"].items():
+                copied_node = {}
+                for field_key, field_val in node.items():
+                    if field_key in _HISTORY_STORED_FIELD_SET:
+                        copied_node[field_key] = field_val
+                    else:
+                        copied_node[field_key] = copy.deepcopy(field_val)
+                nodes_snapshot[node_id] = copied_node
+            payload = {
+                key: copy.deepcopy(value)
+                for key, value in run.items()
+                if not key.startswith("_") and key not in {"publish_pending", "nodes"}
+            }
+            payload["nodes"] = nodes_snapshot
             payload["workshop"] = workshop
             payloads[run_id] = (workshop, payload)
         retained = {workshop: set(runs) for workshop, runs in _histories.items()}
@@ -577,14 +604,59 @@ def _final_result_payload(run):
     }
 
 
-def record_reference_images(prompt_json):
+def decode_reference_assets(payload):
+    """Decode base64 reference images off the event loop before recording nodes."""
+    if not isinstance(payload, dict):
+        return {}
+    assets = payload.get("assets")
+    if not isinstance(assets, dict) or not assets:
+        return {}
+    keys = set()
+    fields = payload.get("fields")
+    if isinstance(fields, dict):
+        settings = fields.get("SNAPREF", {})
+        mode = settings.get("preprocess", "none")
+        if mode != "none" and settings.get("enabled") and not (
+            settings.get("strength_scale") == "linear" and float(settings.get("strength", 1.0)) <= 0
+        ):
+            for reference in settings.get("references", []):
+                for field in ("asset", "source_asset", "face_asset", "face_source_asset"):
+                    key = reference.get(field)
+                    if key:
+                        keys.add(key)
+    else:
+        workflow = payload.get("workflow") if isinstance(payload.get("workflow"), dict) else {}
+        reference = workflow.get("reference") if isinstance(workflow.get("reference"), dict) else {}
+        if reference.get("activate"):
+            for entry in reference.get("pictures") or ():
+                if isinstance(entry, dict):
+                    if entry.get("asset"):
+                        keys.add(entry["asset"])
+                    if entry.get("source"):
+                        keys.add(entry["source"])
+    decoded = {}
+    for key in keys:
+        entry = assets.get(key)
+        if isinstance(entry, dict) and isinstance(entry.get("data"), str):
+            decoded[key] = base64.b64decode(entry["data"], validate=True)
+    return decoded
+
+
+def record_reference_images(prompt_json, *, decoded_assets=None):
     """Show the exact submitted reference bytes before the generation node."""
     run = _run.get()
     if run is None or run.get("kind") != "illustration":
         return
     from illustration_json import REFERENCE_PREPROCESS_LABELS
     from illustration_reference_assets import stage_reference_assets
-    payload = json.loads(prompt_json)
+    payload = prompt_json if isinstance(prompt_json, dict) else json.loads(prompt_json)
+    decoded = decoded_assets if isinstance(decoded_assets, dict) else {}
+
+    def asset_bytes(assets_map, key):
+        if key in decoded:
+            return decoded[key]
+        return base64.b64decode(assets_map[key]["data"], validate=True)
+
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         # MOSS documents keep reference data under workflow.reference.
@@ -625,8 +697,8 @@ def record_reference_images(prompt_json):
                    image_url=f"{url}&v={asset}", source_image_url=f"{url}&source=1&v={source}",
                    input={"character": character, "reference": role, "picture": picture},
                    output={"reference": role, "picture": picture},
-                   _preview_image=base64.b64decode(assets[asset]["data"], validate=True),
-                   _preview_source=base64.b64decode(assets[source]["data"], validate=True))
+                   _preview_image=asset_bytes(assets, asset),
+                   _preview_source=asset_bytes(assets, source))
             node_ids.append(node_id)
         if node_ids:
             update(run, generation["id"], dependencies=list(dict.fromkeys([*dependencies, *node_ids])))
@@ -674,8 +746,8 @@ def record_reference_images(prompt_json):
                    image_url=f"{url}&v={asset}", source_image_url=f"{url}&source=1&v={source}",
                    input={"character": name, "reference": role, "preprocess": REFERENCE_PREPROCESS_LABELS[mode]},
                    output={"preprocess": REFERENCE_PREPROCESS_LABELS[mode], "reference": role},
-                   _preview_image=base64.b64decode(payload["assets"][asset]["data"], validate=True),
-                   _preview_source=base64.b64decode(payload["assets"][source]["data"], validate=True))
+                   _preview_image=asset_bytes(payload["assets"], asset),
+                   _preview_source=asset_bytes(payload["assets"], source))
             node_ids.append(node_id)
     if node_ids:
         update(run, generation["id"], dependencies=list(dict.fromkeys([*dependencies, *node_ids])))
@@ -838,6 +910,14 @@ def changed(run):
             _history_task = asyncio.create_task(_persist_history())
     latest_runs = (_latest, _latest_video, _latest_video_input, _latest_lora_feedback)
     if any(run is latest for latest in latest_runs) and _notify is not None:
+        event_type = {
+            "video": "video_flow",
+            "video_input": "video_input_flow",
+            "lora_feedback": "lora_feedback_flow",
+        }.get(run.get("kind"), "illustration_flow")
+        has_subscribers = getattr(_notify, "has_subscribers", None)
+        if has_subscribers is not None and not has_subscribers(event_type):
+            return
         # Coalesce a burst of state changes without streaming full prompts.
         if not run.get("publish_pending"):
             run["publish_pending"] = True
@@ -846,11 +926,8 @@ def changed(run):
                     await asyncio.sleep(0.05)
                     run["publish_pending"] = False
                     if any(run is latest for latest in (_latest, _latest_video, _latest_video_input, _latest_lora_feedback)):
-                        event_type = {
-                            "video": "video_flow",
-                            "video_input": "video_input_flow",
-                            "lora_feedback": "lora_feedback_flow",
-                        }.get(run.get("kind"), "illustration_flow")
+                        if has_subscribers is not None and not has_subscribers(event_type):
+                            return
                         await _notify(event_type, snapshot(run))
                 except Exception as exc:
                     run["publish_pending"] = False
@@ -1288,6 +1365,18 @@ def queue_progress(item):
         or binding[0]["nodes"][binding[1]].get("kind") == "image"
     ):
         run, node_id, _ = binding
+        if run.get("kind") == "illustration":
+            # Avoid bumping revision or scheduling disk checkpoints on every ComfyUI
+            # sampling tick; live progress is already delivered via queue_progress WS.
+            node = run["nodes"][node_id]
+            node["progress"] = item.progress
+            node["summary"] = f"진행률 {item.progress:g}%"
+            node["progress_detail"] = serializable(item.progress_detail)
+            run["updated_at"] = time.time()
+            has_subscribers = getattr(_notify, "has_subscribers", None)
+            if _notify is not None and (has_subscribers is None or has_subscribers("illustration_flow")):
+                changed(run)
+            return
         update(run, node_id, progress=item.progress, summary=f"진행률 {item.progress:g}%",
                progress_detail=serializable(item.progress_detail))
 
@@ -1528,7 +1617,7 @@ def llm_attempt(event, model, service, alias=""):
     event = {k: str(v) if isinstance(v, BaseException) else v for k, v in event.items()}
     event.update(model=model, service=service, alias=alias)
     node = run["nodes"][node_id]
-    node["attempts"].append(event)
+    node["attempts"] = [*node["attempts"], event]
     timing_keys = ("thinking_started_at", "thinking_ended_at", "response_started_at", "response_ended_at", "tps")
     timing = dict.fromkeys(timing_keys) if event.get("type") == "attempt_start" else {
         key: event[key] for key in timing_keys if key in event

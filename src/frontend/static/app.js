@@ -10410,8 +10410,8 @@
         // ─── ComfyUI 실행 관리 ───
         const COMFY_RUNTIME_PROFILE_DEFAULTS = Object.freeze({
             auto_start: false,
-            enable_cors: true,
-            listen_all: true,
+            enable_cors: false,
+            listen_all: false,
             fast: false,
             disable_dynamic_vram: false,
             vram_mode: 'auto',
@@ -10754,8 +10754,8 @@
                 : 'auto';
             return {
                 auto_start: source.auto_start === true,
-                enable_cors: source.enable_cors === undefined ? true : source.enable_cors === true,
-                listen_all: source.listen_all === undefined ? true : source.listen_all === true,
+                enable_cors: source.enable_cors === true,
+                listen_all: source.listen_all === true,
                 fast: source.fast === true,
                 disable_dynamic_vram: source.disable_dynamic_vram === true,
                 vram_mode: vramMode,
@@ -10827,7 +10827,7 @@
             const inputId = numericId === 3
                 ? 'setting-comfyui-port-3'
                 : (numericId === 2 ? 'setting-comfyui-port-2' : 'setting-comfyui-port');
-            const fallback = numericId === 3 ? 8186 : (numericId === 2 ? 8187 : 8188);
+            const fallback = numericId === 3 ? 8213 : (numericId === 2 ? 8212 : 8211);
             return Number.parseInt(document.getElementById(inputId)?.value, 10) || fallback;
         }
 
@@ -15268,11 +15268,11 @@
             await loadLlmServiceCatalog();
 
             // 폼에 값 설정
-            document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8188;
+            document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8211;
             document.getElementById('setting-comfyui-port-2').value = currentConfig.comfyui_port_2
                 || currentConfig.comfyui_port_illustration
-                || 8187;
-            document.getElementById('setting-comfyui-port-3').value = currentConfig.comfyui_port_3 || 8186;
+                || 8212;
+            document.getElementById('setting-comfyui-port-3').value = currentConfig.comfyui_port_3 || 8213;
             document.getElementById('setting-video-engine-port').value = currentConfig.video_engine_port || 8093;
             document.getElementById('setting-video-engine-project-path').value = currentConfig.video_engine_project_path || '';
             document.getElementById('setting-video-engine-auto-start').checked = currentConfig.video_engine_auto_start === true;
@@ -16950,9 +16950,9 @@
                 _origin: 'saveSettings',
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 memo_enabled: document.getElementById('setting-memo-enabled').checked,
-                comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
-                comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187,
-                comfyui_port_3: parseInt(document.getElementById('setting-comfyui-port-3').value) || 8186,
+                comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8211,
+                comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8212,
+                comfyui_port_3: parseInt(document.getElementById('setting-comfyui-port-3').value) || 8213,
                 video_engine_port: videoEnginePort,
                 video_engine_project_path: videoEngineProjectPathValue(false),
                 video_engine_auto_start: document.getElementById('setting-video-engine-auto-start')?.checked === true,

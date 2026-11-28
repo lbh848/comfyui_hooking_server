@@ -6,6 +6,8 @@ import {
   actionLabels, activeLlmStreams, contentText, inputText, llmLogsRequest, statusLabels, useLlmLogsPoll,
   type LlmHistory, type LlmStats, type LlmStream, type StreamAction,
 } from "./llmLogs";
+import { usePageVisible } from "./ModalWorkspace";
+import { claimLlmStreamsFeed, publishLlmStreams } from "./workshopEvents";
 import "./llm-logs.css";
 
 type Notify = (message: string) => void;
@@ -121,9 +123,11 @@ function LiveCard({ stream, streams, connected, follow, notify, refresh }: {
 }
 
 export function LlmLogsPage({ notify }: { notify: Notify }) {
+  const pageVisible = usePageVisible();
   const [revision, setRevision] = useState(0);
-  const history = useLlmLogsPoll<{ history: LlmHistory[]; count: number }>("history", 3000, revision);
-  const live = useLlmLogsPoll<{ streams: LlmStream[]; errors: string[] }>("streams", 750, revision);
+  const [liveActive, setLiveActive] = useState(false);
+  const history = useLlmLogsPoll<{ history: LlmHistory[]; count: number }>("history", liveActive ? 3000 : 6000, revision, pageVisible);
+  const live = useLlmLogsPoll<{ streams: LlmStream[]; errors: string[] }>("streams", liveActive ? 1000 : 2500, revision, pageVisible);
   const [selected, setSelected] = useState<LlmHistory | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -132,6 +136,13 @@ export function LlmLogsPage({ notify }: { notify: Notify }) {
   const records = history.data?.history || [];
   const streams = activeLlmStreams(live.data?.streams);
   const hasLiveStreams = streams.length > 0;
+  useEffect(() => { setLiveActive(hasLiveStreams); }, [hasLiveStreams]);
+  useEffect(() => (pageVisible ? claimLlmStreamsFeed() : undefined), [pageVisible]);
+  useEffect(() => {
+    if (!pageVisible) return;
+    if (live.error) publishLlmStreams(null, live.error);
+    else if (live.data) publishLlmStreams(live.data.streams, live.data.errors.join(" "));
+  }, [pageVisible, live.data, live.error]);
   const search = query.trim().toLocaleLowerCase();
   const visible = records.filter((record) => (!status || (record.status || "ok") === status)
     && (!slot || record.llm_slot === slot)

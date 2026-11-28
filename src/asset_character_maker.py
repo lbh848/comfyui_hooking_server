@@ -1,6 +1,7 @@
 """Per-character, persistent maker proposals and non-destructive version restores."""
 from __future__ import annotations
 
+import asyncio
 import copy
 from datetime import datetime, timezone
 import hashlib
@@ -14,6 +15,7 @@ from urllib.parse import urlencode
 from aiohttp import web
 from PIL import Image
 
+from asset_json import join_moss_caption_parts
 from asset_preset_scope import write_scope_documents
 from configuration import settings_lock
 from json_store import write_json_atomic
@@ -22,6 +24,43 @@ MAX_UPLOAD_IMAGES = 6
 MAX_UPLOAD_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_UPLOAD_TOTAL_BYTES = 36 * 1024 * 1024
 UPLOAD_IMAGE_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
+MAKER_MODEL_FAMILIES = ("anima", "moss")
+MAKER_REASONING_DEPTHS = ("fast", "deep")
+
+
+def normalize_maker_model_family(value):
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("메이커 모드는 Anima 또는 MOSS만 선택할 수 있습니다.")
+    normalized = value.strip().lower()
+    if normalized not in MAKER_MODEL_FAMILIES:
+        raise ValueError("메이커 모드는 Anima 또는 MOSS만 선택할 수 있습니다.")
+    return normalized
+
+
+def normalize_maker_reasoning_depth(value):
+    if value is None or value == "":
+        return "fast"
+    if not isinstance(value, str):
+        raise ValueError("추론 레벨은 빠르게 또는 깊게만 선택할 수 있습니다.")
+    normalized = value.strip().lower()
+    if normalized not in MAKER_REASONING_DEPTHS:
+        raise ValueError("추론 레벨은 빠르게 또는 깊게만 선택할 수 있습니다.")
+    return normalized
+
+
+def _merge_moss_prose_items(items):
+    cleaned = [item.strip() for item in items if isinstance(item, str) and item.strip()]
+    if len(cleaned) <= 1:
+        return cleaned
+    merged = [cleaned[0]]
+    for item in cleaned[1:]:
+        if merged[-1].endswith((".", "!", "?")):
+            merged[-1] = f"{merged[-1]} {item}"
+        else:
+            merged.append(item)
+    return merged
 
 
 def validate_uploaded_images(uploaded_files):
@@ -165,7 +204,17 @@ class AssetCharacterMaker:
         if state.get("name") != name or not isinstance(state.get("versions"), list):
             raise ValueError("캐릭터 버전 파일을 확인하세요.")
         if state.get("pending") and state["pending"]["id"] not in self.running:
-            orphan_uploads = list(state["pending"].get("uploaded_images") or [])
+            saved_upload_ids = {
+                item.get("id")
+                for version in state.get("versions") or []
+                if isinstance(version, dict)
+                for item in version.get("uploaded_images") or []
+                if isinstance(item, dict) and item.get("id")
+            }
+            orphan_uploads = [
+                item for item in (state["pending"].get("uploaded_images") or [])
+                if isinstance(item, dict) and item.get("id") not in saved_upload_ids
+            ]
             state.update(pending=None, error="서버 재시작으로 AI 요청이 중단되었습니다. 다시 요청하세요.")
             write_json_atomic(path, state)
             self._remove_uploaded_files(name, orphan_uploads)
@@ -336,6 +385,17 @@ class AssetCharacterMaker:
             )]
             pending = {"id": uuid.uuid4().hex, "message": message.strip(), "base_id": base["id"],
                        "phase": "generate" if generating else "propose"}
+            model_family = normalize_maker_model_family(body.get("model_family"))
+            reasoning_depth = normalize_maker_reasoning_depth(body.get("reasoning_depth"))
+            if not generating and model_family:
+                pending["model_family"] = model_family
+            if not generating:
+                pending["reasoning_depth"] = reasoning_depth
+                if reasoning_depth == "deep":
+                    pending["deep_pass"] = 1
+                    pending["stage_label"] = (
+                        "영역 탐지 준비 중…" if validated_uploads else "1차 상세 프롬프트 작성 중…"
+                    )
             if generating:
                 pending["version_id"] = base["id"]
             elif body.get("use_image", True) and base.get("image_path"):
@@ -362,7 +422,27 @@ class AssetCharacterMaker:
                 raise
             return self._public(state, character), copy.deepcopy(base["after"]), history
 
-    def finish(self, name, request_id, before, result=None, error="", *, generate=False):
+    def update_pending_stage(self, name, request_id, stage_label, *, phase=None, deep_pass=None):
+        with settings_lock(self.characters.path):
+            state = self._read(name)
+            pending = state.get("pending")
+            if not pending or pending["id"] != request_id:
+                return
+            if stage_label:
+                pending["stage_label"] = str(stage_label)
+            if phase:
+                pending["phase"] = phase
+            if deep_pass is not None:
+                pending["deep_pass"] = deep_pass
+            write_json_atomic(self.path(name), state)
+
+    def finish(
+        self, name, request_id, before, result=None, error="", *,
+        generate=False, deep_pass=None, auto_refined=False,
+        message_override=None, parent_id_override=None,
+        feedback_image_version_id_override=None, keep_uploaded_images=False,
+        stage_label="",
+    ):
         with settings_lock(self.characters.path):
             state = self._read(name)
             pending = state.get("pending")
@@ -371,31 +451,75 @@ class AssetCharacterMaker:
             orphan_uploads = []
             if result is not None:
                 after = copy.deepcopy(before)
+                model_family = pending.get("model_family", "")
+                reasoning_depth = pending.get("reasoning_depth", "fast")
                 for key in ("appearance", "outfit", "expression", "composition"):
                     tags = result.get("fields", {}).get(key)
                     if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
                         raise ValueError("AI 결과 태그 형식을 확인하세요.")
-                    after["values"][f"raw_{key}_tags"] = tags
+                    after["values"][f"raw_{key}_tags"] = (
+                        _merge_moss_prose_items(tags) if model_family == "moss" else tags
+                    )
                 # Expression and composition share one visible field in character settings.
-                after["values"]["raw_expression_tags"] = list(dict.fromkeys([
+                merged_expression = list(dict.fromkeys([
                     *after["values"]["raw_expression_tags"],
                     *after["values"].pop("raw_composition_tags"),
                 ]))
+                after["values"]["raw_expression_tags"] = (
+                    _merge_moss_prose_items(merged_expression)
+                    if model_family == "moss"
+                    else merged_expression
+                )
                 after["values"].pop("composition_preset", None)
                 if result.get("natural_language") is not None:
                     after["values"]["natural_language"] = result["natural_language"]
                 validate_settings(after)
-                uploaded_images = copy.deepcopy(pending.pop("uploaded_images", None) or [])
-                extra = {"feedback_image_version_id": pending.get("image_version_id", "")}
-                if uploaded_images:
+                if keep_uploaded_images:
+                    uploaded_images = copy.deepcopy(pending.get("uploaded_images") or [])
+                else:
+                    uploaded_images = copy.deepcopy(pending.pop("uploaded_images", None) or [])
+                extra = {
+                    "feedback_image_version_id": (
+                        feedback_image_version_id_override
+                        if feedback_image_version_id_override is not None
+                        else pending.get("image_version_id", "")
+                    )
+                }
+                if model_family:
+                    extra["model_family"] = model_family
+                if reasoning_depth == "deep":
+                    extra["reasoning_depth"] = "deep"
+                if deep_pass is not None:
+                    extra["deep_pass"] = deep_pass
+                if auto_refined:
+                    extra["auto_refined"] = True
+                if uploaded_images and not auto_refined:
                     extra["uploaded_images"] = uploaded_images
-                version = self._append(state, "proposal", before, after, parent_id=pending["base_id"],
-                                       message=pending["message"], assistant_message=str(result.get("assistant_message", "")),
-                                       **extra)
+                version = self._append(
+                    state, "proposal", before, after,
+                    parent_id=parent_id_override or pending["base_id"],
+                    message=message_override if message_override is not None else pending["message"],
+                    assistant_message=str(result.get("assistant_message", "")),
+                    **extra,
+                )
                 if generate:
                     pending.update(phase="generate", version_id=version["id"])
+                    if stage_label:
+                        pending["stage_label"] = stage_label
+                    if deep_pass is not None:
+                        pending["deep_pass"] = deep_pass
             else:
-                orphan_uploads = list(pending.get("uploaded_images") or [])
+                saved_upload_ids = {
+                    item.get("id")
+                    for version in state.get("versions") or []
+                    if isinstance(version, dict)
+                    for item in version.get("uploaded_images") or []
+                    if isinstance(item, dict) and item.get("id")
+                }
+                orphan_uploads = [
+                    item for item in (pending.get("uploaded_images") or [])
+                    if isinstance(item, dict) and item.get("id") not in saved_upload_ids
+                ]
             if error and pending.get("version_id"):
                 target = next(v for v in state["versions"] if v["id"] == pending["version_id"])
                 target["image_error"] = error
@@ -407,20 +531,32 @@ class AssetCharacterMaker:
                 self.running.discard(request_id)
             return copy.deepcopy(version) if result is not None else None
 
-    def finish_image(self, name, request_id, result):
+    def finish_image(self, name, request_id, result, *, next_stage_label="", next_deep_pass=None):
         with settings_lock(self.characters.path):
             state = self._read(name)
             pending = state.get("pending")
             if not pending or pending["id"] != request_id:
-                return
+                return None, None
             path = result.get("local_path") if isinstance(result, dict) and result.get("success") else None
             if not path or not Path(path).is_file():
                 raise ValueError((result.get("error") if isinstance(result, dict) else "") or "생성 이미지를 저장하지 못했습니다.")
             version = next(v for v in state["versions"] if v["id"] == pending["version_id"])
             version.update(image_path=str(path), image_updated_at=datetime.now(timezone.utc).isoformat(), image_error="")
-            state.update(pending=None, error="")
+            if next_stage_label:
+                pending.update(
+                    phase="propose",
+                    stage_label=str(next_stage_label),
+                    version_id="",
+                    image_version_id=version["id"],
+                )
+                if next_deep_pass is not None:
+                    pending["deep_pass"] = next_deep_pass
+                state.update(pending=pending, error="")
+            else:
+                state.update(pending=None, error="")
+                self.running.discard(request_id)
             write_json_atomic(self.path(name), state)
-            self.running.discard(request_id)
+            return str(path), copy.deepcopy(version)
 
 
 def generation_job(template, values):
@@ -432,7 +568,7 @@ def generation_job(template, values):
     if is_moss_document(job.get("prompt_json")):
         from modes.moss_prompt_builder import MossPromptBuilder
         moss = job["prompt_json"]["moss"]
-        character_tags = ", ".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip())
+        character_tags = join_moss_caption_parts(tags)
         natural_language = str(values.get("natural_language") or "").strip()
         items = moss.get("items")
         if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict):
@@ -443,12 +579,12 @@ def generation_job(template, values):
                 prefix = existing[:-len(", character")].strip()
             else:
                 prefix = existing
-            body = ", ".join(part for part in (character_tags, natural_language) if part)
-            items[0]["caption"] = ", ".join(part for part in (prefix, body or "character") if part)
+            body = join_moss_caption_parts((character_tags, natural_language))
+            items[0]["caption"] = join_moss_caption_parts((prefix, body or "character"))
         else:
             summary = moss.setdefault("summary", {})
             parts = [summary.get("caption", ""), *tags, natural_language]
-            summary["caption"] = ", ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+            summary["caption"] = join_moss_caption_parts(parts)
         job["positive_prompt"] = MossPromptBuilder.dumps(job["prompt_json"])
         return job
     fields = job["prompt_json"]["fields"]
@@ -534,27 +670,8 @@ def register_character_maker_runtime(server, prepare_generation=None):
                         template.update(storage_group="character_maker", storage_session=f"asset-{fingerprint(body.get('name'))}")
                     elif body.get("action") == "generate":
                         raise ValueError("이미지 생성 설정을 확인하세요.")
-                    result, before, history = store.begin(body, uploaded_files=uploaded_files)
-                    name, pending = result["name"], result["pending"]
-
-                    async def enqueue_image(values):
-                        item = await server.queue_manager.add_item(
-                            "asset_generation", label=f"캐릭터 메이커 이미지 · {name}",
-                            params={"body": generation_job(template, values), "asset_model_preset": snapshot},
-                        )
-                        def image_completed(future):
-                            try:
-                                store.finish_image(name, pending["id"], future.result())
-                            except BaseException as exc:
-                                store.finish(name, pending["id"], before,
-                                             error=str(exc) or "이미지 생성이 취소되었습니다. 다시 생성하세요.")
-                        item.completion_future.add_done_callback(image_completed)
-
-                    async def run(_item):
-                        image_path = store.image_path(name, pending["image_version_id"]) if pending.get("image_version_id") else None
-                        kwargs = {"image_path": image_path}
-                        if pending.get("uploaded_images"):
-                            kwargs["reference_images"] = store.uploaded_image_entries(name, pending["uploaded_images"])
+                    resolved_family = normalize_maker_model_family(body.get("model_family"))
+                    if body.get("action") == "propose" and not resolved_family:
                         workflow_type = (
                             (snapshot or {}).get("config", {}).get("asset_workflow_type")
                             or body.get("asset_workflow_type")
@@ -566,21 +683,168 @@ def register_character_maker_runtime(server, prepare_generation=None):
                                 workflow_type = AssetModelPresets(server.CONFIG_FILE).snapshot(server.app_config)["config"]["asset_workflow_type"]
                             except Exception:
                                 workflow_type = ""
-                        if str(workflow_type).strip().lower() == "moss":
-                            kwargs["model_family"] = "moss"
+                        resolved_family = "moss" if str(workflow_type).strip().lower() == "moss" else "anima"
+                    resolved_depth = normalize_maker_reasoning_depth(body.get("reasoning_depth"))
+                    begin_body = (
+                        {**body, "model_family": resolved_family, "reasoning_depth": resolved_depth}
+                        if body.get("action") == "propose"
+                        else body
+                    )
+                    result, before, history = store.begin(begin_body, uploaded_files=uploaded_files)
+                    name, pending = result["name"], result["pending"]
+                    request_id = pending["id"]
+                    uploaded_refs_snapshot = copy.deepcopy(pending.get("uploaded_images") or [])
+                    detected_bbox_regions = []
+
+                    def set_stage(stage_label):
+                        store.update_pending_stage(name, request_id, stage_label)
+
+                    async def enqueue_image(values, *, label_suffix="", next_stage_label="", next_deep_pass=None, on_done=None):
+                        item = await server.queue_manager.add_item(
+                            "asset_generation",
+                            label=f"캐릭터 메이커 이미지{label_suffix} · {name}",
+                            params={"body": generation_job(template, values), "asset_model_preset": snapshot},
+                        )
+                        def image_completed(future):
+                            try:
+                                saved_path, saved_version = store.finish_image(
+                                    name, request_id, future.result(),
+                                    next_stage_label=next_stage_label,
+                                    next_deep_pass=next_deep_pass,
+                                )
+                            except BaseException as exc:
+                                store.finish(
+                                    name, request_id, before,
+                                    error=str(exc) or "이미지 생성이 취소되었습니다. 다시 생성하세요.",
+                                )
+                                return
+                            if on_done and saved_path and saved_version:
+                                asyncio.ensure_future(on_done(saved_path, saved_version))
+                        item.completion_future.add_done_callback(image_completed)
+
+                    async def schedule_deep_pass2(image1_path, version1):
+                        async def run_pass2(_item):
+                            ref_entries = (
+                                store.uploaded_image_entries(name, uploaded_refs_snapshot)
+                                if uploaded_refs_snapshot
+                                else None
+                            )
+                            orig_msg = pending["message"]
+                            if ref_entries:
+                                pass2_message = (
+                                    f"Deep refinement pass (2/2) for the user's request: {orig_msg}\n"
+                                    "Compare GENERATED_CURRENT carefully against USER_UPLOADED_* and all "
+                                    "*_CROP_* close-ups. Identify EVERY concrete discrepancy (hairstyle "
+                                    "count/bangs, headpiece, left/right asymmetry, mantle/cape ending "
+                                    "length, collar, bodice color panels, sleeves/gloves, hip ornaments, "
+                                    "skirt shape/pattern, overskirt length, legwear, footwear height, "
+                                    "held prop hand/length/shaft color/finial, leaked background) and "
+                                    "produce a corrected prompt that fixes every mismatch."
+                                )
+                            else:
+                                pass2_message = (
+                                    f"Deep self-review pass (2/2) for the user's request: {orig_msg}\n"
+                                    "Inspect GENERATED_CURRENT against the user's request and current "
+                                    "fields. Identify any missing, drifted, or contradictory details "
+                                    "and produce an improved prompt."
+                                )
+                            pass2_history = [
+                                *history,
+                                {"role": "user", "content": orig_msg, "accepted": True},
+                                {"role": "assistant", "content": str(version1.get("assistant_message") or ""), "accepted": True},
+                            ]
+                            pass2_kwargs = {
+                                "image_path": image1_path,
+                                "model_family": resolved_family,
+                                "reasoning_depth": "deep",
+                                "deep_pass": 2,
+                                "precomputed_bbox_regions": detected_bbox_regions if ref_entries else None,
+                                "progress_callback": set_stage,
+                            }
+                            if ref_entries:
+                                pass2_kwargs["reference_images"] = ref_entries
+                            proposal2 = await server.character_maker.suggest_asset_values(
+                                name, version1["after"]["values"], pass2_message, pass2_history, **pass2_kwargs,
+                            )
+                            version2 = store.finish(
+                                name, request_id, version1["after"], proposal2,
+                                generate=True,
+                                deep_pass=2,
+                                auto_refined=True,
+                                message_override="2차 자동 디테일 보정",
+                                parent_id_override=version1["id"],
+                                feedback_image_version_id_override=version1["id"],
+                                stage_label="2차 이미지 생성 중…",
+                            )
+                            if version2:
+                                await enqueue_image(
+                                    version2["after"]["values"],
+                                    label_suffix=" (2차 보정)",
+                                )
+                            return {"success": True}
+
+                        def pass2_completed(future):
+                            try:
+                                future.result()
+                            except BaseException as exc:
+                                store.finish(
+                                    name, request_id, version1["after"],
+                                    error=str(exc) or "2차 디테일 보정이 취소되었습니다. 1차 결과는 보관되었습니다.",
+                                )
+
+                        try:
+                            item2 = await server.queue_manager.add_item(
+                                "character_maker",
+                                label=f"캐릭터 메이커 2차 보정 · {name}",
+                                params={"character": name},
+                                runtime_handler=run_pass2,
+                            )
+                            item2.completion_future.add_done_callback(pass2_completed)
+                        except BaseException as exc:
+                            store.finish(
+                                name, request_id, version1["after"],
+                                error=str(exc) or "2차 디테일 보정을 시작하지 못했습니다. 1차 결과는 보관되었습니다.",
+                            )
+
+                    async def run(_item):
+                        image_path = store.image_path(name, pending["image_version_id"]) if pending.get("image_version_id") else None
+                        kwargs = {"image_path": image_path, "model_family": resolved_family}
+                        if uploaded_refs_snapshot:
+                            kwargs["reference_images"] = store.uploaded_image_entries(name, uploaded_refs_snapshot)
+                        if resolved_depth == "deep":
+                            kwargs["reasoning_depth"] = "deep"
+                            kwargs["deep_pass"] = 1
+                            kwargs["bbox_regions_out"] = detected_bbox_regions
+                            kwargs["progress_callback"] = set_stage
                         proposal = await server.character_maker.suggest_asset_values(
                             name, before["values"], pending["message"], history, **kwargs,
                         )
-                        version = store.finish(name, pending["id"], before, proposal, generate=template is not None)
+                        will_run_pass2 = resolved_depth == "deep" and template is not None
+                        version = store.finish(
+                            name, request_id, before, proposal,
+                            generate=template is not None,
+                            deep_pass=1 if resolved_depth == "deep" else None,
+                            keep_uploaded_images=will_run_pass2,
+                            stage_label="1차 이미지 생성 중…" if will_run_pass2 else "",
+                        )
                         if template is not None and version:
-                            await enqueue_image(version["after"]["values"])
+                            if will_run_pass2:
+                                await enqueue_image(
+                                    version["after"]["values"],
+                                    label_suffix=" (1차)",
+                                    next_stage_label="원본 대조·2차 디테일 보정 중…",
+                                    next_deep_pass=2,
+                                    on_done=schedule_deep_pass2,
+                                )
+                            else:
+                                await enqueue_image(version["after"]["values"])
                         return {"success": True}
 
                     def completed(future):
                         try:
                             future.result()
                         except BaseException as exc:
-                            store.finish(name, pending["id"], before,
+                            store.finish(name, request_id, before,
                                          error=str(exc) or "AI 요청이 취소되었습니다. 다시 요청하세요.")
 
                     try:
@@ -593,7 +857,7 @@ def register_character_maker_runtime(server, prepare_generation=None):
                             )
                             item.completion_future.add_done_callback(completed)
                     except Exception as exc:
-                        store.finish(name, pending["id"], before, error=str(exc))
+                        store.finish(name, request_id, before, error=str(exc))
                         raise
                 else:
                     result = store.change(body)

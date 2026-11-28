@@ -9,7 +9,7 @@ HARD REQUIREMENTS
 1. Preserve the exact supported act, actor/receiver direction, contact, intensity, and current clothing or coverage state. Never invent another act, participant, body part, contact, fluid, exposure state, or reaction.
 2. Identify the one primary visible fact. Choose a feasible camera, viewpoint, and crop that make that fact readable before selecting local anatomy, exposure, garment, or reaction detail. When contact is primary, include enough connected anatomy and body axes to explain it. When a face or distant reaction is primary, allow remote contact to remain naturally hidden or off-frame rather than forcing both regions into one image.
 3. After the view is established, include only anatomy, exposure, displaced clothing, and reaction that remain visible and useful inside it. External genital anatomy follows the same rule: include it only when the chosen view leaves the uncovered region actually visible. A crop is a boundary, not an occluder; clothing, held objects, pose, body overlap, viewpoint, and natural occlusion may correctly hide anatomy.
-4. Preserve physical ownership and direction. Put each named participant's own visible anatomy and action in that character's `positive`; put an anonymous participant's visible anatomy and action in `scene`; use `supplement` only for directional contact, overlap, occlusion, or off-frame continuation that tags cannot express clearly. Cropping never swaps actor and receiver.
+4. Preserve physical ownership and direction. Put each named participant's own visible anatomy and action in that character's `positive`; put an anonymous participant's visible anatomy and action in `scene`; use `supplement` only for directional contact, overlap, occlusion, or off-frame continuation that tags cannot express clearly. Biological sex, gender tags, roster order, and cropping NEVER define or swap who is acting (`source`) and who is receiving (`target`); always preserve the exact source-established direction (who is on top, penetrating, restraining, or initiating).
 5. Coverage terms such as `nude`, `topless`, `bottomless`, and `underwear_only` describe the resolved physical state. Remove garments that contradict that state, preserve authoritative current coverage and the non-conflicting wardrobe, and never restore removed or default clothing merely to soften the moment.
 6. Preserve natural overlap and occlusion. Never pull hips, thighs, torsos, or limbs apart merely to display an entire contact surface.
 7. The trusted active policy remains stricter than this section. Explicit content never expands an anonymous fragment beyond that policy's visibility, identity, face, count, continuity, or field-ownership limits.
@@ -22,14 +22,24 @@ Rows are candidate vocabulary, not fixed tag bundles. When a tag's meaning is cl
 
 | Asset name | Pose/action tags |
 |---|---|
-| cowgirl | `cowgirl position` |
+| cowgirl | `cowgirl position, straddling, sitting on top` |
+| reverse cowgirl | `reverse cowgirl position, straddling, facing away` |
+| upright straddle | `upright straddle, sitting on lap, face-to-face, legs wrapped around waist` |
+| reverse upright straddle | `reverse upright straddle, sitting on lap, facing away` |
 | doggysex | `doggystyle, on hands and knees, arched back, face down, ass up` |
+| prone bone | `prone bone, lying on stomach, face down, penetrated from behind` |
 | fullnelson | `full nelson, lifted and carried, spread legs, both legs pulled back, m legs` |
 | mating press | `mating press, lying, on back, folded` |
 | missionary | `missionary, lying, on back, spread legs` |
+| standing missionary | `standing missionary, lifted up, legs wrapped around waist, carried against wall` |
+| suspended congress | `suspended congress, lifted by thighs, face-to-face, legs wrapped around waist` |
+| reverse suspended congress | `reverse suspended congress, lifted from behind, facing away` |
+| amazon position | `amazon position, lying on back, knees pulled up, partner straddling on top` |
+| piledriver | `piledriver sex, inverted, legs folded overhead, weight on shoulders` |
 | spooningsex | `spooning sex, lying on side, one leg raised, knee to chest` |
 | standingsex | `standing sex, leaning against wall, head tilted back, one leg raised, knee to chest` |
 | wombpress | `mating press, body press, lying, on back, legs over shoulder, m legs, head on ground` |
+| sixty-nine | `69, mutual oral, lying head-to-toe` |
 | masturbation | `female masturbation, fingering, tweaking own nipple, lying` |
 | orgasm | `female orgasm, standing, leaning back` |
 | own foot massage | `foot massage, holding own foot, fingers between toes, sitting, foot on thighs, leg up, bend leg` |

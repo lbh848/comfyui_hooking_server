@@ -21,6 +21,10 @@ ASSET_PRESET_FILES = frozenset({
     "lora_manage.json", "style_lora_manage.json", "bot_lora_manage.json",
 } | {Path(location.local).name for location in PRESET_LOCATIONS.values()
      if location.local.startswith("data/asset_data/") and not location.directory})
+BG_ASSET_PRESET_FILES = frozenset({
+    "tags.json", "hidden_tags.json", "name_mapping.json",
+} | {Path(location.local).name for location in PRESET_LOCATIONS.values()
+     if location.local.startswith("data/bg_asset_data/") and not location.directory})
 _digest_cache: dict[Path, tuple[tuple, str]] = {}
 
 
@@ -62,6 +66,8 @@ def backup_policy(path: str | Path) -> BackupPolicy | None:
                 if path.name in {"tags.json", "hidden_tags.json"}:
                     prefix = f"preset_import_{path.stem}_"
                     return BackupPolicy(parent / "asset_data/backup", prefix, prefix + "*.json")
+                return BackupPolicy(parent / "backups/presets/user" / relative)
+            if len(parts) == 2 and parts[0] == "bg_asset_data" and path.name in BG_ASSET_PRESET_FILES:
                 return BackupPolicy(parent / "backups/presets/user" / relative)
             if parts[0] == "chain_presets" and (len(parts) == 2 or len(parts) == 3 and parts[1] == "hidden"):
                 return BackupPolicy(parent / "backups/presets/user" / relative, ignored_keys=("saved_at",))
@@ -172,6 +178,7 @@ def backup_presets(project_root: str | Path) -> dict:
         if not location.directory:
             paths.update((root / location.builtin, root / location.local))
     paths.update(root / "data/asset_data" / name for name in ASSET_PRESET_FILES)
+    paths.update(root / "data/bg_asset_data" / name for name in BG_ASSET_PRESET_FILES)
     paths.update((root / "data/chain_presets").glob("*.json"))
     paths.update((root / "data/chain_presets/hidden").glob("*.json"))
     paths.update(root / relative for relative in (

@@ -874,9 +874,16 @@ def apply_installed_config(
     required_bindings: Iterable[str],
     default_workflow_bindings: Mapping[str, str] | None = None,
     workflow_base_dir: str | os.PathLike[str] | None = None,
-    comfy_port: int = 8188,
+    comfy_port: int | None = None,
     install_mode: str = INSTALL_MODE_STANDARD,
 ) -> ConfigUpdateResult:
+    from comfy_runtime import (
+        COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY,
+        DEFAULT_COMFY_PORTS,
+    )
+    resolved_comfy_port = (
+        DEFAULT_COMFY_PORTS[1] if comfy_port is None else int(comfy_port)
+    )
     config_file = Path(config_path).resolve()
     backup_root = Path(requirements_dir).resolve()
     install_root = Path(comfy_root).resolve()
@@ -924,7 +931,8 @@ def apply_installed_config(
         )
 
         direct_updates = {
-            "comfyui_port": int(comfy_port),
+            "comfyui_port": resolved_comfy_port,
+            COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY: True,
             "comfy_input_dir": str(install_root / "input"),
             **default_lora_load_paths(),
             "outfit_mode_enabled": False,

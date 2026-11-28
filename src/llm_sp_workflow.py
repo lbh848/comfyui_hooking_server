@@ -105,7 +105,8 @@ async def analyze(messages: list, *, slot_id: str = LLM_SP["id"], reasoning_budg
     targets[0]["widgets_values"][0] = ""
     targets[0]["widgets_values"][1] = context_size
     node_id = str(targets[0]["id"])
-    port = int(config.get("comfyui_port", 8188))
+    from comfy_runtime import DEFAULT_COMFY_PORTS
+    port = int(config.get("comfyui_port", DEFAULT_COMFY_PORTS[1]))
     host = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
     base_url = f"http://{host}:{port}"
     prompt_id = None

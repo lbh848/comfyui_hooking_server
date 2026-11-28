@@ -388,7 +388,7 @@ export function IllustStyleRef({ value, readOnly, inventory, onChange }: {
     {pickerOpen && !readOnly && remainingSlots > 0 && (
       <ImagePicker
         allowBot
-        initialSource={scope.prefix === "asset" ? "asset" : "bot"}
+        initialSource={scope.prefix === "asset" || scope.prefix === "model" ? "asset" : "bot"}
         title="화풍 참조 이미지 가져오기"
         maxSelect={remainingSlots}
         backgroundable={false}

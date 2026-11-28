@@ -2,12 +2,19 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight, Download, Eye, RefreshCw, Save, Sparkles, SquaresIntersect } from "lucide-react";
 import { Empty, Modal, Panel } from "./components";
 import { BgAssetExportThemes } from "./BgAssetExportThemes";
+import { ExportPostprocessChoice } from "./AssetPostprocessPage";
+import type { PostprocessPreviewBannerState } from "./assetPostprocess";
 import { bgAssetMedia, bgAssetRequest, bgAssetResponse, useBgAssetResource, type AssetRecord } from "./bgAsset";
 import {
   assetExportFormats,
+  availableAtmospheresForPlaces,
   bgAssetNameMapping,
   bgAssetNamingLabels,
+  bgAssetPlaceAtmospheres,
+  commonAtmospheresForSelection,
+  countAtmospherePlaces,
   downloadAssetExport,
+  reconcileSelectedAtmospheres,
   validateBgAssetExport,
   validateBgAssetExportBatch,
   type AssetExportIssue,
@@ -25,11 +32,11 @@ type AtmospherePreviewItem = { place: string; filename: string; image_count: num
 type AtmospherePreview = {
   theme: string; atmosphere: string; loading: boolean; error: string; items: AtmospherePreviewItem[];
 };
-const steps = ["테마 선택", "시간대 선택", "장소 선택", "이름 설정", "내보내기 확인"];
+const steps = ["테마 선택", "장소 선택", "시간대 선택", "이름 설정", "내보내기 확인"];
 const stepDescriptions = [
   "함께 내보낼 테마를 선택한 뒤 다음 단계로 이동하세요.",
-  "테마별로 ZIP에 포함할 시간대를 선택하세요.",
   "테마별로 ZIP에 포함할 장소를 선택하세요.",
+  "선택한 장소에서 ZIP에 포함할 시간대를 선택하세요.",
   "파일명에 사용할 이름과 순서, 이미지 출력 방식을 설정하세요.",
   "선택한 테마의 설정을 확인하고 ZIP으로 내보내세요.",
 ];
@@ -45,8 +52,16 @@ function ExportIssues({ issues, warning = false }: { issues: AssetExportIssue[];
   </div>;
 }
 
-function ExportSelection({ label, items, selected, disabled, onChange, actions }: {
-  label: string; items: string[]; selected: string[]; disabled: boolean; onChange: (value: string[]) => void; actions?: ReactNode;
+function ExportSelection({ label, items, selected, disabled, onChange, actions, itemDetail, emptyTitle, emptyMessage }: {
+  label: string;
+  items: string[];
+  selected: string[];
+  disabled: boolean;
+  onChange: (value: string[]) => void;
+  actions?: ReactNode;
+  itemDetail?: (item: string) => string;
+  emptyTitle?: string;
+  emptyMessage?: string;
 }) {
   const [search, setSearch] = useState("");
   const visible = items.filter(item => item.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
@@ -55,16 +70,32 @@ function ExportSelection({ label, items, selected, disabled, onChange, actions }
       <div className="asset-export-toolbar"><label className="field">{label} 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <div className="asset-actions"><button type="button" className="button" disabled={disabled || !items.length} onClick={() => onChange([...items])}>전체 선택</button><button type="button" className="button" disabled={disabled || !selected.length} onClick={() => onChange([])}>전체 해제</button></div>
       </div>
-      {!items.length ? <Empty title={`내보낼 ${label} 항목이 없습니다`}>배경 생성에서 이미지를 먼저 준비하세요.</Empty>
+      {!items.length ? <Empty title={emptyTitle || `내보낼 ${label} 항목이 없습니다`}>{emptyMessage || "배경 생성에서 이미지를 먼저 준비하세요."}</Empty>
         : !visible.length ? <Empty title="검색 결과가 없습니다">다른 검색어를 입력하세요.</Empty>
           : <div className="asset-export-selection">{visible.map(item => <label className="asset-export-option" key={item}>
-            <input type="checkbox" checked={selected.includes(item)} disabled={disabled} onChange={event => onChange(event.target.checked ? [...selected, item] : selected.filter(value => value !== item))} /><span>{item}</span>
+            <input
+              type="checkbox"
+              checked={selected.includes(item)}
+              disabled={disabled}
+              onChange={event => onChange(items.filter(value => event.target.checked
+                ? (value === item || selected.includes(value))
+                : (value !== item && selected.includes(value))))}
+            />
+            {itemDetail
+              ? <span className="asset-export-character-label"><strong>{item}</strong><small>{itemDetail(item)}</small></span>
+              : <span>{item}</span>}
           </label>)}</div>}
     </div>
   </Panel>;
 }
 
-export function BgAssetExport({ active, initialTheme, notify }: { active: boolean; initialTheme: string; notify: (message: string) => void }) {
+export function BgAssetExport({ active, initialTheme, notify, postprocess, onOpenPostprocess }: {
+  active: boolean;
+  initialTheme: string;
+  notify: (message: string) => void;
+  postprocess?: PostprocessPreviewBannerState;
+  onOpenPostprocess?: () => void;
+}) {
   const themes = useBgAssetResource(active ? "themes" : null);
   const [theme, setTheme] = useState("");
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
@@ -87,6 +118,8 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [qualityDraft, setQualityDraft] = useState("");
+  const [preferPostprocess, setPreferPostprocess] = useState(true);
+  const applyPostprocessOnExport = !!postprocess?.active && preferPostprocess;
 
   const entry = drafts[theme];
   const dirty = !!entry && JSON.stringify(entry.mapping) !== entry.saved;
@@ -120,7 +153,9 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
           const info = await bgAssetRequest(`name_mapping/${encodeURIComponent(name)}`, undefined, controller.signal);
           if (controller.signal.aborted) return;
           const mapping = bgAssetNameMapping(info);
-          setDrafts(previous => ({ ...previous, [name]: { info, mapping, saved: JSON.stringify(mapping), places: [...info.places], atmospheres: [...info.atmospheres] } }));
+          const places: string[] = [...(info.places || [])];
+          const atmospheres = availableAtmospheresForPlaces(info, places);
+          setDrafts(previous => ({ ...previous, [name]: { info, mapping, saved: JSON.stringify(mapping), places, atmospheres } }));
         } catch (cause) {
           if (!controller.signal.aborted) setLoadError(previous => [previous, `${name}: ${(cause as Error).message}`].filter(Boolean).join("\n"));
         }
@@ -159,7 +194,18 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
 
   function update(patch: Partial<ExportDraft>) {
     setDrafts(previous => ({ ...previous, [theme]: { ...previous[theme], ...patch } }));
-    setValidation(null); setError(""); setValidationError("");
+    setValidation(null); setBatchValidation(null); setError(""); setValidationError("");
+  }
+  function updatePlaces(places: string[]) {
+    setDrafts(previous => {
+      const draft = previous[theme];
+      if (!draft) return previous;
+      const previousAvailable = availableAtmospheresForPlaces(draft.info, draft.places);
+      const nextAvailable = availableAtmospheresForPlaces(draft.info, places);
+      const atmospheres = reconcileSelectedAtmospheres(previousAvailable, nextAvailable, draft.atmospheres);
+      return { ...previous, [theme]: { ...draft, places, atmospheres } };
+    });
+    setValidation(null); setBatchValidation(null); setError(""); setValidationError("");
   }
   function changeMapping(patch: Partial<BgAssetNameMapping>) { update({ mapping: { ...entry.mapping, ...patch } }); }
   function commitQuality(raw: string) {
@@ -246,13 +292,15 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
       if (failed) editTheme(failed.theme);
       throw new Error("선택한 테마의 내보내기 오류를 확인하세요.");
     }
-    const response = await bgAssetResponse("export", { themes: batchThemes }, undefined, "POST", [409]);
+    const response = await bgAssetResponse("export", { themes: batchThemes, apply_postprocess: applyPostprocessOnExport }, undefined, "POST", [409]);
     if (response.status === 409) {
       setBatchValidation({ key: batchKey, plan: await response.json() });
       throw new Error("내보낼 배경 에셋이 변경되었습니다. 테마별 오류를 확인하세요.");
     }
     downloadAssetExport(await response.blob(), selectedThemes.length === 1 ? `${selectedThemes[0]}.zip` : "배경 에셋 익스포트.zip");
-    notify(`${selectedThemes.length}개 테마의 배경 ZIP 다운로드를 시작했습니다.`);
+    notify(applyPostprocessOnExport
+      ? `${selectedThemes.length}개 테마의 배경 ZIP(후처리 적용) 다운로드를 시작했습니다.`
+      : `${selectedThemes.length}개 테마의 배경 ZIP 다운로드를 시작했습니다.`);
   }
 
   async function llm(mode: "auto_fix" | "full") {
@@ -270,32 +318,69 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
     setDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([, draft]) => JSON.stringify(draft.mapping) !== draft.saved)));
   }
 
-  async function refreshAtmospheres() {
+  async function refreshThemeCatalog() {
     const info = await bgAssetRequest(`name_mapping/${encodeURIComponent(theme)}`);
     setDrafts(previous => {
       const draft = previous[theme];
       if (!draft) return previous;
-      const atmospheres: string[] = info.atmospheres;
-      return { ...previous, [theme]: { ...draft, info: { ...draft.info, atmospheres }, atmospheres: atmospheres.filter(item => draft.atmospheres.includes(item) || !draft.info.atmospheres.includes(item)) } };
+      const nextPlaces: string[] = (info.places || []).filter((item: string) => draft.places.includes(item) || !(draft.info.places || []).includes(item));
+      const previousAvailable = availableAtmospheresForPlaces(draft.info, draft.places);
+      const nextAvailable = availableAtmospheresForPlaces(info, nextPlaces);
+      const nextAtmospheres = reconcileSelectedAtmospheres(previousAvailable, nextAvailable, draft.atmospheres);
+      return {
+        ...previous,
+        [theme]: {
+          ...draft,
+          info: { ...draft.info, places: info.places, atmospheres: info.atmospheres, place_atmospheres: info.place_atmospheres },
+          places: nextPlaces,
+          atmospheres: nextAtmospheres,
+        },
+      };
     });
     setValidation(null); setBatchValidation(null);
   }
 
   function selectCommonAtmospheres() {
     if (!batchReady || writing.current) return;
-    const catalogs = selectedThemes.map(name => new Set<string>(drafts[name].info.atmospheres));
-    const atmospheres = [...catalogs[0]].filter(item => catalogs.every(catalog => catalog.has(item)));
+    const result = commonAtmospheresForSelection(selectedThemes.map(name => ({ info: drafts[name].info, places: drafts[name].places })));
+    if (result.missingThemeCount > 0) {
+      notify("공통 시간대를 선택하려면 선택한 모든 테마에서 장소를 하나 이상 선택하세요.");
+      return;
+    }
     setDrafts(previous => {
       const next = { ...previous };
-      for (const name of selectedThemes) next[name] = { ...previous[name], atmospheres };
+      for (const name of selectedThemes) next[name] = { ...previous[name], atmospheres: result.atmospheres };
       return next;
     });
     setValidation(null); setBatchValidation(null); setError(""); setValidationError("");
-    notify(atmospheres.length ? `선택한 테마의 공통 시간대 ${atmospheres.length}개를 선택했습니다.` : "선택한 테마 모두에게 있는 시간대가 없습니다.");
+    if (selectedThemes.length > 1) {
+      notify(result.atmospheres.length
+        ? `선택한 테마의 장소 ${result.placeCount}개에 공통인 시간대 ${result.atmospheres.length}개를 선택했습니다.`
+        : "선택한 테마의 모든 장소에 공통인 시간대가 없습니다.");
+      return;
+    }
+    notify(result.atmospheres.length
+      ? `선택한 장소 ${result.placeCount}개의 공통 시간대 ${result.atmospheres.length}개를 선택했습니다.`
+      : `선택한 장소 ${result.placeCount}개 모두에 있는 시간대가 없습니다.`);
   }
 
+  const entryPlaceAtmospheres = entry ? bgAssetPlaceAtmospheres(entry.info) : {};
+  const availableAtmospheres = entry ? availableAtmospheresForPlaces(entry.info, entry.places) : [];
+  const atmospherePlaceCounts = entry ? countAtmospherePlaces(entry.info, entry.places) : {};
+  const emptyPlaceCount = batchReady ? selectedThemes.filter(name => !drafts[name]?.places.length).length : 0;
+  const emptyAtmosphereCount = batchReady ? selectedThemes.filter(name => !drafts[name]?.atmospheres.length).length : 0;
   const missingSelection = !entry?.places.length || !entry?.atmospheres.length;
-  const nextDisabled = !!busy || (step === 0 ? !batchReady : step === 1 ? !entry?.atmospheres.length : step === 2 ? !entry?.places.length : !entry);
+  const nextDisabled = !!busy || (
+    step === 0 ? !batchReady
+      : step === 1 ? !batchReady || emptyPlaceCount > 0
+        : step === 2 ? !batchReady || emptyAtmosphereCount > 0
+          : !entry
+  );
+  const footerStatus = busy
+    || (step === 3 ? (dirty ? "저장하지 않은 변경 사항" : "변경 사항 저장됨")
+      : step === 1 && emptyPlaceCount > 0 ? `장소 미선택 ${emptyPlaceCount}개`
+        : step === 2 && emptyAtmosphereCount > 0 ? `시간대 미선택 ${emptyAtmosphereCount}개`
+          : `${selectedThemes.length}개 선택됨`);
 
   return <>
     <div className="asset-export-page">
@@ -317,10 +402,16 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
         </>}
         {step > 0 && step < 4 && !!selectedThemes.length && <div className="asset-export-character-toolbar">
           <label className="field">설정할 테마<select value={theme} disabled={!!busy} onChange={event => { setTheme(event.target.value); setError(""); setValidationError(""); }}>
-            {selectedThemes.map(name => <option key={name} value={name}>{name}{drafts[name] && JSON.stringify(drafts[name].mapping) !== drafts[name].saved ? " · 미저장" : ""}</option>)}
+            {selectedThemes.map(name => {
+              const draft = drafts[name];
+              const note = step === 1 && draft && !draft.places.length ? " · 장소 미선택"
+                : step === 2 && draft && !draft.atmospheres.length ? " · 시간대 미선택"
+                  : draft && JSON.stringify(draft.mapping) !== draft.saved ? " · 미저장" : "";
+              return <option key={name} value={name}>{name}{note}</option>;
+            })}
           </select></label>
           <span className="badge">{selectedThemes.indexOf(theme) + 1} / {selectedThemes.length}개</span>
-          {entry && <span className="field-help">시간대 {entry.atmospheres.length}개 · 장소 {entry.places.length}개 선택</span>}
+          {entry && <span className="field-help">장소 {entry.places.length}개 · 시간대 {entry.atmospheres.length}개 선택</span>}
         </div>}
         {step === 3 && !!selectedThemes.length && <section className="asset-export-import-group" aria-label="설정 가져오기">
           <span className="asset-export-import-label">설정 가져오기</span>
@@ -328,11 +419,42 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
         </section>}
         {step > 0 && step < 4 && theme && !entry && !loadError && <p role="status">이름 치환 규칙을 불러오는 중…</p>}
         {entry && <>
-          {step === 1 && <ExportSelection key={`${theme}-atmosphere`} label="시간대" items={entry.info.atmospheres} selected={entry.atmospheres} disabled={!!busy} onChange={atmospheres => update({ atmospheres })} actions={<>
-            <button type="button" className="icon-button" disabled={!!busy} aria-label="시간대 목록 새로고침" title="시간대 목록 새로고침" onClick={() => void run("시간대 목록을 불러오는 중…", refreshAtmospheres)}><RefreshCw size={15} aria-hidden="true" /></button>
-            <button type="button" className="icon-button" disabled={!!busy || !batchReady} aria-label="공통 시간대 선택" title="공통 시간대 선택" onClick={selectCommonAtmospheres}><SquaresIntersect size={15} aria-hidden="true" /></button>
-          </>} />}
-          {step === 2 && <ExportSelection key={`${theme}-place`} label="장소" items={entry.info.places} selected={entry.places} disabled={!!busy} onChange={places => update({ places })} />}
+          {step === 1 && <ExportSelection
+            key={`${theme}-place`}
+            label="장소"
+            items={entry.info.places}
+            selected={entry.places}
+            disabled={!!busy}
+            onChange={updatePlaces}
+            itemDetail={place => `시간대 ${(entryPlaceAtmospheres[place] || []).length}개`}
+            actions={<button type="button" className="icon-button" disabled={!!busy} aria-label="장소 목록 새로고침" title="장소 목록 새로고침" onClick={() => void run("장소 목록을 불러오는 중…", refreshThemeCatalog)}><RefreshCw size={15} aria-hidden="true" /></button>}
+          />}
+          {step === 2 && <ExportSelection
+            key={`${theme}-atmosphere`}
+            label="시간대"
+            items={availableAtmospheres}
+            selected={entry.atmospheres}
+            disabled={!!busy}
+            onChange={atmospheres => update({ atmospheres })}
+            itemDetail={atmosphere => `${atmospherePlaceCounts[atmosphere] || 0} / ${entry.places.length} 장소`}
+            emptyTitle={entry.info.places.length && !entry.places.length ? "선택된 장소가 없습니다" : undefined}
+            emptyMessage={entry.info.places.length && !entry.places.length ? "장소 선택 단계에서 내보낼 장소를 먼저 선택하세요." : undefined}
+            actions={<>
+              <button type="button" className="icon-button" disabled={!!busy} aria-label="시간대 목록 새로고침" title="시간대 목록 새로고침" onClick={() => void run("시간대 목록을 불러오는 중…", refreshThemeCatalog)}><RefreshCw size={15} aria-hidden="true" /></button>
+              <button
+                type="button"
+                className="icon-button"
+                disabled={!!busy || !batchReady || emptyPlaceCount > 0}
+                aria-label="공통 시간대 선택"
+                title={emptyPlaceCount > 0
+                  ? "선택한 모든 테마에서 장소를 하나 이상 선택하면 공통 시간대를 선택할 수 있습니다."
+                  : selectedThemes.length > 1
+                    ? "선택한 테마들의 모든 선택 장소에 공통으로 있는 시간대만 선택합니다."
+                    : "선택한 모든 장소에 공통으로 있는 시간대만 선택합니다."}
+                onClick={selectCommonAtmospheres}
+              ><SquaresIntersect size={15} aria-hidden="true" /></button>
+            </>}
+          />}
           {step === 3 && <>
             <div className="asset-export-summary"><Panel title="파일명 구성 미리보기"><div className="asset-export-body asset-export-pattern">
               {entry.mapping.naming_order.filter(block => entry.mapping.naming_enabled[block]).map((block, index) => <span key={block}>{index > 0 && " _ "}<strong>{bgAssetNamingLabels[block]}</strong></span>)}
@@ -378,20 +500,27 @@ export function BgAssetExport({ active, initialTheme, notify }: { active: boolea
           <div className="asset-export-body">
             {!batchReady && !loadError && <p role="status">테마 설정을 불러오는 중… ({batchThemes.length}/{selectedThemes.length})</p>}
             <p className="field-help">모든 테마의 내보내기 설정을 확인한 뒤 ZIP을 만듭니다. 이 화면에서 수정한 값은 저장 전에도 ZIP에 적용됩니다. 대표 이미지는 배경 생성에서 지정할 수 있습니다.</p>
+            <ExportPostprocessChoice
+              postprocess={postprocess}
+              applyPostprocess={preferPostprocess}
+              disabled={!!busy}
+              onChange={setPreferPostprocess}
+              onOpenPostprocess={onOpenPostprocess}
+            />
             {batchPlan ? <><p className="asset-export-count">{batchPlan.success && <Check size={16} />}{batchPlan.theme_count}개 테마 · 내보낼 파일 {batchPlan.file_count}개</p>
               {batchPlan.themes.map(item => <div className="asset-export-batch-result" key={item.theme}>
                 <div className="asset-export-toolbar"><strong>{item.theme}</strong><span>{item.file_count}개 · {item.success ? "내보내기 가능" : "확인 필요"}</span><button type="button" className="button" disabled={!!busy} onClick={() => editTheme(item.theme)}>설정 보기</button></div>
                 <ExportIssues issues={item.errors} /><ExportIssues issues={item.warnings} warning />
               </div>)}
             </> : selectedThemes.map(name => <div className="asset-export-batch-result" key={name}>
-              <div className="asset-export-toolbar"><strong>{name}</strong><span>{drafts[name] ? `시간대 ${drafts[name].atmospheres.length}개 · 장소 ${drafts[name].places.length}개 · ${assetExportFormats[drafts[name].mapping.export_format]}` : "설정 불러오는 중…"}</span><button type="button" className="button" disabled={!!busy || !drafts[name]} onClick={() => editTheme(name)}>설정 보기</button></div>
+              <div className="asset-export-toolbar"><strong>{name}</strong><span>{drafts[name] ? `장소 ${drafts[name].places.length}개 · 시간대 ${drafts[name].atmospheres.length}개 · ${assetExportFormats[drafts[name].mapping.export_format]}` : "설정 불러오는 중…"}</span><button type="button" className="button" disabled={!!busy || !drafts[name]} onClick={() => editTheme(name)}>설정 보기</button></div>
             </div>)}
           </div>
         </Panel>}
       </div>
       <footer className="asset-export-footer">
         <button type="button" className="button" disabled={!!busy || step === 0} onClick={() => changeStep(step - 1)}><ChevronLeft size={15} />이전</button>
-        <span role="status">{busy || (step === 3 ? dirty ? "저장하지 않은 변경 사항" : "변경 사항 저장됨" : `${selectedThemes.length}개 선택됨`)}</span>
+        <span role="status">{footerStatus}</span>
         <div className="asset-actions">
           {step === 3 && <button type="button" className="button" disabled={!!busy || !entry || !dirty} onClick={() => void run("저장 중…", save)}><Save size={15} />저장</button>}
           {step < 4 ? <button type="button" className="button primary" disabled={nextDisabled} onClick={() => changeStep(step + 1)}>다음 단계<ChevronRight size={15} /></button>

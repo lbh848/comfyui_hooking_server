@@ -806,13 +806,22 @@ def _prepare_gemini_pdf_messages(messages: list, service: str) -> tuple[list, di
         **layout_options,
     )
     rendered_options = metadata.get("image_options") or {}
+    logged_resolution = (
+        "MEDIA_RESOLUTION_HIGH"
+        if metadata.get("image_count")
+        else (
+            rendered_options.get("media_resolution", PDF_MEDIA_RESOLUTION)
+            if metadata["prompt_format"] == "image"
+            else PDF_MEDIA_RESOLUTION
+        )
+    )
     _llm_log(
         "[LLM_PDF_PROMPT] 요청 변환 완료: "
         f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
         f"service={service}, pages={metadata['page_count']}, "
         f"format={metadata['prompt_format']}, "
         f"font_pt={metadata['font_size']}, "
-        f"resolution={rendered_options.get('media_resolution', PDF_MEDIA_RESOLUTION) if metadata['prompt_format'] == 'image' else PDF_MEDIA_RESOLUTION}, "
+        f"resolution={logged_resolution}, "
         f"page={rendered_options.get('page_width')}x{rendered_options.get('page_height')}, "
         f"margin={rendered_options.get('margin')}, "
         f"character_width_ratio={metadata['character_width_ratio']}, "
@@ -1050,6 +1059,16 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
         return structured
 
     candidate = _strip_base64_fence(raw)
+    if (candidate[:1] in ("{", "[") and '"base64:' in candidate) or re.search(
+        r'"base64:[A-Za-z0-9+/=]{4,}', candidate
+    ):
+        _record_response_diagnostic("Base64 JSON 구조 파싱 실패로 값을 복호화하지 못했습니다.")
+        print(
+            "[LLM_GEMINI_BASE64] JSON 구문 손상으로 Base64 값 복호화 실패: "
+            f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
+            f"chars={len(raw)}, raw={raw[:500]!r}"
+        )
+        return f"[LLM 실패] Base64 JSON 구조 파싱 실패; raw={raw!r}"
     marked = candidate.startswith("base64:")
     if marked:
         candidate = candidate[7:]
@@ -1084,16 +1103,547 @@ def _decode_gemini_whole_base64_response(raw_text: str) -> str:
     return decoded
 
 
-def _decode_lore_npc_field(value, field, *, path=None):
-    if field == "aliases" and isinstance(value, (list, str)):
+_ILLUSTRATION_PROSE_BASE64_FIELDS = frozenset({"instruction", "caption"})
+_EMPTY_SCENE_ENVELOPE_RE = re.compile(
+    r'^(?:<lb[-_]xnai[^>]*>\s*)?\{\s*"scenes"\s*:\s*\[\s*\]\s*\}(?:\s*</lb[-_]xnai>)?$',
+    re.IGNORECASE,
+)
+
+
+def _is_clean_prose_char(char: str) -> bool:
+    code = ord(char)
+    return (
+        char in "\n\r\t"
+        or 32 <= code < 127
+        or 0x2010 <= code <= 0x2027
+        or 0xAC00 <= code <= 0xD7A3
+    )
+
+
+def _is_clean_prose_text(text: str) -> bool:
+    return bool(text) and all(_is_clean_prose_char(char) for char in text)
+
+
+def _decode_clean_base64_slice(span: str, *, allow_end_pad: bool = False) -> str | None:
+    if not span:
+        return ""
+    if allow_end_pad:
+        body = span.rstrip("=")
+        if not re.fullmatch(r"[A-Za-z0-9+/]+", body) or len(body) % 4 == 1:
+            return None
+        padded = body + "=" * (-len(body) % 4)
+    else:
+        if len(span) % 4 != 0 or not re.fullmatch(r"[A-Za-z0-9+/]+", span):
+            return None
+        padded = span
+    try:
+        decoded = base64.b64decode(padded, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return decoded if _is_clean_prose_text(decoded) else None
+
+
+def _find_clean_base64_runs(raw: str, *, min_quartets: int = 3) -> list[tuple[int, int, str]]:
+    """Find maximal clean UTF-8 prose Base64 runs across all 4 quartet phases."""
+    length = len(raw)
+    candidates: list[tuple[int, int, str]] = []
+    for phase in range(4):
+        index = phase
+        while index <= length - 4:
+            decoder = codecs.getincrementaldecoder("utf-8")()
+            start = index
+            parts: list[str] = []
+            last_clean_end = start
+            last_clean_len = 0
+            cursor = index
+            while cursor <= length - 4:
+                quartet = raw[cursor:cursor + 4]
+                is_end = (cursor + 4 == length)
+                if is_end:
+                    body = quartet.rstrip("=")
+                    if not re.fullmatch(r"[A-Za-z0-9+/]+", body) or len(body) % 4 == 1:
+                        break
+                    padded = body + "=" * (-len(body) % 4)
+                else:
+                    if not re.fullmatch(r"[A-Za-z0-9+/]{4}", quartet):
+                        break
+                    padded = quartet
+                try:
+                    chunk_bytes = base64.b64decode(padded, validate=True)
+                    chunk_text = decoder.decode(chunk_bytes, final=is_end)
+                except (ValueError, UnicodeDecodeError):
+                    break
+                if chunk_text and not _is_clean_prose_text(chunk_text):
+                    break
+                parts.append(chunk_text)
+                cursor += 4
+                if not decoder.getstate()[0]:
+                    last_clean_end = cursor
+                    last_clean_len = len(parts)
+            if cursor < length and last_clean_end == cursor:
+                remainder = raw[cursor:]
+                if remainder.count("=") == len(remainder):
+                    last_clean_end = length
+                elif 2 <= len(remainder.rstrip("=")) <= 3 and re.fullmatch(r"[A-Za-z0-9+/]+=*", remainder):
+                    body = remainder.rstrip("=")
+                    padded = body + "=" * (-len(body) % 4)
+                    try:
+                        tail_text = decoder.decode(base64.b64decode(padded, validate=True), final=True)
+                    except (ValueError, UnicodeDecodeError):
+                        tail_text = None
+                    if tail_text and _is_clean_prose_text(tail_text):
+                        parts.append(tail_text)
+                        last_clean_end = length
+                        last_clean_len = len(parts)
+            if last_clean_end - start >= min_quartets * 4:
+                candidates.append((start, last_clean_end, "".join(parts[:last_clean_len])))
+                index = last_clean_end
+            else:
+                index += 4
+    if not candidates:
+        return []
+    candidates.sort(key=lambda item: (item[1], -item[0]))
+    count = len(candidates)
+    best_score = [0] * count
+    prev_choice: list[tuple[int, int] | None] = [None] * count
+    for idx, (start, end, _text) in enumerate(candidates):
+        best_score[idx] = end - start
+        for prev_idx in range(idx):
+            prev_start, prev_end, _ = candidates[prev_idx]
+            if prev_end <= start:
+                score = best_score[prev_idx] + (end - start)
+                if score > best_score[idx]:
+                    best_score[idx] = score
+                    prev_choice[idx] = (prev_idx, prev_end)
+            elif prev_start < start < prev_end < end and (prev_end - start) <= 12:
+                trim_back = ((prev_end - start + 3) // 4) * 4
+                trimmed_end = prev_end - trim_back
+                if trimmed_end - prev_start >= min_quartets * 4:
+                    score = best_score[prev_idx] - trim_back + (end - start)
+                    if score > best_score[idx]:
+                        best_score[idx] = score
+                        prev_choice[idx] = (prev_idx, trimmed_end)
+    best_end = max(range(count), key=lambda idx: best_score[idx])
+    chosen: list[tuple[int, int, str]] = []
+    current = best_end
+    override_end = None
+    while current != -1:
+        start, end, text = candidates[current]
+        if override_end is not None and override_end < end:
+            end = override_end
+            text = _decode_clean_base64_slice(raw[start:end])
+            if text is None:
+                return []
+        chosen.append((start, end, text))
+        link = prev_choice[current]
+        if link is None:
+            break
+        current, override_end = link
+    chosen.reverse()
+    return chosen
+
+
+def _decode_partial_base64_edge(segment: str, *, from_left: bool) -> str | None:
+    if not segment:
+        return ""
+    if len(segment) not in (2, 3) or not re.fullmatch(r"[A-Za-z0-9+/]+", segment):
+        return None
+    if from_left:
+        raw_bytes = base64.b64decode(segment + "A" * (4 - len(segment)))[:(len(segment) * 6) // 8]
+    else:
+        raw_bytes = base64.b64decode("A" * (4 - len(segment)) + segment)[3 - (len(segment) * 6) // 8:]
+    try:
+        decoded = raw_bytes.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    return decoded if _is_clean_prose_text(decoded) else None
+
+
+def _is_plain_english_leak(word: str) -> bool:
+    core = word.strip()
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z'-]{1,24}", core):
+        return False
+    if not (core.islower() or core.istitle()):
+        return False
+    if len(core) >= 3 and not re.search(r"[aeiouyAEIOUY]", core):
+        return False
+    return True
+
+
+def _repair_base64_prose_gap(left_text: str, gap: str, right_text: str) -> tuple[int, str] | None:
+    best = None
+    for left_b64 in (0, 2, 3):
+        if left_b64 > len(gap):
+            continue
+        left_piece = _decode_partial_base64_edge(gap[:left_b64], from_left=True)
+        if left_piece is None:
+            continue
+        left_full = left_text + left_piece
+        for right_b64 in (0, 2, 3):
+            if left_b64 + right_b64 > len(gap):
+                continue
+            right_piece = _decode_partial_base64_edge(gap[len(gap) - right_b64:], from_left=False)
+            if right_piece is None:
+                continue
+            right_full = right_piece + right_text
+            middle = gap[left_b64:len(gap) - right_b64]
+            if left_b64 in (2, 3) and middle.startswith("="):
+                pad_len = 4 - left_b64
+                if middle.startswith("=" * pad_len):
+                    middle = middle[pad_len:]
+            if middle == "":
+                left_boundary = not left_full or left_full.endswith((" ", ",", ".", "-", "\n"))
+                right_boundary = not right_full or right_full.startswith((" ", ",", ".", "-", "\n"))
+                if left_boundary and right_boundary:
+                    candidate = (55, left_piece + right_piece)
+                else:
+                    continue
+            else:
+                had_stray = False
+                word = middle
+                if re.fullmatch(r"[A-Za-z0-9+/]{1,3} [a-zA-Z][a-zA-Z'-]{1,24} ?", middle):
+                    word = " " + middle.split(" ", 1)[1]
+                    had_stray = True
+                elif not re.fullmatch(r" ?[a-zA-Z][a-zA-Z'-]{1,24} ?", middle):
+                    continue
+                if not _is_plain_english_leak(word):
+                    continue
+                left_ok = not left_full or left_full.endswith((" ", ",", "-", "(", "\n")) or word.startswith(" ")
+                right_ok = not right_full or right_full.startswith((" ", ",", ".", ";", ":", "-", ")", "\n")) or word.endswith(" ")
+                if not (left_ok and right_ok):
+                    continue
+                score = (105 if had_stray else 120) + (10 if word.strip().islower() else 0) + min(len(word.strip()), 12)
+                joined = left_piece + word + right_piece
+                if left_full.endswith(" ") and word.startswith(" "):
+                    joined = left_piece + word[1:] + right_piece
+                if right_full.startswith(" ") and word.endswith(" "):
+                    joined = left_piece + word[:-1] + right_piece
+                candidate = (score, joined)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+    if best is not None:
+        return best
+    if len(gap) <= 12:
+        return (10, "\x00DROP")
+    return None
+
+
+def _recover_corrupt_base64_prose(payload: str) -> str | None:
+    """Recover natural-language prose when a Base64 value has a localized word slip or typo.
+
+    Only call on free-text prose fields after strict decoding fails. Rejects
+    short, binary, or heavily damaged payloads instead of fabricating text.
+    """
+    raw = str(payload or "").strip()
+    if len(raw) < 24:
+        return None
+    runs = _find_clean_base64_runs(raw)
+    if not runs or len(runs) > 4:
+        return None
+    covered = sum(end - start for start, end, _ in runs)
+    if covered / len(raw) < 0.70:
+        return None
+    pieces: list[str] = []
+    if runs[0][0] > 0:
+        if runs[0][0] > 16:
+            return None
+        prefix_fix = _repair_base64_prose_gap("", raw[:runs[0][0]], runs[0][2])
+        if prefix_fix is None:
+            return None
+        if prefix_fix[1] != "\x00DROP":
+            pieces.append(prefix_fix[1])
+    for index, (start, end, text) in enumerate(runs):
+        if index == 0:
+            pieces.append(text)
+            continue
+        prev_start, prev_end, prev_text = runs[index - 1]
+        best_join = None
+        for back in (0, 4):
+            if back > (prev_end - prev_start) - 4:
+                continue
+            adj_prev = _decode_clean_base64_slice(raw[prev_start:prev_end - back]) if back else prev_text
+            if adj_prev is None:
+                continue
+            for fwd in (0, 4):
+                if fwd > (end - start) - 4:
+                    continue
+                adj_next = _decode_clean_base64_slice(raw[start + fwd:end], allow_end_pad=(end == len(raw))) if fwd else text
+                if adj_next is None:
+                    continue
+                adj_gap = raw[prev_end - back:start + fwd]
+                if len(adj_gap) > 32:
+                    continue
+                repaired = _repair_base64_prose_gap(adj_prev, adj_gap, adj_next)
+                if repaired is None:
+                    continue
+                score, replacement = repaired
+                total_score = score - (1 if back else 0) - (1 if fwd else 0)
+                if best_join is None or total_score > best_join[0]:
+                    best_join = (total_score, back, adj_prev, replacement, adj_next)
+        if best_join is None:
+            return None
+        _, back, adj_prev, replacement, adj_next = best_join
+        if back:
+            pieces[-1] = adj_prev
+        if replacement == "\x00DROP":
+            pieces[-1] = re.sub(r"[A-Za-z0-9'-]+$", "", pieces[-1])
+            right_clean = re.sub(r"^[A-Za-z0-9'-]+", "", adj_next)
+            pieces.append(" " + right_clean)
+        else:
+            pieces.append(replacement)
+            pieces.append(adj_next)
+    if runs[-1][1] < len(raw):
+        tail = raw[runs[-1][1]:]
+        if len(tail) > 16:
+            return None
+        tail_fix = _repair_base64_prose_gap(pieces[-1], tail, "")
+        if tail_fix is None:
+            return None
+        if tail_fix[1] != "\x00DROP":
+            pieces.append(tail_fix[1])
+    recovered = re.sub(r" {2,}", " ", "".join(pieces)).strip()
+    recovered = re.sub(r" ([.,;:])", r"\1", recovered)
+    return recovered if any(char.isalnum() for char in recovered) else None
+
+
+_BASE64_JSON_PAYLOAD_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= \t\r\n"
+)
+_JSON_KEY_AFTER_COMMA_RE = re.compile(r'"(?:[^"\\]|\\.)*"\s*:')
+
+_RESILIENT_LORE_BASE64_TASKS = {
+    "lore_npc_generation": {
+        "label": "NPC",
+        "item_label": "인물",
+        "log_label": "로어북 NPC",
+        "prose_fields": frozenset({"description", "visual_context"}),
+        "list_fields": frozenset({"aliases"}),
+        "hold_fields": frozenset({"aliases", "description", "visual_context"}),
+        "array_keys": ("characters", "candidates", "npc_candidates"),
+        "output_key": "characters",
+        "top_scalar_keys": (),
+    },
+    "bg_lore_theme_generation": {
+        "label": "로어북 배경 테마",
+        "item_label": "장소",
+        "log_label": "로어북 배경 테마",
+        "prose_fields": frozenset({"description", "natural_language"}),
+        "list_fields": frozenset({"anchors"}),
+        "hold_fields": frozenset({
+            "anchors", "description", "natural_language",
+            "tags", "common_tags", "negative_tags",
+        }),
+        "array_keys": ("places", "locations", "backgrounds"),
+        "output_key": "places",
+        "top_scalar_keys": ("common_tags", "negative_tags"),
+    },
+}
+
+
+def _repair_unterminated_base64_json_strings(text: str) -> str:
+    """Repair JSON string values starting with `base64:` whose closing quote was omitted.
+
+    Models occasionally encode a trailing JSON closer (for example `"}` as `LiJ9`)
+    into the Base64 payload and emit the structural delimiter (`}`, `]`, or `,`)
+    without the closing `"`. Only repairs unambiguous delimiter boundaries in value
+    position, and strips an absorbed trailing JSON closer from the decoded payload
+    when it matches the omitted quote and boundary.
+    """
+    if '"base64:' not in text:
+        return text
+    out: list[str] = []
+    containers: list[str] = []
+    previous = ""
+    i = 0
+    n = len(text)
+    repaired = False
+
+    def peek_non_ws(pos: int) -> int:
+        while pos < n and text[pos] in " \t\r\n":
+            pos += 1
+        return pos
+
+    def encode_trimmed(trimmed: str) -> str:
+        return '""' if not trimmed else f'"base64:{_base64_encode_text(trimmed)}"'
+
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r\n":
+            out.append(ch)
+            i += 1
+            continue
+        if ch != '"':
+            out.append(ch)
+            if ch in "{[":
+                containers.append(ch)
+            elif ch in "}]" and containers:
+                containers.pop()
+            previous = ch
+            i += 1
+            continue
+
+        is_key = bool(containers and containers[-1] == "{" and previous in ("{", ","))
+        if not is_key and text.startswith('"base64:', i):
+            j = i + 8
+            while j < n:
+                c = text[j]
+                if c in _BASE64_JSON_PAYLOAD_CHARS:
+                    j += 1
+                elif c == "\\" and j + 1 < n and text[j + 1] == "/":
+                    j += 2
+                else:
+                    break
+            payload_end = j
+            while payload_end > i + 8 and text[payload_end - 1] in " \t\r\n":
+                payload_end -= 1
+            if payload_end > i + 8 and j < n and text[j] != '"':
+                delim = text[j]
+                after = peek_non_ws(j + 1)
+                after_ch = text[after] if after < n else ""
+                top = containers[-1] if containers else ""
+                valid_boundary = False
+                if delim == "}" and top == "{" and after_ch in (",", "}", "]", ""):
+                    valid_boundary = True
+                elif delim == "]" and top in ("[", "{") and after_ch in (",", "}", "]", ""):
+                    valid_boundary = True
+                elif delim == ",":
+                    if top == "{" and (
+                        _JSON_KEY_AFTER_COMMA_RE.match(text, after) is not None
+                        or after_ch == "{"
+                    ):
+                        valid_boundary = True
+                    elif top == "[" and after_ch in ('"', "{", "[", "]"):
+                        valid_boundary = True
+                if valid_boundary:
+                    payload = text[i + 8:payload_end].replace(r"\/", "/")
+                    decoded = None
+                    try:
+                        decoded = _decode_gemini_scene_document("base64:" + payload)
+                    except Exception:
+                        decoded = None
+                    extra_closer = ""
+                    rebuilt = None
+                    if decoded is not None:
+                        if delim == "}":
+                            if decoded.endswith('"}'):
+                                rebuilt = encode_trimmed(decoded[:-2])
+                            elif decoded.endswith('"'):
+                                rebuilt = encode_trimmed(decoded[:-1])
+                        elif delim == "]":
+                            if top == "{" and decoded.endswith('"}]'):
+                                rebuilt = encode_trimmed(decoded[:-3])
+                                extra_closer = "}"
+                            elif top == "{" and decoded.endswith('"}'):
+                                rebuilt = encode_trimmed(decoded[:-2])
+                                extra_closer = "}"
+                            elif decoded.endswith('"]'):
+                                rebuilt = encode_trimmed(decoded[:-2])
+                            elif decoded.endswith('"'):
+                                rebuilt = encode_trimmed(decoded[:-1])
+                        elif delim == ",":
+                            if top == "{" and after_ch == "{" and decoded.endswith('"}'):
+                                rebuilt = encode_trimmed(decoded[:-2])
+                                extra_closer = "}"
+                            elif top == "{" and after_ch == "{":
+                                valid_boundary = False
+                            elif decoded.endswith('",'):
+                                rebuilt = encode_trimmed(decoded[:-2])
+                            elif decoded.endswith('"'):
+                                rebuilt = encode_trimmed(decoded[:-1])
+                    elif delim == "," and top == "{" and after_ch == "{":
+                        valid_boundary = False
+
+                    if valid_boundary:
+                        if rebuilt is not None:
+                            out.append(rebuilt)
+                        else:
+                            out.append(text[i:payload_end])
+                            out.append('"')
+                        if extra_closer:
+                            out.append(extra_closer)
+                            if containers and containers[-1] == "{":
+                                containers.pop()
+                            previous = extra_closer
+                        else:
+                            previous = '"'
+                        repaired = True
+                        i = payload_end
+                        continue
+
+        k = i + 1
+        escaped = False
+        while k < n:
+            c = text[k]
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                break
+            k += 1
+        if k >= n:
+            out.append(text[i:])
+            break
+        out.append(text[i:k + 1])
+        previous = '"'
+        i = k + 1
+
+    return "".join(out) if repaired else text
+
+
+def _try_repair_base64_json_document(body: str):
+    """Attempt conservative JSON syntax repairs on a Base64-transported JSON document."""
+    lenient_decoder = json.JSONDecoder(strict=False)
+    candidates: list[str] = [body]
+
+    quote_repaired = _repair_unterminated_base64_json_strings(body)
+    if quote_repaired != body:
+        candidates.append(quote_repaired)
+
+    from modes.llm_prompt_edit import (
+        _repair_json_closing_brackets,
+        _repair_json_escapes,
+        _repair_json_syntax,
+    )
+
+    for base_candidate in list(candidates):
+        esc_repaired = _repair_json_escapes(base_candidate)
+        if esc_repaired not in candidates:
+            candidates.append(esc_repaired)
+        syn_repaired = _repair_json_syntax(esc_repaired)
+        if syn_repaired not in candidates:
+            candidates.append(syn_repaired)
+        bal_repaired = _repair_json_closing_brackets(syn_repaired)
+        if bal_repaired not in candidates:
+            candidates.append(bal_repaired)
+
+    for candidate in candidates:
+        try:
+            parsed, parsed_end = lenient_decoder.raw_decode(candidate, 0)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, (dict, list)):
+            trailing = re.sub(
+                r"(?:</[A-Za-z][^<>]*>|```|\[/TOON\])\s*",
+                "",
+                candidate[parsed_end:],
+                flags=re.I,
+            )
+            if not trailing.strip():
+                return parsed, parsed_end, candidate
+    return None, 0, None
+
+
+def _decode_resilient_base64_field(value, field, *, profile, path=None):
+    if field in profile["list_fields"] and isinstance(value, (list, str)):
         single = isinstance(value, str)
-        aliases = []
-        for index, alias in enumerate([value] if single else value):
+        items = []
+        for index, item in enumerate([value] if single else value):
             location = f"{path}[{index}]" if path is not None and not single else path
-            restored = _decode_lore_npc_field(alias, "", path=location)
-            if restored is not None or alias is None:
-                aliases.append(restored)
-        return aliases[0] if single and aliases else aliases
+            restored = _decode_resilient_base64_field(item, "", profile=profile, path=location)
+            if restored is not None or item is None:
+                items.append(restored)
+        return items[0] if single and items else items
     if not isinstance(value, str) or not value.startswith("base64:"):
         return value
     try:
@@ -1101,16 +1651,20 @@ def _decode_lore_npc_field(value, field, *, path=None):
     except ValueError as exc:
         # Keep the intact words in free text. A damaged name, tag or number
         # must never be turned into a different value by joining its fragments.
-        if isinstance(exc, UnicodeDecodeError) and field in ("description", "visual_context"):
-            words = exc.object.decode("utf-8", errors="surrogateescape").split()
-            words = ["…" if re.search(r"[\udc80-\udcff]", word) else word for word in words]
-            recovered = " ".join(words)
-            if any(char.isalnum() for char in recovered):
+        if field in profile["prose_fields"]:
+            recovered = _recover_corrupt_base64_prose(value[7:])
+            if recovered is None and isinstance(exc, UnicodeDecodeError):
+                words = exc.object.decode("utf-8", errors="surrogateescape").split()
+                words = ["…" if re.search(r"[\udc80-\udcff]", word) else word for word in words]
+                candidate = " ".join(words)
+                if any(char.isalnum() for char in candidate):
+                    recovered = candidate
+            if recovered is not None:
                 if path is not None:
-                    _record_response_diagnostic(f"NPC 설명 일부 복원 (손상된 단어는 …로 표시): {path}: {exc}")
+                    _record_response_diagnostic(f"{profile['label']} 설명 일부 복원: {path}: {exc}")
                 return recovered
         if path is not None:
-            _record_response_diagnostic(f"복원할 수 없는 NPC 값 제외: {path}: {exc}")
+            _record_response_diagnostic(f"복원할 수 없는 {profile['label']} 값 제외: {path}: {exc}")
         return None
 
 
@@ -1124,7 +1678,8 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     None means this is not a structured document; legacy text transport applies.
     """
     raw = str(raw_text or "")
-    lore_npcs = (_stream_metadata_ctx.get() or {}).get("task_key") == "lore_npc_generation"
+    task_key = (_stream_metadata_ctx.get() or {}).get("task_key")
+    resilient_profile = _RESILIENT_LORE_BASE64_TASKS.get(task_key)
     start = len(raw) - len(raw.lstrip())
     wrapped = False
     closing_wrappers = []
@@ -1154,6 +1709,8 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     ):
         # Read JSON syntax without requiring its root to be complete. Only
         # explicitly marked values are decoded; object keys remain verbatim.
+        if '"base64:' in raw[start:]:
+            raw = raw[:start] + _repair_unterminated_base64_json_strings(raw[start:])
         parts = [raw[:start]]
         containers = []
         previous = ""
@@ -1181,7 +1738,7 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                 fragment = raw[index + 1:]
                 if is_key or not (fragment.startswith("base64:") or "base64:".startswith(fragment)):
                     parts.append(raw[index:])
-                elif fragment.startswith("base64:") and not lore_npcs:
+                elif fragment.startswith("base64:") and resilient_profile is None:
                     # A quartet can end in the middle of a UTF-8 character.
                     # Keep that suffix buffered instead of emitting U+FFFD.
                     payload = fragment[7:].replace(r"\/", "/")
@@ -1192,7 +1749,7 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                         )
                         parts.append(json.dumps(decoded, ensure_ascii=False)[:-1])
                 break
-            if (lore_npcs and is_key and value in ("aliases", "description", "visual_context")
+            if (resilient_profile is not None and is_key and value in resilient_profile["hold_fields"]
                     and (separator := re.match(r"\s*:\s*", raw[end:]))):
                 # Wait for the complete value before exposing words that a
                 # later byte may invalidate, even across stream chunks.
@@ -1203,12 +1760,16 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                         field_value, index = decoder.raw_decode(raw, value_start)
                     except json.JSONDecodeError:
                         break
-                    restored = _decode_lore_npc_field(field_value, value)
+                    restored = _decode_resilient_base64_field(field_value, value, profile=resilient_profile)
                     parts.append(json.dumps(restored, ensure_ascii=False) if restored != field_value else raw[value_start:index])
                     previous = '"'
                     continue
             if not is_key and value.startswith("base64:"):
-                decoded = _decode_lore_npc_field(value, "") if lore_npcs else _decode_gemini_scene_document(value)
+                decoded = (
+                    _decode_resilient_base64_field(value, "", profile=resilient_profile)
+                    if resilient_profile is not None
+                    else _decode_gemini_scene_document(value)
+                )
                 parts.append(json.dumps(decoded, ensure_ascii=False))
             else:
                 parts.append(raw[index:end])
@@ -1265,10 +1826,19 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             _llm_log(f"[LLM_GEMINI_BASE64] Scene/source 문자열 값 복호화 완료: slot={_llm_slot_ctx.get()}, values={len(replacements)}")
         return restored
     decoder = json.JSONDecoder()
+    repaired_json_source = None
     try:
         value, end = decoder.raw_decode(raw, start)
     except json.JSONDecodeError as document_error:
-        if (not partial and _gemini_base64_response_mode_ctx.get()
+        value = None
+        if not partial and raw[start:start + 1] in ("{", "[", '"') and "base64:" in raw[start:]:
+            value, end, repaired_json_source = _try_repair_base64_json_document(raw[start:])
+            if value is not None:
+                _llm_log(
+                    "[LLM_GEMINI_BASE64] 손상된 JSON 구문 복구 후 Base64 복호화 진행: "
+                    f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, error={document_error}"
+                )
+        if (value is None and not partial and _gemini_base64_response_mode_ctx.get()
                 == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES):
             # A legacy combined JSON response may end during its last scene.
             # Keep only complete scene objects; never guess missing payload bits.
@@ -1292,37 +1862,58 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                     position += 1
                 if scenes:
                     return _decode_structured_base64_values(json.dumps({"scenes": scenes}, ensure_ascii=False))
-        if not partial and lore_npcs:
+        if value is None and not partial and resilient_profile is not None:
             from modes.llm_prompt_edit import salvage_json_array_objects
+            salvage_source = _repair_unterminated_base64_json_strings(raw[start:])
             rows, skipped = salvage_json_array_objects(
-                raw[start:], ("characters", "candidates", "npc_candidates"),
+                salvage_source, resilient_profile["array_keys"],
             )
             if rows:
                 _record_response_diagnostic(
-                    f"JSON 인물 응답 불완전/파싱 실패로 완성 항목 {len(rows)}개를 복구했습니다"
+                    f"JSON {resilient_profile['item_label']} 응답 불완전/파싱 실패로 완성 항목 {len(rows)}개를 복구했습니다"
                     f"{f' (손상·잘림 {skipped}개 생략)' if skipped else ''}: {document_error}"
                 )
                 print(
-                    "[LLM_GEMINI_BASE64] 불완전한 로어북 NPC 응답 부분 복구: "
+                    f"[LLM_GEMINI_BASE64] 불완전한 {resilient_profile['log_label']} 응답 부분 복구: "
                     f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
                     f"recovered={len(rows)}, skipped={skipped}, error={document_error}"
                 )
+                salvaged_doc = {}
+                lenient_decoder = json.JSONDecoder(strict=False)
+                for key in resilient_profile["top_scalar_keys"]:
+                    key_match = re.search(rf'"{re.escape(key)}"\s*:\s*', salvage_source)
+                    if key_match:
+                        try:
+                            scalar_val, _ = lenient_decoder.raw_decode(salvage_source, key_match.end())
+                            salvaged_doc[key] = scalar_val
+                        except json.JSONDecodeError:
+                            pass
+                salvaged_doc[resilient_profile["output_key"]] = rows
                 return _decode_structured_base64_values(
-                    json.dumps({"characters": rows}, ensure_ascii=False)
+                    json.dumps(salvaged_doc, ensure_ascii=False)
                 )
-        if raw[start:start + 1] in ("{", "[", '"'):
+        if value is None and raw[start:start + 1] in ("{", "[", '"'):
             return None  # Incomplete JSON must stay buffered, not enter TOON.
-        opening = re.search(r"[\[{]", raw)
-        value = None
-        if opening is not None:
-            try:
-                candidate, candidate_end = decoder.raw_decode(raw, opening.start())
-                # A TOON counted label/inline list is not a JSON root document.
-                tail = re.sub(r"(?:</[A-Za-z][^<>]*>|```|\[/TOON\])\s*", "", raw[candidate_end:], flags=re.I)
-                if not tail.strip() and "base64:" not in raw[start:opening.start()]:
-                    value, end, start = candidate, candidate_end, opening.start()
-            except json.JSONDecodeError:
-                pass
+        if value is None:
+            opening = re.search(r"[\[{]", raw)
+            if opening is not None:
+                try:
+                    candidate, candidate_end = decoder.raw_decode(raw, opening.start())
+                    # A TOON counted label/inline list is not a JSON root document.
+                    tail = re.sub(r"(?:</[A-Za-z][^<>]*>|```|\[/TOON\])\s*", "", raw[candidate_end:], flags=re.I)
+                    if not tail.strip() and "base64:" not in raw[start:opening.start()]:
+                        value, end, start = candidate, candidate_end, opening.start()
+                except json.JSONDecodeError:
+                    if (not partial and "base64:" not in raw[start:opening.start()]
+                            and "base64:" in raw[opening.start():]):
+                        repaired_val, repaired_end, repaired_src = _try_repair_base64_json_document(raw[opening.start():])
+                        if repaired_val is not None:
+                            value, end, start = repaired_val, repaired_end, opening.start()
+                            repaired_json_source = repaired_src
+                            _llm_log(
+                                "[LLM_GEMINI_BASE64] 손상된 JSON 구문 복구 후 Base64 복호화 진행: "
+                                f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, error={document_error}"
+                            )
         if value is None:
             # TOON can restore complete lines before its wrappers are closed.
             stop = len(raw.rstrip())
@@ -1387,15 +1978,23 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             return restored
     # A bare Base64 text block can begin with digits. Do not classify a
     # parsed numeric prefix of that block as a complete JSON scalar.
-    if not isinstance(value, (dict, list)) and raw[end:].strip() and not wrapped:
+    trailing = repaired_json_source[end:] if repaired_json_source is not None else raw[end:]
+    if not isinstance(value, (dict, list)) and trailing.strip() and not wrapped:
         return None
 
     changed = False
+    illustration_scenes_mode = (
+        _gemini_base64_response_mode_ctx.get()
+        == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+    )
 
     def restore(item, path, *, field=""):
         nonlocal changed
-        if lore_npcs and (isinstance(item, str) or field == "aliases" and isinstance(item, list)):
-            restored = _decode_lore_npc_field(item, field, path=path)
+        if resilient_profile is not None and (
+            isinstance(item, str)
+            or (field in resilient_profile["list_fields"] and isinstance(item, list))
+        ):
+            restored = _decode_resilient_base64_field(item, field, profile=resilient_profile, path=path)
             changed |= restored != item
             return restored
         if isinstance(item, dict):
@@ -1407,12 +2006,26 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             try:
                 decoded = _decode_gemini_scene_document(item)
             except Exception as e:
+                if (illustration_scenes_mode
+                        and field in _ILLUSTRATION_PROSE_BASE64_FIELDS):
+                    recovered = _recover_corrupt_base64_prose(item[7:])
+                    if recovered is not None:
+                        _record_response_diagnostic(
+                            f"Base64 문장 일부 복구: {path}: {type(e).__name__}: {e}"
+                        )
+                        _llm_log(
+                            "[LLM_GEMINI_BASE64] 손상된 Base64 문장 일부 복구: "
+                            f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
+                            f"path={path}, error={type(e).__name__}: {e}"
+                        )
+                        changed = True
+                        return recovered
                 raise ValueError(f"{path}: {type(e).__name__}: {e}; value={item!r}") from e
             changed = True
             return decoded
         return item
 
-    if (_gemini_base64_response_mode_ctx.get() == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+    if (illustration_scenes_mode
             and (isinstance(value, list)
                  or isinstance(value, dict) and isinstance(value.get("scenes"), list))):
         # Some providers retain the combined JSON shape despite the envelope
@@ -1449,13 +2062,13 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                     traceback.print_exc()
     else:
         restored = restore(value, "$")
-    if not changed:
+    if not changed and repaired_json_source is None:
         return raw
     _llm_log(
         "[LLM_GEMINI_BASE64] JSON 문자열 값 복호화 완료: "
         f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, chars={len(raw)}"
     )
-    return raw[:start] + json.dumps(restored, ensure_ascii=False) + raw[end:]
+    return raw[:start] + json.dumps(restored, ensure_ascii=False) + trailing
 
 
 def _decode_gemini_scene_document(payload: str, *, scene_slot: str | None = None) -> str:
@@ -1487,7 +2100,8 @@ def _decode_gemini_scene_document(payload: str, *, scene_slot: str | None = None
             # Recover only an omitted slot; retain explicit inner identities
             # and never assign one envelope's slot across multiple scenes.
             if (isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict)
-                    and ("scene" in items[0] or "background_prompt" in items[0])
+                    and ("scene" in items[0] or "background_prompt" in items[0]
+                         or "panels" in items[0] or "items" in items[0])
                     and items[0].get("slot") in (None, "")):
                 items[0]["slot"] = scene_slot
                 print(f"[LLM_GEMINI_BASE64] 장면 envelope slot 복구: scene_slot={scene_slot}, fields={list(items[0])}")
@@ -1537,6 +2151,9 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
             traceback.print_exc()
             continue
         decoded = decoded.strip()
+        if _EMPTY_SCENE_ENVELOPE_RE.fullmatch(decoded):
+            failed_slots.append(scene_slot)
+            continue
         # Preserve the completed transport frame's boundary even when the
         # model omits its inner document wrapper. Never join bare JSON roots.
         if not re.search(r"<lb[-_]xnai[^>]*>", decoded, re.I):
@@ -1634,6 +2251,8 @@ class _GeminiBase64StreamDecoder:
                 traceback.print_exc()
                 continue
             decoded = decoded.strip()
+            if _EMPTY_SCENE_ENVELOPE_RE.fullmatch(decoded):
+                continue
             # Keep the same document boundary in streaming and final output.
             if not re.search(r"<lb[-_]xnai[^>]*>", decoded, re.I):
                 decoded = f"<lb-xnai>\n{decoded}\n</lb-xnai>"
@@ -2268,6 +2887,24 @@ def _messages_have_inline_pdf(messages: list) -> bool:
     return False
 
 
+def _messages_have_inline_images(messages: list) -> bool:
+    """내부 메시지에 실제 비전 이미지(image_url) 파트가 있는지 구조로 확인한다."""
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            url = (part.get("image_url") or {}).get("url", "")
+            _, b64 = _parse_data_url(url)
+            if b64:
+                return True
+    return False
+
+
 def _build_claude_content(content):
     """OpenAI content list → Claude content(str 그대로 또는 blocks list)."""
     if isinstance(content, str):
@@ -2308,12 +2945,22 @@ def _build_gemini_request_body(messages: list, model: str, *, service: str = "ge
         temperature = _current_config.get("llm_temperature", 1.0)
         if temperature is not None:
             generation_config["temperature"] = float(temperature)
-    if _messages_have_inline_pdf(messages):
+    has_pdf = _messages_have_inline_pdf(messages)
+    has_images = _messages_have_inline_images(messages)
+    task_key = str((_stream_metadata_ctx.get() or {}).get("task_key") or "").strip()
+    if has_images and task_key == "character_maker_feedback":
+        # Character Maker vision inspection needs full detail on tiny ornaments,
+        # bangs, trim edges, legwear, and props even when PDF transport is on.
+        generation_config["mediaResolution"] = "MEDIA_RESOLUTION_HIGH"
+    elif has_pdf:
         if _current_config.get("llm_pdf_prompt_format", "pdf") == "image":
             generation_config["mediaResolution"] = _PDF_IMAGE_MEDIA_RESOLUTIONS.get(
                 str(_current_config.get("llm_pdf_image_media_resolution", "medium")).strip().lower(),
                 "MEDIA_RESOLUTION_MEDIUM",
             )
+        elif has_images:
+            # Never downgrade attached real vision images to LOW because of a text PDF.
+            generation_config["mediaResolution"] = "MEDIA_RESOLUTION_HIGH"
         else:
             generation_config["mediaResolution"] = PDF_MEDIA_RESOLUTION
     max_tokens = int(_current_config.get("llm_max_tokens", 0) or 0)
@@ -3456,7 +4103,9 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         )
     )
     try:
-        pdf_messages, pdf_metadata = _prepare_gemini_pdf_messages(messages, service)
+        pdf_messages, pdf_metadata = await asyncio.to_thread(
+            _prepare_gemini_pdf_messages, messages, service
+        )
     except Exception as e:
         print(
             "[LLM_PDF_PROMPT] 동기 요청 PDF 변환 실패: "
@@ -3467,7 +4116,8 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         traceback.print_exc()
         return f"[LLM 실패] PDF 프롬프트 변환 오류: {e}"
     request_messages = (
-        _encode_gemini_base64_messages(
+        await asyncio.to_thread(
+            _encode_gemini_base64_messages,
             pdf_messages,
             protocol=_gemini_base64_protocol(service),
         )
@@ -6788,7 +7438,9 @@ async def _dispatch_stream(messages: list, service: str, model: str):
     current_slot = _normalize_llm_slot(_llm_slot_ctx.get())
     use_base64 = _gemini_base64_enabled(service)
     try:
-        pdf_messages, pdf_metadata = _prepare_gemini_pdf_messages(messages, service)
+        pdf_messages, pdf_metadata = await asyncio.to_thread(
+            _prepare_gemini_pdf_messages, messages, service
+        )
     except Exception as e:
         print(
             "[LLM_PDF_PROMPT] 스트림 요청 PDF 변환 실패: "
@@ -6802,7 +7454,8 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         }
         return
     request_messages = (
-        _encode_gemini_base64_messages(
+        await asyncio.to_thread(
+            _encode_gemini_base64_messages,
             pdf_messages,
             protocol=_gemini_base64_protocol(service),
         )
@@ -7047,7 +7700,8 @@ async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=Tru
             yield ev
 
         if log_history:
-            _log_history(
+            await asyncio.to_thread(
+                _log_history,
                 service=service, model=use_model, messages=messages,
                 output=final_text, completion_tokens=final_tokens,
                 elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,

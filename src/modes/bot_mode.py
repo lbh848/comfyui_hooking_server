@@ -2751,13 +2751,26 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+        try:
+            stat = os.stat(filepath)
+        except OSError:
+            print(f"[BOT_MODE] 이미지 파일 없음: {filepath}")
+            return _json_error("파일을 찾을 수 없습니다.", status=404)
         if not os.path.isfile(filepath):
             print(f"[BOT_MODE] 이미지 파일 없음: {filepath}")
             return _json_error("파일을 찾을 수 없습니다.", status=404)
 
         import mimetypes as mt
         content_type = mt.guess_type(filepath)[0] or "image/webp"
-        return web.FileResponse(filepath, headers={"Content-Type": content_type})
+        headers = {
+            "Content-Type": content_type,
+            "Cache-Control": (
+                "private, max-age=31536000, immutable"
+                if request.query.get("v") == str(stat.st_mtime_ns)
+                else "no-store"
+            ),
+        }
+        return web.FileResponse(filepath, headers=headers)
 
     async def handle_get_face_crop_images(self, request):
         """GET /api/bot_mode/face_crop_images?bot=...&character=..."""
@@ -3012,7 +3025,7 @@ class BotMode:
             return _json_error(str(exc))
 
     async def handle_upload_bot_archive(self, request):
-        from modes.bot_archives import MAX_ARCHIVE_SIZE
+        from modes.bot_archives import MAX_ARCHIVE_SIZE, MAX_ARCHIVE_SIZE_GB
         temporary = None
         try:
             bot_name = request.query.get("bot_name", "")
@@ -3025,7 +3038,7 @@ class BotMode:
             metadata_bytes = bytearray()
             while chunk := await metadata.read_chunk():
                 metadata_bytes.extend(chunk)
-                if len(metadata_bytes) > 8 * 1024 * 1024:
+                if len(metadata_bytes) > 32 * 1024 * 1024:
                     raise ValueError("원본 파일의 로어북 정보가 너무 큽니다.")
             lore_entries = json.loads(metadata_bytes)
             if not isinstance(lore_entries, list):
@@ -3043,7 +3056,7 @@ class BotMode:
                 while chunk := await part.read_chunk(size=1024 * 1024):
                     size += len(chunk)
                     if size > MAX_ARCHIVE_SIZE:
-                        raise ValueError("원본 파일은 1GB 이하로 선택하세요.")
+                        raise ValueError(f"원본 파일은 {MAX_ARCHIVE_SIZE_GB}GB 이하로 선택하세요.")
                     digest.update(chunk)
                     writing = asyncio.create_task(asyncio.to_thread(stream.write, chunk))
                     try:
@@ -3349,47 +3362,130 @@ class BotMode:
             return _json_error(str(e))
 
     # ─── 이미지 삭제 ─────────────────────────────────────
-    async def handle_delete_image(self, request):
-        """POST /api/bot_mode/delete_image - 이미지 삭제"""
-        try:
-            body = await request.json()
-            bot_name = body.get("bot", "").strip()
-            char_name = body.get("character", "").strip()
-            filename = body.get("filename", "").strip()
-
-            if not bot_name or not char_name or not filename:
-                return _json_error("필수 값이 누락되었습니다.")
-
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            filepath = os.path.join(char_dir, filename)
-            filepath = os.path.normpath(filepath)
-            if not filepath.startswith(os.path.normpath(BOT_DIR)):
-                return _json_error("잘못된 경로입니다.")
+    @staticmethod
+    def _delete_character_image_files(char_dir: str, filenames: list[str], *, is_batch: bool) -> tuple[list[str], list[dict]]:
+        """캐릭터 폴더 안의 이미지와 연결된 프롬프트 JSON을 안전하게 삭제한다."""
+        deleted: list[str] = []
+        failed: list[dict] = []
+        for filename in filenames:
+            if (
+                os.path.basename(filename) != filename
+                or filename in {".", ".."}
+                or ":" in filename
+            ):
+                failed.append({"filename": filename, "error": "잘못된 경로입니다."})
+                if not is_batch:
+                    break
+                continue
+            filepath = os.path.abspath(os.path.join(char_dir, filename))
+            if os.path.commonpath([char_dir, filepath]) != char_dir:
+                failed.append({"filename": filename, "error": "잘못된 경로입니다."})
+                if not is_batch:
+                    break
+                continue
             if not os.path.isfile(filepath):
-                return _json_error("파일을 찾을 수 없습니다.")
-
-            os.remove(filepath)
+                failed.append({"filename": filename, "error": "파일을 찾을 수 없습니다."})
+                if not is_batch:
+                    break
+                continue
+            try:
+                os.remove(filepath)
+                deleted.append(filename)
+            except OSError as exc:
+                if not is_batch:
+                    raise
+                failed.append({"filename": filename, "error": str(exc)})
+                continue
             # 프롬프트 파일도 삭제
             base = os.path.splitext(filename)[0]
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-            if os.path.isfile(prompt_path):
-                os.remove(prompt_path)
+            prompt_path = os.path.abspath(os.path.join(char_dir, f"{base}_prompt.json"))
+            if os.path.commonpath([char_dir, prompt_path]) == char_dir and os.path.isfile(prompt_path):
+                try:
+                    os.remove(prompt_path)
+                except OSError as exc:
+                    print(f"[BOT_MODE] 프롬프트 파일 삭제 실패: {prompt_path} ({exc})")
+        return deleted, failed
+
+    async def handle_delete_image(self, request):
+        """POST /api/bot_mode/delete_image - 이미지 단건/일괄 삭제"""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot") or "").strip()
+            char_name = str(body.get("character") or "").strip()
+            raw_filenames = body.get("filenames")
+            is_batch = raw_filenames is not None
+
+            if not bot_name or not char_name:
+                return _json_error("필수 값이 누락되었습니다.")
+
+            if is_batch:
+                if not isinstance(raw_filenames, list):
+                    return _json_error("삭제할 파일 목록 형식이 올바르지 않습니다.")
+                filenames = list(dict.fromkeys(
+                    str(name).strip() for name in raw_filenames if isinstance(name, str) and str(name).strip()
+                ))
+                if not filenames:
+                    return _json_error("삭제할 이미지를 선택해 주세요.")
+            else:
+                filename = str(body.get("filename") or "").strip()
+                if not filename:
+                    return _json_error("필수 값이 누락되었습니다.")
+                filenames = [filename]
+
+            bot_root = os.path.abspath(BOT_DIR)
+            char_dir = os.path.abspath(os.path.join(bot_root, bot_name, char_name))
+            if (
+                os.path.basename(bot_name) != bot_name
+                or os.path.basename(char_name) != char_name
+                or bot_name in {".", ".."}
+                or char_name in {".", ".."}
+                or ":" in bot_name
+                or ":" in char_name
+                or os.path.commonpath([bot_root, char_dir]) != bot_root
+            ):
+                return _json_error("잘못된 경로입니다.")
+
+            deleted, failed = await asyncio.to_thread(
+                self._delete_character_image_files, char_dir, filenames, is_batch=is_batch
+            )
+            if not deleted and failed:
+                return _json_error(failed[0]["error"])
 
             # A deleted representative must not remain selected on saved cards.
-            async with self._lock:
-                data = _load_bot_data()
-                bot = next((item for item in data["bots"] if item["name"] == bot_name), None)
-                character = next((item for item in (bot or {}).get("characters", []) if item["name"] == char_name), None)
-                if character is not None:
-                    cards, _ = effective_character_cards(character)
-                    if any(filename in card.get("rep_images", []) for card in cards):
-                        for card in cards:
-                            card["rep_images"] = [name for name in card.get("rep_images", []) if name != filename]
-                        store_visual_cards(character, cards)
-                        _save_bot_data(data)
+            deleted_set = set(deleted)
+            if deleted_set:
+                async with self._lock:
+                    data = _load_bot_data()
+                    bot = next((item for item in data["bots"] if item["name"] == bot_name), None)
+                    character = next((item for item in (bot or {}).get("characters", []) if item["name"] == char_name), None)
+                    if character is not None:
+                        cards, _ = effective_character_cards(character)
+                        if any(
+                            name in deleted_set
+                            for card in cards
+                            for name in card.get("rep_images", [])
+                        ):
+                            for card in cards:
+                                card["rep_images"] = [
+                                    name for name in card.get("rep_images", [])
+                                    if name not in deleted_set
+                                ]
+                            store_visual_cards(character, cards)
+                            _save_bot_data(data)
 
-            print(f"[BOT_MODE] 이미지 삭제: {bot_name}/{char_name}/{filename}")
-            return _json_ok({"deleted": True})
+            if is_batch:
+                print(
+                    f"[BOT_MODE] 이미지 일괄 삭제: {bot_name}/{char_name} "
+                    f"({len(deleted)}장{f', 실패 {len(failed)}장' if failed else ''})"
+                )
+            else:
+                print(f"[BOT_MODE] 이미지 삭제: {bot_name}/{char_name}/{deleted[0]}")
+            return _json_ok({
+                "deleted": True,
+                "deleted_filenames": deleted,
+                "deleted_count": len(deleted),
+                "failed": failed,
+            })
         except Exception as e:
             print(f"[BOT_MODE] 이미지 삭제 실패: {e}")
             traceback.print_exc()
@@ -7280,6 +7376,8 @@ class BotMode:
                 "text": text,
                 "genre": str(bot.get("genre") or ""),
                 "genre_work_title": str(bot.get("genre_work_title") or ""),
+                "genre_crossover_background": str(bot.get("genre_crossover_background") or ""),
+                "genre_crossover_works": str(bot.get("genre_crossover_works") or ""),
                 "preset": preset,
                 "scope": scope,
                 "builtin_presets": builtin,     # 배포자료(잠금)
@@ -7348,6 +7446,12 @@ class BotMode:
 
             genre = str(body.get("genre", bot.get("genre")) or "").strip()
             genre_work_title = str(body.get("genre_work_title", bot.get("genre_work_title")) or "").strip()
+            genre_crossover_background = str(
+                body.get("genre_crossover_background", bot.get("genre_crossover_background")) or ""
+            ).strip()
+            genre_crossover_works = str(
+                body.get("genre_crossover_works", bot.get("genre_crossover_works")) or ""
+            ).strip()
             if genre == "secondary_bot" and not genre_work_title:
                 return _json_error("2차봇의 작품명을 입력하세요.")
 
@@ -7368,6 +7472,10 @@ class BotMode:
                     bot["genre"] = genre
                 if "genre_work_title" in body:
                     bot["genre_work_title"] = genre_work_title
+                if "genre_crossover_background" in body:
+                    bot["genre_crossover_background"] = genre_crossover_background
+                if "genre_crossover_works" in body:
+                    bot["genre_crossover_works"] = genre_crossover_works
                 bot["system_prompt_preset"] = preset_name
                 bot["preset_scope"] = "builtin"
                 _save_bot_data(data)
@@ -7383,6 +7491,10 @@ class BotMode:
                 bot["genre"] = genre
             if "genre_work_title" in body:
                 bot["genre_work_title"] = genre_work_title
+            if "genre_crossover_background" in body:
+                bot["genre_crossover_background"] = genre_crossover_background
+            if "genre_crossover_works" in body:
+                bot["genre_crossover_works"] = genre_crossover_works
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
             data["system_prompt_presets"][preset_name] = text  # local 프리셋 덮어쓰기

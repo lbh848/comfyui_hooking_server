@@ -280,88 +280,47 @@ async def suggest_bg_theme_values(
         ),
     })
 
+    from modes.lighbd_service import call_logged_llm_task, call_logged_llm_vision_task
+
     images = vision_images or None
     task_key = "character_maker_feedback" if images else "character_maker_draft"
     call_label = "배경 에셋 메이커"
-    t0 = time.perf_counter()
-    sink: dict = {}
-    last_raw_result: str | None = None
 
     def _validator(raw_text: str) -> tuple[bool, str]:
         parsed, reason = _parse_bg_maker_llm_payload(raw_text, before, focus_place, focus_time)
         return (parsed is not None, reason)
 
-    def _on_attempt_fail(info: dict) -> None:
-        nonlocal last_raw_result
-        try:
-            from modes.lighbd_service import _log_lighbd_history
-            attempt_raw = info.get("result")
-            if attempt_raw:
-                last_raw_result = str(attempt_raw)
-            snap = dict(sink or {})
-            _log_lighbd_history({
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "prompt_id": task_key,
-                "call_name": call_label,
-                "input": messages,
-                "output": str(info.get("result") or ""),
-                "completion_tokens": int(snap.get("completion_tokens") or 0),
-                "prompt_tokens": int(snap.get("prompt_tokens") or 0),
-                "elapsed": 0.0,
-                "tps": 0.0,
-                "status": "error",
-                "error": (
-                    f"[재시도 {info.get('phase')} {info.get('slot')} "
-                    f"{info.get('attempt')}/{info.get('total_attempts')}] {info.get('reason')}"
-                ),
-            })
-        except Exception:
-            traceback.print_exc()
-
-    try:
-        if images:
-            raw = await llm_service.callLLMVisionTask(
-                task_key,
-                messages,
-                images=images,
-                json_mode=True,
-                result_validator=_validator,
-                metadata_sink=sink,
-                on_attempt_failure=_on_attempt_fail,
-            )
-        else:
-            raw = await llm_service.callLLMTask(
-                task_key,
-                messages,
-                json_mode=True,
-                result_validator=_validator,
-                metadata_sink=sink,
-                on_attempt_failure=_on_attempt_fail,
-            )
-    except Exception as exc:
-        character_maker._log_cm_history(
-            task_key, messages, f"[LLM 실패] {exc}", t0,
-            status="error", error=str(exc), sink=sink, call_label=call_label,
+    metadata: dict[str, object] = {"prompt_id": task_key}
+    if images:
+        metadata["vision_image_count"] = len(images)
+    context = llm_service.create_llm_execution_context(
+        task_key,
+        call_name=call_label,
+        json_mode=True,
+        metadata=metadata,
+    )
+    if images:
+        execution_result = await call_logged_llm_vision_task(
+            context,
+            messages,
+            images=images,
+            result_validator=_validator,
         )
-        raise
-
-    if isinstance(raw, str) and raw.strip().startswith("[LLM 실패]"):
-        character_maker._log_cm_history(
-            task_key, messages, last_raw_result or raw, t0,
-            status="error", error=raw, sink=sink, call_label=call_label,
+    else:
+        execution_result = await call_logged_llm_task(
+            context,
+            messages,
+            result_validator=_validator,
+            retry_messages=messages,
         )
+
+    raw = execution_result.to_legacy()
+    if not execution_result.accepted or (isinstance(raw, str) and raw.strip().startswith("[LLM 실패]")):
         raise ValueError(raw)
 
     parsed, reason = _parse_bg_maker_llm_payload(raw, before, focus_place, focus_time)
     if parsed is None:
-        character_maker._log_cm_history(
-            task_key, messages, raw, t0, status="error", error=reason, sink=sink, call_label=call_label,
-        )
         raise ValueError(reason)
-
-    character_maker._log_cm_history(
-        task_key, messages, raw, t0, status="ok", sink=sink, call_label=call_label,
-    )
     return parsed
 
 
@@ -919,8 +878,8 @@ def register_bg_theme_maker_runtime(server, prepare_generation=None):
                         )
                         if not workflow_type and hasattr(server, "app_config"):
                             try:
-                                from asset_model_presets import AssetModelPresets
-                                workflow_type = AssetModelPresets(server.CONFIG_FILE).snapshot(server.app_config)["config"]["asset_workflow_type"]
+                                from asset_model_presets import BgAssetModelPresets
+                                workflow_type = BgAssetModelPresets(server.CONFIG_FILE).snapshot(server.app_config)["config"]["asset_workflow_type"]
                             except Exception:
                                 workflow_type = ""
                         if str(workflow_type).strip().lower() == "moss":

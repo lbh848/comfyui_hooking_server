@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from modes import illustration_context_pipeline as pipeline
 from modes import llm_service
+from modes.moss_prompt_contract import is_moss_natural_detail
 from queue_manager import QueueItem
 
 
@@ -24,7 +25,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     composite = toggles["illustration_output_mode"] in ("composite", "composite_both")
     if manga:
         toggles.update(speak_enabled=False, supplement=True)
-    moss_manga = (manga and str(toggles.get("illustration_model_family") or "") == "moss")
+    moss = str(toggles.get("illustration_model_family") or "") == "moss"
+    moss_manga = bool(manga and moss)
+    moss_natural = bool(moss and is_moss_natural_detail(toggles))
     if emotion:
         # 감정 삽화는 시작 이미지의 복장을 재사용하며 OUTFIT·PLAN·KEYVIS·
         # 별도 MULTI-CHAR-MASK 노드를 실행 계획에 만들지 않는다. 인스턴스
@@ -346,7 +349,10 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 if keyvis_in_detail and i == 1:
                     description += " · KEYVIS 대표 만화 1페이지 함께 예측" if moss_manga else " · KEYVIS 대표 이미지 1장 함께 예측"
                 detail_sources.append((job(card("DETAIL-COMPOSITE" if composite else "DETAIL-MANGA" if manga else "CALL2-DETAIL", 4,
-                                                f"{description} · " + (f"MOSS 만화 {len(batch)}페이지" if moss_manga else f"장면 {len(batch)}개 이미지 태그 묘사"),
+                                                f"{description} · " + (
+                                                    (f"MOSS 만화 {len(batch)}페이지" + (" (자연어)" if moss_natural else "")) if moss_manga else
+                                                    f"장면 {len(batch)}개 MOSS 자연어 레이아웃 묘사" if moss_natural else
+                                                    f"장면 {len(batch)}개 이미지 태그 묘사"),
                                                 group="composite_detail" if composite else "manga_detail" if manga else "call2_detail", index=i, count=len(detail_batches)),
                                            [plans[index] for index in sources] if plans else front,
                                            output=(f"MOSS multi_panel {len(batch)}페이지" if moss_manga else f"장면 {len(batch)}개 묘사") + ("·KEYVIS" if keyvis_in_detail and i == 1 else "") + ("·마스크" if mask_inline else "")), batch, False))

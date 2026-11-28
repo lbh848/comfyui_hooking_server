@@ -8,9 +8,32 @@ export type InternalLoraFilter = InternalLoraSource | "all";
 export const internalLoraFilterLabels: Record<InternalLoraFilter, string> = { all: "전체", ...internalLoraLabels };
 export type PickerLora = LoraEntry & { sourceUrl?: string; internalSource?: InternalLoraSource; detail?: string;
   botName?: string; projectName?: string; characterName?: string; visualCardId?: string };
+export type BotLoraGroup = { botName: string; projects: string[]; items: PickerLora[] };
 const folders: Record<InternalLoraSource, string> = { asset: "SOYA_ASSET_LORA", bot: "SOYA_BOT_LORA", style: "SOYA_STYLE_LORA" };
 export const loraPath = (value = "") => value.replaceAll("\\", "/").replace(/^loras\//i, "");
 export const isInternalLora = (item: Pick<PickerLora, "path" | "internalSource">) => !!item.internalSource || /^SOYA_CHAR_LORA\//i.test(loraPath(item.path));
+export function loraBotName(item: Pick<PickerLora, "botName" | "internalSource" | "path">): string {
+  if (item.botName?.trim()) return item.botName.trim();
+  const match = loraPath(item.path).match(/^SOYA_CHAR_LORA\/SOYA_BOT_LORA\/([^/]+)\//i);
+  return match?.[1] || (item.internalSource === "bot" ? "기타" : "");
+}
+export function groupBotLoras(items: PickerLora[]): BotLoraGroup[] {
+  const groups = new Map<string, PickerLora[]>();
+  for (const item of items) {
+    const botName = loraBotName(item) || "기타";
+    const list = groups.get(botName);
+    if (list) list.push(item);
+    else groups.set(botName, [item]);
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, "ko", { numeric: true }))
+    .map(([botName, groupItems]) => ({
+      botName,
+      projects: [...new Set(groupItems.map(item => item.projectName?.trim() || "").filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, "ko", { numeric: true })),
+      items: groupItems,
+    }));
+}
 export const defaultLoraTrigger = (item: PickerLora) => item.customTrigger?.trim() || item.trigger?.trim() || "";
 export const loraBase = (item: PickerLora) => /moss/i.test(item.family) ? "moss" : /sdxl|sd xl|ilxl|illustrious|pony|noobai/i.test(item.family) ? "sdxl" : "anima";
 export const incompatibleLora = (item: PickerLora, profile: string) => profile === "moss" ? loraBase(item) !== "moss" : loraBase(item) === "moss" || (profile === "ilxl" ? loraBase(item) !== "sdxl" : !["v3", "anima_ilxl"].includes(profile) && loraBase(item) === "sdxl");
@@ -33,7 +56,7 @@ export function searchLoras(items: PickerLora[], source: string, query: string, 
   const search = query.trim().toLocaleLowerCase();
   return items.filter(item => !!item.path && !/snapref/i.test(item.path) && !/^SOYA_CHAR_LORA\/SOYA_INSTANCE_LORA\//i.test(loraPath(item.path)) && isInternalLora(item) === (source === "internal") &&
     (source !== "internal" || internalSource === "all" || item.internalSource === internalSource) &&
-    `${item.name} ${item.alias || ""} ${item.path} ${item.family} ${item.trigger} ${item.customTrigger || ""} ${item.detail || ""}`.toLocaleLowerCase().includes(search))
+    `${item.name} ${item.alias || ""} ${item.path} ${item.family} ${item.trigger} ${item.customTrigger || ""} ${item.detail || ""} ${item.botName || ""} ${item.projectName || ""} ${item.characterName || ""}`.toLocaleLowerCase().includes(search))
     .sort((a, b) => (a.alias?.trim() || a.name).localeCompare(b.alias?.trim() || b.name, "ko", { numeric: true }));
 }
 

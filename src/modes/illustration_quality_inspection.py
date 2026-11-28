@@ -1080,7 +1080,7 @@ def _history_record(
 
 def _log_history(record: dict[str, Any]) -> None:
     try:
-        lighbd_service._log_lighbd_history(record)
+        lighbd_service._log_lighbd_history_background(record)
     except Exception as exc:
         print(
             "[ILLUSTRATION_QUALITY] LB Details history write failed: "

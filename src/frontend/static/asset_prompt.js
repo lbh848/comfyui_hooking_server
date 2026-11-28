@@ -42,6 +42,19 @@ globalThis.ComfyAssetPrompt = (() => {
             return 'SOYA_ASSET_LORA\\' + l.lora_path;
         }
 
+        function joinMossPromptParts(parts) {
+            let result = '';
+            for (const raw of parts) {
+                if (typeof raw !== 'string') continue;
+                const cleaned = raw.trim();
+                if (!cleaned) continue;
+                if (!result) result = cleaned;
+                else if (/[.!?]$/.test(result)) result += ' ' + cleaned;
+                else result += ', ' + cleaned;
+            }
+            return result;
+        }
+
         function getAssetPresetValues(assetTags, category) {
             if (category === 'composition_presets') return { ...assetTags.expressions, ...assetTags.composition_presets };
             return assetTags[category] || {};
@@ -130,7 +143,7 @@ globalThis.ComfyAssetPrompt = (() => {
                 ].filter(v => typeof v === 'string' && v.trim());
                 positiveTags = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
                     + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
-                    + '\n[ANIMA]\n' + section1Rest.join(', ')
+                    + '\n[ANIMA]\n' + (isMoss ? joinMossPromptParts(section1Rest) : section1Rest.join(', '))
                     + (isDual ? '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
                         + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
                         + '\n[SDXL]\n' + section2Rest.join(', ') : '')
@@ -266,7 +279,8 @@ globalThis.ComfyAssetPrompt = (() => {
                         : key.endsWith('_DATA') || ['CHAR_FACE_TAG_INFORM', 'SNAPREF'].includes(key) ? JSON.parse(value)
                         : value;
                 }
-                fields.ANIMA_CONTENT = [primaryLoraTriggerWords, ...t.animaArtistTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags, ...t.backgroundTags, t.naturalLanguage].filter(value => typeof value === 'string' && value.trim()).join(', ');
+                const animaContentParts = [primaryLoraTriggerWords, ...t.animaArtistTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags, ...t.backgroundTags, t.naturalLanguage].filter(value => typeof value === 'string' && value.trim());
+                fields.ANIMA_CONTENT = isMoss ? joinMossPromptParts(animaContentParts) : animaContentParts.join(', ');
                 delete fields.ANIMA;
                 if ('SDXL' in fields) { fields.SDXL_CONTENT = fields.SDXL; delete fields.SDXL; }
                 const [animaNegative, sdxlNegative = ''] = negative.split('[SDXL]');
@@ -302,14 +316,17 @@ globalThis.ComfyAssetPrompt = (() => {
             const styleMask = slots.length === 1 && slots[0].mask_area_limit_enabled;
             const clean = values => values.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim());
             const unique = values => [...new Set(clean(values))];
+            const primaryCapabilities = getAssetWorkflowCapabilities(slots[0].asset_workflow_type);
             const background = clean(parts[0].backgroundTags).join(', ');
-            const characterText = part => clean([...part.cTags, ...part.appTags, ...part.exprTags, ...part.outfitTags]).join(', ');
+            const characterText = part => {
+                const textParts = clean([...part.cTags, ...part.appTags, ...part.exprTags, ...part.outfitTags]);
+                return primaryCapabilities.moss ? joinMossPromptParts(textParts) : textParts.join(', ');
+            };
             const inform = parts.map(characterText);
             const regionalText = parts.map(part => part.naturalLanguage.trim());
             if (styleMask && !inform[0] && !regionalText[0]) inform[0] = 'character';
             if (inform.some((value, index) => !value && !regionalText[index])) throw new Error('각 영역의 외모·복장·표정 또는 자연어를 입력하세요.');
             const names = layout.regions.map(region => region.name);
-            const primaryCapabilities = getAssetWorkflowCapabilities(slots[0].asset_workflow_type);
             const primaryBase = primaryCapabilities.moss ? 'moss' : 'anima';
             const styleTriggers = unique(filterAssetLorasForCapabilities(slots[0].style_lora_enabled ? slots[0].style_lora_list : [], primaryCapabilities)
                 .filter(item => String(item.BASE || 'anima').trim().toLowerCase() === primaryBase).map(item => item.trigger));

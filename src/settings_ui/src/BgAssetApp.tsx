@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Download, Images, Layers, Menu, Mountain, Palette, RefreshCw, Settings2, Workflow, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, Download, Images, Layers, Menu, Mountain, Palette, RefreshCw, Settings2, WandSparkles, Workflow, X } from "lucide-react";
 import { Modal } from "./components";
 import { BackgroundModals, ModalPage, useModalWorkspace } from "./ModalWorkspace";
 import { ProgramShutdown, WorkshopSwitcher } from "./WorkshopControls";
@@ -13,18 +13,18 @@ import { workNavigation } from "./workNavigation";
 import { pageInfo } from "./data";
 import { WorkActivityCount } from "./WorkActivityCount";
 import { useResources } from "./useResources";
-import { AssetModelSettingsScope } from "./ModelSettingsScope";
+import { BgAssetModelSettingsScope } from "./ModelSettingsScope";
 import { IllustrationSaveProvider, IllustrationSaveStatus } from "./IllustrationSaveStatus";
 import { IllustrationModelSelectionProvider, useIllustrationModelSelection } from "./IllustrationModelSelection";
 import { IllustModelPresets } from "./IllustModelPresets";
 import { AssetGenerationControls, type AssetGenerationControlsProps } from "./AssetGenerationControls";
 import { AssetGenerationStatus } from "./AssetGenerationStatus";
-import { assetRequest } from "./asset";
 import {
   applyActiveAssetModel,
   assetModelPreset,
   bgAssetPresetFields,
   bgAssetRequest,
+  bgAssetStyleResolution,
   bgAssetStyleValues,
   bgBatchItemKey,
   buildBgAssetRequest,
@@ -45,9 +45,12 @@ import { BgAssetStyleSelectionDialog } from "./BgAssetStyleSelectionDialog";
 import { BgAssetPresetSettings } from "./BgAssetPresetSettings";
 import { BgAssetThemeWorkspace } from "./BgAssetThemeWorkspace";
 import { BgAssetBatchView, type BgBatchRunRequest } from "./BgAssetBatchView";
+import { BgAssetLoreThemeView, type BgLoreBaseLinkRequest } from "./BgAssetLoreThemeView";
 import { BgAssetGallery } from "./BgAssetGallery";
 import { BgAssetGenerationTags } from "./BgAssetGenerationTags";
 import { BgAssetExport } from "./BgAssetExport";
+import { AssetPostprocessPage } from "./AssetPostprocessPage";
+import { useWorkspacePostprocess, type BgAssetPostprocessSettings } from "./assetPostprocess";
 import "./illust.css";
 import "./asset.css";
 
@@ -55,14 +58,16 @@ const pages = [
   { id: "generate", label: "배경 생성", icon: Images, description: "테마의 장소와 시간대를 골라 배경 에셋을 만들고 결과를 확인하세요." },
   { id: "export", label: "배경 익스포트", icon: Download, description: "내보낼 장소·시간대를 고르고 이름 치환 규칙을 적용해 ZIP으로 저장하세요." },
   { id: "batch", label: "배경 일괄 생성", icon: Layers, description: "테마에 등록된 장소와 시간대를 체크해 한 번에 배경 에셋을 일괄 생성하세요." },
+  { id: "lore-theme", label: "로어북 테마 생성", icon: BookOpen, description: "봇(.charx)·모듈(.risum)의 로어북을 읽어 봇 이름의 테마 아래 필요한 공간·장소와 시간대를 자동으로 생성하세요." },
+  { id: "postprocess", label: "후처리", icon: WandSparkles, description: "원본 배경을 유지한 채 흐림 효과 등 후처리 효과를 실시간으로 확인하고 익스포트에 적용하세요." },
   { id: "style", label: "그림체 설정", icon: Palette, description: "배경 전용 그림체 프리셋을 선택·편집하거나 에셋 그림체에서 가져오세요." },
   { id: "theme", label: "배경 설정", icon: Mountain, description: "테마 아래 여러 장소를 만들고 각 장소마다 낮·노을·밤 등 시간대별 느낌을 편집하세요." },
-  { id: "workflow", label: "그림 모델 설정", icon: Workflow, description: "Comfy 공방 에셋과 공유하는 그림 모델·워크플로우·샘플링·공통 LoRA를 설정하세요." },
+  { id: "workflow", label: "그림 모델 설정", icon: Workflow, description: "배경 에셋 전용 그림 모델·워크플로우·샘플링·공통 LoRA를 설정하세요." },
   ...workNavigation.items.map(item => ({ ...item, description: pageInfo[item.id].description })),
 ] as const;
 
 export default function BgAssetApp() {
-  return <AssetModelSettingsScope><IllustrationSaveProvider><IllustrationModelSelectionProvider><BgAssetAppContent /></IllustrationModelSelectionProvider></IllustrationSaveProvider></AssetModelSettingsScope>;
+  return <BgAssetModelSettingsScope><IllustrationSaveProvider><IllustrationModelSelectionProvider><BgAssetAppContent /></IllustrationModelSelectionProvider></IllustrationSaveProvider></BgAssetModelSettingsScope>;
 }
 
 function BgAssetAppContent() {
@@ -83,6 +88,8 @@ function BgAssetAppContent() {
   const visible = mobile ? menu : !collapsed;
   const { draft, setDraft, storageError } = useBgAssetDraft();
   const tags = useBgAssetResource("tags");
+  const postprocess = useWorkspacePostprocess<BgAssetPostprocessSettings>("bg_asset", active);
+  const postprocessBanner = { active: postprocess.active, revision: postprocess.revision, summary: postprocess.summary };
   const inventory = useResources();
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -197,7 +204,7 @@ function BgAssetAppContent() {
     if (themeSettings.dirty && !themeSettings.locked && !await themeSettings.retry()) {
       throw new Error("배경 설정을 저장한 뒤 생성하세요.");
     }
-    const [settings, styles] = await Promise.all([assetRequest("asset/presets"), bgAssetRequest("style-presets")]);
+    const [settings, styles] = await Promise.all([bgAssetRequest("model/presets"), bgAssetRequest("style-presets")]);
     requireBgAssetStylePreset(slot, styles);
     const preset = assetModelPreset(slot, settings);
     if (!preset?.config.asset_workflow_source_paths[preset.config.asset_workflow_type]) {
@@ -218,7 +225,7 @@ function BgAssetAppContent() {
     if (request.theme === themeSettings.name && themeSettings.dirty && !themeSettings.locked && !await themeSettings.retry()) {
       throw new Error("배경 설정을 저장한 뒤 생성하세요.");
     }
-    const [settings, styles] = await Promise.all([assetRequest("asset/presets"), bgAssetRequest("style-presets")]);
+    const [settings, styles] = await Promise.all([bgAssetRequest("model/presets"), bgAssetRequest("style-presets")]);
     const stylePreset = requireBgAssetStylePreset({ asset_style_preset_id: request.stylePresetId }, styles);
     const baseStyle = bgAssetStyleValues(stylePreset);
     const modelPreset = assetModelPreset(draft.slot, settings);
@@ -236,8 +243,6 @@ function BgAssetAppContent() {
         place: item.place,
         time: item.time,
         atmosphere: item.time,
-        img_w: request.width,
-        img_h: request.height,
       });
       const built = await buildBgAssetRequest(slot, tags.data, settings, styles, request.themeData);
       jobs.push({
@@ -250,9 +255,125 @@ function BgAssetAppContent() {
     setToast(`${result.count}개 배경 에셋을 작업 큐에 추가했습니다.`);
   }
 
+  const loreStylePresetId = (
+    draft.batch?.stylePresetId
+    && stylePresets.presets.some(item => item.id === draft.batch.stylePresetId)
+  )
+    ? draft.batch.stylePresetId
+    : (stylePresets.selectedId || stylePresets.presets[0]?.id || "");
+  const loreStylePreset = stylePresets.presets.find(item => item.id === loreStylePresetId);
+  const loreBaseResolution = bgAssetStyleResolution(loreStylePreset);
+
+  async function enqueueLoreBaseAndLink(request: BgLoreBaseLinkRequest) {
+    if (!request.places.length) throw new Error("베이스를 생성할 장소가 없습니다.");
+    if (!request.baseTime.trim()) throw new Error("베이스 기준 시간대를 선택하세요.");
+    if (modelSelection.disabled) throw new Error("그림 모델 설정을 저장한 뒤 생성하세요.");
+    const [settings, styles] = await Promise.all([bgAssetRequest("model/presets"), bgAssetRequest("style-presets")]);
+    const stylePreset = requireBgAssetStylePreset({ asset_style_preset_id: loreStylePresetId }, styles);
+    const baseStyle = bgAssetStyleValues(stylePreset);
+    const modelPreset = assetModelPreset(draft.slot, settings);
+    if (!modelPreset?.config.asset_workflow_source_paths[modelPreset.config.asset_workflow_type]) {
+      throw new Error("그림 모델 설정에서 워크플로우를 선택하세요.");
+    }
+
+    const themeData = loadBgThemeData(request.theme, request.catalog);
+    const baseThemeOverride: BgThemeData = {
+      ...themeData,
+      places: Object.fromEntries(
+        Object.entries(themeData.places).map(([placeName, placeData]) => [
+          placeName,
+          request.places.includes(placeName)
+            ? { ...placeData, i2i_enabled: false, i2i_images: [] }
+            : placeData,
+        ]),
+      ),
+    };
+
+    const jobs: AssetRecord[] = [];
+    for (const place of request.places) {
+      const slot = newBgAssetSlot({
+        ...baseStyle,
+        asset_style_preset_id: stylePreset.id,
+        asset_model_preset_id: modelPreset.id,
+        asset_workflow_type: modelPreset.config.asset_workflow_type,
+        theme: request.theme,
+        place,
+        time: request.baseTime,
+        atmosphere: request.baseTime,
+      });
+      const built = await buildBgAssetRequest(slot, request.catalog, settings, styles, baseThemeOverride);
+      jobs.push({
+        ...built,
+        asset_chain_slot_id: bgBatchItemKey(request.theme, place, request.baseTime),
+      });
+    }
+    const result = await bgAssetRequest("enqueue", {
+      label: `로어북 베이스 생성 · ${request.theme} (${request.baseTime})`,
+      jobs,
+      auto_link_i2i: true,
+      auto_link_i2i_denoise: request.denoise,
+    });
+    return {
+      batchId: String(result.batch_id || ""),
+      count: Number(result.count) || jobs.length,
+      baseTime: request.baseTime,
+    };
+  }
+
+  async function refreshThemeCatalog(updatedName: string) {
+    const freshCatalog = await bgAssetRequest("tags");
+    tags.setData(freshCatalog);
+    if (updatedName && updatedName === themeSettings.name && freshCatalog.themes?.[updatedName]) {
+      themeSettings.applySavedTheme(loadBgThemeData(updatedName, freshCatalog));
+    }
+    return freshCatalog;
+  }
+
+  function openBatchForTheme(
+    savedName: string,
+    options?: {
+      selectRemainingAfterBaseTime?: string;
+      selectCombinations?: { place: string; time: string }[];
+      catalog?: AssetRecord;
+    },
+  ) {
+    setDraft(previous => {
+      const nextBatch: AssetRecord = { ...(previous.batch || {}), theme: savedName };
+      if (options?.selectCombinations?.length) {
+        const selectedKeys = options.selectCombinations.map(item => bgBatchItemKey(savedName, item.place, item.time));
+        nextBatch.selectedByTheme = {
+          ...(previous.batch?.selectedByTheme || {}),
+          [savedName]: selectedKeys,
+        };
+      } else {
+        const baseTime = options?.selectRemainingAfterBaseTime;
+        const catalog = options?.catalog || tags.data;
+        if (baseTime && catalog?.themes?.[savedName]) {
+          const themeData = loadBgThemeData(savedName, catalog);
+          const remainingKeys: string[] = [];
+          for (const [place, placeData] of Object.entries(themeData.places)) {
+            for (const time of Object.keys(placeData.times)) {
+              if (time !== baseTime) {
+                remainingKeys.push(bgBatchItemKey(savedName, place, time));
+              }
+            }
+          }
+          if (remainingKeys.length > 0) {
+            nextBatch.selectedByTheme = {
+              ...(previous.batch?.selectedByTheme || {}),
+              [savedName]: remainingKeys,
+            };
+          }
+        }
+      }
+      return { ...previous, batch: nextBatch };
+    });
+    changePage("batch");
+  }
+
   async function previewBgAsset(slot: AssetRecord, themeOverride?: BgThemeData) {
     if (modelSelection.disabled) throw new Error("그림 모델 설정을 저장한 뒤 미리보기를 확인하세요.");
-    const [settings, styles] = await Promise.all([assetRequest("asset/presets"), bgAssetRequest("style-presets")]);
+    const [settings, styles] = await Promise.all([bgAssetRequest("model/presets"), bgAssetRequest("style-presets")]);
     return bgAssetRequest("preview", await buildBgAssetRequest(
       slot,
       tags.data!,
@@ -285,6 +406,14 @@ function BgAssetAppContent() {
   const activeModelName = activeModel?.name || (modelSelection.resource.error ? "불러오기 실패" : modelSelection.data ? "선택 필요" : "불러오는 중…");
   const modelSummary = <button type="button" className="button asset-generation-preset" title={`그림 모델 설정 · ${activeModelName}`} onClick={() => changePage("workflow")}><Workflow size={14} /><span><small>활성 그림 모델</small><strong>{activeModelName}{modelSelection.pending ? " · 수정 중" : ""}</strong></span></button>;
 
+  const activePlaceData = themeSettings.selectedPlace
+    ? themeSettings.themeData.places[themeSettings.selectedPlace]
+    : undefined;
+  const activePlaceMissingI2i = !!(activePlaceData?.i2i_enabled && !activePlaceData.i2i_images.length);
+  const activePlaceI2iLabel = activePlaceData?.i2i_enabled && activePlaceData.i2i_images.length > 0
+    ? `i2i ${activePlaceData.i2i_denoise.toFixed(2)}`
+    : "";
+
   const generationControls: AssetGenerationControlsProps = {
     count: draft.count, busy,
     disabledReason: !stylePresets.resource.data ? stylePresets.error
@@ -293,6 +422,7 @@ function BgAssetAppContent() {
       : !themeSettings.name ? "테마를 선택하세요."
       : !themeSettings.selectedPlace ? "장소를 선택하세요. 배경 설정에서 장소를 추가할 수 있습니다."
       : !themeSettings.selectedTime ? "시간대를 선택하세요. 배경 설정에서 시간대를 추가할 수 있습니다."
+      : activePlaceMissingI2i ? "i2i가 켜져 있지만 기준 이미지가 없습니다. 배경 설정에서 기준 이미지를 등록하거나 i2i를 꺼 주세요."
       : stylePresets.busy ? "배경 그림체 프리셋을 처리 중입니다. 완료된 뒤 생성할 수 있습니다."
       : themeSettings.busy ? "배경 설정을 저장 중입니다. 저장이 끝난 뒤 생성할 수 있습니다."
       : targetBusy ? "적용 대상을 변경 중입니다. 완료된 뒤 생성할 수 있습니다."
@@ -303,7 +433,7 @@ function BgAssetAppContent() {
     onBlocked: reason => setToast(reason, 3000),
   };
 
-  const presetActive = info.id === "style" || info.id === "theme" || info.id === "batch";
+  const presetActive = info.id === "style" || info.id === "theme" || info.id === "batch" || info.id === "lore-theme" || info.id === "postprocess";
   const themeNames = Object.keys(tags.data?.themes || {});
   const activePlaceNames = Object.keys(themeSettings.themeData.places);
   const activeTimeNames = themeSettings.selectedPlace
@@ -321,14 +451,14 @@ function BgAssetAppContent() {
     <aside id="bg-asset-sidebar" className="sidebar" inert={!visible}><nav aria-label="배경 에셋 메뉴">
       {[
         { label: "배경 에셋", ids: ["generate", "export"] },
-        { label: "자동화", ids: ["batch"] },
+        { label: "자동화", ids: ["batch", "lore-theme", "postprocess"] },
         { label: "프리셋 설정", ids: ["style", "theme", "workflow"] },
       ].map(group => <details className="nav-group" open key={group.label}>
         <summary>{group.label}<ChevronRight size={13} /></summary>
         <div className="nav-group-items">{pages.filter(page => group.ids.includes(page.id)).map(({ id, label, icon: Icon }) =>
           <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined}
             onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}>
-            <Icon size={18} /><span>{label}</span>{id === "batch" && <small>{batchBadgeCount}</small>}
+            <Icon size={18} /><span>{label}</span>{id === "batch" && <small>{batchBadgeCount}</small>}{id === "postprocess" && postprocess.active && <small>ON</small>}
           </a>)}
         </div>
       </details>)}
@@ -346,11 +476,11 @@ function BgAssetAppContent() {
       <div className="page-heading">
         <div className="asset-page-title">
           {info.id !== "generate" && <p className="eyebrow">배경 에셋 <span>✧</span></p>}
-          {["batch", "style", "theme"].includes(info.id) ? <div className="asset-page-title-row"><h1>{info.label}</h1>{modelSummary}</div> : <h1>{info.label}</h1>}
+          {["batch", "lore-theme", "style", "theme"].includes(info.id) ? <div className="asset-page-title-row"><h1>{info.label}</h1>{modelSummary}</div> : <h1>{info.label}</h1>}
           {info.id !== "generate" && <p>{info.description}</p>}
           {info.id === "generate" && <div className="asset-generation-summary" role="group" aria-label="배경 생성 설정">
             <button type="button" className="button asset-generation-preset" title="그림체 설정" onClick={() => changePage("style")}><Palette size={14} /><span><small>배경 그림체</small><strong>{stylePresets.selected?.name || "선택 필요"}{stylePresets.dirty ? " · 수정됨" : ""}</strong></span></button>
-            <button type="button" className="button asset-generation-preset" title="배경 설정" onClick={() => changePage("theme")}><Mountain size={14} /><span><small>배경 설정</small><strong>{themeSettings.name ? [themeSettings.name, themeSettings.selectedPlace, themeSettings.selectedTime].filter(Boolean).join(" · ") : "선택 필요"}</strong></span></button>
+            <button type="button" className="button asset-generation-preset" title="배경 설정" onClick={() => changePage("theme")}><Mountain size={14} /><span><small>배경 설정</small><strong>{themeSettings.name ? [themeSettings.name, themeSettings.selectedPlace, themeSettings.selectedTime, activePlaceI2iLabel].filter(Boolean).join(" · ") : "선택 필요"}</strong></span></button>
             {modelSummary}
             <div className="asset-generation-resolution" role="group" aria-label="이미지 해상도">
               <span>이미지 해상도</span>
@@ -360,13 +490,13 @@ function BgAssetAppContent() {
             </div>
           </div>}
         </div>
-        <div className="asset-actions"><button type="button" className="button" disabled={modelSelection.pending || modelSelection.action.busy || stylePresets.busy} onClick={() => { tags.reload(); stylePresets.reload(); modelSelection.resource.reload(); }}><RefreshCw size={14} />새로고침</button></div>
+        <div className="asset-actions"><button type="button" className="button" disabled={modelSelection.pending || modelSelection.action.busy || stylePresets.busy} onClick={() => { tags.reload(); stylePresets.reload(); modelSelection.resource.reload(); postprocess.reload(); }}><RefreshCw size={14} />새로고침</button></div>
       </div>
       {(error || tags.error || modelSelection.resource.error || stylePresets.resource.error || storageError) && <div className="settings-feedback error" role="alert">{error || tags.error || modelSelection.resource.error || stylePresets.resource.error || storageError}<button type="button" className="button" onClick={() => { setError(""); tags.reload(); stylePresets.reload(); modelSelection.resource.reload(); }}>다시 확인</button></div>}
-      {["generate", "batch", "style", "theme"].includes(info.id) && !tags.data && !tags.error && <p role="status">배경 에셋과 프리셋을 불러오는 중…</p>}
+      {["generate", "batch", "lore-theme", "style", "theme"].includes(info.id) && !tags.data && !tags.error && <p role="status">배경 에셋과 프리셋을 불러오는 중…</p>}
       {tags.data && <>
         <ModalPage page="generate" pageTitle="배경 생성" active={info.id === "generate"} onNavigate={changePage} keepMounted>
-          <div className="asset-generation-view"><BgAssetGallery tags={tags.data} selection={draft.slot} onBrowse={browseGallery} keyboardEnabled={galleryKeyboardEnabled && active && info.id === "generate"} builtinUnlockToken={themeSettings.unlockToken} onThemeDeleted={name => {
+          <div className="asset-generation-view"><BgAssetGallery tags={tags.data} selection={draft.slot} postprocess={postprocessBanner} onBrowse={browseGallery} keyboardEnabled={galleryKeyboardEnabled && active && info.id === "generate"} builtinUnlockToken={themeSettings.unlockToken} onThemeDeleted={name => {
             tags.setData(previous => {
               if (!previous) return previous;
               const themes = { ...previous.themes }; delete themes[name];
@@ -453,6 +583,9 @@ function BgAssetAppContent() {
             makerVisible={themeMakerOpen && info.id === "theme"}
             generation={{ ...generationControls, onGenerate: () => void run(() => generateSingle(draft.slot, draft.count, "배경 메이커")) }}
             generationError={error}
+            onThemeUpdated={refreshThemeCatalog}
+            onOpenBatch={openBatchForTheme}
+            onNotify={setToast}
             onWorkQueue={() => changePage("work-queue")}
             onOpenGenerate={() => changePage("generate")}
           />
@@ -469,14 +602,56 @@ function BgAssetAppContent() {
             modelBlockedReason={modelBlockedReason}
             onPreview={(slot, themeData) => void run(async () => { setPreview(await previewBgAsset(slot, themeData)); })}
             onGenerate={request => void run(() => generateBatch(request), true)}
+            onThemeUpdated={refreshThemeCatalog}
             onOpenThemeSettings={() => changePage("theme")}
             onOpenWorkQueue={() => changePage("work-queue")}
             onNotify={setToast}
           />
         </ModalPage>
+
+        <ModalPage page="lore-theme" pageTitle="로어북 테마 생성" active={info.id === "lore-theme"} onNavigate={changePage} keepMounted>
+          <BgAssetLoreThemeView
+            tags={tags.data}
+            activeWorkflowType={activeWorkflowType || draft.slot.asset_workflow_type || "anima_only"}
+            busy={busy || targetBusy}
+            builtinUnlockToken={themeSettings.unlockToken}
+            stylePresetName={loreStylePreset?.name || ""}
+            baseResolution={loreBaseResolution}
+            baseGenerationBlockedReason={
+              modelBlockedReason
+              || (stylePresets.busy ? "배경 그림체 프리셋을 처리 중입니다. 완료된 뒤 생성할 수 있습니다."
+                : !stylePresets.resource.data
+                  ? (stylePresets.error
+                    ? "배경 그림체 프리셋을 불러오지 못했습니다. 그림체 설정에서 다시 불러오세요."
+                    : "배경 그림체 프리셋을 불러오는 중입니다.")
+                : !loreStylePreset ? "그림체 설정에서 배경 그림체 프리셋을 먼저 선택하세요."
+                : "")
+            }
+            onThemeSaved={async savedName => {
+              const freshCatalog = await bgAssetRequest("tags");
+              tags.setData(freshCatalog);
+              if (savedName === themeSettings.name && !themeSettings.dirty) {
+                themeSettings.selectTheme(savedName, freshCatalog, {
+                  place: themeSettings.selectedPlace,
+                  time: themeSettings.selectedTime,
+                });
+              }
+              return freshCatalog;
+            }}
+            onEnqueueBaseAndLink={enqueueLoreBaseAndLink}
+            onOpenTheme={async savedName => {
+              await switchActiveTheme(savedName);
+              changePage("theme");
+            }}
+            onOpenBatch={openBatchForTheme}
+            onOpenWorkQueue={() => changePage("work-queue")}
+            onNotify={setToast}
+          />
+        </ModalPage>
       </>}
+      <ModalPage page="postprocess" pageTitle="후처리" active={info.id === "postprocess"} onNavigate={changePage} keepMounted><AssetPostprocessPage workspace="bg_asset" active={active && info.id === "postprocess"} initialEntity={draft.slot.theme || ""} postprocess={postprocess} /></ModalPage>
       <ModalPage page="workflow" pageTitle="그림 모델 설정" active={info.id === "workflow"} onNavigate={changePage} keepMounted><IllustModelPresets /></ModalPage>
-      <ModalPage page="export" pageTitle="배경 익스포트" active={info.id === "export"} onNavigate={changePage} keepMounted><BgAssetExport active={active && info.id === "export"} initialTheme={draft.slot.theme || ""} notify={setToast} /></ModalPage>
+      <ModalPage page="export" pageTitle="배경 익스포트" active={info.id === "export"} onNavigate={changePage} keepMounted><BgAssetExport active={active && info.id === "export"} initialTheme={draft.slot.theme || ""} notify={setToast} postprocess={postprocessBanner} onOpenPostprocess={() => changePage("postprocess")} /></ModalPage>
       <ModalPage page="work-queue" pageTitle="작업 큐" active={info.id === "work-queue"} onNavigate={changePage}><WorkQueuePage notify={setToast} /></ModalPage>
       <ModalPage page="llm-logs" pageTitle="LLM 로그" active={info.id === "llm-logs"} onNavigate={changePage}><LlmLogsPage notify={setToast} /></ModalPage>
       <ModalPage page="program-logs" pageTitle="프로그램 로그" active={info.id === "program-logs"} onNavigate={changePage}><ProgramLogsPage notify={setToast} /></ModalPage>
@@ -485,6 +660,6 @@ function BgAssetAppContent() {
     </main><BackgroundModals /><div className="statusbar"><span>Comfy공방 · 배경 에셋</span><span>{busy ? "처리 중…" : "작성 내용 자동 보관"}</span></div></div>
     <BgAssetStyleSelectionDialog presets={stylePresets} models={modelSelection.data} disabled={busy || targetBusy || modelSelection.disabled} />
     {toast && <div className="toast" role="status"><Check size={17} /><span>{toast.message}</span><button type="button" className="icon-button" aria-label="알림 닫기" onClick={() => setToast("")}><X size={14} /></button></div>}
-    {preview && <Modal title="프롬프트 미리보기" className="asset-modal" backgroundable={false} onClose={() => setPreview(null)}><pre className="asset-prompt">{JSON.stringify(preview.prompt_json, null, 2)}</pre></Modal>}
+    {preview && <Modal title="프롬프트 미리보기" className="asset-modal" backgroundable={false} onClose={() => setPreview(null)}><pre className="asset-prompt">{JSON.stringify(preview.prompt_json, (key, value) => key === "data" && typeof value === "string" && value.length > 200 ? `<base64 · ${value.length.toLocaleString()} chars>` : value, 2)}</pre></Modal>}
   </div>;
 }

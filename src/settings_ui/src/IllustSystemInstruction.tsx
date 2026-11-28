@@ -6,8 +6,12 @@ import { enc, useIllustrationAction, type IllustrationData } from "./illustratio
 import { useBotApi, useBotResource } from "./BotApiScope";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 
-const genres = ["", "secondary_bot", "Medieval fantasy", "Modern", "Modern fantasy", "Cyberpunk", "Steampunk", "Sci-fi / Space", "Wuxia", "Eastern fantasy", "Historical", "Post-apocalyptic"];
-const instructionValue = (value: IllustrationData | null) => JSON.stringify(value && [value.scope, value.preset, value.text, value.genre || "", value.genre_work_title || ""]);
+const standardGenres = ["", "Medieval fantasy", "Modern", "Modern fantasy", "Cyberpunk", "Steampunk", "Sci-fi / Space", "Wuxia", "Eastern fantasy", "Historical", "Post-apocalyptic"];
+const genres = ["", "secondary_bot", "secondary_bot_crossover", ...standardGenres.slice(1)];
+const instructionValue = (value: IllustrationData | null) => JSON.stringify(value && [
+  value.scope, value.preset, value.text, value.genre || "", value.genre_work_title || "",
+  value.genre_crossover_background || "", value.genre_crossover_works || "",
+]);
 export const customSystemInstructionTitle = (botName: string) => `${botName} · 커스텀 시스템 지침`;
 
 export function CustomSystemInstruction({ botName, readOnly, onClose }: {
@@ -20,6 +24,7 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
   const [draft, setDraft] = useState<IllustrationData | null>(null);
   const [base, setBase] = useState<IllustrationData | null>(null);
   const [customGenre, setCustomGenre] = useState(false);
+  const [customCrossoverBackground, setCustomCrossoverBackground] = useState(false);
   const [builtinUnlockToken, setBuiltinUnlockToken] = useState("");
   const [dialog, setDialog] = useState<"create" | "duplicate" | "unlock" | "delete" | null>(null);
   const [reassign, setReassign] = useState<Record<string, string>>({});
@@ -44,7 +49,10 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
       if (!draft) return;
       const sent = { ...draft };
       await api.request("bot_mode/system_prompt", { bot_name: botName, preset_name: sent.preset, scope: sent.scope, text: sent.text,
-        genre: sent.genre || "", genre_work_title: sent.genre_work_title || "", edit_builtin: builtin && !locked, bind_only: locked, builtin_unlock_token: builtinUnlockToken });
+        genre: sent.genre || "", genre_work_title: sent.genre_work_title || "",
+        genre_crossover_background: sent.genre_crossover_background || "",
+        genre_crossover_works: sent.genre_crossover_works || "",
+        edit_builtin: builtin && !locked, bind_only: locked, builtin_unlock_token: builtinUnlockToken });
       setBase(sent);
       // Refresh the picker cache without replacing text typed during the request.
       const presets = sent.scope === "builtin" ? "builtin_presets" : "local_presets";
@@ -94,7 +102,10 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
     }, undefined, "DELETE") : await api.request("bot_mode/system_prompt", operation === "unlock" || operation === "lock"
       ? { action: operation, confirmed: operation === "unlock", builtin_unlock_token: builtinUnlockToken }
       : { action: operation, bot_name: botName, preset_name: name.trim(), scope: "local", text: operation === "create" ? "" : draft.text,
-          genre: draft.genre || "", genre_work_title: draft.genre_work_title || "", builtin_unlock_token: builtinUnlockToken });
+          genre: draft.genre || "", genre_work_title: draft.genre_work_title || "",
+          genre_crossover_background: draft.genre_crossover_background || "",
+          genre_crossover_works: draft.genre_crossover_works || "",
+          builtin_unlock_token: builtinUnlockToken });
     if (operation === "unlock") {
       if (!result.builtin_unlock_token) throw new Error("배포 잠금 해제를 지원하려면 프로그램을 다시 시작하세요.");
       setBuiltinUnlockToken(result.builtin_unlock_token);
@@ -153,12 +164,20 @@ export function CustomSystemInstruction({ botName, readOnly, onClose }: {
           </div>
           <textarea id={instructionId} rows={12} spellCheck={false} readOnly={locked} value={draft.text} onChange={event => setDraft({ ...draft, text: event.target.value })} />
         </div>
-        <label className="field">장르<select className="illust-genre-select" value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); else if (draft.genre === "secondary_bot") setDraft({ ...draft, genre: "" }); }}>
-          {genres.map(genre => <option key={genre} value={genre}>{genre === "secondary_bot" ? "2차봇" : genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
+        <label className="field">장르<select className="illust-genre-select" value={customGenre || !genres.includes(draft.genre || "") ? "__custom__" : draft.genre || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomGenre(custom); if (!custom) setDraft({ ...draft, genre: event.target.value }); else if (draft.genre === "secondary_bot" || draft.genre === "secondary_bot_crossover") setDraft({ ...draft, genre: "" }); }}>
+          {genres.map(genre => <option key={genre} value={genre}>{genre === "secondary_bot" ? "2차봇" : genre === "secondary_bot_crossover" ? "2차봇(크로스오버)" : genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
         </select></label>
         {draft.genre === "secondary_bot" && <>
           <label className="field">작품명<input required value={draft.genre_work_title || ""} placeholder="원작명 · 필요하면 시리즈나 편까지 입력" onChange={event => setDraft({ ...draft, genre_work_title: event.target.value })} /></label>
           <p className="field-help">LLM이 알고 있는 작품의 세계관·시대·건축·기술 수준을 배경 묘사에 참고합니다. 현재 장면의 장소·낮과 밤·날씨는 원문을 따릅니다. 특정 시기나 평행세계 설정은 위 커스텀 시스템 지침에 적어 주세요.</p>
+        </>}
+        {draft.genre === "secondary_bot_crossover" && <>
+          <label className="field">배경 장르 · 선택 사항<select value={customCrossoverBackground || !standardGenres.includes(draft.genre_crossover_background || "") ? "__custom__" : draft.genre_crossover_background || ""} onChange={event => { const custom = event.target.value === "__custom__"; setCustomCrossoverBackground(custom); if (!custom) setDraft({ ...draft, genre_crossover_background: event.target.value }); }}>
+            {standardGenres.map(genre => <option key={genre} value={genre}>{genre || "Not specified"}</option>)}<option value="__custom__">Custom</option>
+          </select></label>
+          {(customCrossoverBackground || !standardGenres.includes(draft.genre_crossover_background || "")) && <label className="field">사용자 지정 배경 장르<input value={draft.genre_crossover_background || ""} placeholder="예: 학원 도시, 차원 교차 판타지" onChange={event => setDraft({ ...draft, genre_crossover_background: event.target.value })} /></label>}
+          <label className="field">주요 등장 작품 · 선택 사항<input value={draft.genre_crossover_works || ""} placeholder="예: 블루 아카이브, 동방 프로젝트, 원신 (쉼표로 구분)" onChange={event => setDraft({ ...draft, genre_crossover_works: event.target.value })} /></label>
+          <p className="field-help">비워 두면 자유 크로스오버로 동작하며 원문과 커스텀 시스템 지침을 따릅니다. 입력한 배경 장르와 주요 등장 작품은 배경 참고와 동명이인 판별 힌트로만 사용하며, 배경 프롬프트에 작품명 태그를 강제로 넣지 않습니다.</p>
         </>}
         {(customGenre || !genres.includes(draft.genre || "")) && <label className="field">사용자 지정 장르<input value={draft.genre || ""} onChange={event => setDraft({ ...draft, genre: event.target.value })} /></label>}
         <IllustrationFeedback {...action} />

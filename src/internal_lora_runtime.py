@@ -61,8 +61,9 @@ def main() -> None:
             return
         value = server.load_config()
         if value != server.app_config:
+            from comfy_runtime import DEFAULT_COMFY_PORTS
             server.app_config = value
-            server.REAL_COMFY_PORT = int(value.get("comfyui_port", 8188))
+            server.REAL_COMFY_PORT = int(value.get("comfyui_port", DEFAULT_COMFY_PORTS[1]))
             server.REAL_COMFY_ILLUST_PORT = value.get("comfyui_port_illustration")
             server.asset_tool.workflow_source_path = value["tag_analysis_workflow_source_path"]
             server.llm_service.update_config({key: value.get(key, default)

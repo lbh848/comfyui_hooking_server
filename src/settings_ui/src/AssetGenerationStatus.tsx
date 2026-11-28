@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { CircleCheck, CircleX, ListTodo } from "lucide-react";
-import { loraRequest } from "./internalLora";
 import { assetGenerationStatus, matchesAssetQueueWorkspace, type AssetQueueState, type AssetQueueWorkspace } from "./assetGenerationQueue";
+import { subscribeQueueStatus } from "./workshopEvents";
 
 export function AssetGenerationStatus({ onOpenQueue, onStateChange, workspace = "asset" }: {
   onOpenQueue: () => void;
@@ -13,64 +13,34 @@ export function AssetGenerationStatus({ onOpenQueue, onStateChange, workspace = 
   const [result, setResult] = useState<{ failed: boolean; title: string } | null>(null);
 
   useEffect(() => {
-    const controller = new AbortController();
-    let timer: number;
-    let reconnect: number;
-    let resultTimer: number;
-    let socket: WebSocket | null = null;
-    let revision = 0;
+    let resultTimer: number | undefined;
     let latest: AssetQueueState | null = null;
-    const receive = (next: AssetQueueState) => {
-      if (controller.signal.aborted) return;
-      // The first snapshot is history, not a newly completed generation.
-      if (latest) {
-        const previous = new Map(latest.items.map(item => [item.id, item.status]));
-        const finished = next.items.filter(item => item.type === "asset_generation"
-          && matchesAssetQueueWorkspace(item, workspace)
-          && (item.status === "completed" || item.status === "failed") && previous.get(item.id) !== item.status)
-          .sort((left, right) => (right.completed_at || 0) - (left.completed_at || 0))[0];
-        if (finished) {
-          setResult({ failed: finished.status === "failed", title: [finished.label, finished.error].filter(Boolean).join("\n") });
-          clearTimeout(resultTimer);
-          resultTimer = window.setTimeout(() => setResult(null), 6000);
+    const unsubscribe = subscribeQueueStatus(
+      raw => {
+        const next = raw as AssetQueueState;
+        // The first snapshot is history, not a newly completed generation.
+        if (latest) {
+          const previous = new Map((latest.items || []).map(item => [item.id, item.status]));
+          const finished = (next.items || []).filter(item => item.type === "asset_generation"
+            && matchesAssetQueueWorkspace(item, workspace)
+            && (item.status === "completed" || item.status === "failed") && previous.get(item.id) !== item.status)
+            .sort((left, right) => (right.completed_at || 0) - (left.completed_at || 0))[0];
+          if (finished) {
+            setResult({ failed: finished.status === "failed", title: [finished.label, finished.error].filter(Boolean).join("\n") });
+            window.clearTimeout(resultTimer);
+            resultTimer = window.setTimeout(() => setResult(null), 6000);
+          }
         }
-      }
-      revision++;
-      latest = next;
-      setState(next);
-      setError("");
-    };
-    const connect = () => {
-      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
-      socket.onmessage = event => {
-        if (controller.signal.aborted) return;
-        const value = JSON.parse(event.data);
-        if (value.type === "queue_updated") receive(value.data);
-        if (value.type === "queue_progress" && value.data.item_type === "asset_generation"
-          && latest?.items.some(item => item.id === value.data.item_id && item.status === "processing")) {
-          receive({ ...latest, items: latest.items.map(item =>
-            item.id === value.data.item_id && item.status === "processing"
-              ? { ...item, progress: value.data.progress, progress_detail: value.data.detail } : item) });
-        }
-      };
-      socket.onclose = () => {
-        if (!controller.signal.aborted) reconnect = window.setTimeout(connect, 3000);
-      };
-    };
-    const poll = async () => {
-      const before = revision;
-      try {
-        const next = await loraRequest("queue/status?monitor=1", undefined, controller.signal);
-        if (before === revision) receive(next as AssetQueueState);
-      } catch (cause) {
-        if (!controller.signal.aborted && before === revision) setError((cause as Error).message);
-      } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(poll, 2000);
-      }
-    };
-    connect();
-    void poll();
-    return () => { controller.abort(); clearTimeout(timer); clearTimeout(reconnect); clearTimeout(resultTimer); socket?.close(); };
+        latest = next;
+        setState(next);
+        setError("");
+      },
+      {
+        activateWorker: true,
+        onError: cause => setError(cause instanceof Error ? cause.message : String(cause)),
+      },
+    );
+    return () => { window.clearTimeout(resultTimer); unsubscribe(); };
   }, [workspace]);
 
   useEffect(() => { onStateChange?.(error ? null : state); }, [state, error, onStateChange]);

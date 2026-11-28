@@ -10,20 +10,49 @@ import { useModelSettingsRequest, useModelSettingsScope } from "./ModelSettingsS
 export function IllustModelPresets() {
   const scope = useModelSettingsScope();
   const request = useModelSettingsRequest();
-  const { resource, action, data, setData, presets, pending, setPending, generation, disabled } = useIllustrationModelSelection();
+  const {
+    resource, action, data, commit, selectPreset, refreshOnConflict,
+    presets, pending, setPending, setSyncPaused, generation, workflowSyncVersion,
+    reportWorkflowSaved, disabled,
+  } = useIllustrationModelSelection();
   const [dialog, setDialog] = useState<"create" | "duplicate" | "rename" | "delete" | "unlock" | null>(null);
   const [builtinUnlockToken, setBuiltinUnlockToken] = useState("");
   const [name, setName] = useState("");
+  useEffect(() => {
+    setSyncPaused(dialog !== null);
+    return () => setSyncPaused(false);
+  }, [dialog, setSyncPaused]);
   useEffect(() => () => { if (builtinUnlockToken) void request(`${scope.prefix}/presets`, { action: "lock", builtin_unlock_token: builtinUnlockToken }).catch(() => {}); }, [builtinUnlockToken, request, scope]);
   if (!data) return <Panel title="그림 모델 프리셋"><IllustrationLoading error={resource.error} retry={resource.reload} /></Panel>;
   const active = data.presets.find((item: IllustrationData) => item.id === data.active_id);
   const builtin = active?.scope === "builtin";
   const locked = builtin && !builtinUnlockToken;
   const change = (operation: string, values: IllustrationData = {}) => action.run(async () => {
-    const result = await request(`${scope.prefix}/presets`, { action: operation, preset_id: data.active_id, revision: data.revision, builtin_unlock_token: builtinUnlockToken, ...values });
+    if (operation === "select") {
+      await selectPreset(values.target_id, builtinUnlockToken);
+      setDialog(null);
+      return;
+    }
+    const send = (source: IllustrationData) => request(`${scope.prefix}/presets`, {
+      action: operation, preset_id: source.active_id, revision: source.revision,
+      builtin_unlock_token: builtinUnlockToken, ...values,
+    });
+    let result: IllustrationData;
+    try {
+      result = await send(data);
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error;
+      const refreshed = await refreshOnConflict();
+      if (operation === "unlock") {
+        result = await send(refreshed);
+      } else {
+        setDialog(null);
+        throw new Error("다른 곳에서 프리셋이 변경되어 최신 목록을 자동으로 불러왔습니다. 변경된 내용을 확인한 뒤 다시 시도하세요.");
+      }
+    }
     if (operation === "unlock") setBuiltinUnlockToken(result.builtin_unlock_token);
     if (operation === "lock") setBuiltinUnlockToken("");
-    setData(result); setDialog(null);
+    commit(result); setDialog(null);
   }, operation === "select" ? "프리셋을 적용했습니다." : operation === "unlock" ? "배포 잠금을 해제했습니다." : operation === "lock" ? "배포 잠금을 설정했습니다." : "프리셋을 저장했습니다.");
   function open(operation: "create" | "duplicate" | "rename" | "delete" | "unlock") {
     let next = operation === "create" ? "" : active?.name || "";
@@ -59,7 +88,7 @@ export function IllustModelPresets() {
     </div></Panel>
     {active
       ? <fieldset className="illust-form" disabled={action.busy || !resource.data}>
-      <IllustWorkflow key={`${data.active_id}:${active.scope}:${generation}`} preset={data} readOnly={locked} builtinUnlockToken={builtinUnlockToken} onPresetChange={setData} onPendingChange={setPending} reloadPresets={resource.reload} />
+      <IllustWorkflow key={`${data.active_id}:${active.scope}:${generation}`} preset={data} readOnly={locked} builtinUnlockToken={builtinUnlockToken} onPresetChange={commit} onPendingChange={setPending} reloadPresets={resource.reload} workflowSyncVersion={workflowSyncVersion} onWorkflowSaved={reportWorkflowSaved} />
     </fieldset> : <Empty title="그림 모델 프리셋을 만들어 주세요">프리셋 추가를 누른 뒤 사용할 그림 모델과 세부 설정을 지정하세요.</Empty>}
     {dialog && <Modal title={dialog === "unlock" ? "배포 풀기" : dialog === "duplicate" ? "그림 모델 프리셋 복제" : dialog === "create" ? "그림 모델 프리셋 추가" : dialog === "rename" ? "프리셋 이름 변경" : "그림 모델 프리셋 삭제"} onClose={() => setDialog(null)} closeDisabled={action.busy} backgroundable={false}>
       <form className="illust-form" onSubmit={event => { event.preventDefault(); void change(dialog, dialog === "unlock" ? { confirmed: true } : dialog === "delete" ? {} : { name: name.trim() }); }}>

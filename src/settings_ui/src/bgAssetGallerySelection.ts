@@ -1,6 +1,6 @@
 import { loadBgThemeData, pickBgPlaceAndTime, type AssetRecord } from "./bgAsset";
 
-export type BgAssetGalleryCombination = { place: string; atmosphere: string };
+export type BgAssetGalleryCombination = { place: string; atmosphere?: string };
 
 function matchFolderName(keys: string[], folder: string): string {
   if (keys.includes(folder)) return folder;
@@ -20,11 +20,17 @@ export function applyBgAssetGallerySelection(
   let place = draft.slot.theme === theme ? (draft.slot.place || "") : "";
   let time = draft.slot.theme === theme ? (draft.slot.time || "") : "";
 
-  if (combination) {
+  if (combination?.place) {
     const matchedPlace = matchFolderName(placeNames, combination.place);
     const timeNames = Object.keys(themeData.places[matchedPlace]?.times || {});
     place = matchedPlace;
-    time = matchFolderName(timeNames, combination.atmosphere);
+    if (combination.atmosphere) {
+      time = matchFolderName(timeNames, combination.atmosphere);
+    } else if (Object.hasOwn(themeData.places, matchedPlace)) {
+      time = pickBgPlaceAndTime(themeData, matchedPlace, time).time;
+    } else {
+      time = "";
+    }
   } else {
     const picked = pickBgPlaceAndTime(themeData, place, time);
     place = picked.place;

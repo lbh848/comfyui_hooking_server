@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Flame, Layers2, PanelTopOpen } from "lucide-react";
-import { useWorkshopScreen, workshopLabels, type Workshop } from "./WorkshopNavigation";
+import { useOptionalWorkshopScreen, useWorkshopScreen, workshopLabels, type Workshop } from "./WorkshopNavigation";
 
 type ModalEntry = {
   id: string;
@@ -12,7 +12,7 @@ type ModalEntry = {
   working: boolean;
   restore: () => void;
 };
-type ModalPageScope = { page: string; pageTitle: string; onRestore: () => void };
+type ModalPageScope = { page: string; pageTitle: string; active: boolean; onRestore: () => void };
 const PageContext = createContext<ModalPageScope | undefined>(undefined);
 const WorkspaceContext = createContext<{
   entries: ModalEntry[];
@@ -42,6 +42,12 @@ export function useModalPage() {
   return useContext(PageContext);
 }
 
+export function usePageVisible() {
+  const screen = useOptionalWorkshopScreen();
+  const modalPage = useContext(PageContext);
+  return (screen ? screen.active : true) && (modalPage ? modalPage.active : true);
+}
+
 // Keep a page's owners mounted while their dialogs hold drafts or running work.
 export function ModalPage<T extends string>({ page, pageTitle, active, onNavigate, keepMounted = false, children }: {
   page: T;
@@ -52,9 +58,10 @@ export function ModalPage<T extends string>({ page, pageTitle, active, onNavigat
   children: ReactNode;
 }) {
   const { entries } = useModalWorkspace();
-  const { workshop } = useWorkshopScreen();
+  const { workshop, active: workshopActive } = useWorkshopScreen();
+  const pageActive = workshopActive && active;
   const onRestore = useCallback(() => onNavigate(page), [page, onNavigate]);
-  const scope = useMemo(() => ({ page, pageTitle, onRestore }), [page, pageTitle, onRestore]);
+  const scope = useMemo(() => ({ page, pageTitle, active: pageActive, onRestore }), [page, pageTitle, pageActive, onRestore]);
   if (!active && !keepMounted && !entries.some(entry => entry.workshop === workshop && entry.page === page)) return null;
   return <PageContext.Provider value={scope}><div hidden={!active}>{children}</div></PageContext.Provider>;
 }

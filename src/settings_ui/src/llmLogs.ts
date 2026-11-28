@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type LlmStats = {
   prompt_tokens?: number | null; completion_tokens?: number | null;
@@ -53,24 +53,49 @@ export async function llmLogsRequest<T>(path: string, signal?: AbortSignal, body
   }
   return result as T;
 }
-export function useLlmLogsPoll<T>(path: string, interval: number, refresh: number) {
+export function useLlmLogsPoll<T>(path: string, interval: number, refresh: number, active = true) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
+  const intervalRef = useRef(interval);
+  intervalRef.current = interval;
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
-    let timer: number;
+    let timer: number | undefined;
+    let inFlight = false;
+    function schedule() {
+      window.clearTimeout(timer);
+      if (controller.signal.aborted || document.hidden) return;
+      timer = window.setTimeout(() => { void poll(); }, intervalRef.current);
+    }
     async function poll() {
+      if (controller.signal.aborted || document.hidden || inFlight) {
+        schedule();
+        return;
+      }
+      window.clearTimeout(timer);
+      inFlight = true;
       try {
         const result = await llmLogsRequest<T>(path, controller.signal);
         if (!controller.signal.aborted) { setData(result); setError(""); }
       } catch (error) {
         if (!controller.signal.aborted) setError((error as Error).message);
       } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(poll, interval);
+        inFlight = false;
+        schedule();
       }
     }
+    const onVisibility = () => {
+      if (document.hidden) window.clearTimeout(timer);
+      else void poll();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     void poll();
-    return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [path, interval, refresh]);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [path, refresh, active]);
   return { data, error };
 }

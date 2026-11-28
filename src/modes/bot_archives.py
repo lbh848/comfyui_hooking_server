@@ -9,7 +9,8 @@ from json_store import write_json_atomic
 from modes.character_lore import normalize_character_lore
 
 
-MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
+MAX_ARCHIVE_SIZE_GB = 4
+MAX_ARCHIVE_SIZE = MAX_ARCHIVE_SIZE_GB * 1024 * 1024 * 1024
 
 
 class BotArchiveStore:

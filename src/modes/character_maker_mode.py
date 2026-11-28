@@ -65,7 +65,11 @@ EDITABLE_PRESET_LABELS = {
     "anima_negative_preset": "ANIMA 부정",
     "character_negative_preset": "캐릭터 부정",
 }
+MAX_TAG_ITEM_LENGTH = 6000
 MAX_NATURAL_LANGUAGE_LENGTH = 2000
+MAKER_MODEL_FAMILIES = ("anima", "moss")
+MAKER_REASONING_DEPTHS = ("fast", "deep")
+MAX_AI_BBOX_CROPS = 4
 RAG_COLD_START_TIMEOUT_SECONDS = 300.0
 SINGLE_SESSION_ID = "default"
 MAX_REFERENCE_COUNT = 8
@@ -80,8 +84,47 @@ class CharacterMakerError(ValueError):
     """사용자 입력 또는 현재 세션 상태로 작업을 진행할 수 없을 때 사용."""
 
 
+def normalize_maker_model_family(
+    value: Any, *, default: str = "anima", strict: bool = False
+) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    if normalized in MAKER_MODEL_FAMILIES:
+        return normalized
+    if strict:
+        raise CharacterMakerError("메이커 모드는 Anima 또는 MOSS만 선택할 수 있습니다.")
+    return default
+
+
+def normalize_maker_reasoning_depth(
+    value: Any, *, default: str = "fast", strict: bool = False
+) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    if normalized in MAKER_REASONING_DEPTHS:
+        return normalized
+    if strict:
+        raise CharacterMakerError("추론 레벨은 빠르게 또는 깊게만 선택할 수 있습니다.")
+    return default
+
+
 def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _strip_unbalanced_edge_quotes(text: str) -> str:
+    """Remove stray unbalanced leading/trailing double quotes from decoded LLM prose."""
+    cleaned = text.strip()
+    while cleaned and cleaned.count('"') % 2 == 1:
+        if cleaned.endswith('"'):
+            cleaned = cleaned[:-1].rstrip()
+        elif cleaned.startswith('"'):
+            cleaned = cleaned[1:].lstrip()
+        else:
+            break
+    return cleaned
 
 
 def _normalize_tag_list(value: Any, *, field: str) -> list[str]:
@@ -94,11 +137,13 @@ def _normalize_tag_list(value: Any, *, field: str) -> list[str]:
     for raw in value:
         if not isinstance(raw, str):
             raise CharacterMakerError(f"{field} 태그에는 문자열만 사용할 수 있습니다.")
-        tag = raw.strip()
+        tag = _strip_unbalanced_edge_quotes(raw)
         if not tag:
             continue
-        if len(tag) > 300:
-            raise CharacterMakerError(f"{field} 태그 한 항목은 300자를 넘을 수 없습니다.")
+        if len(tag) > MAX_TAG_ITEM_LENGTH:
+            raise CharacterMakerError(
+                f"{field} 태그 한 항목은 {MAX_TAG_ITEM_LENGTH}자를 넘을 수 없습니다."
+            )
         key = tag.casefold()
         if key in seen:
             continue
@@ -268,8 +313,15 @@ def _parse_llm_payload(
         return None, (
             f"fields 키가 {sorted(EDITABLE_FIELDS)}와 정확히 일치해야 합니다. ({detail})"
         )
+    coerced_fields: dict[str, Any] = {}
+    for field in EDITABLE_FIELDS:
+        raw_field_value = fields.get(field)
+        if isinstance(raw_field_value, str):
+            coerced_fields[field] = [raw_field_value] if raw_field_value.strip() else []
+        else:
+            coerced_fields[field] = raw_field_value
     try:
-        normalized_fields = _normalize_fields(fields)
+        normalized_fields = _normalize_fields(coerced_fields)
     except CharacterMakerError as exc:
         return None, f"fields 값을 정규화하지 못했습니다: {exc}"
 
@@ -323,7 +375,7 @@ def _parse_llm_payload(
     if natural_language is not None and not isinstance(natural_language, str):
         natural_language = None
     if isinstance(natural_language, str):
-        natural_language = natural_language.strip()[:MAX_NATURAL_LANGUAGE_LENGTH]
+        natural_language = _strip_unbalanced_edge_quotes(natural_language)[:MAX_NATURAL_LANGUAGE_LENGTH]
 
     return {
         "assistant_message": assistant_message.strip()[:4000],
@@ -344,6 +396,257 @@ def validate_character_maker_llm_result(
     if parsed is None:
         return False, reason or "LLM 응답 형식이 올바르지 않습니다."
     return True, ""
+
+
+MOSS_FORENSIC_TEXT_KEYS = (
+    "character_overview",
+    "hair_and_bangs",
+    "headpiece_and_ribbons",
+    "eyes_ears_wings_nonhuman",
+    "neck_and_shoulders",
+    "bodice_and_chest",
+    "arms_sleeves_gloves",
+    "waist_and_hips",
+    "skirt_and_overskirt",
+    "legwear",
+    "footwear",
+    "held_props",
+    "expression_and_pose",
+)
+MOSS_APPEARANCE_SECTION_KEYS = (
+    "body_eyes_ears",
+    "hair_bangs_curls",
+    "headpiece_ribbons",
+    "wings_nonhuman",
+)
+MOSS_OUTFIT_SECTION_KEYS = (
+    "neck_shoulders_mantle",
+    "bodice_chest",
+    "sleeves_gloves",
+    "waist_hips",
+    "skirt_overskirt",
+    "legwear_footwear",
+    "legwear",
+    "footwear",
+    "held_props",
+)
+
+
+def _join_moss_prose_sections(parts: list[str]) -> str:
+    """Join non-empty English prose sections cleanly with sentence spacing."""
+    result = ""
+    for raw in parts:
+        cleaned = _strip_unbalanced_edge_quotes(raw)
+        if not cleaned:
+            continue
+        if not result:
+            result = cleaned
+        elif result.endswith((".", "!", "?")):
+            result = f"{result} {cleaned}"
+        else:
+            result = f"{result}. {cleaned}"
+    return result
+
+
+def _parse_reference_bboxes(raw: str) -> tuple[dict[str, Any] | None, str]:
+    """Parse AI-detected normalized [0..1000] detail crop bounding boxes."""
+    try:
+        parsed = llm_prompt_edit.parse_llm_json(raw)
+    except Exception as exc:
+        return None, f"영역 탐지(BBox) JSON 파싱 실패: {type(exc).__name__}: {exc}"
+    if isinstance(parsed, list):
+        raw_regions = parsed
+    elif isinstance(parsed, dict):
+        raw_regions = (
+            parsed.get("regions")
+            or parsed.get("boxes")
+            or parsed.get("crops")
+            or []
+        )
+    else:
+        return None, "영역 탐지(BBox) 응답 형식이 올바르지 않습니다."
+    if not isinstance(raw_regions, list):
+        return None, "영역 탐지(BBox) regions는 배열이어야 합니다."
+
+    normalized: list[dict[str, Any]] = []
+    for item in raw_regions:
+        if not isinstance(item, dict):
+            continue
+        coords = None
+        if all(k in item for k in ("x1", "y1", "x2", "y2")):
+            coords = (item.get("x1"), item.get("y1"), item.get("x2"), item.get("y2"))
+        elif isinstance(item.get("bbox"), (list, tuple)) and len(item["bbox"]) == 4:
+            coords = tuple(item["bbox"])
+        elif isinstance(item.get("box"), (list, tuple)) and len(item["box"]) == 4:
+            coords = tuple(item["box"])
+        if coords is None:
+            continue
+        try:
+            vals = [float(v) for v in coords]
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in vals):
+            continue
+        if max(abs(v) for v in vals) <= 1.0:
+            vals = [v * 1000.0 for v in vals]
+        x1, y1, x2, y2 = [max(0, min(1000, int(round(v)))) for v in vals]
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+        w = x2 - x1
+        h = y2 - y1
+        if w < 50 or h < 50:
+            continue
+        if w * h > 880_000:
+            continue
+        try:
+            image_index = max(1, int(item.get("image_index", 1)))
+        except (TypeError, ValueError):
+            image_index = 1
+        label = _strip_unbalanced_edge_quotes(str(item.get("label") or "")).strip()[:64]
+        if not label:
+            label = f"Detail region {len(normalized) + 1}"
+        normalized.append({
+            "image_index": image_index,
+            "label": label,
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+        })
+        if len(normalized) >= MAX_AI_BBOX_CROPS:
+            break
+    return {"regions": normalized}, ""
+
+
+def _parse_moss_forensic_audit(raw: str) -> tuple[dict[str, Any] | None, str]:
+    """Validate and normalize Stage-1 14-slot visual forensic blueprint."""
+    try:
+        parsed = llm_prompt_edit.parse_llm_json(raw)
+    except Exception as exc:
+        return None, f"1단계 시각 분석 JSON 파싱 실패: {type(exc).__name__}: {exc}"
+    if not isinstance(parsed, dict):
+        return None, "1단계 시각 분석 응답이 JSON 객체가 아닙니다."
+    normalized: dict[str, Any] = {}
+    missing = []
+    for key in MOSS_FORENSIC_TEXT_KEYS:
+        val = parsed.get(key)
+        if isinstance(val, list):
+            val = ", ".join(str(x).strip() for x in val if str(x).strip())
+        if not isinstance(val, str) or not val.strip():
+            missing.append(key)
+            normalized[key] = ""
+        else:
+            normalized[key] = _strip_unbalanced_edge_quotes(val)[:2000]
+    if len(missing) > 2:
+        return None, f"1단계 시각 분석 필수 구역이 누락되었습니다: {missing}"
+    raw_fixes = parsed.get("visual_diff_fixes", [])
+    if isinstance(raw_fixes, str):
+        raw_fixes = [raw_fixes] if raw_fixes.strip() else []
+    if not isinstance(raw_fixes, list):
+        raw_fixes = []
+    normalized["visual_diff_fixes"] = [
+        _strip_unbalanced_edge_quotes(str(item))[:600]
+        for item in raw_fixes
+        if str(item).strip()
+    ][:20]
+    scope_note = parsed.get("user_scope_note", "")
+    if isinstance(scope_note, str) and scope_note.strip():
+        normalized["user_scope_note"] = _strip_unbalanced_edge_quotes(scope_note)[:600]
+    return normalized, ""
+
+
+def _parse_moss_sectioned_synthesis(raw: str) -> tuple[dict[str, Any] | None, str]:
+    """Validate Stage-2 sectioned MOSS synthesis and assemble standard maker payload."""
+    try:
+        parsed = llm_prompt_edit.parse_llm_json(raw)
+    except Exception as exc:
+        return None, f"2단계 MOSS 프롬프트 JSON 파싱 실패: {type(exc).__name__}: {exc}"
+    if not isinstance(parsed, dict):
+        return None, "2단계 MOSS 프롬프트 응답이 JSON 객체가 아닙니다."
+
+    # Fallback: if model returned standard fields schema directly, delegate safely.
+    if (
+        isinstance(parsed.get("fields"), dict)
+        and "appearance_sections" not in parsed
+        and "outfit_sections" not in parsed
+    ):
+        return _parse_llm_payload(raw, require_queries=False)
+
+    assistant_message = parsed.get("assistant_message")
+    if not isinstance(assistant_message, str) or not assistant_message.strip():
+        return None, "assistant_message(문자열)가 없거나 비어 있습니다."
+
+    app_sec = parsed.get("appearance_sections")
+    outfit_sec = parsed.get("outfit_sections")
+    if not isinstance(app_sec, dict):
+        return None, "appearance_sections(객체)가 없습니다."
+    if not isinstance(outfit_sec, dict):
+        return None, "outfit_sections(객체)가 없습니다."
+
+    def _collect_section_parts(
+        section_map: dict[str, Any], preferred_keys: tuple[str, ...]
+    ) -> list[str]:
+        parts: list[str] = []
+        seen: set[str] = set()
+        for key in (*preferred_keys, *section_map.keys()):
+            if key in seen or key not in section_map:
+                continue
+            seen.add(key)
+            val = section_map.get(key, "")
+            if isinstance(val, list):
+                val = " ".join(str(x).strip() for x in val if str(x).strip())
+            if isinstance(val, str) and val.strip():
+                parts.append(val)
+        return parts
+
+    app_parts = _collect_section_parts(app_sec, MOSS_APPEARANCE_SECTION_KEYS)
+    outfit_parts = _collect_section_parts(outfit_sec, MOSS_OUTFIT_SECTION_KEYS)
+
+    appearance_prose = _join_moss_prose_sections(app_parts)
+    outfit_prose = _join_moss_prose_sections(outfit_parts)
+    official_tag = parsed.get("official_character_tag", "")
+    official_tag = _strip_unbalanced_edge_quotes(official_tag) if isinstance(official_tag, str) else ""
+    appearance_list = [p for p in (official_tag, appearance_prose) if p]
+    outfit_list = [outfit_prose] if outfit_prose else []
+
+    def _coerce_prose_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            cleaned = _strip_unbalanced_edge_quotes(value)
+            return [cleaned] if cleaned else []
+        if isinstance(value, list):
+            joined = _join_moss_prose_sections([str(x) for x in value if isinstance(x, str)])
+            return [joined] if joined else []
+        return []
+
+    expression_list = _coerce_prose_list(parsed.get("expression", ""))
+    composition_list = _coerce_prose_list(parsed.get("composition", ""))
+    if not appearance_list and not outfit_list:
+        return None, "appearance_sections와 outfit_sections가 모두 비어 있습니다."
+
+    try:
+        normalized_fields = _normalize_fields({
+            "appearance": appearance_list,
+            "outfit": outfit_list,
+            "expression": expression_list,
+            "composition": composition_list,
+        })
+    except CharacterMakerError as exc:
+        return None, f"2단계 fields 정규화 실패: {exc}"
+
+    natural_language = parsed.get("natural_language")
+    if natural_language is not None and not isinstance(natural_language, str):
+        natural_language = None
+    if isinstance(natural_language, str):
+        natural_language = _strip_unbalanced_edge_quotes(natural_language)[:MAX_NATURAL_LANGUAGE_LENGTH]
+
+    return {
+        "assistant_message": assistant_message.strip()[:4000],
+        "fields": normalized_fields,
+        "rag_queries": {field: [] for field in EDITABLE_FIELDS},
+        "natural_language": natural_language,
+    }, ""
 
 
 def _tag_diff(
@@ -1344,6 +1647,130 @@ class CharacterMakerService:
             traceback.print_exc()
             return self._encode_vision_image(path)
 
+    def _encode_reference_bbox_crops(
+        self,
+        reference_entries: list[dict[str, Any]],
+        regions: list[dict[str, Any]],
+        *,
+        banner_color: str = "#be123c",
+    ) -> list[dict[str, Any]]:
+        """Crop AI-selected normalized [0..1000] bounding boxes from reference images.
+
+        Works for any aspect ratio or layout (portrait, landscape, turnaround sheets,
+        seated poses, bust shots, or cards with margins). Adds a small safety padding
+        margin around each region and upscales cleanly so tiny details are legible.
+        """
+        if not reference_entries or not regions:
+            return []
+        loaded_images: dict[int, Image.Image] = {}
+        crops: list[dict[str, Any]] = []
+        try:
+            for crop_idx, region in enumerate(regions[:MAX_AI_BBOX_CROPS], start=1):
+                raw_idx = int(region.get("image_index", 1) or 1)
+                ref_idx = raw_idx if 1 <= raw_idx <= len(reference_entries) else 1
+                entry = reference_entries[ref_idx - 1]
+                path = str(entry.get("path") or "")
+                image_id = str(entry.get("image_id") or f"USER_UPLOADED_{ref_idx}")
+                ref_name = str(entry.get("name") or "")
+                if not path or not os.path.isfile(path):
+                    continue
+                rgb = loaded_images.get(ref_idx)
+                if rgb is None:
+                    with Image.open(path) as source:
+                        oriented = ImageOps.exif_transpose(source)
+                        if oriented.mode in ("RGBA", "LA") or (
+                            oriented.mode == "P" and "transparency" in oriented.info
+                        ):
+                            rgba = oriented.convert("RGBA")
+                            rgb = Image.new("RGB", rgba.size, "#ffffff")
+                            rgb.paste(rgba, mask=rgba.split()[-1])
+                        else:
+                            rgb = oriented.convert("RGB")
+                    loaded_images[ref_idx] = rgb
+                width, height = rgb.size
+                if width < 64 or height < 64:
+                    continue
+                x1 = int(region["x1"])
+                y1 = int(region["y1"])
+                x2 = int(region["x2"])
+                y2 = int(region["y2"])
+                # Expand slightly (~4% of box size) so ornament tips or borders aren't clipped.
+                pad_x = max(10, int(round((x2 - x1) * 0.04)))
+                pad_y = max(10, int(round((y2 - y1) * 0.04)))
+                px0 = max(0, int(round(width * max(0, x1 - pad_x) / 1000.0)))
+                py0 = max(0, int(round(height * max(0, y1 - pad_y) / 1000.0)))
+                px1 = min(width, int(round(width * min(1000, x2 + pad_x) / 1000.0)))
+                py1 = min(height, int(round(height * min(1000, y2 + pad_y) / 1000.0)))
+                if (px1 - px0) < 24 or (py1 - py0) < 24:
+                    continue
+                crop = rgb.crop((px0, py0, px1, py1))
+                max_side = max(crop.width, crop.height)
+                target_max = max(512, min(768, int(round(max_side * 1.6))))
+                scale = target_max / max(1, max_side)
+                new_w = max(240, int(round(crop.width * scale)))
+                new_h = max(64, int(round(crop.height * scale)))
+                if new_w > 768:
+                    ratio = 768.0 / new_w
+                    new_w = 768
+                    new_h = max(64, int(round(new_h * ratio)))
+                resized = crop.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                banner_h = 38
+                canvas = Image.new("RGB", (new_w, banner_h + new_h), banner_color)
+                canvas.paste(resized, (0, banner_h))
+                draw = ImageDraw.Draw(canvas)
+                draw.rectangle((0, banner_h - 2, new_w, banner_h - 1), fill="#ffffff")
+                label = str(region.get("label") or f"Detail {crop_idx}").strip()[:64]
+                crop_id = f"{image_id}_CROP_{crop_idx}"
+                banner_text = f"{crop_id} | {label}"
+                chosen_text = crop_id
+                chosen_font = self._banner_font(14)
+                for candidate in (banner_text, crop_id):
+                    size = 17
+                    while size >= 12:
+                        font = self._banner_font(size)
+                        bbox = draw.textbbox((0, 0), candidate, font=font)
+                        if (bbox[2] - bbox[0]) <= new_w - 16:
+                            chosen_text = candidate
+                            chosen_font = font
+                            break
+                        size -= 1
+                    else:
+                        continue
+                    break
+                tb = draw.textbbox((0, 0), chosen_text, font=chosen_font)
+                tw = tb[2] - tb[0]
+                th = tb[3] - tb[1]
+                draw.text(
+                    (max(8, (new_w - tw) // 2), max(2, (banner_h - 2 - th) // 2 - tb[1])),
+                    chosen_text,
+                    fill="#ffffff",
+                    font=chosen_font,
+                )
+                out = io.BytesIO()
+                canvas.save(out, format="PNG")
+                raw = out.getvalue()
+                if raw:
+                    crops.append({
+                        "image_id": crop_id,
+                        "parent_image_id": image_id,
+                        "reference_index": ref_idx,
+                        "name": ref_name,
+                        "label": label,
+                        "bbox": [x1, y1, x2, y2],
+                        "b64": base64.b64encode(raw).decode("ascii"),
+                        "mime": "image/png",
+                        "description": (
+                            f"AI-selected close-up crop #{crop_idx} of {image_id} "
+                            f"(bbox [{x1},{y1},{x2},{y2}]): {label}."
+                        ),
+                    })
+            return crops
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] BBox 확대 크롭 생성 실패, 스킵: error={exc}"
+            )
+            return []
+
     def _revision_vision_inputs(
         self, session: dict[str, Any], *, base: str = "user"
     ) -> list[dict[str, Any]]:
@@ -1454,6 +1881,15 @@ class CharacterMakerService:
             return "No images are attached. Reason only from text and current fields."
         has_banners = any(item.get("banner_color") for item in image_manifest)
         has_current = any(item.get("role") == "CURRENT" for item in image_manifest)
+        has_zoom = any(item.get("role") == "REF_DETAIL_ZOOM" for item in image_manifest)
+        zoom_note = (
+            " Images marked *_CROP_* are magnified close-up regions cropped directly from the "
+            "corresponding USER_UPLOADED_* reference image — inspect these close-ups carefully "
+            "for small ornaments, bangs coverage, collar/trim edges, bodice panels, legwear, "
+            "footwear, and held props, and never treat them as separate characters or panels."
+            if has_zoom
+            else ""
+        )
         if has_banners and has_current:
             return (
                 "Images are attached separately in image_manifest order. "
@@ -1463,6 +1899,7 @@ class CharacterMakerService:
                 "reference images uploaded by the user in this turn. "
                 "Never swap GENERATED_CURRENT and USER_UPLOADED_*, and ignore the added "
                 "header banners when writing tags or descriptions."
+                + zoom_note
             )
         if has_banners:
             return (
@@ -1470,17 +1907,20 @@ class CharacterMakerService:
                 "reference image marked with a red USER_UPLOADED_1, USER_UPLOADED_2, ... banner "
                 "above its top edge. Do not treat a USER_UPLOADED_* image as a prior generated "
                 "output, and ignore the added header banners when writing tags or descriptions."
+                + zoom_note
             )
         if has_current:
             return (
                 "Images are attached separately in image_manifest order. "
                 "Exactly one CURRENT image is the edit target. Every REF image is "
                 "user-provided reference evidence and is not the edit target."
+                + zoom_note
             )
         return (
             "No CURRENT image is attached. Every attached image is a REF supplied "
             "only as reference evidence; do not treat the first REF as a generated "
             "image to modify."
+            + zoom_note
         )
 
     @staticmethod
@@ -1530,86 +1970,210 @@ class CharacterMakerService:
         image_manifest: list[dict[str, Any]] | None = None,
         model_family: str = "anima",
     ) -> list[dict[str, str]]:
-        if str(model_family or "").strip().lower() == "moss":
-            model_guidance = (
-                "Target model guidance for MOSS-Image (which uses a Qwen3.5 text encoder and "
-                "combines concise visual tags with natural language inside one summary caption): "
-                "This asset workflow primarily generates a single character. Keep appearance, "
-                "outfit, expression, and composition as concise lowercase visual tags without "
-                "Danbooru emphasis weights such as (tag:1.3), and omit quality/score/year, "
-                "rating, artist, and LoRA trigger tags (style and triggers are added separately). "
-                "Keep a single subject count tag (such as 1girl or 1boy) in appearance, avoid "
-                "contradictory generic+specific duplicates (for example, prefer very long hair "
-                "over both long hair and very long hair), and do not emit layout JSON, "
-                "coordinates, or bounding boxes. "
-                "Use natural_language for clear English sentences describing pose, framing, "
-                "expression nuance, lighting/mood, and physical interactions that short tags "
-                "cannot express accurately. "
-                "If the user requests an interaction involving another person's minimal partial "
-                "body part (such as a hand patting the character's head, holding their chin, or "
-                "an arm reaching from off-screen), keep the character as the sole full subject: "
-                "do NOT add a second full person or a second person-count tag (avoid 2girls, "
-                "1girl 1boy, multiple people) or a separate identity; instead describe only the "
-                "anonymous partial limb entering from the frame edge and its exact physical "
-                "contact point in expression/composition and natural_language (e.g. 'an "
-                "off-screen hand gently patting the top of her head from the right edge'). "
-            )
-        else:
-            model_guidance = (
-                "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
-                "and understands descriptive sentences well): prefer at least 2 descriptive "
-                "sentences; use natural language for mood, composition, and emotional intent that "
-                "pure tags cannot convey (e.g. 'a large blue peony flower covering half of her face'); "
-                "name a character first then describe their basic appearance; layer the prompt as "
-                "quality -> subject -> specific details -> atmosphere -> mood; natural language may "
-                "be interleaved with tags in any order. "
-            )
-        system = (
-            "You are a collaborative character-design editor for an image-generation UI. "
-            "Reason from the world context, provided checkpoint/branch conversation, current "
-            "visual evidence, references, and user feedback. Do not use hard-coded keyword "
-            "matching. "
-            "You may modify four tag fields (appearance, outfit, expression, composition) "
-            "and a SEPARATE top-level field natural_language. "
-            "All other generation settings are read-only presets. Preserve locked fields exactly. "
+        resolved_family = normalize_maker_model_family(model_family)
+        vision_banner_rules = (
             "When attached images carry a colored header banner above the top edge, read that "
             "banner to identify each image reliably: blue GENERATED_CURRENT is the existing "
-            "generated character image to inspect/fix, and red USER_UPLOADED_1, USER_UPLOADED_2, "
-            "... are reference images uploaded by the user in the current turn. Never confuse "
-            "or swap GENERATED_CURRENT with USER_UPLOADED_*, and never describe the added header "
-            "banner itself. "
-            "When USER_UPLOADED_* (REF) images are attached: if the user asks to transfer only "
-            "specific attributes (for example, outfit only), extract all visible details of "
-            "those requested attributes into concrete tags and natural_language while preserving "
-            "unrelated fields of the current character; if the user asks to recreate the "
-            "reference character or compare GENERATED_CURRENT against USER_UPLOADED_* to fix "
-            "wrong or missing tags, systematically inspect every visible region — hairstyle "
-            "(ponytail, twin tails, braids, half-up, loose hair, bangs, side curls, hair "
-            "highlights/inner color), hair ornaments, eye color, ears, wings/tails/horns, "
-            "collar or shoulder mantle/cape, dress/top/sleeves/waist/ribbons and their exact "
-            "placement, skirt layers, legwear/tights/socks, footwear, and held props — actively "
-            "remove tags in current_fields that contradict USER_UPLOADED_* or caused wrong "
-            "features in GENERATED_CURRENT, and add every prominent feature visible in "
-            "USER_UPLOADED_* that is missing from GENERATED_CURRENT. "
+            "generated character image to inspect/fix, red USER_UPLOADED_1, USER_UPLOADED_2, "
+            "... are reference images uploaded by the user in the current turn, and red "
+            "USER_UPLOADED_*_DETAIL_ZOOM images are 2x2 magnified close-up crop sheets of the "
+            "same reference image (1:Head/Headpiece, 2:Torso/Sleeves/Props, 3:Waist/Hips/Skirt, "
+            "4:Legs/Footwear). Always inspect both the full reference image and its *_DETAIL_ZOOM "
+            "close-ups carefully to verify fine details; never confuse or swap GENERATED_CURRENT "
+            "with USER_UPLOADED_*, never treat a 2x2 zoom sheet as a multi-panel layout or "
+            "multiple characters, and never describe the added header banners or zoom labels. "
+        )
+        prior_turn_rules = (
             "Prior turns in recent_conversation may refer to earlier images that are no longer "
             "attached; base visual observations on the images attached to the current turn "
             "rather than carrying over position cues from earlier turns (such as 'leftmost "
             "character') onto a different image. "
             "Keep character fields focused on the character rather than background scenery or "
             "weather effects unless the user explicitly asks for them. "
-            "natural_language is free-form descriptive text inserted into the image prompt; it "
-            "may be empty. "
-            + model_guidance
-            + "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
-            "natural_language. "
-            "fields must contain exactly appearance/outfit/expression/composition string arrays. "
-            "natural_language is a TOP-LEVEL key (sibling of fields and rag_queries), NEVER a key "
-            "inside fields. "
-            "rag_queries must contain the same four keys, each mapping to a non-empty ARRAY of "
-            "short Korean or English semantic search unit strings (never a bare string). "
-            "Tags should describe visible, image-generatable details. "
-            f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
         )
+        natural_language_restrictions = (
+            "STRICT RULE FOR top-level natural_language (MANDATORY): "
+            "natural_language is a reusable character-level field shared across different "
+            "expression presets, so NEVER include facial expressions, emotions, personality or "
+            "affect adjectives, gaze cues, pose descriptions, or atmosphere/mood/vibe/lighting-mood "
+            "descriptions in natural_language. Forbidden in natural_language: smiles, frowns, "
+            "blushes, winks, tears, eye-contact/gaze (e.g. 'smiling warmly', 'smiling cheerfully', "
+            "'looking at the viewer', 'cheerful', 'confident', 'shy', 'angry', 'sad', 'serene', "
+            "'playful', 'emotional intent', 'posing confidently'), and atmosphere/mood/vibe/"
+            "lighting-mood wording (e.g. 'warm atmosphere', 'cozy mood', 'ethereal vibe', "
+            "'dramatic mood', 'melancholic ambiance', 'mystical aura', 'moody lighting'). "
+            "Put ALL facial expressions, emotions, and gaze exclusively in fields.expression, "
+            "and ALL pose/framing exclusively in fields.composition — never in natural_language "
+            "(and never in fields.appearance or fields.outfit). "
+            "If current_natural_language already contains any expression, emotion, pose, mood, "
+            "atmosphere, or redundant full-character summary and natural_language is unlocked, "
+            "actively delete those parts. "
+        )
+        has_attached_images = bool(image_manifest)
+        if resolved_family == "moss":
+            visual_audit_rules = (
+                "PRE-WRITE VISUAL AUDIT (when images are attached): "
+                "Emit a compact 'visual_audit' object as the FIRST JSON key, written in concise, "
+                "concrete English (NEVER Korean) with 5 short literal entries inspected from BOTH "
+                "the full image and any *_CROP_* close-ups: "
+                "head_hair_wings (hair color/ponytail sweep side, full blunt bangs vs parted forehead, "
+                "spiral curls/ringlets, exact headpiece silhouette/gems/ribbons, eyes, ear tilt, exact "
+                "count & structure of wings/tails/horns), "
+                "shoulders_bodice_sleeves (explicitly separate character's RIGHT shoulder vs LEFT "
+                "shoulder — which is bare vs covered by a mantle/cape — exact vertical ending length "
+                "of any cape/mantle, and which exact edge has fur/trim; choker vs high collar; bodice "
+                "neckline cut & CENTER panel color/bars vs SIDE panels color/clasps; chest bow/brooch; "
+                "RIGHT sleeve/glove vs LEFT sleeve/glove), "
+                "waist_hips_skirt_overskirt (sash solid vs striped; explicitly separate RIGHT hip vs "
+                "LEFT hip bows/crests/ruffles; inner skirt shape & hem emblem; exact ending length of "
+                "overskirt/peplum flaps relative to mid-thigh/knees), "
+                "legwear_footwear_props (exact legwear: seamless full pantyhose/tights vs thigh-highs "
+                "vs socks vs bare legs + pattern; exact boot shaft height/stripes/cuff gems/heels; "
+                "prop relative length, shaft color/thickness, grip point relative to finial, finial "
+                "shape, angle), "
+                "and mismatches_to_fix (list of mismatches between GENERATED_CURRENT and USER_UPLOADED_* "
+                "naming exact old phrases in current_fields to delete, or [] on first turn). "
+                "MANDATORY: Every color, asymmetry, bare-skin zone, and ornament recorded in "
+                "visual_audit MUST be explicitly transferred into fields.appearance or fields.outfit "
+                "— never drop a color or collapse an asymmetric left/right garment into a symmetric one. "
+                if has_attached_images
+                else ""
+            )
+            system = (
+                "You are a collaborative character-design editor for an image-generation UI "
+                "operating in MOSS mode (Qwen3.5 natural-language text encoder). Reason from world "
+                "context, conversation, visual evidence, references, and user feedback. Do not use "
+                "hard-coded keyword matching. Modify four fields (appearance, outfit, expression, "
+                "composition) and top-level natural_language. Preserve locked fields exactly. "
+                + vision_banner_rules
+                + visual_audit_rules
+                + "When USER_UPLOADED_* images are attached: if the user asks to transfer only "
+                "specific attributes, extract those attributes while preserving unrelated fields; "
+                "when recreating a reference character or fixing GENERATED_CURRENT against "
+                "USER_UPLOADED_*, inspect every zone from head to footwear using both full and "
+                "*_CROP_* close-up images, and actively DELETE/REPLACE every wrong, generic, or "
+                "contradictory phrase in current_fields rather than appending onto broken text. "
+                + prior_turn_rules
+                + natural_language_restrictions
+                + "MOSS natural-language rules (MANDATORY): "
+                "1. Concrete, dense English prose across ALL image fields (no Danbooru tag lists). "
+                "Cover every visible zone thoroughly without filler or repetition across fields. "
+                "2. Positive-only phrasing (CRITICAL): NEVER write negative phrasing inside fields "
+                "or natural_language ('no X', 'without X', 'not pleated', 'no bare thighs', 'instead "
+                "of thigh-highs') — naming forbidden items causes MOSS to draw them. State ONLY the "
+                "positive visible form (e.g., 'smooth sleek teal sleeve', 'smooth gently scalloped "
+                "flared white mini-skirt', 'seamless full-length sheer milky-white pantyhose tights "
+                "covering the entire legs from under the skirt down into the boots'). "
+                "3. Avoid strong-prior generic stereotypes that distort actual geometry: do not call "
+                "a narrow pointed spire/circlet a generic 'crown tiara'; do not call a slender short "
+                "baton a 'magic staff' or 'scepter'; do not call short mid-thigh overskirt flaps "
+                "'coat-tails' (write 'short mid-thigh-length peplum overskirt panels ending well "
+                "above the knees'); do not call a smooth flared skirt 'pleated' unless crisp pleats "
+                "are visible; for an asymmetric one-shoulder mantle, explicitly name which shoulder "
+                "is covered vs bare and which exact edge has fur/trim (top/inner collar edge vs "
+                "bottom hem); when bangs cover the forehead, explicitly write 'full blunt bangs "
+                "completely covering her entire forehead down to her eyebrows' and place forehead "
+                "ornaments 'resting directly across the top of her bangs' (never 'onto her forehead'). "
+                "4. Explicit L/R asymmetry, color-zone ownership, exact counts, and prop anatomy: "
+                "assign each color/pattern (solid vs striped vs cross-grid) to its exact garment "
+                "zone (center corset panel vs side panels vs chest bow vs sash vs underlayer); state "
+                "explicit left-vs-right placement for shoulders, sleeves, gloves, hip bows/crests/"
+                "ruffles, ponytail sweep side, and props; state exact counts ('exactly four wings — "
+                "one upper pair and one lower pair'); for held props state relative length, shaft "
+                "thickness/color, exact grip position right beneath or along the shaft relative to "
+                "the finial, finial motif/size, and shaft angle/tip. "
+                "5. Official Danbooru character tag exception: ONLY for an established character "
+                "with a confirmed official Danbooru tag (or explicitly supplied), place that exact "
+                "tag as the FIRST element of fields.appearance (lowercase, spaces, unescaped "
+                "parentheses e.g. 'asuna (blue archive)'). Omit it for original/unidentified characters. "
+                "6. Field scope: "
+                "fields.appearance = build, gender/age presentation ('a slender young woman'), hair "
+                "color/style/sweep/bangs/curls, headpiece/ribbons, eyes, facial marks, ears/wings/"
+                "tails/horns. "
+                "fields.outfit = top-to-bottom clothing: bare skin zones, choker/collar, asymmetric "
+                "mantle & exact trim edges, bodice cut & color zones, L/R sleeves & gloves, sash & "
+                "L/R hip ornaments, inner skirt shape/emblem, overskirt/peplum length/borders, exact "
+                "legwear (pantyhose vs thigh-highs vs socks vs bare), footwear, and held prop. "
+                "fields.expression = ONLY facial expression, brows, eyes, mouth, blush, gaze. "
+                "fields.composition = ONLY framing/shot scale, angle, posture, hand placement. When "
+                "USER_UPLOADED_* shows a full-body outfit and no tight crop is requested, frame as a "
+                "full-body standing portrait showing head to footwear so all regions can be verified. "
+                "NEVER copy background colors, patterns, UI cards, text, speech bubbles, floating "
+                "sparkles, or decorative background motifs from USER_UPLOADED_* into fields.composition "
+                "or any other field — background is controlled separately by the style preset. "
+                "7. Top-level natural_language: NEVER write a full-character recap summary or any "
+                "expression/emotion/gaze/mood/pose wording. Default to '' (empty string); for complex "
+                "reference characters, optionally write ONE short strictly expression-free structural "
+                "disambiguation sentence reinforcing ONLY 3-5 drift-prone physical constraints (e.g., "
+                "full blunt bangs covering forehead, exact wing count, short mid-thigh overskirt "
+                "length, asymmetric left-only mantle / bare right shoulder, prop grip point) without "
+                "repeating a general character summary. "
+                "8. Forbidden tokens: rewrite legacy Danbooru tags on unlocked fields into natural "
+                "English. Never emit subject-count tags (1girl, solo), underscores, emphasis weights "
+                "((tag:1.2)), quality/score/rating/artist/LoRA triggers, layout JSON/bboxes, abstract "
+                "vibe/aura words, or figurative animal/object similes. "
+                "9. Single-character scope: if the user requests a minimal off-screen limb touching "
+                "the character, keep the character as the sole full subject and describe only the "
+                "anonymous partial limb and contact point. "
+                "10. Output JSON: return one JSON object with "
+                + ("visual_audit (first, in English), " if has_attached_images else "")
+                + "fields, natural_language, rag_queries, and assistant_message. "
+                "Write assistant_message in the user's language (Korean when the user writes in "
+                "Korean); write visual_audit, fields, and natural_language in English only. "
+                "fields has exactly appearance/outfit/expression/composition string arrays (one "
+                "coherent prose string per field, or [official_danbooru_tag, prose] for appearance; "
+                "[] allowed). natural_language is a TOP-LEVEL key, never inside fields. rag_queries "
+                "has the same four keys mapping to string arrays ([] allowed when RAG is disabled). "
+                f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
+            )
+        else:
+            model_guidance = (
+                "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
+                "and understands descriptive sentences well): when natural_language is used, write "
+                "concrete, neutral English sentences describing physical appearance details, outfit "
+                "construction, accessory/prop placement, or spatial structure that pure tags cannot "
+                "convey precisely (e.g. 'a large blue peony flower tucked behind her left ear'); "
+                "never include facial expressions, emotions, mood, or atmosphere in natural_language "
+                "(keep all expression/emotion details in fields.expression); natural_language may be "
+                "empty string '' when tags already cover the visual details. "
+            )
+            system = (
+                "You are a collaborative character-design editor for an image-generation UI. "
+                "Reason from the world context, provided checkpoint/branch conversation, current "
+                "visual evidence, references, and user feedback. Do not use hard-coded keyword "
+                "matching. "
+                "You may modify four tag fields (appearance, outfit, expression, composition) "
+                "and a SEPARATE top-level field natural_language. "
+                "All other generation settings are read-only presets. Preserve locked fields exactly. "
+                + vision_banner_rules
+                + "When USER_UPLOADED_* (REF) images are attached: if the user asks to transfer only "
+                "specific attributes (for example, outfit only), extract all visible details of "
+                "those requested attributes into concrete tags and natural_language while preserving "
+                "unrelated fields of the current character; if the user asks to recreate the "
+                "reference character or compare GENERATED_CURRENT against USER_UPLOADED_* to fix "
+                "wrong or missing tags, systematically inspect every visible region — hairstyle "
+                "(ponytail, twin tails, braids, half-up, loose hair, bangs, side curls, hair "
+                "highlights/inner color), hair ornaments, eye color, ears, wings/tails/horns, "
+                "collar or shoulder mantle/cape, dress/top/sleeves/waist/ribbons and their exact "
+                "placement, skirt layers, legwear/tights/socks, footwear, and held props — actively "
+                "remove tags in current_fields that contradict USER_UPLOADED_* or caused wrong "
+                "features in GENERATED_CURRENT, and add every prominent feature visible in "
+                "USER_UPLOADED_* that is missing from GENERATED_CURRENT. "
+                + prior_turn_rules
+                + natural_language_restrictions
+                + "natural_language is optional neutral descriptive text inserted into the image "
+                "prompt; it may be empty. "
+                + model_guidance
+                + "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
+                "natural_language. "
+                "fields must contain exactly appearance/outfit/expression/composition string arrays. "
+                "natural_language is a TOP-LEVEL key (sibling of fields and rag_queries), NEVER a key "
+                "inside fields. "
+                "rag_queries must contain the same four keys, each mapping to a non-empty ARRAY of "
+                "short Korean or English semantic search unit strings (never a bare string). "
+                "Tags should describe visible, image-generatable details. "
+                f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
+            )
         manifest = copy.deepcopy(image_manifest or [])
         history = self._chat_context_for_request(
             session,
@@ -1626,6 +2190,7 @@ class CharacterMakerService:
             else session["natural_language"]
         )
         user_payload = {
+            "model_family": resolved_family,
             "world_context": session["world_context"],
             "feedback": feedback,
             "current_fields": base_fields,
@@ -1643,14 +2208,80 @@ class CharacterMakerService:
             "image_legend": self._image_legend(manifest),
             "image_manifest": manifest,
         }
+        user_instruction = (
+            "Update the character description in MOSS natural-language mode and return JSON only.\n"
+            if resolved_family == "moss"
+            else "캐릭터 상태를 수정하고 JSON만 반환하세요.\n"
+        )
         return [
             {"role": "system", "content": system},
             {
                 "role": "user",
-                "content": "캐릭터 상태를 수정하고 JSON만 반환하세요.\n"
+                "content": user_instruction
                 + json.dumps(user_payload, ensure_ascii=False, indent=2),
             },
         ]
+
+    async def _call_structured_llm(
+        self,
+        task_key: str,
+        messages: list[dict[str, str]],
+        images: list[tuple[str, ...]] | None,
+        *,
+        parser: Callable[[str], tuple[dict[str, Any] | None, str]],
+        call_label: str = "캐릭터 메이커",
+    ) -> dict[str, Any]:
+        from modes.lighbd_service import (
+            call_logged_llm_task,
+            call_logged_llm_vision_task,
+        )
+
+        def validator(raw: str) -> tuple[bool, str]:
+            parsed_val, reason_val = parser(raw)
+            if parsed_val is None:
+                return False, reason_val or "LLM 응답 형식이 올바르지 않습니다."
+            return True, ""
+
+        metadata: dict[str, Any] = {"prompt_id": task_key}
+        if images:
+            metadata["vision_image_count"] = len(images)
+        context = llm_service.create_llm_execution_context(
+            task_key,
+            call_name=call_label,
+            json_mode=True,
+            metadata=metadata,
+        )
+        if images:
+            execution_result = await call_logged_llm_vision_task(
+                context,
+                messages,
+                images=images,
+                result_validator=validator,
+            )
+        else:
+            execution_result = await call_logged_llm_task(
+                context,
+                messages,
+                result_validator=validator,
+                retry_messages=messages,
+            )
+        raw = execution_result.to_legacy()
+        if not execution_result.accepted or (
+            isinstance(raw, str) and raw.strip().startswith("[LLM 실패]")
+        ):
+            print(
+                f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, "
+                f"slot={execution_result.final_slot}, result={raw}"
+            )
+            raise CharacterMakerError(raw)
+        parsed, reason = parser(raw)
+        if parsed is None:
+            print(
+                f"[CHARACTER_MAKER] LLM JSON 검증 실패: task={task_key}, "
+                f"reason={reason}, raw={str(raw)[:1000]!r}"
+            )
+            raise CharacterMakerError(reason)
+        return parsed
 
     async def _call_revision_llm(
         self,
@@ -1661,112 +2292,310 @@ class CharacterMakerService:
         require_queries: bool,
         call_label: str = "캐릭터 메이커",
     ) -> dict[str, Any]:
-        validator = lambda raw: validate_character_maker_llm_result(
-            raw, require_queries=require_queries
+        return await self._call_structured_llm(
+            task_key,
+            messages,
+            images,
+            parser=lambda raw: _parse_llm_payload(raw, require_queries=require_queries),
+            call_label=call_label,
         )
-        t0 = time.perf_counter()
-        # callLLMTask/VisionTask 가 스트림 usage 토큰을 채워 돌려줄 싱크.
-        # 스트리밍 경로에선 진짜 usage, 비스트리밍/실패 시엔 근사치 또는 0.
-        sink: dict = {}
-        # 검증 실패를 일으킨 마지막 원문 응답. callLLMTask 가 재시도 소진 시
-        # 원문을 버리고 reason 만 남긴 [LLM 실패] 문자열을 반환하므로, per-attempt
-        # 콜백이 받은 마지막 원문을 보존해 최종 요약 레코드의 output(=자세히 모달
-        # "LLM 원본 응답" 필드)에 채운다.
-        last_raw_result: str | None = None
 
-        def _on_attempt_fail(info: dict) -> None:
-            """재시도 중 각 실패 시도를 자세히(lighbd_history.jsonl)에 개별 기록한다.
-            최종 결과(성공/파싱실패)는 _log_cm_history 가 별도로 남기고, 여기는 중간
-            실패 가시성용. sink 는 시도 간 공유/덮어쓰기되므로 호출 시점에 스냅샷한다.
-            call_label 로 어느 단계(draft/RAG 선택)의 시도인지 구분한다."""
-            nonlocal last_raw_result
-            try:
-                from modes.lighbd_service import _log_lighbd_history
+    def _reference_bbox_messages(
+        self,
+        feedback: str,
+        ref_manifest: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Lightweight vision prompt asking AI to select tight detail-crop bboxes."""
+        system = (
+            "You select tight close-up crop bounding boxes for a character design reference image. "
+            "Inspect the attached USER_UPLOADED_* reference image(s) (portrait, landscape, turnaround "
+            "sheet, seated pose, bust shot, or card with text/margins). "
+            "Return 2 to 4 tight, non-redundant bounding boxes covering the most visually intricate "
+            "character zones relevant to user_feedback (for full character recreation, typically: "
+            "1) head/bangs/headpiece/ears, 2) shoulders/collar/upper torso/sleeves/held props, "
+            "3) waist/hips/lower garment/skirt/emblems, 4) legs/legwear/footwear; for partial "
+            "requests like outfit-only or face-only, focus boxes tightly on the requested zones). "
+            "Ignore decorative card frames, text banners, speech bubbles, and empty background margins "
+            "— wrap ONLY the character regions tightly. "
+            "Coordinate system: normalized integers 0..1000 where x1 is left edge, y1 is top edge, "
+            "x2 is right edge, y2 is bottom edge (0 <= x1 < x2 <= 1000, 0 <= y1 < y2 <= 1000). "
+            "Return ONE JSON object only with key 'regions': an array of up to 4 objects, each with "
+            "keys image_index (1-based integer), label (short English label, 2-6 words), x1, y1, x2, y2."
+        )
+        payload = {
+            "user_feedback": feedback,
+            "reference_images": ref_manifest,
+        }
+        return [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": (
+                    "Identify 2 to 4 tight detail-crop bounding boxes on the reference image(s). "
+                    "Return JSON only.\n"
+                    + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                ),
+            },
+        ]
 
-                # 검증 실패를 일으킨 원문 응답 보존(최종 요약 레코드 output용).
-                # 매 시도 갱신하므로 콜백 시리즈가 끝나면 마지막 시도의 원문이 남는다.
-                attempt_raw = info.get("result")
-                if attempt_raw:
-                    last_raw_result = str(attempt_raw)
-
-                snap = dict(sink or {})
-                _log_lighbd_history({
-                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                    "prompt_id": task_key,
-                    "call_name": call_label,
-                    "input": messages,
-                    "output": str(info.get("result") or ""),
-                    "completion_tokens": int(snap.get("completion_tokens") or 0),
-                    "prompt_tokens": int(snap.get("prompt_tokens") or 0),
-                    "elapsed": 0.0,
-                    "tps": 0.0,
-                    "status": "error",
-                    "error": (
-                        f"[재시도 {info.get('phase')} {info.get('slot')} "
-                        f"{info.get('attempt')}/{info.get('total_attempts')}] "
-                        f"{info.get('reason')}"
-                    ),
-                })
-            except Exception:
-                print("[CHARACTER_MAKER] per-attempt LIGHBD 기록 실패")
-                traceback.print_exc()
-
+    async def _detect_reference_bboxes(
+        self,
+        feedback: str,
+        ref_vision_images: list[tuple[str, ...]],
+        ref_manifest: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Run AI bbox localization on reference image(s); never fails the main request."""
+        if not ref_vision_images:
+            return []
         try:
-            if images:
-                # 다중 비전: CURRENT(활성 리비전) + REF(참고 이미지) 각각 별도 이미지로 전송.
-                raw = await llm_service.callLLMVisionTask(
-                    task_key,
-                    messages,
-                    images=images,
-                    json_mode=True,
-                    result_validator=validator,
-                    metadata_sink=sink,
-                    on_attempt_failure=_on_attempt_fail,
-                )
-            else:
-                raw = await llm_service.callLLMTask(
-                    task_key,
-                    messages,
-                    json_mode=True,
-                    result_validator=validator,
-                    metadata_sink=sink,
-                    on_attempt_failure=_on_attempt_fail,
-                )
+            messages = self._reference_bbox_messages(feedback, ref_manifest)
+            parsed = await self._call_structured_llm(
+                "character_maker_feedback",
+                messages,
+                ref_vision_images,
+                parser=_parse_reference_bboxes,
+                call_label="에셋 캐릭터 메이커 · 깊게 영역 탐지(BBox)",
+            )
+            regions = list(parsed.get("regions") or [])
+            print(
+                f"[CHARACTER_MAKER] 깊게 BBox 영역 탐지 완료: count={len(regions)}, "
+                f"regions={regions}"
+            )
+            return regions
         except Exception as exc:
-            self._log_cm_history(
-                task_key, messages, f"[LLM 실패] {exc}", t0,
-                status="error", error=str(exc), sink=sink, call_label=call_label,
-            )
-            raise
-        if isinstance(raw, str) and raw.strip().startswith("[LLM 실패]"):
-            # raw 는 callLLMTask 가 reason 만으로 만든 [LLM 실패] 문자열이라 원문이 없다.
-            # per-attempt 콜백이 보존한 마지막 원문(last_raw_result)이 있으면 output(자세히
-            # 모달 "LLM 원본 응답")에 우선 사용하고, error("오류 내용")에는 원인 문자열을 둔다.
-            history_output = last_raw_result or raw
             print(
-                f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, "
-                f"result={raw}, raw_captured={bool(last_raw_result)}"
+                f"[CHARACTER_MAKER] 깊게 BBox 영역 탐지 실패, 원본 전체 이미지로 계속 진행: "
+                f"error={type(exc).__name__}: {exc}"
             )
-            self._log_cm_history(
-                task_key, messages, history_output, t0, status="error", error=raw,
-                sink=sink, call_label=call_label,
-            )
-            raise CharacterMakerError(raw)
-        parsed, reason = _parse_llm_payload(raw, require_queries=require_queries)
-        if parsed is None:
-            print(
-                f"[CHARACTER_MAKER] LLM JSON 검증 실패: task={task_key}, "
-                f"reason={reason}, raw={str(raw)[:1000]!r}"
-            )
-            self._log_cm_history(
-                task_key, messages, raw, t0, status="error",
-                error=reason, sink=sink, call_label=call_label,
-            )
-            raise CharacterMakerError(reason)
-        self._log_cm_history(
-            task_key, messages, raw, t0, status="ok", sink=sink, call_label=call_label,
+            return []
+
+    def _moss_forensic_audit_messages(
+        self,
+        session: dict[str, Any],
+        feedback: str,
+        *,
+        image_manifest: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Stage-1 vision forensic inspector for MOSS reference recreation & visual diff."""
+        has_current = any(item.get("role") == "CURRENT" for item in image_manifest)
+        has_refs = any(item.get("role") == "REF" for item in image_manifest)
+        has_crops = any(item.get("role") == "REF_DETAIL_ZOOM" for item in image_manifest)
+        crop_phrase = (
+            " and its AI-cropped close-up images (USER_UPLOADED_*_CROP_*)"
+            if has_crops
+            else ""
         )
-        return parsed
+        if has_current and has_refs:
+            diff_rule = (
+                "GENERATED_CURRENT (blue banner) IS attached alongside USER_UPLOADED_* (red banner)"
+                + crop_phrase
+                + ". Compare GENERATED_CURRENT against USER_UPLOADED_* region by region and list "
+                "EVERY concrete discrepancy in visual_diff_fixes (wrong hairstyle count, swapped "
+                "left/right shoulder/arm/hip/hand, wrong bodice color, wrong mantle length or fur "
+                "edge, wrong overskirt length, missing tights/pantyhose, wrong boot height, wrong "
+                "prop length/color/hand/finial, leaked background, etc.). "
+            )
+        elif has_current:
+            diff_rule = (
+                "GENERATED_CURRENT is attached with no separate reference image. Compare "
+                "GENERATED_CURRENT against user_feedback and current_fields, and list EVERY "
+                "missing, drifted, or contradictory visual detail in visual_diff_fixes. "
+            )
+        else:
+            diff_rule = (
+                "No GENERATED_CURRENT image is attached; inspect USER_UPLOADED_*"
+                + crop_phrase
+                + " thoroughly and set visual_diff_fixes to []. "
+            )
+        system = (
+            "You are Stage 1 (Forensic Visual Inspector) of a deep character-design pipeline "
+            "for the MOSS image model. Your ONLY job is exhaustive, pixel-accurate visual "
+            "observation of the attached reference character image(s)"
+            + crop_phrase
+            + ". Write EVERY JSON string value in concise, concrete English (1-2 dense sentences "
+            "per slot; NEVER write Korean). Use exact English garment and visual terminology "
+            "directly. Do NOT guess generic tropes and do NOT omit small ornaments, colors, "
+            "garment lengths, or asymmetries. "
+            + diff_rule
+            + "CRITICAL VERIFICATION CHECKLIST (inspect matching close-up crops when present): "
+            "1. Hair count & bangs: verify exact hairstyle count — single high/side ponytail vs "
+            "twin tails vs half-up vs loose hair (never mistake hair trailing behind one shoulder "
+            "for a second ponytail). State which side any ponytail sweeps toward (viewer's left vs "
+            "viewer's right). Verify whether blunt bangs completely cover the forehead down to the "
+            "eyebrows or leave forehead skin parted/exposed. Note cheek sidelocks and spiral curls. "
+            "2. Headpiece & hair accessories: exact vertical silhouette and height (tall narrow "
+            "pointed spire/diadem vs low flat circlet vs hat/hairpin), metal color (silver vs "
+            "gold), forehead arch/wire and hanging gem resting over bangs, AND distinguish fabric "
+            "cloth ribbon bows tied behind/around the headpiece (exact colors & tails) from actual "
+            "feathered/wing ornaments (never mistake cloth bow loops for angel wings). "
+            "3. Eyes, ears, wings/nonhuman: exact eye color/shape, ear shape and tilt, body build, "
+            "and EXACT count & geometry of any wings/horns/tail (e.g., exact wing count such as "
+            "4 = 2 upper + 2 lower, angular geometric stained-glass crystal vs rounded butterfly/"
+            "feathered, frame color, translucent membrane tint colors — or 'none'). "
+            "4. Neck, shoulders & outer mantle/cape length: "
+            "- Distinguish a low fitted choker (leaving upper neck and collarbones bare) vs a high "
+            "standing collar / turtleneck / scarf, noting exact choker colors and center gem. "
+            "- CRITICAL ANATOMICAL RIGHT vs LEFT (when facing the viewer, character's RIGHT side is "
+            "on the VIEWER'S LEFT, and character's LEFT side is on the VIEWER'S RIGHT): explicitly "
+            "separate [character's RIGHT shoulder (viewer's left)] vs [character's LEFT shoulder "
+            "(viewer's right)] (bare skin vs covered by an asymmetrical shoulder mantle/cape). "
+            "- MANDATORY VERTICAL ENDING LENGTH: for ANY cape, mantle, cloak, shawl, or coat, "
+            "state explicitly WHERE its bottom edge stops vertically on the body (upper-arm / "
+            "elbow-length short mantle, waist-length, hip-length, mid-thigh, knee-length, or "
+            "calf/ankle/floor-length). "
+            "- If fur/lace trim is on a shoulder garment, verify WHICH exact edge carries it (top "
+            "shoulder ridge & inner front edge ONLY vs bottom hem vs all edges), plus studs, "
+            "embroidery motifs, brooches, and hanging pom-poms. "
+            "5. Upper garment / bodice color zones: specify neckline cut (strapless/sweetheart/"
+            "collared), center chest bow & brooch exact color/shape, CENTER front panel exact color "
+            "and horizontal bars/chevrons/fasteners/buttons, and SIDE panels exact color, trim "
+            "borders, and clasp tabs. "
+            "6. Arms, sleeves & gloves — SEPARATE RIGHT vs LEFT: explicitly record BOTH "
+            "[character's RIGHT arm (viewer's left)] (upper-arm sleeve color/cut/off-shoulder fit, "
+            "forearm/cuff shape & color, glove length/color) AND [character's LEFT arm (viewer's "
+            "right)] (upper-arm sleeve/inner flared sleeve color, forearm, glove length/color). "
+            "WRIST-vs-HIP CHECK: if a hand rests on a hip, verify whether a nearby ribbon bow or "
+            "ornament belongs to the WAIST/HIP BELT (record under waist_and_hips) vs the wrist/arm. "
+            "7. Waist, hips & lower garment: verify whether the waist belt/sash is solid or striped "
+            "(exact stripe colors), explicitly separate [character's RIGHT hip (viewer's left)] vs "
+            "[character's LEFT hip (viewer's right)] ornaments (hip bow with buckle & tails vs hip "
+            "crest/armor/ruffle), inner skirt or trouser cut/texture (smooth gently scalloped "
+            "flared mini-skirt vs knife-pleated skirt vs shorts/pants) and exact front hem emblem, "
+            "AND any outer overskirt/peplum flaps (exact colors, surface grid/pattern, border color "
+            "& thickness, tip cutout inlays, ruffled underlayer if visible, and EXACT ending height "
+            "relative to the legs: upper-thigh, mid-thigh well above knees, knee-length, or calf). "
+            "8. Legwear & footwear: distinguish seamless full-length pantyhose/tights (covering "
+            "entire thighs with zero bare skin above stockings) vs thigh-high stockings vs socks vs "
+            "bare legs, plus opacity and faint lace motifs; record EXACT footwear shaft height "
+            "(shoes, ankle boots, mid-calf boots below the knees, knee-high boots, or thigh-high "
+            "boots), main color, vertical stripe/panel color, strap clasps, pointed/winged cuff "
+            "trim, exact gem position (top front of cuff vs ankle), and heel color. "
+            "9. Held props — ALL 5 ATTRIBUTES: inspect pixels directly and record (a) exact hand "
+            "holding it (character's RIGHT [viewer's left] vs LEFT [viewer's right]), (b) EXACT "
+            "length relative to the body (palm-sized, short forearm-length ~35-45cm baton/wand, "
+            "waist-length rod, or tall full-height floor-length staff), (c) EXACT shaft/body color "
+            "& thickness (verify from pixels — e.g. dark midnight-blue vs black vs silver vs gold), "
+            "(d) EXACT grip position along the shaft (e.g. gripped right at the top collar directly "
+            "beneath the finial vs mid-shaft vs bottom handle) and diagonal angle, and (e) exact "
+            "finial motif/colors/size and opposite ferrule tip color (or 'none'). "
+            "10. Ignore reference UI frames, speech bubbles, text banners, background wallpaper, "
+            "and added red/blue inspection headers. "
+            "Return ONE JSON object with these exact keys: "
+            "character_overview, hair_and_bangs, headpiece_and_ribbons, eyes_ears_wings_nonhuman, "
+            "neck_and_shoulders, bodice_and_chest, arms_sleeves_gloves, waist_and_hips, "
+            "skirt_and_overskirt, legwear, footwear, held_props, expression_and_pose, "
+            "user_scope_note, visual_diff_fixes."
+        )
+        payload = {
+            "world_context": session.get("world_context", ""),
+            "user_feedback": feedback,
+            "current_fields": session.get("fields", {}),
+            "image_legend": self._image_legend(image_manifest),
+            "image_manifest": image_manifest,
+        }
+        return [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": (
+                    "Inspect all attached images and close-up crops and return the complete "
+                    "14-zone English forensic audit JSON only.\n"
+                    + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                ),
+            },
+        ]
+
+    def _moss_prompt_synthesis_messages(
+        self,
+        session: dict[str, Any],
+        feedback: str,
+        forensic_audit: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        """Stage-2 structured MOSS natural-language prompt synthesizer."""
+        system = (
+            "Stage 2 (MOSS Prompt Synthesizer for Qwen3.5 text encoder). Cross-check forensic_audit "
+            "against the attached reference image(s) and faithfully translate EVERY detail into "
+            "concrete, literal English MOSS prose split across the JSON sections below. NEVER "
+            "invent, alter, drop, or swap any color, metal, motif, material, left/right side, "
+            "garment length, boot height, or prop shape!\n"
+            "RULES:\n"
+            "1. Scope & Diff: For full recreation or reference-fix requests, rewrite all applicable "
+            "sections completely from forensic_audit. For partial-attribute requests (e.g. hair "
+            "only), keep unrelated current_fields and rewrite only requested sections. If "
+            "forensic_audit.visual_diff_fixes is non-empty, fix EVERY listed discrepancy across "
+            "all fields.\n"
+            "2. Literal Fidelity (1-3 dense English sentences per non-empty section; '' if absent): "
+            "Preserve exact metal/colors (silver vs gold, dark navy vs teal vs white), exact hair "
+            "count & bangs, exact wing count & stained-glass/crystal geometry (never add feathers "
+            "if crystal), exact character RIGHT vs LEFT shoulders/arms/hips/hands (for ANY "
+            "asymmetrical garment, side ponytail, hip bow, or held prop, ALWAYS pair anatomical "
+            "side with viewer side in parentheses — e.g. 'her left shoulder (viewer's right)', "
+            "'her right hip (viewer's left)', 'her left hand (viewer's right)' — and keep every "
+            "section 100% consistent on which side wears which garment!), exact fur edge, exact "
+            "bodice color zones, exact skirt pattern, exact legwear (full seamless tights vs "
+            "stockings), exact footwear height (preserve mid-calf below the knees literally — NEVER "
+            "turn mid-calf boots into 'knee-high'), and exact prop hand, shaft color, finial motif "
+            "butterfly crystal finial), grip point, and tip color.\n"
+            "3. Positive-Only Phrasing: NEVER use negative words ('no X', 'without X', 'not "
+            "pleated', 'no bare thighs') in English descriptions; describe only visible form.\n"
+            "4. Anti-Drift Length & Noun Locks:\n"
+            "- Never write bare 'cape', 'half-cape', or 'mantle' without vertical ending length "
+            "(e.g. 'short elbow-length asymmetrical left-shoulder mantle ending at the elbow well "
+            "above her waist').\n"
+            "- Never write 'staff', 'baton-staff', 'magic staff', or 'scepter' in ANY field "
+            "(held_props, composition, or natural_language) for a short forearm-length prop; use "
+            "'short, slender forearm-length baton/wand' with its exact shaft color and grip right "
+            "below the finial.\n"
+            "- Never call short mid-thigh overskirt flaps 'coat-tails'; write 'short, stiff, "
+            "pointed mid-thigh-length peplum overskirt panels ending at mid-thigh well above her "
+            "knees'.\n"
+            "- Never invent 'high standing collar' for a low fitted choker, never invent 'wing "
+            "motifs' for a fabric ribbon bow, and place forehead ornaments 'resting across the top "
+            "of her bangs' (never 'onto her forehead').\n"
+            "5. Strict Separation:\n"
+            "- official_character_tag: confirmed official Danbooru tag only, else ''.\n"
+            "- appearance_sections: body_eyes_ears, hair_bangs_curls, headpiece_ribbons, "
+            "wings_nonhuman.\n"
+            "- outfit_sections: neck_shoulders_mantle, bodice_chest, sleeves_gloves, waist_hips, "
+            "skirt_overskirt, legwear, footwear, held_props.\n"
+            "- expression: ONLY face, brows, eyes, mouth, blush, gaze.\n"
+            "- composition: ONLY framing (full-body head-to-footwear standing portrait when lower "
+            "outfit/footwear exists), angle, posture, and exact right/left hand placement (matching "
+            "held_props noun). ZERO background/UI/text/frames.\n"
+            "- natural_language: ONE concise expression-free structural anchor sentence reinforcing "
+            "the 5-6 highest-drift constraints (bangs, hair count, wing count, short mantle length "
+            "& bare shoulder, mid-thigh overskirt, boot height, short baton hand & shaft color). "
+            "ZERO emotion/pose/smile.\n"
+            "6. English-only in all prompt fields (zero Korean outside assistant_message). No "
+            "Danbooru tags (1girl, solo), underscores, weights, or quality/artist triggers.\n"
+            "Return ONE JSON object with exact keys: assistant_message (Korean if user_feedback is "
+            "Korean), official_character_tag, appearance_sections, outfit_sections, expression, "
+            "composition, natural_language, rag_queries."
+        )
+        payload: dict[str, Any] = {
+            "user_feedback": feedback,
+            "forensic_audit": forensic_audit,
+        }
+        world_ctx = str(session.get("world_context") or "").strip()
+        if world_ctx:
+            payload["world_context"] = world_ctx
+        current_fields = session.get("fields") or {}
+        if any(current_fields.get(k) for k in EDITABLE_FIELDS):
+            payload["current_fields"] = current_fields
+        current_nl = str(session.get("natural_language") or "").strip()
+        if current_nl:
+            payload["current_natural_language"] = current_nl
+        return [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": (
+                    "Synthesize MOSS English prompt sections faithfully from forensic_audit. "
+                    "Return JSON only.\n"
+                    + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                ),
+            },
+        ]
 
     def _log_cm_history(
         self,
@@ -1779,27 +2608,42 @@ class CharacterMakerService:
         error: str = "",
         sink: dict | None = None,
         call_label: str = "캐릭터 메이커",
+        llm_slot: str = "",
     ) -> None:
-        """캐릭터 메이커 LLM 호출을 LIGHBD 자세히(lighbd_history.jsonl)에 기록.
-
-        call_label 은 자세히 카드에서 두 단계(1단계 수정 / 2단계 RAG 태그선택)를
-        구분하는 배지(call_name)로 쓰인다.
-
-        비전 입력(이미지)은 messages 의 텍스트와 별도라 텍스트 히스토리엔
-        포함되지 않는다(자세히 모달은 텍스트 입출력만 표시). 토큰 통계는
-        callLLMTask/VisionTask 의 metadata_sink 로부터 받아 기록하며, 스트리밍
-        usage 를 못 얻은 경우(비스트리밍/실패)엔 근사치 또는 0으로 떨어진다.
-        """
+        """캐릭터 메이커 LLM 호출을 LIGHBD 자세히(lighbd_history.jsonl)에 기록."""
         try:
             from modes.lighbd_service import _log_lighbd_history
 
             elapsed = round(time.perf_counter() - t0, 3)
             output_text = output if isinstance(output, str) else str(output)
             sk = sink or {}
+            resolved_slot = str(llm_slot or sk.get("llm_slot") or "").strip().lower()
+            if not resolved_slot and task_key:
+                try:
+                    resolved_slot, _ = llm_service._routing_for(task_key)
+                except Exception:
+                    resolved_slot = ""
+            service_name = ""
+            model_name = ""
+            if resolved_slot:
+                try:
+                    suffix = llm_service._slot_suffix(resolved_slot)
+                    service_name = str(
+                        llm_service._base_config_get(f"llm_service{suffix}", "openai") or ""
+                    )
+                    model_name = str(
+                        llm_service._base_config_get(f"llm_model{suffix}", "") or ""
+                    )
+                except Exception:
+                    pass
             record = {
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": task_key,
+                "task_key": task_key,
                 "call_name": call_label,
+                "llm_slot": resolved_slot,
+                "service": service_name,
+                "model": model_name,
                 "input": messages,
                 "output": output_text,
                 "completion_tokens": int(sk.get("completion_tokens") or 0),
@@ -2044,19 +2888,33 @@ class CharacterMakerService:
         image_path: str | None = None,
         reference_images: list[dict[str, Any]] | None = None,
         model_family: str = "anima",
+        reasoning_depth: str = "fast",
+        deep_pass: int = 1,
+        precomputed_bbox_regions: list[dict[str, Any]] | None = None,
+        bbox_regions_out: list[dict[str, Any]] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         """Use the configured editor and logs without mutating the legacy singleton session."""
+        def _notify_progress(label: str) -> None:
+            if callable(progress_callback) and label:
+                try:
+                    progress_callback(label)
+                except Exception:
+                    pass
+
         fields = _normalize_fields({field: values.get(f"raw_{field}_tags", []) for field in EDITABLE_FIELDS})
         session = {
             "fields": fields, "natural_language": values.get("natural_language", ""),
             "world_context": f"Character: {character}", "settings": {},
             "locks": dict.fromkeys(LOCKABLE_FIELDS, False), "chat": history,
         }
+        resolved_family = normalize_maker_model_family(model_family, strict=True)
+        resolved_depth = normalize_maker_reasoning_depth(reasoning_depth, strict=True)
         vision_images: list[tuple[str, ...]] = []
         manifest: list[dict[str, Any]] = []
         has_references = bool(reference_images)
         if image_path:
-            if has_references:
+            if has_references or resolved_depth == "deep":
                 encoded = self._encode_vision_image_with_banner(
                     image_path,
                     banner_text="GENERATED_CURRENT | Current generated image (edit target)",
@@ -2067,7 +2925,7 @@ class CharacterMakerService:
                 encoded = self._encode_vision_image(image_path)
             if encoded is None:
                 raise CharacterMakerError("피드백할 이미지를 읽지 못했습니다. 다시 생성하세요.")
-            if has_references:
+            if has_references or resolved_depth == "deep":
                 vision_images.append((
                     encoded[0],
                     encoded[1],
@@ -2091,6 +2949,9 @@ class CharacterMakerService:
                     "role": "CURRENT",
                     "description": "Latest selected generated image of the target character to modify.",
                 })
+        ref_entries: list[dict[str, Any]] = []
+        ref_only_vision: list[tuple[str, ...]] = []
+        ref_only_manifest: list[dict[str, Any]] = []
         for ref_index, ref in enumerate(reference_images or [], start=1):
             ref_path = ref.get("path", "") if isinstance(ref, dict) else str(ref or "")
             ref_name = str(ref.get("name") or "").strip() if isinstance(ref, dict) else os.path.basename(ref_path)
@@ -2105,13 +2966,13 @@ class CharacterMakerService:
                 raise CharacterMakerError("첨부한 참고 이미지를 읽지 못했습니다. 다시 업로드해 주세요.")
             position = len(vision_images) + 1
             label_name = f" ({ref_name})" if ref_name else ""
-            vision_images.append((
+            vision_entry = (
                 encoded[0],
                 encoded[1],
                 f"Image {position} [{image_id}] (red top banner): Reference image #{ref_index} "
                 f"uploaded by the user{label_name}. Not the generated output.",
-            ))
-            manifest.append({
+            )
+            manifest_entry = {
                 "position": position,
                 "role": "REF",
                 "image_id": image_id,
@@ -2123,15 +2984,113 @@ class CharacterMakerService:
                     f"(marked with a red {image_id} banner above the top edge). "
                     "Not the generated output; use it as the visual reference requested by the user."
                 ),
+            }
+            vision_images.append(vision_entry)
+            manifest.append(manifest_entry)
+            ref_entries.append({
+                "path": ref_path,
+                "name": ref_name,
+                "image_id": image_id,
+                "reference_index": ref_index,
             })
+            ref_only_vision.append((
+                encoded[0],
+                encoded[1],
+                f"Image {ref_index} [{image_id}] (red top banner): Reference image #{ref_index}{label_name}.",
+            ))
+            ref_only_manifest.append({
+                "image_index": ref_index,
+                "image_id": image_id,
+                "name": ref_name,
+            })
+
+        if resolved_depth == "deep" and ref_entries:
+            if precomputed_bbox_regions is not None:
+                bbox_regions = list(precomputed_bbox_regions)
+            else:
+                _notify_progress("영역 탐지 중 (AI BBox)…")
+                bbox_regions = await self._detect_reference_bboxes(
+                    message, ref_only_vision, ref_only_manifest,
+                )
+            if bbox_regions_out is not None:
+                bbox_regions_out.clear()
+                bbox_regions_out.extend(bbox_regions)
+            if bbox_regions:
+                bbox_crops = self._encode_reference_bbox_crops(
+                    ref_entries,
+                    bbox_regions,
+                    banner_color="#be123c",
+                )
+                for crop_item in bbox_crops:
+                    crop_pos = len(vision_images) + 1
+                    vision_images.append((
+                        crop_item["b64"],
+                        crop_item["mime"],
+                        f"Image {crop_pos} [{crop_item['image_id']}] (red top banner): "
+                        f"{crop_item['description']}",
+                    ))
+                    manifest.append({
+                        "position": crop_pos,
+                        "role": "REF_DETAIL_ZOOM",
+                        "image_id": crop_item["image_id"],
+                        "parent_image_id": crop_item["parent_image_id"],
+                        "reference_index": crop_item["reference_index"],
+                        "banner_color": "red",
+                        "name": crop_item["name"],
+                        "label": crop_item["label"],
+                        "bbox": crop_item["bbox"],
+                        "description": crop_item["description"],
+                    })
+
         images = vision_images or None
+        pass_tag = f"{deep_pass}차" if resolved_depth == "deep" else ""
+        if resolved_depth == "deep" and resolved_family == "moss" and images:
+            _notify_progress(
+                "1차 정밀 시각 분석 중…" if deep_pass == 1 else "원본 대조·2차 디테일 분석 중…"
+            )
+            audit_messages = self._moss_forensic_audit_messages(
+                session, message, image_manifest=manifest,
+            )
+            forensic_audit = await self._call_structured_llm(
+                "character_maker_feedback",
+                audit_messages,
+                images,
+                parser=_parse_moss_forensic_audit,
+                call_label=f"에셋 캐릭터 메이커 · MOSS 깊게 {pass_tag}(영문 시각 분석)",
+            )
+            _notify_progress(
+                "1차 프롬프트 합성 중…" if deep_pass == 1 else "2차 보정 프롬프트 합성 중…"
+            )
+            synth_images = [
+                img
+                for img, item in zip(vision_images, manifest)
+                if item.get("role") != "REF_DETAIL_ZOOM"
+            ] or None
+            synth_messages = self._moss_prompt_synthesis_messages(
+                session, message, forensic_audit,
+            )
+            return await self._call_structured_llm(
+                "character_maker_feedback" if synth_images else "character_maker_draft",
+                synth_messages,
+                synth_images,
+                parser=_parse_moss_sectioned_synthesis,
+                call_label=f"에셋 캐릭터 메이커 · MOSS 깊게 {pass_tag}(프롬프트 합성)",
+            )
+
+        if resolved_depth == "deep":
+            _notify_progress(
+                "1차 상세 프롬프트 작성 중…" if deep_pass == 1 else "원본 대조·2차 디테일 보정 중…"
+            )
         messages = self._revision_messages(
             session, message, rag_enabled=False, image_manifest=manifest,
-            model_family=model_family,
+            model_family=resolved_family,
         )
+        mode_tag = "MOSS" if resolved_family == "moss" else "Anima"
+        depth_tag = f" 깊게 {pass_tag}" if resolved_depth == "deep" else ""
         return await self._call_revision_llm(
             "character_maker_feedback" if images else "character_maker_draft",
-            messages, images, require_queries=False, call_label="에셋 캐릭터 메이커",
+            messages, images, require_queries=False,
+            call_label=f"에셋 캐릭터 메이커 · {mode_tag}{depth_tag}",
         )
 
     async def revise(self, session_id: str, payload: Any) -> dict[str, Any]:
@@ -2207,6 +3166,9 @@ class CharacterMakerService:
             image_manifest = [
                 copy.deepcopy(item["manifest"]) for item in vision_inputs
             ]
+            model_family = normalize_maker_model_family(
+                payload.get("model_family"), strict=True
+            )
             messages = self._revision_messages(
                 session,
                 feedback,
@@ -2215,6 +3177,7 @@ class CharacterMakerService:
                 branch_id=branch_id,
                 current_message_id=user_message_id,
                 image_manifest=image_manifest,
+                model_family=model_family,
             )
             draft = await self._call_revision_llm(
                 task_key, messages, images or None, require_queries=True,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetRequest, buildAssetRequest, copyAssetCharacterSettings, type AssetRecord } from "./asset";
 import type { useAssetCharacterSettings } from "./useAssetCharacterSettings";
 
+export type CharacterMakerModelFamily = "anima" | "moss";
+export type CharacterMakerReasoningDepth = "fast" | "deep";
 export type UploadedCharacterImage = {
   id: string; name: string; url: string;
 };
@@ -9,19 +11,33 @@ export type CharacterVersion = {
   id: string; number: number; kind: "snapshot" | "proposal" | "apply" | "rollback";
   created_at: string; before: AssetRecord; after: AssetRecord; message: string;
   assistant_message?: string; parent_id?: string; source_id?: string;
+  model_family?: CharacterMakerModelFamily;
+  reasoning_depth?: CharacterMakerReasoningDepth;
+  deep_pass?: number;
+  auto_refined?: boolean;
   image_url?: string; image_error?: string; image_updated_at?: string; feedback_image_version_id?: string;
   uploaded_images?: UploadedCharacterImage[];
 };
 export type CharacterHistory = {
   name: string; versions: CharacterVersion[]; active_version_id: string;
   revision: string; character_revision: string; error: string;
-  pending: { id: string; message: string; base_id: string; phase?: "propose" | "generate"; version_id?: string; image_version_id?: string; uploaded_images?: UploadedCharacterImage[] } | null;
+  pending: {
+    id: string; message: string; base_id: string;
+    phase?: "propose" | "generate"; version_id?: string; image_version_id?: string;
+    model_family?: CharacterMakerModelFamily;
+    reasoning_depth?: CharacterMakerReasoningDepth;
+    deep_pass?: number;
+    stage_label?: string;
+    uploaded_images?: UploadedCharacterImage[];
+  } | null;
 };
 
 export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType<typeof useAssetCharacterSettings>) {
   const name: string = draft.slot.character || "";
+  const activeModelFamily: CharacterMakerModelFamily = draft.slot.asset_workflow_type === "moss" ? "moss" : "anima";
   const currentName = useRef(name);
   currentName.current = name;
+  const [modelFamily, setModelFamily] = useState<CharacterMakerModelFamily>(activeModelFamily);
   const [history, setHistory] = useState<CharacterHistory | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,17 +50,26 @@ export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType
   const settings = useMemo(() => copyAssetCharacterSettings(draft.defaults, draft.slot), [draft.defaults, draft.slot]);
   const data = history?.name === name ? history : null;
 
+  useEffect(() => {
+    setModelFamily(activeModelFamily);
+  }, [activeModelFamily]);
+
   const reload = useCallback(async (signal?: AbortSignal) => {
     if (!name) return;
     const sequence = ++requestSequence.current;
     try {
       const result = await assetRequest(`asset/character-maker?name=${encodeURIComponent(name)}`, undefined, signal) as CharacterHistory;
       if (signal?.aborted || currentName.current !== name || sequence !== requestSequence.current) return;
-      if (pendingId.current && (!result.pending || result.pending.phase === "generate")) {
-        setSelectedId(result.pending?.version_id || pendingVersion.current || result.versions.at(-1)?.id || "");
-        setNotice(result.pending ? "AI 제안을 보관했습니다. 이미지를 생성하고 있습니다."
-          : result.error ? "요청이 중단되었습니다. 저장된 제안에서 다시 시도할 수 있습니다."
-          : "결과를 보관했습니다. 이미지를 보며 대화를 이어가거나 변경 내용을 적용하세요.");
+      if (pendingId.current && (!result.pending || result.pending.phase === "generate" || (result.pending.deep_pass || 0) >= 2)) {
+        const latestVersionId = result.pending?.version_id || result.versions.at(-1)?.id || pendingVersion.current || "";
+        if (latestVersionId) setSelectedId(latestVersionId);
+        setNotice(
+          result.pending
+            ? (result.pending.stage_label || "AI 제안을 보관했습니다. 이미지를 생성하고 있습니다.")
+            : result.error
+              ? "요청이 중단되었습니다. 저장된 제안에서 다시 시도할 수 있습니다."
+              : "결과를 보관했습니다. 이미지를 보며 대화를 이어가거나 변경 내용을 적용하세요."
+        );
       }
       pendingId.current = result.pending?.id || "";
       pendingVersion.current = result.pending?.version_id || "";
@@ -92,6 +117,7 @@ export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType
       const payload = {
         action, name, settings, revision: action === "reset" ? data?.revision : latest.revision, character_revision: latest.character_revision,
         builtin_unlock_token: character.unlockToken, asset_workflow_type: generationJob?.asset_workflow_type || draft.slot.asset_workflow_type,
+        ...(action === "propose" ? { model_family: extraPayload.model_family || modelFamily } : {}),
         ...extraPayload, generation_job: generationJob,
       };
       let requestBody: AssetRecord | FormData = payload;
@@ -121,5 +147,5 @@ export function useAssetCharacterMaker(draft: AssetRecord, character: ReturnType
   }
 
   const selected = data?.versions.find(version => version.id === selectedId) || data?.versions.at(-1);
-  return { data, selected, select: setSelectedId, settings, busy, error, notice, act, reload };
+  return { data, selected, select: setSelectedId, settings, busy, error, notice, act, reload, modelFamily, setModelFamily, activeModelFamily };
 }

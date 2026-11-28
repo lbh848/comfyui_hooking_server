@@ -24,7 +24,12 @@ WORKFLOW_GROUPS = {
     "workflow_pack_extra_paths.anima_rgba_asset": ("에셋", "ANIMA"),
     "workflow_pack_extra_paths.asset_moss_8step": ("에셋", "MOSS"),
     "workflow_pack_extra_paths.asset_moss_4step": ("에셋", "MOSS"),
+    "workflow_pack_extra_paths.asset_moss_4step_rgba": ("에셋", "MOSS"),
     "workflow_pack_extra_paths.asset_moss_50step": ("에셋", "MOSS"),
+    "bg_anima_only_asset_workflow_source_path": ("배경", "ANIMA"),
+    "bg_moss_asset_workflow_source_path": ("배경", "MOSS"),
+    "workflow_pack_extra_paths.bg_asset_moss_8step": ("배경", "MOSS"),
+    "workflow_pack_extra_paths.bg_asset_moss_4step": ("배경", "MOSS"),
     "workflow_pack_extra_paths.illustration_dual_vae": ("삽화", "ANIMA"),
     "workflow_pack_extra_paths.illustration_moss_8step": ("삽화", "MOSS"),
     "workflow_pack_extra_paths.illustration_moss_4step": ("삽화", "MOSS"),
@@ -63,7 +68,7 @@ def default_workflow_groups(items: list[dict]) -> list[dict]:
             paths = {("삽화", "기본")} if "comfy_workflow_source_path" in item.get("bindings", []) else {("기타", "미분류")}
         for path in sorted(paths):
             grouped.setdefault(path, []).append(item["id"])
-    order = {name: index for index, name in enumerate(("삽화", "에셋", "이미지 편집", "LoRA 학습", "영상", "공통", "기타", "미분류"))}
+    order = {name: index for index, name in enumerate(("삽화", "에셋", "배경", "이미지 편집", "LoRA 학습", "영상", "공통", "기타", "미분류"))}
     return [{"id": "default-" + hashlib.sha256((category + "/" + name).encode()).hexdigest()[:16],
              "category": category, "name": name, "itemIds": identities}
             for (category, name), identities in sorted(grouped.items(), key=lambda item: (order[item[0][0]], item[0][1]))]
@@ -119,16 +124,25 @@ class WorkflowGroupMoveBlocked(ValueError):
 
 
 def _group_key(group: dict) -> tuple[str, str]:
-    aliases = {"이미지 편집": "편집", "LoRA 학습": "학습", "공통": "유틸리티", "에셋 및 수정": "에셋"}
+    aliases = {"이미지 편집": "편집", "LoRA 학습": "학습", "공통": "유틸리티", "에셋 및 수정": "에셋", "배경 에셋": "배경"}
     return aliases.get(group["category"], group["category"]).casefold(), group["name"].casefold()
 
 
 def effective_workflow_groups(catalog: dict, saved: list[dict]) -> list[dict]:
     """Keep pack classifications authoritative and overlay only local memberships."""
     pack_ids = {item["id"] for item in catalog["items"] if item["source"] == "pack"}
+    pack_local_ids = {
+        _local_workflow_id(relative)
+        for item in catalog["items"]
+        if item["source"] == "pack"
+        for relative in item.get("localPaths", [])
+    }
     result = []
     by_key = {}
-    assigned_local = {identity for group in saved for identity in group["itemIds"] if identity.startswith("local:")}
+    assigned_local = {
+        identity for group in saved for identity in group["itemIds"]
+        if identity.startswith("local:") and identity not in pack_local_ids
+    }
     for group in catalog["defaultGroups"]:
         identities = [identity for identity in group["itemIds"] if identity in pack_ids or identity not in assigned_local]
         if identities:
@@ -136,7 +150,10 @@ def effective_workflow_groups(catalog: dict, saved: list[dict]) -> list[dict]:
             result.append(value)
             by_key[_group_key(value)] = value
     for group in saved:
-        identities = [identity for identity in group["itemIds"] if identity.startswith("local:")]
+        identities = [
+            identity for identity in group["itemIds"]
+            if identity.startswith("local:") and identity not in pack_local_ids
+        ]
         if not identities:
             continue
         target = by_key.get(_group_key(group))

@@ -455,21 +455,48 @@ def register_model_preset_runtime(server, prefix, presets, on_change=None, works
         name = (body or {}).get("workshop", request.query.get("workshop"))
         return name if name in WORKSHOPS else workshop
 
+    async def notify_changed(selected_workshop: str | None, result: dict, kind: str) -> None:
+        notify = getattr(server, "notify_frontend", None)
+        if not callable(notify):
+            return
+        has_subscribers = getattr(notify, "has_subscribers", None)
+        if callable(has_subscribers) and not has_subscribers("model_presets_changed"):
+            return
+        scope_key = f"{prefix}:{selected_workshop}" if selected_workshop else prefix
+        try:
+            await notify("model_presets_changed", {
+                "scope": scope_key,
+                "prefix": prefix,
+                "workshop": selected_workshop or "",
+                "kind": kind,
+                "active_id": result.get("active_id") or result.get("preset_id") or "",
+                "revision": result.get("revision") or "",
+                "saved_at": result.get("saved_at"),
+            })
+        except Exception:
+            pass
+
     workflow_lock = asyncio.Lock()
     async def model_presets(request: web.Request) -> web.Response:
         try:
+            mutated = False
+            selected_workshop = None
             async with workflow_lock:
                 if request.method == "POST":
                     body = await request.json()
                     if not isinstance(body, dict) or set(body) - {"action", "preset_id", "target_id", "revision", "name", "config", "scope", "confirmed", "builtin_unlock_token", "workshop"}:
                         raise ValueError("프리셋 요청을 확인하세요.")
-                    result = presets.change(server.app_config, body, requested_workshop(request, body))
+                    selected_workshop = requested_workshop(request, body)
+                    result = presets.change(server.app_config, body, selected_workshop)
+                    mutated = body.get("action") not in {"lock", "unlock"}
                 else:
                     selected_workshop = requested_workshop(request)
                     result = presets.view(presets.read(server.app_config, selected_workshop), selected_workshop)
                 if on_change:
                     on_change()
-                return web.json_response(result, headers={"Cache-Control": "no-store"})
+            if mutated:
+                await notify_changed(selected_workshop, result, "presets")
+            return web.json_response(result, headers={"Cache-Control": "no-store"})
         except (ValueError, KeyError, TypeError, OSError, IndexError) as exc:
             return web.json_response({"error": str(exc)}, status=409 if isinstance(exc, PresetConflict) else 400)
 
@@ -482,11 +509,14 @@ def register_model_preset_runtime(server, prefix, presets, on_change=None, works
             if not isinstance(body, dict) or set(body) - {"preset_id", "profile", "path", "revision", "fields", "builtin_unlock_token", "workshop"}:
                 raise ValueError("워크플로우 설정 요청을 확인하세요.")
             profile = body.get("profile", request.query.get("profile"))
+            selected_workshop = requested_workshop(request, body)
             async with workflow_lock:
                 result = presets.workflow(server.app_config, profile, body.get("preset_id", request.query.get("preset_id")),
                                           body if request.method == "POST" else None,
-                                          requested_workshop(request, body))
-                return web.json_response(result, headers={"Cache-Control": "no-store"})
+                                          selected_workshop)
+            if request.method == "POST":
+                await notify_changed(selected_workshop, result, "workflow")
+            return web.json_response(result, headers={"Cache-Control": "no-store"})
         except (ValueError, KeyError, TypeError, OSError, IndexError) as exc:
             return web.json_response({"error": str(exc)}, status=409 if isinstance(exc, PresetConflict) else 400)
 

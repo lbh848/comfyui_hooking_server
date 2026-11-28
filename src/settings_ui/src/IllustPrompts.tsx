@@ -12,11 +12,13 @@ import { IllustPostprocess } from "./IllustPostprocess";
 import { useWorkflowAutosave } from "./useWorkflowAutosave";
 import { useUnsavedChanges } from "./unsavedChanges";
 import { illustrationPresetFamily } from "./illustrationModels";
+import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 
 const labels: Record<string, string> = {
   local_llm_load_after_generation: "생성이 끝나면, 공방-LLM 로드", image_model_load_at_detail: "DETAIL이 시작할 때 그림 모델 로드",
   illustration_model_family: "그림 모델",
   illustration_output_mode: "출력 모드", original_asset_count: "원본 에셋 출력 장수",
+  moss_detail_prompt_mode: "MOSS DETAIL 작성 방식",
   moss_dialogue_repair_enabled: "말풍선 한국어 교정",
   manga_disable_bubbles: "말풍선 끄기",
   outfit_enabled: "OUTFIT 복장·헤어 추적", time_place_enabled: "TIME & PLACE 시간·장소·조명 추적", npc_generation_enabled: "미등록 인물 자동 생성", npc_generation_deferred: "NPC 생성은 나중에", npc_lifetime: "미사용 수명 (회)", call2_plan_enabled: "PLAN 시각 계획",
@@ -38,6 +40,7 @@ for (const [suffix, text] of Object.entries({ enabled: "병렬 처리", max_conc
 const choices: Record<string, [string, string][]> = {
   profile_resolve_mode: [["per_character", "캐릭터별 예측"], ["combined", "한번에 예측"]],
   illustration_output_mode: [["illustration", "일반 삽화"], ["original_asset", "원본 에셋"], ["both", "일반 삽화 + 원본 에셋"], ["manga", "만화 삽화"], ["manga_both", "만화 삽화 + 원본 에셋"]],
+  moss_detail_prompt_mode: [["tags", "태그 방식 (기존)"], ["natural", "자연어 방식"]],
   scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]], manga_scene_mode: [["manual", "지정 범위 적용"], ["auto", "범위 안에서 자동 선택"]],
   character_limit: [["1", "1"], ["2", "2"], ["3", "3"]], manga_character_limit: [["1", "1"], ["2", "2"], ["3", "3"]],
   call3_prompt_mode: [["speak", "대사"], ["manga", "말풍선"], ["subtitle", "자막"]],
@@ -73,7 +76,7 @@ const generationGroups: { id: string; title: string; description: string; sectio
   {
     id: "pipeline", title: "파이프라인", description: "출력 방식과 생성 단계의 사용 여부를 설정합니다.",
     sections: [
-      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_dialogue_repair_enabled", "nsfw", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "profile_resolve_mode", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
+      { title: "", keys: ["illustration_model_family", "illustration_output_mode", "moss_detail_prompt_mode", "moss_dialogue_repair_enabled", "nsfw", "overthinking_prevention_enabled", "manga_composition_hint_enabled", "manga_disable_bubbles", "profile_context_translate", "profile_resolve_mode", "outfit_enabled", "time_place_enabled", "call2_plan_enabled"] },
       { title: "NPC 생성", keys: ["npc_generation_enabled"], dependent: ["npc_lifetime"] },
       { title: "", keys: ["key_visual", "postprocess_enabled"] },
     ],
@@ -112,6 +115,7 @@ const generationTabs = Object.fromEntries(generationGroups.map(group => [group.i
 // 해당 생성 설정을 노출하지 않는다. DETAIL 설정은 그대로 유지한다.
 const emotionHiddenKeys = new Set([
   "illustration_model_family",
+  "moss_detail_prompt_mode",
   "moss_dialogue_repair_enabled",
   "manga_composition_hint_enabled",
   "manga_disable_bubbles",
@@ -167,6 +171,7 @@ const fieldHelp: Record<string, string> = {
   local_llm_load_after_generation: "삽화 작업이 끝나면, LLM 모델을 GPU에 올립니다.",
   image_model_load_at_detail: "detail이 시작하는 시점에서 그림 모델을 미리 GPU에 올립니다.\n초기 웜업 시간을 LLM 생성 시간에 가릴 수 있습니다.",
   illustration_output_mode: "원본 에셋 장수는 에셋 선택 탭에서 설정합니다. 만화 삽화 모드는 MOSS 그림 모델에서만 선택할 수 있습니다.",
+  moss_detail_prompt_mode: "MOSS 일반 삽화(DETAIL-MOSS)와 MOSS 만화(DETAIL-MANGA)의 묘사 방식을 선택합니다. 자연어 방식은 태그 대신 자연어 영어 문장으로 작성합니다.",
   moss_dialogue_repair_enabled: "항상 OFF로 고정됩니다. 말풍선 대사를 교정하지 않고 그대로 그립니다.",
   nsfw: "NSFW 및 물리 접촉 지침을 추가합니다. 호환성 지침은 항상 적용됩니다.",
   overthinking_prevention_enabled: "DETAIL·DETAIL-MOSS·DETAIL-MANGA의 LLM 시스템 프롬프트 맨 앞에 과도한 추론을 줄이는 지침을 추가합니다.",
@@ -276,14 +281,28 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
   const togglesResource = useIllustrationResource(scopedPath("illustration_context/toggles"), false, request);
   const promptsResource = useIllustrationResource(scopedPath("illustration_context/prompts"), false, request);
   const configResource = useIllustrationResource(scopedPath("illustration/config"), false, request);
-  // The active illustration model preset is global; this selector switches it
-  // without touching the per-generation toggles saved below.
-  const modelPresetResource = useIllustrationResource(scope === "illustration" ? "illustration/presets" : null, false, request);
-  const activeModelPreset = (modelPresetResource.data?.presets || []).find(
-    (item: IllustrationData) => item.id === modelPresetResource.data?.active_id);
-  const modelFamily = modelPresetResource.data ? illustrationPresetFamily(activeModelPreset) : "";
+  // Share the workshop's model selection state so switching model families here
+  // stays synchronized with the model preset editor and active model pickers.
+  const modelSelection = useIllustrationModelSelection();
+  const modelPresetData = scope === "illustration" ? modelSelection.data : null;
+  const activeModelPreset = (modelPresetData?.presets || []).find(
+    (item: IllustrationData) => item.id === modelPresetData?.active_id);
+  const modelFamily = modelPresetData ? illustrationPresetFamily(activeModelPreset) : "";
   const [pendingModelFamily, setPendingModelFamily] = useState<"moss" | "anima" | "">("");
   const modelAction = useIllustrationAction();
+  const ownModelPresetTargetRef = useRef("");
+  const prevModelPresetIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const activeId = modelPresetData?.active_id;
+    if (prevModelPresetIdRef.current !== undefined && activeId !== prevModelPresetIdRef.current) {
+      if (ownModelPresetTargetRef.current && activeId === ownModelPresetTargetRef.current) {
+        ownModelPresetTargetRef.current = "";
+      } else {
+        modelAction.clear();
+      }
+    }
+    prevModelPresetIdRef.current = activeId;
+  }, [modelPresetData?.active_id, modelAction.clear]);
   const [toggles, setToggles] = useState<IllustrationData | null>(null);
   const [prompts, setPrompts] = useState<IllustrationData | null>(null);
   const [config, setConfig] = useState<IllustrationData | null>(null);
@@ -338,7 +357,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
   if (!toggles || !prompts || !config) return <Panel title="삽화 프롬프트 설정"><IllustrationLoading error={togglesResource.error || promptsResource.error || configResource.error} retry={() => { togglesResource.reload(); promptsResource.reload(); configResource.reload(); }} /></Panel>;
   async function selectModelFamily(value: string) {
     const family = value === "moss" ? "moss" : "anima";
-    const document = modelPresetResource.data;
+    const document = modelPresetData;
     if (!document) return;
     const storageKey = `soya-illust-model-family:${family}`;
     const remembered = window.localStorage.getItem(storageKey);
@@ -365,12 +384,9 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
       return;
     }
     setPendingModelFamily(family);
+    ownModelPresetTargetRef.current = target.id;
     await modelAction.run(async () => {
-      await request("illustration/presets", {
-        action: "select", target_id: target.id, preset_id: document.active_id,
-        revision: document.revision, workshop: "illustration",
-      });
-      modelPresetResource.reload();
+      await modelSelection.selectPreset(target.id);
       configResource.reload();
     }, `${target.name} 모델로 전환했습니다.`);
     setPendingModelFamily("");
@@ -379,7 +395,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
     if (name === "illustration_model_family") {
       if (scope !== "illustration") return null;
       return <ModelFamilyField key={name} value={pendingModelFamily || modelFamily}
-        disabled={modelAction.busy || !modelPresetResource.data}
+        disabled={modelAction.busy || modelSelection.disabled}
         onChange={value => void selectModelFamily(value)} />;
     }
     // 일반 삽화 공방은 합성 모드를 선택할 수 없으므로, 합성 모드가 저장돼
@@ -394,6 +410,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
         (pendingModelFamily || modelFamily) === "anima" && ["manga", "manga_both"].includes(key)]);
     const retryPrefix = name.includes("_parallel_slow_retry_") ? name.split("_slow_retry_")[0] : "";
     const mossModel = (pendingModelFamily || modelFamily) === "moss";
+    if (name === "moss_detail_prompt_mode" && !mossModel) return null;
     // MOSS는 DETAIL-MOSS가 만든 bbox 객체 레이아웃을 그대로 쓰므로 V3 영역 마스크 설정을 제어하지 않는다.
     const maskKeys = ["single_char_mask_enabled", "single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"];
     const maskLocked = mossModel && maskKeys.includes(name);
@@ -404,7 +421,9 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
     const disabled = postprocessLocked || planLocked || maskLocked || name === "prompt_format" || (dependencies[name] || []).some(key => !toggles![key]) || !!retryPrefix && Number(toggles![`${retryPrefix}_max_concurrency`]) < 2
       || name === "original_asset_count" && !["original_asset", "both", "manga_both", "composite_both"].includes(toggles!.illustration_output_mode)
       || name === "moss_dialogue_repair_enabled";
-    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "overthinking_prevention_enabled", "npc_generation_deferred", "manga_disable_bubbles"].includes(name) ? toggles![name] ?? false : toggles![name];
+    const rawValue = name === "postprocess_enabled" ? config!.postprocess_enabled
+      : name === "moss_detail_prompt_mode" ? (toggles![name] || "tags")
+      : ["local_llm_load_after_generation", "image_model_load_at_detail", "nsfw_asset_generation_enabled", "overthinking_prevention_enabled", "npc_generation_deferred", "manga_disable_bubbles"].includes(name) ? toggles![name] ?? false : toggles![name];
     // Preserve the saved master switch so leaving manga releases this override.
     const value = postprocessLocked || planLocked && name === "call2_plan_enabled" || name === "moss_dialogue_repair_enabled" || maskLocked && ["single_char_mask_enabled", "single_char_mask_skip_enabled"].includes(name) ? false
       : emotionOutputMode && rawValue === "composite_both" ? "composite" : rawValue;
@@ -431,7 +450,7 @@ export function IllustPrompts({ botSelected, scope = "illustration" }: { botSele
       onBlur={event => { if (event.target.matches("input:not([type=checkbox]), textarea")) void autosave.retry(); }}>
         <fieldset className="illust-form">
           <p className="field-help">변경 사항은 자동 저장됩니다. 숫자·텍스트는 입력을 멈추거나 입력칸을 벗어나면 저장됩니다.</p>
-          <IllustrationFeedback error={modelAction.error || modelPresetResource.error || autosave.error || autosave.inputError} message={modelAction.message} />
+          <IllustrationFeedback error={modelAction.error || (scope === "illustration" ? modelSelection.resource.error : "") || autosave.error || autosave.inputError} message={modelAction.message} />
           {autosave.error && <button type="button" className="button" disabled={autosave.busy || !!autosave.inputError} onClick={() => void autosave.retry()}>자동 저장 다시 시도</button>}
           {scopeGenerationGroups.map(group => <div key={group.id} role="tabpanel" id={`illust-generation-panel-${group.id}`} aria-labelledby={`illust-generation-tab-${group.id}`} data-generation-tab={group.id} hidden={generationTab !== group.id} className="illust-generation-content">
             <header className="illust-generation-heading"><h3>{group.title}</h3><p>{group.description}</p></header>

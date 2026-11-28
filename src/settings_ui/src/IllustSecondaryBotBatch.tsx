@@ -1,8 +1,8 @@
 import { useId, useRef, useState } from "react";
 import { Badge, Modal } from "./components";
 import { IllustrationFeedback } from "./IllustBackups";
-import { useBotApi } from "./BotApiScope";
-import { query, type IllustrationData } from "./illustration";
+import { useBotApi, useBotResource } from "./BotApiScope";
+import { enc, query, type IllustrationData } from "./illustration";
 import { useUnsavedChanges } from "./unsavedChanges";
 import "./illust-secondary-bot.css";
 
@@ -15,6 +15,9 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
 }) {
   const api = useBotApi();
   const id = useId();
+  const systemPrompt = useBotResource(`bot_mode/system_prompt?bot_name=${enc(botName)}`);
+  const isCrossover = systemPrompt.data?.genre === "secondary_bot_crossover";
+  const crossoverWorks = String(systemPrompt.data?.genre_crossover_works || "").trim();
   // Keep the reviewed cards and optimistic-save baselines stable across refreshes.
   const [initial] = useState(() => characters);
   const bases = useRef<Record<string, IllustrationData>>(Object.fromEntries(initial
@@ -25,6 +28,7 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
   })));
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const [work, setWork] = useState("");
+  const [rowWorks, setRowWorks] = useState<Record<string, string>>({});
   const [prefix, setPrefix] = useState(", ");
   const [suffix, setSuffix] = useState("");
   const [includePrefix, setIncludePrefix] = useState(false);
@@ -37,12 +41,16 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const stop = useRef(false);
-  const additions = `${includePrefix ? prefix : ""}${includeWork ? work.trim() : ""}${includeSuffix ? suffix : ""}`;
   const rows = targets.map(target => {
     const inputTag = results[target.key]?.tag ?? target.currentTag;
-    const finalTag = inputTag.trim() ? `${inputTag.trim()}${additions}`.trim() : "";
+    const rowWork = rowWorks[target.key] ?? "";
+    const effectiveWork = rowWork.trim() || work.trim();
+    const rowAdditions = includeWork
+      ? (effectiveWork ? `${includePrefix ? prefix : ""}${effectiveWork}${includeSuffix ? suffix : ""}` : "")
+      : `${includePrefix ? prefix : ""}${includeSuffix ? suffix : ""}`;
+    const finalTag = inputTag.trim() ? `${inputTag.trim()}${rowAdditions}`.trim() : "";
     const storedTag = savedTags[target.key] ?? target.currentTag;
-    return { ...target, inputTag, finalTag, storedTag, changed: !!finalTag && finalTag !== storedTag };
+    return { ...target, inputTag, rowWork, effectiveWork, finalTag, storedTag, changed: !!finalTag && finalTag !== storedTag };
   });
   const selected = rows.filter(target => !unchecked.has(target.key));
   const pending = selected.filter(target => target.changed);
@@ -65,8 +73,10 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
         setMessage(`${index + 1}/${selected.length} · ${target.name} · ${target.card.label} 검색 중`);
         try {
           const response = await api.request("bot_mode/suggest_name_tag", {
-            bot: botName, character: target.name, work: work.trim(), card_label: target.card.label,
+            bot: botName, character: target.name, work: target.effectiveWork, card_label: target.card.label,
             appearance: (target.card.appearance || []).map((entry: IllustrationData | string) => typeof entry === "string" ? entry : entry.tag).join(", ").slice(0, 2000),
+            description: String(target.card.selection_guide || "").slice(0, 1000),
+            work_hints: !target.effectiveWork && isCrossover ? crossoverWorks.slice(0, 600) : "",
           });
           const candidates: Candidate[] = response.candidates || [];
           const tag = candidates.some(item => item.tag === response.tag) ? response.tag : "";
@@ -151,7 +161,8 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
             </div>
           </div>
           <div className="illust-secondary-format-order" aria-label="최종 태그 조합 순서"><strong>이름 태그</strong>{includePrefix && <><span>+</span><strong>prefix</strong></>}{includeWork && <><span>+</span><strong>작품명</strong></>}{includeSuffix && <><span>+</span><strong>suffix</strong></>}</div>
-          <p className="field-help">공백과 구분 기호는 입력한 그대로 붙습니다. 작품명은 삽입 여부와 관계없이 자동 검색에도 사용됩니다.</p>
+          <p className="field-help">공백과 구분 기호는 입력한 그대로 붙습니다. 작품명은 삽입 여부와 관계없이 자동 검색에도 사용되며, 각 캐릭터에 개별 작품명을 입력하면 그 값이 우선 적용됩니다.</p>
+          {isCrossover && crossoverWorks && <p className="field-help">크로스오버 주요 등장 작품 힌트: {crossoverWorks}</p>}
           <details className="illust-secondary-format-examples"><summary>쉼표·괄호 입력 예시</summary><p>쉼표 연결: prefix에 <code>{", "}</code>를 입력하고 prefix·작품명 삽입을 켜세요.</p><p>괄호 연결: prefix에 <code>{" ("}</code>, suffix에 <code>)</code>를 입력하고 세 항목의 삽입을 켜세요.</p></details>
         </section>
         <section className="illust-secondary-results" aria-labelledby={`${id}-results`}>
@@ -178,6 +189,8 @@ export function IllustSecondaryBotBatch({ botName, characters, readOnly, onClose
                   {target.changed ? <Badge tone="rose">변경됨</Badge> : savedTags[target.key] !== undefined && <Badge>저장됨</Badge>}
                 </header>
                 <div className="illust-secondary-row-fields">
+                  <label className="field"><span>개별 작품명 <small>선택 · 비우면 공통 작품명 사용</small></span><input aria-label={`${target.name} · ${target.card.label} 개별 작품명`} value={target.rowWork} maxLength={200} disabled={disabled}
+                    placeholder={work.trim() ? `공통: ${work.trim()}` : "예: 동방 프로젝트 (크로스오버 개별 지정)"} autoComplete="off" onChange={event => setRowWorks(current => ({ ...current, [target.key]: event.target.value }))} /></label>
                   {!!result?.candidates.length && <label className="field"><span>이름 태그 후보</span><select aria-label={`${target.name} · ${target.card.label} 이름 태그 후보`} disabled={disabled} value={result.tag} onChange={event => setResults(current => ({ ...current, [target.key]: { ...current[target.key], tag: event.target.value, error: "", manual: false } }))}>
                     <option value="">후보 선택 또는 직접 입력</option>
                     {result.tag && !result.candidates.some(item => item.tag === result.tag) && <option value={result.tag}>직접 입력값 사용</option>}

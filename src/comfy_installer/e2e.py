@@ -27,7 +27,11 @@ from .manager_dependencies import (
     expected_manager_version,
 )
 from .operations import isolated_subprocess_env
-from .execution_profile import cpu_launch_args, installed_cpu_runtime
+from .execution_profile import (
+    comfy_launch_env,
+    cpu_launch_args,
+    installed_cpu_runtime,
+)
 
 
 class ComfyE2EError(RuntimeError):
@@ -337,7 +341,7 @@ class ComfyProcess:
             self.process = subprocess.Popen(
                 command,
                 cwd=str(self.comfy_root),
-                env=isolated_subprocess_env(),
+                env=comfy_launch_env(isolated_subprocess_env()),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

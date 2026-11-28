@@ -3,6 +3,7 @@ import { Group, Link2, Ungroup } from "lucide-react";
 import { Empty, Modal } from "./components";
 import { AssetFolderButton, AssetFolderDeleteButton } from "./AssetFolderButton";
 import { assetMedia, type AssetRecord } from "./asset";
+import { withAssetPostprocessMedia } from "./assetPostprocess";
 
 type GroupAction = (body: AssetRecord) => Promise<boolean>;
 type Folder = { outfit: string; expression: string };
@@ -27,10 +28,10 @@ const filenameTime = (filename?: string) => {
 };
 const folderTime = (item: AssetRecord) => Number(item.modified_at) || 0;
 
-export function AssetCharacterFolders({ names, tags, representatives, search, filter, busy, readOnly, builtinUnlocked, sortOrder = "name-asc", grouped = false, onOpen, onDelete, onAction, error }: {
+export function AssetCharacterFolders({ names, tags, representatives, search, filter, busy, readOnly, builtinUnlocked, sortOrder = "name-asc", grouped = false, postprocessRevision = "", onOpen, onDelete, onAction, error }: {
   names: string[]; tags: AssetRecord; representatives: AssetRecord; search: string; filter: string | null; busy: boolean; readOnly: boolean;
   onOpen: (name: string) => void; onDelete: (name: string) => void; onAction: GroupAction; error: string; builtinUnlocked: boolean;
-  sortOrder?: AssetGallerySortOrder; grouped?: boolean;
+  sortOrder?: AssetGallerySortOrder; grouped?: boolean; postprocessRevision?: string;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
@@ -55,7 +56,7 @@ export function AssetCharacterFolders({ names, tags, representatives, search, fi
     const rep = representatives[name];
     const locked = tags.preset_scopes?.characters?.[name] === "builtin" && !builtinUnlocked;
     return <div className={`asset-folder-entry${readOnly ? "" : " is-deletable"}`} key={name}>
-      <AssetFolderButton label={name} galleryKey={name} character disabled={busy} previewUrl={rep?.filename ? assetMedia(name, rep.outfit, rep.expression, rep.filename) : undefined} onClick={() => onOpen(name)} />
+      <AssetFolderButton label={name} galleryKey={name} character disabled={busy} previewUrl={rep?.filename ? withAssetPostprocessMedia(assetMedia(name, rep.outfit, rep.expression, rep.filename), !!postprocessRevision, postprocessRevision) : undefined} onClick={() => onOpen(name)} />
       {!readOnly && <AssetFolderDeleteButton label={name} disabled={busy || locked} title={locked ? "배포 캐릭터는 캐릭터 설정에서 배포 풀기 후 삭제할 수 있습니다." : undefined} onClick={() => onDelete(name)} />}
       <div className="asset-folder-group-actions"><span><Group size={13} />{groupFor(name) || "미지정"}</span>{!readOnly && <button type="button" className="button" disabled={busy || locked || !tags.characters?.[name]} title={locked ? "배포 캐릭터의 그룹은 캐릭터 설정에서 배포 풀기 후 변경할 수 있습니다." : undefined} aria-label={`${name} 그룹 설정`} onClick={() => { setGroupName(groupFor(name)); setEditing(name); }}>그룹 설정</button>}</div>
     </div>;
@@ -78,8 +79,8 @@ export function AssetCharacterFolders({ names, tags, representatives, search, fi
   </div>;
 }
 
-export function AssetOutfitFolders({ character, data, search, busy, readOnly, sortOrder = "name-asc", onOpen, onDelete, onAction }: {
-  character: string; data: AssetRecord; search: string; busy: boolean; readOnly: boolean; sortOrder?: AssetGallerySortOrder;
+export function AssetOutfitFolders({ character, data, search, busy, readOnly, sortOrder = "name-asc", postprocessRevision = "", onOpen, onDelete, onAction }: {
+  character: string; data: AssetRecord; search: string; busy: boolean; readOnly: boolean; sortOrder?: AssetGallerySortOrder; postprocessRevision?: string;
   onOpen: (item: AssetRecord) => void; onDelete: (item: AssetRecord) => void; onAction: GroupAction;
 }) {
   const [selecting, setSelecting] = useState(false);
@@ -147,7 +148,7 @@ export function AssetOutfitFolders({ character, data, search, busy, readOnly, so
         return <div key={key} className={`asset-folder-entry${readOnly ? "" : " is-deletable"}${selected.includes(key) && selecting ? " is-selected" : ""}${dragKey === key ? " is-dragging" : ""}${dropKey === key ? " is-drop-target" : ""}`} draggable={!busy && !readOnly && !selecting}
           onDragStart={event => { dragging.current = item as Folder; setDragKey(key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-comfy-asset-folder", JSON.stringify({ character, outfit: item.outfit, expression: item.expression })); }}
           onDragEnd={() => { dragging.current = null; setDragKey(""); setDropKey(""); }} onDragOver={event => allowDrop(event, key)} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropKey(""); }} onDrop={event => drop(event, item as Folder)}>
-          <AssetFolderButton label={folderLabel(item as Folder)} galleryKey={key} count={item.count ?? item.image_count ?? 0} disabled={busy} selected={selecting ? selected.includes(key) : undefined} previewUrl={item.representative ? assetMedia(character, item.outfit, item.expression, item.representative) : undefined} onClick={() => selecting ? toggle(key) : onOpen(item)} />
+          <AssetFolderButton label={folderLabel(item as Folder)} galleryKey={key} count={item.count ?? item.image_count ?? 0} disabled={busy} selected={selecting ? selected.includes(key) : undefined} previewUrl={item.representative ? withAssetPostprocessMedia(assetMedia(character, item.outfit, item.expression, item.representative), !!postprocessRevision, postprocessRevision) : undefined} onClick={() => selecting ? toggle(key) : onOpen(item)} />
           {!readOnly && <AssetFolderDeleteButton label={folderLabel(item as Folder)} disabled={busy} onClick={() => onDelete(item)} />}
           {(selecting || section.id && !readOnly) && <div className="asset-folder-group-actions">{selecting && <label className="asset-check"><input type="checkbox" disabled={busy} aria-label={`${folderLabel(item as Folder)} 선택`} checked={selected.includes(key)} onChange={() => toggle(key)} />선택</label>}{section.id && !readOnly && <button type="button" className="button" disabled={busy} aria-label={`${folderLabel(item as Folder)} 그룹 해제`} onClick={() => void onAction({ action: "ungroup_outfit", character, outfit: item.outfit, expression: item.expression })}><Ungroup size={13} />그룹 해제</button>}</div>}
         </div>;

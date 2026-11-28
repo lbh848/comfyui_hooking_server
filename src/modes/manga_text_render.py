@@ -143,8 +143,8 @@ def normalize_manga_text_settings(settings: Optional[dict]) -> dict:
     # 예전 저장값(bold=true)은 700 굵기로 옮긴다. 기본값 병합 전의 원본을 봐야
     # bold만 있던 설정이 기본 500으로 덮이지 않는다.
     raw_weight = raw.get("font_weight")
-    if raw_weight is None and raw.get("bold"):
-        raw_weight = 700
+    if raw_weight is None:
+        raw_weight = 700 if raw.get("bold") else DEFAULT_MANGA_TEXT_SETTINGS["font_weight"]
     weight = int(round(_number(raw_weight, 500, 100, 900, "font_weight") / 100.0) * 100)
     clean["font_weight"] = max(100, min(900, weight))
     clean.pop("bold", None)
@@ -362,7 +362,7 @@ def filter_text_boxes(
     제거한다. 고정 임계값만 쓰면 작은 페이지에서 실제 대사까지 지울 수 있다.
     """
     _, height = image_size
-    parsed: list[tuple[float, float, float, float]] = []
+    horizontal: list[tuple[float, float, float, float]] = []
     for box in boxes:
         try:
             x0, y0, x1, y1 = (float(value) for value in box)
@@ -370,22 +370,21 @@ def filter_text_boxes(
             continue
         if x1 <= x0 or y1 <= y0:
             continue
-        parsed.append((x0, y0, x1, y1))
-    if not parsed:
+        # 대사 한 줄은 폭이 높이보다 뚜렷하게 길다. 세로/정사각형 오검출을
+        # 먼저 제외해야 큰 그림 박스가 중앙 높이를 끌어올려 실제 대사를 지우지 않는다.
+        if (x1 - x0) < (y1 - y0) * 1.4:
+            continue
+        horizontal.append((x0, y0, x1, y1))
+    if not horizontal:
         return []
-    heights = np.array([box[3] - box[1] for box in parsed], dtype=np.float32)
+    heights = np.array([box[3] - box[1] for box in horizontal], dtype=np.float32)
     median_height = float(np.median(heights))
-    min_height = max(20.0, 0.016 * float(height), median_height * 0.60)
-    kept: list[list[float]] = []
-    for x0, y0, x1, y1 in parsed:
-        w, h = x1 - x0, y1 - y0
-        if h < min_height:
-            continue
-        # 대사 한 줄은 폭이 높이보다 뚜렷하게 길다. 정사각형에 가까운 오검출 제거.
-        if w < h * 1.4:
-            continue
-        kept.append([x0, y0, x1, y1])
-    return kept
+    min_height = max(16.0, 0.010 * float(height), median_height * 0.45)
+    return [
+        [x0, y0, x1, y1]
+        for x0, y0, x1, y1 in horizontal
+        if (y1 - y0) >= min_height
+    ]
 
 
 def _union(boxes: Iterable[Iterable[float]]) -> list[float]:
@@ -559,10 +558,9 @@ def match_blocks_to_items(
         bx, by = _center(block["bbox"])
         for item_index, item in enumerate(items):
             score = _text_match_score(expected_texts[item_index], actual)
-            if score < 0.72:
-                continue
             ix, iy = _center(item["bbox"])
-            if score < 0.80 and math.hypot(bx - ix, by - iy) > max_distance:
+            near = math.hypot(bx - ix, by - iy) <= max_distance
+            if score < (0.62 if near else 0.70):
                 continue
             pairs.append((score, block_index, item_index))
     pairs.sort(reverse=True)
@@ -637,11 +635,68 @@ def _region_mask(region, box) -> np.ndarray:
     return out
 
 
+def _detect_text_ink(
+    arr: np.ndarray,
+    box: tuple[int, int, int, int],
+    bg_lum: float,
+    stroke_ref_h: float,
+    *,
+    include_solid_dark: bool = True,
+) -> np.ndarray:
+    """국소 배경 밝기를 기준으로 글자 획만 검출한다.
+
+    반투명 말풍선 뒤에 어두운 배경이 비쳐도 배경 음영을 잉크로 오인하지 않도록
+    닫힘 연산으로 국소 배경 밝기를 복원한 뒤 대비가 큰 어두운 획만 고른다.
+    """
+    x0, y0, x1, y1 = box
+    patch = arr[y0:y1, x0:x1].astype(np.float32)
+    lum = patch @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    if not _HAS_CV2:
+        return lum < bg_lum - 32.0
+    h_img, w_img = arr.shape[:2]
+    kernel_size = max(11, min(25, int(round(stroke_ref_h * 0.45)) | 1))
+    pad = kernel_size // 2 + 2
+    px0, py0 = max(0, x0 - pad), max(0, y0 - pad)
+    px1, py1 = min(w_img, x1 + pad), min(h_img, y1 + pad)
+    crop = arr[py0:py1, px0:px1].astype(np.float32)
+    crop_lum = (crop @ np.array([0.299, 0.587, 0.114], dtype=np.float32)).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    closed = cv2.morphologyEx(crop_lum, cv2.MORPH_CLOSE, kernel)
+    local_bg = closed[y0 - py0:y1 - py0, x0 - px0:x1 - px0].astype(np.float32)
+    ink = (local_bg - lum) > 30.0
+    if include_solid_dark:
+        # 닫힘 커널보다 두꺼운 단색 어두운 블록도 놓치지 않는다.
+        ink |= lum < bg_lum - 85.0
+    return ink
+
+
+def _background_variation(
+    arr: np.ndarray,
+    box: tuple[int, int, int, int],
+    ink: np.ndarray,
+    allowed: Optional[np.ndarray],
+) -> tuple[float, float]:
+    """잉크를 제외한 영역의 색상 표준편차와 밝기 분포 폭(p5~p95)을 구한다."""
+    x0, y0, x1, y1 = box
+    patch = arr[y0:y1, x0:x1].astype(np.float32)
+    keep = ~ink
+    if allowed is not None:
+        keep &= allowed
+    samples = patch[keep]
+    if len(samples) < 16:
+        return 0.0, 0.0
+    lum = samples @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    std = float(np.std(samples))
+    spread = float(np.percentile(lum, 95) - np.percentile(lum, 5))
+    return std, spread
+
+
 def _refine_text_region(arr: np.ndarray, block: dict):
     """실제 글자 잉크로 좌우 여백을 줄이고 밝은 말풍선의 내부를 찾는다.
 
     OCR 사각형은 지우기 후보로 유지한다. 쓰기 폭만 잉크 경계로 좁히며,
-    말풍선 배경의 연결 영역을 채워 글자 구멍을 없앤 내부 마스크를 함께 반환한다.
+    반투명 말풍선의 음영·배경 경계선을 견디도록 밝기와 채도 기준으로
+    내부 연결 영역을 모아 글자 구멍을 채운 마스크를 함께 반환한다.
     배경이 복잡하거나 경계를 확인할 수 없으면 마스크를 사용하지 않는다.
     """
     area = list(block["bbox"])
@@ -659,33 +714,84 @@ def _refine_text_region(arr: np.ndarray, block: dict):
     bg = np.median(bright, axis=0)
     bg_lum = _luminance(bg)
     distance = np.max(np.abs(patch - bg), axis=2)
-    if bg_lum < 150 or np.percentile(distance, 55) > 24:
+    if bg_lum < 150 or np.percentile(distance, 55) > 40:
         return area, None
 
     line_h = float(np.median([b[3] - b[1] for b in block["boxes"]]))
     margin = max(12, int(math.ceil(line_h * 2)))
-    rx0, ry0 = max(0, x0-margin), max(0, y0-margin)
-    rx1, ry1 = min(width, x1+margin), min(height, y1+margin)
+    rx0, ry0 = max(0, x0 - margin), max(0, y0 - margin)
+    rx1, ry1 = min(width, x1 + margin), min(height, y1 + margin)
     roi = arr[ry0:ry1, rx0:rx1].astype(np.float32)
-    tolerance = min(36.0, max(18.0, float(np.percentile(distance, 55)) * 2))
-    background = (np.max(np.abs(roi - bg), axis=2) <= tolerance).astype(np.uint8)
+    roi_lum = roi @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    roi_sat = roi.max(axis=2) - roi.min(axis=2)
+    bg_sat = (
+        float(np.percentile(bright.max(axis=1) - bright.min(axis=1), 90))
+        if len(bright)
+        else 0.0
+    )
+    otsu_t, _ = cv2.threshold(lum.astype(np.uint8), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    lum_floor = max(135.0, min(bg_lum - 55.0, float(otsu_t) + 15.0))
+    sat_limit = max(60.0, bg_sat + 30.0)
+    background = ((roi_lum >= lum_floor) & (roi_sat <= sat_limit)).astype(np.uint8)
     count, labels = cv2.connectedComponents(background, connectivity=8)
     region = None
+    local_ink = _detect_text_ink(
+        arr, (x0, y0, x1, y1), bg_lum, line_h, include_solid_dark=False
+    )
     if count > 1:
-        votes = np.bincount(labels[y0-ry0:y1-ry0, x0-rx0:x1-rx0].ravel(), minlength=count)
+        votes = np.bincount(labels[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0].ravel(), minlength=count)
         votes[0] = 0
-        label = int(votes.argmax())
-        component = (labels == label).astype(np.uint8)
-        touches = sum(bool(edge.any()) for edge in (component[0], component[-1], component[:, 0], component[:, -1]))
-        if votes[label] >= patch.shape[0] * patch.shape[1] * 0.4 and touches < 3:
-            contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            inside = np.zeros_like(component)
+        patch_area = patch.shape[0] * patch.shape[1]
+        merged = np.zeros_like(background)
+        total_votes = 0
+        merged_parts = 0
+        for label in np.argsort(votes)[::-1]:
+            part_votes = int(votes[label])
+            if part_votes <= 0:
+                break
+            if merged_parts > 0 and part_votes < patch_area * 0.08:
+                break
+            component = (labels == int(label)).astype(np.uint8)
+            touches = sum(
+                bool(edge.any())
+                for edge in (component[0], component[-1], component[:, 0], component[:, -1])
+            )
+            if touches >= 3:
+                if merged_parts == 0:
+                    break
+                continue
+            merged |= component
+            total_votes += part_votes
+            merged_parts += 1
+        if total_votes >= patch_area * 0.4:
+            if merged_parts > 1:
+                # 반투명 말풍선 뒤를 가로지르는 얇은 패널 경계선으로 나뉜 두 조각을 이어준다.
+                merged = cv2.morphologyEx(merged, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+            contours, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            inside = np.zeros_like(merged)
             cv2.drawContours(inside, contours, -1, 255, cv2.FILLED)
-            region = ((rx0, ry0), inside)
+            # 말풍선 마스크가 확인된 대사 글자 자체를 잘라내면 부분 분할 실패로 보고 쓰지 않는다.
+            reg_in = inside[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0] > 0
+            ink_count, ink_labels, ink_stats, _ = cv2.connectedComponentsWithStats(
+                local_ink.astype(np.uint8), connectivity=8
+            )
+            glyph_total = 0
+            glyph_covered = 0
+            for label_idx in range(1, ink_count):
+                left, top, w_c, h_c, pixels = (int(value) for value in ink_stats[label_idx])
+                if pixels < 2 or h_c > line_h * 1.3:
+                    continue
+                if left <= 0 or left + w_c >= local_ink.shape[1] or (top <= 0 and top + h_c >= local_ink.shape[0]):
+                    continue
+                glyph_total += pixels
+                glyph_covered += int(np.count_nonzero(reg_in & (ink_labels == label_idx)))
+            if glyph_total == 0 or (glyph_covered / glyph_total) >= 0.90:
+                region = ((rx0, ry0), inside)
 
-    ink = (lum < bg_lum - 40).astype(np.uint8)
+    ink = local_ink.astype(np.uint8)
     if region is not None:
-        ink &= (_region_mask(region, (x0, y0, x1, y1)) > 0).astype(np.uint8)
+        safe_reg = cv2.erode(region[1], np.ones((3, 3), np.uint8))
+        ink &= (_region_mask((region[0], safe_reg), (x0, y0, x1, y1)) > 0).astype(np.uint8)
     # 테두리는 OCR 사각형 가장자리로 이어지므로 제외한다. 글자는 작은 구멍,
     # 마침표까지 포함하고, 축소된 폭만 쓰므로 원래 탐지 영역 밖으로 늘어나지 않는다.
     count, _labels, stats, _centers = cv2.connectedComponentsWithStats(ink, connectivity=8)
@@ -694,9 +800,12 @@ def _refine_text_region(arr: np.ndarray, block: dict):
         left, top, w, h, pixels = (int(value) for value in stat)
         if pixels < 2 or h > line_h * 1.3:
             continue
-        if left <= 0 or top <= 0 or left+w >= ink.shape[1] or top+h >= ink.shape[0]:
+        if region is None:
+            if left <= 0 or top <= 0 or left + w >= ink.shape[1] or top + h >= ink.shape[0]:
+                continue
+        elif (top <= 0 and top + h >= ink.shape[0]) or (left <= 0 and left + w >= ink.shape[1]):
             continue
-        glyphs.append([x0+left, y0+top, x0+left+w, y0+top+h])
+        glyphs.append([x0 + left, y0 + top, x0 + left + w, y0 + top + h])
     if glyphs:
         ink_box = _union(glyphs)
         # 안티앨리어싱의 옅은 가장자리 2px는 보존한다. 세로 OCR 범위는 유지한다.
@@ -743,7 +852,7 @@ def _erase_in_place(
     settings: dict,
     regions: Optional[dict] = None,
 ) -> np.ndarray:
-    """배정된 글자 영역의 잉크를 지운다. 말풍선 내부는 평면 채우기, 그림 위는 inpaint."""
+    """배정된 글자 영역의 잉크를 지운다. 단색 말풍선은 평면 채우기, 반투명·그림 위는 inpaint."""
     h, w = arr.shape[:2]
     pad = int(settings["erase_padding"])
     mode = str(settings["erase_mode"])
@@ -760,19 +869,23 @@ def _erase_in_place(
             y1 = min(h, int(math.ceil(box[3])) + pad)
             if x1 <= x0 or y1 <= y0:
                 continue
-            region = arr[y0:y1, x0:x1].astype(np.int16)
-            lum = region @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
-            ink = lum < bg_lum - 32.0
-            if ink.mean() < 0.004:
-                # 글자색이 배경보다 밝은 경우 등 — 박스 전체를 대상으로 한다.
-                ink = np.ones_like(ink)
+            ink = _detect_text_ink(
+                arr, (x0, y0, x1, y1), bg_lum, max(12.0, float(box[3] - box[1]))
+            )
             region = (regions or {}).get(index)
             allowed = _region_mask(region, (x0, y0, x1, y1)) > 0 if region is not None else None
             if allowed is not None:
                 ink &= allowed
-            use_flat = mode == "flat" or (
-                mode == "auto" and std < 24.0 and bg_lum > 150.0
-            )
+            if ink.mean() < 0.004:
+                # 글자색이 배경보다 밝은 경우 등 — 박스(말풍선 내부) 전체를 대상으로 한다.
+                ink = np.ones_like(ink) if allowed is None else allowed.copy()
+            if mode == "flat":
+                use_flat = True
+            elif mode == "inpaint":
+                use_flat = False
+            else:
+                bg_std, bg_spread = _background_variation(arr, (x0, y0, x1, y1), ink, allowed)
+                use_flat = bg_lum > 150.0 and std < 6.0 and bg_std < 6.0 and bg_spread < 16.0
             if use_flat:
                 if _HAS_CV2:
                     grown = cv2.dilate(

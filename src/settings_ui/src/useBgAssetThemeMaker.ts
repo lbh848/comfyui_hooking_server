@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { assetRequest } from "./asset";
 import {
   bgAssetRequest,
   buildBgAssetRequest,
@@ -139,7 +138,7 @@ export function useBgAssetThemeMaker(
       if (action === "generate" || (action === "propose" && extra.generate_image !== false)) {
         const [tags, models, styles] = await Promise.all([
           bgAssetRequest("tags"),
-          assetRequest("asset/presets"),
+          bgAssetRequest("model/presets"),
           bgAssetRequest("style-presets"),
         ]);
         const baseTheme: BgThemeData = extra.base_id

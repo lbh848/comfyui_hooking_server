@@ -38,6 +38,7 @@ const promptGroups: PromptGroup[] = [
     { key: "npc_generation", label: "NPC 캐릭터 카드 생성 지침 (ANIMA)" },
     { key: "npc_generation_moss", label: "NPC 캐릭터 카드 생성 지침 (MOSS · bbox 없음)" },
     { key: "npc_generation_secondary", label: "2차봇 원작 캐릭터 이름 태그 지침" },
+    { key: "npc_generation_secondary_crossover", label: "2차봇(크로스오버) 원작 캐릭터 이름 태그 지침" },
   ] },
   { id: "plan", title: "PLAN", description: "선택된 장면의 구도·동작·접촉을 계획합니다. 공용 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_plan", label: "선택 장면 구체화 지침" },
@@ -45,11 +46,13 @@ const promptGroups: PromptGroup[] = [
   { id: "detail", title: "DETAIL", description: "선택된 장면을 이미지 태그로 작성합니다. KEYVIS 통합 예측에서는 대표 이미지 지침을, 마스크 통합 예측에서는 인물 영역 배치 지침을 함께 사용합니다.", fields: [
     { key: "call2_detail", label: "이미지 태그 작성 지침" },
   ] },
-  { id: "detail_moss", title: "DETAIL-MOSS", description: "MOSS 그림 모델에서 장면마다 이미지 크기를 입력받아 abs_centralized/yxyx 절대 bbox 레이아웃을 작성합니다. 이미지 중심이 (0,0)이고 y는 아래로, x는 오른쪽으로 증가합니다. 캐릭터뿐 아니라 위치가 중요한 사물도 bbox화합니다.", fields: [
-    { key: "detail_moss", label: "MOSS 레이아웃 작성 지침" },
+  { id: "detail_moss", title: "DETAIL-MOSS", description: "MOSS 그림 모델에서 장면마다 이미지 크기를 입력받아 abs_centralized/yxyx 절대 bbox 레이아웃을 작성합니다. 생성 설정의 MOSS DETAIL 작성 방식에 따라 태그 방식 또는 자연어 방식 지침을 사용합니다.", fields: [
+    { key: "detail_moss", label: "MOSS 레이아웃 작성 지침 (태그 방식)" },
+    { key: "detail_moss_natural", label: "MOSS 레이아웃 작성 지침 (자연어 방식)" },
   ] },
-  { id: "detail_manga", title: "DETAIL-MANGA · MOSS", description: "MOSS 그림 모델에서 만화 페이지 한 장을 page(hierarchy/flow/boundaries) + 1~5컷 panel inventory + 선택적 cross-panel actors로 작성합니다. 모델이 모든 bbox를 절대 yxyx로 계산하고, 서버가 패널·캐릭터·사물·말풍선 item으로 평면화합니다.", fields: [
-    { key: "detail_manga", label: "MOSS 만화 페이지 작성 지침" },
+  { id: "detail_manga", title: "DETAIL-MANGA · MOSS", description: "MOSS 그림 모델에서 만화 페이지 한 장을 page(hierarchy/flow/boundaries) + 1~5컷 panel inventory + 선택적 cross-panel actors로 작성합니다. 생성 설정의 MOSS DETAIL 작성 방식에 따라 태그 방식 또는 자연어 방식 지침을 사용합니다.", fields: [
+    { key: "detail_manga", label: "MOSS 만화 페이지 작성 지침 (태그 방식)" },
+    { key: "detail_manga_natural", label: "MOSS 만화 페이지 작성 지침 (자연어 방식)" },
   ] },
   { id: "keyvis", title: "KEYVIS", description: "대표 이미지 지침·작업 지침·공통 묘사 규칙을 각각 편집합니다. 외부 LLM 호환성 지침과 NSFW 및 물리 접촉 지침은 공유 프롬프트에서 편집합니다.", fields: [
     { key: "call2_keyvis", label: "대표 이미지 지침" },
@@ -75,6 +78,7 @@ const promptGroups: PromptGroup[] = [
   { id: "shared", title: "공유 프롬프트", description: "여러 단계에서 함께 사용하는 지침입니다. 장르 지침은 장르 입력 시, NSFW 및 물리 접촉 지침은 NSFW를 켰을 때 포함됩니다.", fields: [
     { key: "genre", label: "장르·세계관 공통 지침" },
     { key: "genre_secondary", label: "2차봇 작품 배경 지침", help: "장르가 2차봇일 때 작품명과 함께 전달됩니다. LLM의 기존 작품 지식을 배경·시대 해석에 사용합니다." },
+    { key: "genre_secondary_crossover", label: "2차봇(크로스오버) 배경 지침", help: "장르가 2차봇(크로스오버)일 때 전달됩니다. 배경 장르·주요 등장 작품은 참고 힌트로만 사용하며 배경에 작품명 태그를 강제로 넣지 않습니다." },
     { key: "call2_jailbreak", label: "외부 LLM 호환성 지침" },
     { key: "call2_explicit", label: "NSFW 및 물리 접촉 지침" },
   ] },

@@ -503,6 +503,12 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
       setSelectedMatchedChars(current => current.includes(nextCharacter) ? current : [...current, nextCharacter]);
     }
   }
+  function handleLoreNameTagChange(name: string, nextTag: string) {
+    setLoreRegularImportDone(false);
+    setLoreCandidates(current => current.map(item => item.name === name
+      ? { ...item, card: { ...item.card, name_tag: nextTag } }
+      : item));
+  }
   const invalid = useMemo(() => entries.filter(entry => entry.error), [entries]);
   const validationError = invalid.length ? `${invalid.length.toLocaleString()}개 파일의 캐릭터명을 확인하세요.${isLoreCharx ? "" : " 추출 규칙을 수정하면 일괄추가할 수 있습니다."} 첫 오류: ${invalid[0].path} — ${invalid[0].error}` : "";
   const orderedEntries = useMemo(() => [...entries.filter(entry => entry.error), ...entries.filter(entry => !entry.error)], [entries]);
@@ -859,6 +865,7 @@ function BatchAddIllustrationCharacters({ botName, characters, onClose, onAdded,
             ? imagelessLoreCandidates.filter(candidate => !registeredLower.has(candidate.name.toLowerCase()) && !loreNpcResults.has(candidate.name)).map(candidate => candidate.name)
             : []);
         }}
+        onNameTagChange={handleLoreNameTagChange}
         onReclassify={() => void reclassifyLoreImages()}
       />}
       <Panel title="추출 결과 미리보기" aside={<span className="badge">이미지 {entries.length.toLocaleString()}장</span>} className="illust-character-import-group">

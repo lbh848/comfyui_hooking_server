@@ -11,13 +11,13 @@ CONFIG_KEYS = {
     "moss_asset_workflow_source_path",
 }
 READ_PATHS = {
-    "asset/character-maker", "asset/edit-options",
+    "asset/character-maker", "asset/edit-options", "asset/postprocess",
     "asset/presets", "asset/style-presets", "asset/character-presets", "asset/workflow", "asset/sampling-options",
     "asset/config", "asset_mode/status", "asset_mode/tags", "asset_mode/characters",
     "chain_presets", "queue/status", "asset_mode/qwen_edit/composite_items",
 }
 WRITE_PATHS = {
-    "asset/character-maker", "asset/character-upload",
+    "asset/character-maker", "asset/character-upload", "asset/postprocess", "asset/postprocess/preview",
     "asset/presets", "asset/style-presets", "asset/character-presets", "asset/workflow", "asset/style-ref/upload", "asset/style-ref/import", "asset/preview",
     "asset/config", "asset/enqueue", "asset_mode/tags", "asset_mode/upload_reference",
     "asset_mode/compute_ref_hash", "asset_mode/set_representative", "asset_mode/delete_image", "asset_mode/delete_combination",
@@ -69,8 +69,12 @@ def register_asset_runtime(server) -> None:
     register_style_preset_runtime(server)
     if getattr(server, "asset_mode", None) is not None:
         from asset_character_presets import register_character_preset_runtime
+        from asset_postprocess import ASSET_WORKSPACE, register_postprocess_runtime
         from settings_asset_export import register_asset_export_runtime
         register_character_preset_runtime(server)
+        register_postprocess_runtime(
+            server, ASSET_WORKSPACE, server.asset_mode, prefix="/api/asset/postprocess"
+        )
         register_asset_export_runtime(server)
 
     async def sampling_options(request: web.Request) -> web.Response:

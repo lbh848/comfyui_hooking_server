@@ -16,6 +16,7 @@ def without_local_reference_images(value):
         (("snapref_images", "snapref_face_images", "snapref_secondary_images"), "snapref_enabled"),
         (("ref_images", "reference_images"), "ref_enabled"),
         (("style_ref_images",), "style_ref_enabled"),
+        (("i2i_images",), "i2i_enabled"),
         (("images", "face_images", "secondary_images"), None),
     ):
         cleared = False

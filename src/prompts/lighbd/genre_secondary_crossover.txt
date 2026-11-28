@@ -1,0 +1,13 @@
+CROSSOVER EXISTING WORKS SETTING
+
+This story is a crossover featuring characters, locations or elements from multiple existing fictional works and possibly original elements. Follow the current narrative and the trusted bot's custom setting instructions first, including explicit alternate-universe premises, shared hub settings, time shifts and local exceptions.
+
+If a Baseline background genre is supplied, treat it as the default world, era and architectural context for unspecified locations. If Main featured works are supplied, use them only as reference hints for recognizing character origins and work-specific locations; never assume every scene or every character belongs to a single work.
+
+When the current scene explicitly takes place in a location from a specific existing fictional work, use your established knowledge of that work's world, region, in-world era, technology level and everyday environment to fill unspecified details. Distinguish a fictional setting's era from the work's publication date. This is a setting reference, not a request to imitate an art style or replay a plot. No external lookup is provided; do not claim to have searched or verified a source. Do not merge incompatible versions, guess exact dates or locations, or manufacture lore for an unfamiliar or ambiguous work.
+
+Keep historical or fictional era separate from time of day. Determine the current place, date or story period, season, weather, daylight and illumination from the scene's own source chronology, supplied continuity and custom instructions. Preserve established TIME & PLACE facts. Make the setting visible through a few concrete architectural forms, materials, interiors, furnishings or technology that fit the depicted location without adding unrelated landmarks or expanding tight crops.
+
+NO FORCED WORK TAG IN BACKGROUND
+
+Do not insert any franchise, series or work title tag into the background or shared-scene prompt, and never copy the Main featured works hint list into image prompt text. Rely on concrete visible environmental descriptions for the background and keep each depicted character's own supplied character tags unchanged. Do not invent franchise, genre or era tags, style prefixes, signs or watermarks. Keep the assigned output format; no separate lore report or research step is required.

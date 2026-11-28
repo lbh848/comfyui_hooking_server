@@ -85,6 +85,9 @@ def character_tracking_context(root: dict) -> dict:
             "single_char_mask_skip_enabled": False}
 
 
+_IDENTITY_SPLIT_RE = re.compile(r"[\s_.\-]+")
+
+
 def _normalize_candidate_anchor(value, segments) -> str:
     """Accept C45/c45/45 as C045 when that CURRENT anchor exists."""
     text = str(value or "").strip()
@@ -98,15 +101,7 @@ def _normalize_candidate_anchor(value, segments) -> str:
     return ""
 
 
-def parse_candidate(entry, segments, *, repair=False) -> dict:
-    from modes.bot_mode import validate_bot_storage_name
-
-    if not isinstance(entry, dict):
-        raise ValueError("NPC candidate must be an object")
-    name = str(entry.get("name") or "").strip()
-    error = validate_bot_storage_name(name, "NPC 이름")
-    if error or "," in name or "\n" in name:
-        raise ValueError(error or "NPC name cannot contain commas or newlines")
+def _parse_candidate_anchors(entry: dict, name: str, segments, *, repair=False) -> list[str]:
     raw_anchors = entry.get("anchors")
     if isinstance(raw_anchors, str):
         raw_anchors = [raw_anchors]
@@ -120,9 +115,10 @@ def parse_candidate(entry, segments, *, repair=False) -> dict:
         if anchor))
     if not anchors:
         raise ValueError(f"{name}의 근거 번호가 제공된 원문에 없습니다.")
-    description = str(entry.get("description") or "").strip()
-    if not description:
-        raise ValueError(f"NPC candidate requires source identity: {name}")
+    return anchors
+
+
+def _parse_candidate_aliases(entry: dict, name: str, *, repair=False) -> list[str]:
     aliases = entry.get("aliases") or []
     if not isinstance(aliases, list):
         if not repair:
@@ -132,22 +128,247 @@ def parse_candidate(entry, segments, *, repair=False) -> dict:
         if not repair:
             raise ValueError(f"Invalid NPC aliases: {name}")
         aliases = [alias for alias in aliases if isinstance(alias, str)]
-    return {"name": name, "description": description, "anchors": anchors,
-            "aliases": list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip()))}
+    return list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip()))
 
 
-def parse_candidates(value, registered_names, segments, *, repair=False) -> list[dict]:
+def _identity_tokens(text: str) -> tuple[str, ...]:
+    cleaned = str(text or "").strip().casefold()
+    if not cleaned:
+        return ()
+    return tuple(part for part in _IDENTITY_SPLIT_RE.split(cleaned) if part)
+
+
+def _identity_keys(text: str) -> set[str]:
+    """Return normalized lookup keys, including surname/given-name order swaps."""
+    tokens = _identity_tokens(text)
+    if not tokens:
+        return set()
+    keys = {"".join(tokens)}
+    if len(tokens) >= 2:
+        keys.add(tokens[-1] + "".join(tokens[:-1]))
+        keys.add("".join(tokens[1:]) + tokens[0])
+    return keys
+
+
+def _extensions_for_key(key: str, strings: list[str]) -> set[str]:
+    """Return fuller normalized names in ``strings`` that strictly extend ``key``."""
+    if len(key) < 2:
+        return set()
+    is_ascii = key.isascii()
+    extensions: set[str] = set()
+    for text in strings:
+        tokens = _identity_tokens(text)
+        if not tokens:
+            continue
+        compact = "".join(tokens)
+        if len(compact) <= len(key):
+            continue
+        if is_ascii:
+            if len(tokens) >= 2 and key in tokens:
+                extensions.update(_identity_keys(text))
+        elif compact.endswith(key):
+            extensions.update(_identity_keys(text))
+    return extensions
+
+
+def registered_aliases_from_profiles(visual_profiles: dict[str, dict] | None) -> dict[str, list[str]]:
+    """Collect card-authored aliases per canonical name from visual_profiles."""
+    result: dict[str, list[str]] = {}
+    for raw_name, entry in (visual_profiles or {}).items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(entry, dict):
+            continue
+        aliases: list[str] = []
+        seen: set[str] = set()
+        for profile in entry.get("profiles") or []:
+            if not isinstance(profile, dict):
+                continue
+            for raw_alias in profile.get("aliases") or []:
+                alias = str(raw_alias or "").strip()
+                folded = alias.casefold()
+                if alias and folded not in seen:
+                    seen.add(folded)
+                    aliases.append(alias)
+        result[name] = aliases
+    return result
+
+
+def registered_aliases_from_bot(bot: dict | None) -> dict[str, list[str]]:
+    """Collect card-authored aliases per canonical name from bot storage."""
+    result: dict[str, list[str]] = {}
+    for entry in (bot or {}).get("characters") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        aliases: list[str] = []
+        seen: set[str] = set()
+        for card in entry.get("visual_cards") or []:
+            if not isinstance(card, dict):
+                continue
+            for raw_alias in card.get("aliases") or []:
+                alias = str(raw_alias or "").strip()
+                folded = alias.casefold()
+                if alias and folded not in seen:
+                    seen.add(folded)
+                    aliases.append(alias)
+        result[name] = aliases
+    return result
+
+
+def build_registered_alias_index(
+    registered_names,
+    registered_aliases: dict[str, list[str]] | None = None,
+) -> dict:
+    """Build an unambiguous lookup table from registered canonical names and card aliases."""
+    canonical_by_folded: dict[str, str] = {}
+    strings_by_canonical: dict[str, list[str]] = {}
+    keys_by_canonical: dict[str, set[str]] = {}
+    owners_by_key: dict[str, set[str]] = {}
+
+    aliases_by_folded = {
+        str(name or "").strip().casefold(): list(values or [])
+        for name, values in (registered_aliases or {}).items()
+        if str(name or "").strip()
+    }
+    ordered_names = list(dict.fromkeys([
+        *(str(name or "").strip() for name in (registered_names or []) if str(name or "").strip()),
+        *(str(name or "").strip() for name in (registered_aliases or {}) if str(name or "").strip()),
+    ]))
+    for canonical in ordered_names:
+        folded = canonical.casefold()
+        if folded in canonical_by_folded:
+            continue
+        canonical_by_folded[folded] = canonical
+        strings = list(dict.fromkeys(
+            text for text in (canonical, *(str(a or "").strip() for a in aliases_by_folded.get(folded, [])))
+            if text
+        ))
+        keys: set[str] = set()
+        for text in strings:
+            keys.update(_identity_keys(text))
+        strings_by_canonical[canonical] = strings
+        keys_by_canonical[canonical] = keys
+        for key in keys:
+            owners_by_key.setdefault(key, set()).add(canonical)
+
+    unique_key_to_canonical = {
+        key: next(iter(owners))
+        for key, owners in owners_by_key.items()
+        if len(owners) == 1
+    }
+    return {
+        "canonical_by_folded": canonical_by_folded,
+        "unique_key_to_canonical": unique_key_to_canonical,
+        "strings_by_canonical": strings_by_canonical,
+        "keys_by_canonical": keys_by_canonical,
+    }
+
+
+def match_registered_character(name: str, aliases: list[str], alias_index: dict | None) -> str | None:
+    """Resolve an NPC candidate to a registered canonical name when aliases uniquely match."""
+    if not alias_index:
+        return None
+    cleaned_name = str(name or "").strip()
+    if not cleaned_name:
+        return None
+    direct = alias_index["canonical_by_folded"].get(cleaned_name.casefold())
+    if direct:
+        return direct
+
+    candidate_strings = list(dict.fromkeys(
+        text for text in (cleaned_name, *(str(a or "").strip() for a in (aliases or [])))
+        if text
+    ))
+    candidate_keys: set[str] = set()
+    for text in candidate_strings:
+        candidate_keys.update(_identity_keys(text))
+
+    hits_by_canonical: dict[str, set[str]] = {}
+    unique_map = alias_index["unique_key_to_canonical"]
+    for key in candidate_keys:
+        owner = unique_map.get(key)
+        if owner:
+            hits_by_canonical.setdefault(owner, set()).add(key)
+    if len(hits_by_canonical) != 1:
+        return None
+
+    canonical, matched_keys = next(iter(hits_by_canonical.items()))
+    registered_strings = alias_index["strings_by_canonical"][canonical]
+    registered_keys = alias_index["keys_by_canonical"][canonical]
+    contradicted: set[str] = set()
+    partial_keys: set[str] = set()
+    for key in registered_keys:
+        r_ext = _extensions_for_key(key, registered_strings)
+        c_ext = _extensions_for_key(key, candidate_strings)
+        if r_ext or c_ext:
+            partial_keys.add(key)
+        if r_ext and c_ext and not (r_ext & c_ext):
+            contradicted.add(key)
+    uncontradicted = matched_keys - contradicted
+    if not uncontradicted:
+        return None
+    if contradicted and not (uncontradicted - partial_keys):
+        return None
+    return canonical
+
+
+def parse_candidate(entry, segments, *, repair=False) -> dict:
+    from modes.bot_mode import validate_bot_storage_name
+
+    if not isinstance(entry, dict):
+        raise ValueError("NPC candidate must be an object")
+    name = str(entry.get("name") or "").strip()
+    error = validate_bot_storage_name(name, "NPC 이름")
+    if error or "," in name or "\n" in name:
+        raise ValueError(error or "NPC name cannot contain commas or newlines")
+    anchors = _parse_candidate_anchors(entry, name, segments, repair=repair)
+    description = str(entry.get("description") or "").strip()
+    if not description:
+        raise ValueError(f"NPC candidate requires source identity: {name}")
+    aliases = _parse_candidate_aliases(entry, name, repair=repair)
+    return {"name": name, "description": description, "anchors": anchors, "aliases": aliases}
+
+
+def parse_candidates(
+    value,
+    registered_names,
+    segments,
+    *,
+    repair=False,
+    registered_aliases: dict[str, list[str]] | None = None,
+    remapped_out: dict[str, str] | None = None,
+) -> list[dict]:
     if not isinstance(value, list):
         if repair:
             print(f"[ILLUST_CONTEXT:NPC] 후보 배열 형식 오류로 건너뜀: {type(value).__name__}")
             return []
         raise ValueError("NPC candidates must be an array")
-    known = {name.casefold() for name in registered_names}
+    alias_index = build_registered_alias_index(registered_names, registered_aliases)
+    seen_candidates: set[str] = set()
     result = []
     for entry in value:
         try:
+            if not isinstance(entry, dict):
+                raise ValueError("NPC candidate must be an object")
+            raw_name = str(entry.get("name") or "").strip()
+            if raw_name:
+                raw_aliases = _parse_candidate_aliases(entry, raw_name, repair=repair)
+                matched = match_registered_character(raw_name, raw_aliases, alias_index)
+                if matched:
+                    _parse_candidate_anchors(entry, raw_name, segments, repair=repair)
+                    if not repair:
+                        raise ValueError(f"Duplicate or registered NPC candidate: {raw_name}")
+                    if remapped_out is not None:
+                        remapped_out[raw_name.casefold()] = matched
+                    print(
+                        "[ILLUST_CONTEXT:NPC] 등록 캐릭터 별칭 일치로 치환: "
+                        f"candidate={raw_name!r} -> registered={matched!r}"
+                    )
+                    continue
             candidate = parse_candidate(entry, segments, repair=repair)
-            if candidate["name"].casefold() in known:
+            if candidate["name"].casefold() in seen_candidates:
                 raise ValueError(f"Duplicate or registered NPC candidate: {candidate['name']}")
         except (ValueError, TypeError) as exc:
             if not repair:
@@ -155,11 +376,11 @@ def parse_candidates(value, registered_names, segments, *, repair=False) -> list
             print(f"[ILLUST_CONTEXT:NPC] 후보 제외: {exc}")
             continue
         result.append(candidate)
-        known.add(candidate["name"].casefold())
+        seen_candidates.add(candidate["name"].casefold())
     return result
 
 
-def _find_name_tag_candidates(candidates, work_title):
+def _find_name_tag_candidates(candidates, work_title="", *, work_hints=()):
     from modes.bot_name_tags import find_candidates, load_dictionary
 
     try:
@@ -168,7 +389,9 @@ def _find_name_tag_candidates(candidates, work_title):
         print(f"[ILLUST_CONTEXT:NPC] 단부루 이름 태그 사전을 읽지 못했습니다: {exc}")
         return {}
     return {
-        candidate["name"]: find_candidates(entries, [candidate["name"], *candidate["aliases"]], work_title)
+        candidate["name"]: find_candidates(
+            entries, [candidate["name"], *candidate["aliases"]], work_title, hints=work_hints,
+        )
         for candidate in candidates
     }
 
@@ -197,6 +420,7 @@ def parse_cards(value, candidates, *, salvage=False, name_tag_candidates=None) -
             if name_tag_candidates and type(name_tag_id) is int and name_tag_id > 0:
                 match = next((item for item in name_tag_candidates.get(name, []) if item["id"] == name_tag_id), None)
                 if match:
+                    card.update(image_name_tag=match["tag"], use_image_name_tag=True)
                     card["appearance"] = normalize_tag_entries([match["tag"], *card["appearance"]])
             root = {"name": name}
             store_visual_cards(root, [card])
@@ -221,10 +445,12 @@ def _lore_npc_root(candidate, fields, *, secondary_bot=False):
     card = root["visual_cards"][0]
     if not card["appearance"]:
         raise ValueError(f"{candidate['name']}의 외모 태그가 없습니다.")
-    name_tag = fields.get("name_tag")
-    if secondary_bot and isinstance(name_tag, str) and name_tag:
+    name_tag = str(fields.get("name_tag") or "").strip()
+    if secondary_bot and name_tag:
         card.update(image_name_tag=name_tag, use_image_name_tag=True)
-        card["appearance"] = normalize_tag_entries([name_tag, *card["appearance"]])
+        existing_tags = tag_values(card["appearance"])
+        if all(tag.casefold() != name_tag.casefold() for tag in existing_tags):
+            card["appearance"] = normalize_tag_entries([name_tag, *card["appearance"]])
         store_visual_cards(root, [card])
     return root
 
@@ -235,7 +461,10 @@ def lore_npc_card(candidate, fields, *, secondary_bot):
     prepared = {**{key: card[key] for key in ("gender_tag", "visual_context")},
                 **{key: tag_values(card[key]) for key in ("appearance", "default_outfit", "face_tags", "eye_tags")}}
     if secondary_bot:
-        prepared["name_tag"] = fields.get("name_tag", "")
+        prepared["name_tag"] = str(fields.get("name_tag") or "").strip()
+        source_work = str(fields.get("source_work") or "").strip()
+        if source_work:
+            prepared["source_work"] = source_work
     return prepared
 
 
@@ -316,19 +545,51 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
         if bot is None:
             raise ValueError(f"NPC 대상 봇을 찾을 수 없습니다: {bot_name}")
         existing = {entry["name"].casefold(): entry for entry in bot.get("characters", [])}
-        pending = [entry for entry in candidates if entry["name"].casefold() not in existing]
+        alias_index = (
+            build_registered_alias_index(
+                [entry["name"] for entry in bot.get("characters", []) if isinstance(entry, dict) and entry.get("name")],
+                registered_aliases_from_bot(bot),
+            )
+            if prepared_cards is None
+            else None
+        )
+        matched_existing: dict[str, dict] = {}
+        pending = []
+        for entry in candidates:
+            folded = entry["name"].casefold()
+            if folded in existing:
+                continue
+            matched = match_registered_character(entry["name"], entry.get("aliases") or [], alias_index)
+            if matched and matched.casefold() in existing:
+                matched_existing[folded] = existing[matched.casefold()]
+                print(
+                    "[ILLUST_CONTEXT:NPC] 기존 등록 캐릭터 별칭 일치로 카드 생성 생략: "
+                    f"candidate={entry['name']!r} -> registered={matched!r}"
+                )
+                continue
+            pending.append(entry)
         output = ""
         created = []
         roots = []
-        secondary_bot = toggles.get("genre") == "secondary_bot"
+        genre = str((toggles or {}).get("genre") or "").strip()
+        secondary_bot = builders.is_secondary_bot_genre(genre)
+        crossover = builders.is_crossover_secondary_genre(genre)
         if pending and prepared_cards is not None:
             roots = [_lore_npc_root(candidate, prepared_cards.get(candidate["name"]), secondary_bot=secondary_bot)
                      for candidate in pending]
         elif pending:
             name_tag_candidates = None
             if secondary_bot:
-                name_tag_candidates = await asyncio.to_thread(
-                    _find_name_tag_candidates, pending, toggles.get("genre_work_title", ""))
+                if crossover:
+                    name_tag_candidates = await asyncio.to_thread(
+                        _find_name_tag_candidates,
+                        pending,
+                        "",
+                        work_hints=builders.parse_crossover_works((toggles or {}).get("genre_crossover_works", "")),
+                    )
+                else:
+                    name_tag_candidates = await asyncio.to_thread(
+                        _find_name_tag_candidates, pending, (toggles or {}).get("genre_work_title", ""))
             messages = builders.npc_generation_messages(prompts, pending, past_text, segmented, toggles,
                                                         name_tag_candidates=name_tag_candidates)
             def validate(response):
@@ -343,15 +604,25 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                 result_validator=validate, json_mode=True)
             roots = parse_cards(pipeline._json_object_from_text(output), pending, salvage=True,
                                 name_tag_candidates=name_tag_candidates)
+        def _collect_profiles(lookup: dict[str, dict]) -> list[dict]:
+            collected = []
+            seen_profiles: set[str] = set()
+            for candidate in candidates:
+                entry = lookup.get(candidate["name"].casefold())
+                if not entry or not entry.get("visual_cards"):
+                    continue
+                key = entry["name"].casefold()
+                if key in seen_profiles:
+                    continue
+                seen_profiles.add(key)
+                collected.append(cards_to_character_profiles(entry["name"], entry["visual_cards"]))
+            return collected
+
         # Prediction is enough for downstream LLMs. Registration still waits
         # for the representative image and its normal rendering assets.
-        predicted = {**existing, **{root["name"].casefold(): root for root in roots}}
+        predicted = {**existing, **matched_existing, **{root["name"].casefold(): root for root in roots}}
         if on_profiles_ready:
-            await on_profiles_ready({"characters": [
-                cards_to_character_profiles(entry["name"], entry["visual_cards"])
-                for candidate in candidates
-                if (entry := predicted.get(candidate["name"].casefold())) and entry.get("visual_cards")
-            ], "created": [], "output": output})
+            await on_profiles_ready({"characters": _collect_profiles(predicted), "created": [], "output": output})
         if roots and render_gate is not None:
             # "NPC 생성은 나중에": 외형 예측은 즉시 넘겨 DETAIL이 참조할 수 있게 하고,
             # 대표 이미지 Comfy 호출은 이미지 생성 단계(STEP 6)까지 기다린다.
@@ -406,9 +677,7 @@ async def generate_cards(*, manager, bot_name, candidates, prompts, past_text,
                     created.append(root["name"])
                 if prepare_character:
                     await prepare_character(root)
-        profiles = [cards_to_character_profiles(entry["name"], entry["visual_cards"])
-                    for candidate in candidates
-                    if (entry := existing.get(candidate["name"].casefold())) and entry.get("visual_cards")]
+        profiles = _collect_profiles({**existing, **matched_existing})
         illustration_flow.llm_metadata(npc_created=created)
         return {"characters": profiles, "created": created, "output": output}
 

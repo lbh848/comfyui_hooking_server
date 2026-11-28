@@ -244,8 +244,14 @@ from video_engine_runtime import (
 )
 from comfy_runtime import (
     COMFY_INSTANCE_IDS,
+    COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY,
+    COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY,
+    COMFY_PORT_CONFIG_KEYS,
     DEFAULT_COMFY_LAUNCH_PROFILES,
+    DEFAULT_COMFY_PORTS,
     ComfyRuntimeValidationError,
+    apply_comfy_launch_network_migration,
+    apply_comfy_launch_port_migration,
     autostart_comfy_instances,
     normalize_comfy_launch_profiles,
     register_comfy_runtime_routes,
@@ -577,11 +583,13 @@ DEFAULT_LORA_LOAD_PATHS = default_lora_load_paths()
 # 기본 설정값
 DEFAULT_CONFIG = {
     **default_app_paths(),
-    "comfyui_port": 8188,  # ComfyUI 서버 포트
-    "comfyui_port_2": 8187,  # 두 번째 ComfyUI 실행 포트
-    "comfyui_port_3": 8186,  # 세 번째 ComfyUI 실행 포트
+    "comfyui_port": DEFAULT_COMFY_PORTS[1],  # ComfyUI 서버 포트
+    "comfyui_port_2": DEFAULT_COMFY_PORTS[2],  # 두 번째 ComfyUI 실행 포트
+    "comfyui_port_3": DEFAULT_COMFY_PORTS[3],  # 세 번째 ComfyUI 실행 포트
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
+    COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY: True,
+    COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY: True,
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
     "comfy_task_modal_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_MODAL_PARALLEL),
     "comfy_task_vast_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_VAST_PARALLEL),
@@ -731,6 +739,7 @@ DEFAULT_CONFIG = {
         "focus": "",
         "direction": "",
         "prompt_format": "v3",
+        "moss_detail_prompt_mode": illustration_context_pipeline.DEFAULT_TOGGLES["moss_detail_prompt_mode"],
         "positive_note": "",
         "negative_note": "",
         "compat_comfy": True,
@@ -767,6 +776,9 @@ DEFAULT_CONFIG = {
         ),
         "asset_name_mapping_full": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1,
+        ),
+        "bg_lore_theme_generation": _llm_route_defaults(
+            max_retries=1, fallback_max_retries=0,
         ),
         "preset_import_classify": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1,
@@ -1093,11 +1105,35 @@ def load_config() -> dict:
                     if key not in config:
                         config[key] = copy.deepcopy(default)
                         video_engine_migrated.append(key)
-                if video_engine_migrated:
-                    print(
-                        "[CONFIG:MIGRATION] 영상 전용 엔진 실행 설정 기본값 추가: "
-                        f"keys={video_engine_migrated}"
-                    )
+                config, comfy_network_migrated, hardened_instances = (
+                    apply_comfy_launch_network_migration(config)
+                )
+                config, comfy_ports_migrated, migrated_ports = (
+                    apply_comfy_launch_port_migration(config)
+                )
+                if video_engine_migrated or comfy_network_migrated or comfy_ports_migrated:
+                    if video_engine_migrated:
+                        print(
+                            "[CONFIG:MIGRATION] 영상 전용 엔진 실행 설정 기본값 추가: "
+                            f"keys={video_engine_migrated}"
+                        )
+                    if comfy_network_migrated and hardened_instances:
+                        labels = ", ".join(
+                            f"Comfy #{instance_id}" for instance_id in hardened_instances
+                        )
+                        print(
+                            "[CONFIG:MIGRATION] 보안 기본값 1회 마이그레이션: "
+                            f"{labels}의 외부 접속 허용/CORS 전체 허용을 로컬 전용(OFF)으로 전환했습니다."
+                        )
+                    if comfy_ports_migrated and migrated_ports:
+                        port_summary = ", ".join(
+                            f"Comfy #{instance_id} ({old_port}→{new_port})"
+                            for instance_id, old_port, new_port in migrated_ports
+                        )
+                        print(
+                            "[CONFIG:MIGRATION] 보안 기본 포트 1회 마이그레이션: "
+                            f"{port_summary}로 변경했습니다."
+                        )
                     save_config(config)
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
@@ -1495,8 +1531,8 @@ def _reset_illustration_quality_inspection_runtime() -> None:
     _illustration_quality_inspection_runtime_enabled = False
     print("[ILLUST_INSPECTION] 서버 시작: 생성 이미지 자동 검사 OFF")
 
-# ComfyUI 포트: config → 환경변수 → 기본값(8188) 순서
-REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
+# ComfyUI 포트: config → 환경변수 → 기본값(8211) 순서
+REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", str(DEFAULT_COMFY_PORTS[1]))))
 # 삽화 전용 포트: None이면 메인 포트(REAL_COMFY_PORT) 사용
 REAL_COMFY_ILLUST_PORT = app_config.get("comfyui_port_illustration")  # None or int
 comfy_runtime_manager = None
@@ -1554,12 +1590,8 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
             f"resolved=Comfy #{selected}"
         )
 
-    port_key = {
-        1: "comfyui_port",
-        2: "comfyui_port_2",
-        3: "comfyui_port_3",
-    }[selected]
-    fallback_port = {1: 8188, 2: 8187, 3: 8186}[selected]
+    port_key = COMFY_PORT_CONFIG_KEYS[selected]
+    fallback_port = DEFAULT_COMFY_PORTS[selected]
     try:
         port = int(app_config.get(port_key, fallback_port))
         if not 1 <= port <= 65535:
@@ -1820,9 +1852,20 @@ frontend_ws_connections = frontend_ws_manager.connections
 _regeneration_background_tasks: set[asyncio.Task] = set()
 
 # ─── 프론트엔드 WebSocket 이벤트 전송 ───────────────────
+def has_frontend_ws_subscribers(event_type: str) -> bool:
+    """현재 연결된 프론트엔드 WS 중 해당 이벤트를 구독하는 클라이언트가 있는지 확인한다."""
+    for entry in list(frontend_ws_connections.values()):
+        ws = entry.get("ws")
+        if ws is None or ws.closed:
+            continue
+        allowed = entry.get("events")
+        if allowed is None or event_type in allowed:
+            return True
+    return False
+
+
 async def notify_frontend(event_type: str, data: dict = None):
     """프론트엔드 대시보드에 이벤트를 전송한다."""
-    message = {"type": event_type, "data": data or {}}
     client_count = len(frontend_ws_connections)
     # 정상 송신은 로그를 찍지 않는다. 아래 예외는 대시보드 미접속 경고에만 적용한다.
     # - system_stats: 매초 호출되는 헤더 시스템 통계
@@ -1839,7 +1882,16 @@ async def notify_frontend(event_type: str, data: dict = None):
         if not quiet_notify:
             print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
         return
+    targets = []
     for client_id, entry in list(frontend_ws_connections.items()):
+        allowed = entry.get("events")
+        if allowed is not None and event_type not in allowed:
+            continue
+        targets.append((client_id, entry))
+    if not targets:
+        return
+    message = {"type": event_type, "data": data or {}}
+    for client_id, entry in targets:
         peer = ""
         try:
             ws = entry["ws"]
@@ -1862,6 +1914,9 @@ async def notify_frontend(event_type: str, data: dict = None):
             print(f"[WS-NOTIFY] [FAIL] 송신 실패 event={event_type} client={client_id[:8]} peer={peer} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
             traceback.print_exc()
+
+
+notify_frontend.has_subscribers = has_frontend_ws_subscribers
 
 
 # ─── 시스템 모니터 (RAM/VRAM/CPU/GPU) ───────────────────
@@ -2730,6 +2785,8 @@ def _capture_illustration_runtime_snapshot(
     raw_toggles = _illustration_raw_toggles_for_workshop(config_snapshot, workshop=workshop)
     raw_toggles["genre"] = str(bot.get("genre") or "").strip()
     raw_toggles["genre_work_title"] = str(bot.get("genre_work_title") or "").strip()
+    raw_toggles["genre_crossover_background"] = str(bot.get("genre_crossover_background") or "").strip()
+    raw_toggles["genre_crossover_works"] = str(bot.get("genre_crossover_works") or "").strip()
     raw_toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
         illustration_workflow_type
     )
@@ -3010,7 +3067,8 @@ def split_prompt_chat(text: str) -> tuple[str, str]:
 
 
 def build_prompt(positive: str, negative: str, workflow_api: dict = None,
-                 illustration_prompt_json: dict | None = None) -> dict:
+                 illustration_prompt_json: dict | None = None,
+                 *, record_flow: bool = True, out_document: dict | None = None) -> dict:
     """API 워크플로우의 긍정·부정 프롬프트만 채운다."""
     source_workflow = current_api_workflow if workflow_api is None else workflow_api
     if source_workflow is None:
@@ -3058,16 +3116,21 @@ def build_prompt(positive: str, negative: str, workflow_api: dict = None,
             manga_disable_bubbles=bool(raw_body.get("illustration_manga_disable_bubbles")),
             **({"render_target": render_target} if render_target else {}),
         )
-        from illustration_flow import record_reference_images
-        record_reference_images(positive)
-        # Older saved workflows may still carry the removed text detailer.
-        # Keep their outputs on the first decode so that branch never executes.
+        _document = None
         if isinstance(positive, str) and positive.lstrip().startswith("{"):
             import json as _json
             try:
                 _document = _json.loads(positive)
             except _json.JSONDecodeError:
                 _document = None
+        if out_document is not None and isinstance(_document, dict):
+            out_document["document"] = _document
+        if record_flow:
+            from illustration_flow import record_reference_images
+            record_reference_images(_document if isinstance(_document, dict) else positive)
+        # Older saved workflows may still carry the removed text detailer.
+        # Keep their outputs on the first decode so that branch never executes.
+        if _document is not None:
             from illustration_json import (disable_moss_detailer_branch,
                                            disable_moss_dialogue_repair_branch,
                                            is_moss_document)
@@ -3088,6 +3151,9 @@ def build_prompt(positive: str, negative: str, workflow_api: dict = None,
             log_to_file("proxy.log", f"부정프롬프트 주입 (node {nid}): {negative[:100]}...")
 
     return wf
+
+
+build_prompt._supports_flow_defer = True
 
 
 # ─── 이미지 처리 (클라이언트 전송용) ─────────────────────
@@ -3506,136 +3572,136 @@ async def save_backup(
             )(_apply_postprocess)
         image_bytes = await _apply_postprocess()
 
-    # 1) 이미지를 WebP로 변환 (quality=80, 원본 워크플로우 EXIF 메타데이터 포함)
-    try:
-        img = Image.open(BytesIO(image_bytes))
-    except Exception as e:
-        print(f"[BACKUP] ✗ 이미지 로드 실패: {e}")
-        return None, image_bytes  # 합성(또는 원본) 이미지를 호출자에게 반환 (risu 전송 등)
+    # 1) 이미지 WebP 변환, EXIF/원본(_raw)/워크플로우/제출 프롬프트 저장을
+    # 워커 스레드에서 일괄 수행해 이미지 서빙과 폴링 응답이 멈추지 않게 한다.
+    webp_quality = get_backup_webp_quality()
+    webp_lossless = get_backup_webp_lossless()
 
-    webp_path = os.path.join(backup_dir, f"{base_name}.webp")
-
-    # EXIF에 원본 워크플로우 삽입 (ComfyUI 호환)
-    exif_bytes = None
-    if HAS_PIEXIF and backup_original_workflow:
+    def _write_backup_artifacts_sync():
         try:
-            metadata = json.dumps(
-                {
-                    "prompt": backup_api_workflow or {},
-                    "workflow": backup_original_workflow,
-                },
-                ensure_ascii=False,
-            )
-            user_comment = piexif.helper.UserComment.dump(metadata, encoding="unicode")
-            exif_dict = {
-                "0th": {},
-                "Exif": {piexif.ExifIFD.UserComment: user_comment},
-                "1st": {},
-                "GPS": {},
-            }
-            exif_bytes = piexif.dump(exif_dict)
-        except Exception as e:
-            print(f"[BACKUP] ⚠ EXIF 생성 실패: {e}")
-            exif_bytes = None
+            with Image.open(BytesIO(image_bytes)) as img:
+                image_size = (int(img.size[0]), int(img.size[1]))
+                webp_path = os.path.join(backup_dir, f"{base_name}.webp")
 
-    save_kwargs = {"format": "WEBP", "quality": get_backup_webp_quality()}
-    if get_backup_webp_lossless():
-        save_kwargs["lossless"] = True
-        del save_kwargs["quality"]
-    if exif_bytes:
-        save_kwargs["exif"] = exif_bytes
+                # EXIF에 원본 워크플로우 삽입 (ComfyUI 호환)
+                exif_bytes = None
+                if HAS_PIEXIF and backup_original_workflow:
+                    try:
+                        metadata = json.dumps(
+                            {
+                                "prompt": backup_api_workflow or {},
+                                "workflow": backup_original_workflow,
+                            },
+                            ensure_ascii=False,
+                        )
+                        user_comment = piexif.helper.UserComment.dump(metadata, encoding="unicode")
+                        exif_dict = {
+                            "0th": {},
+                            "Exif": {piexif.ExifIFD.UserComment: user_comment},
+                            "1st": {},
+                            "GPS": {},
+                        }
+                        exif_bytes = piexif.dump(exif_dict)
+                    except Exception as e:
+                        print(f"[BACKUP] ⚠ EXIF 생성 실패: {e}")
+                        exif_bytes = None
 
-    if img.mode == "RGBA":
-        await asyncio.to_thread(img.save, webp_path, **save_kwargs)
-    else:
-        await asyncio.to_thread(lambda: img.convert("RGB").save(webp_path, **save_kwargs))
+                save_kwargs = {"format": "WEBP", "quality": webp_quality}
+                if webp_lossless:
+                    save_kwargs["lossless"] = True
+                    del save_kwargs["quality"]
+                if exif_bytes:
+                    save_kwargs["exif"] = exif_bytes
 
-    orig_size = len(image_bytes)
-    webp_size = os.path.getsize(webp_path)
-    print(f"[BACKUP] 이미지 저장: {base_name}.webp ({orig_size:,}B → {webp_size:,}B)")
-
-    # 후처리가 적용된 백업은 합성 전 원본(대사 없음)을 _raw/{base}.webp로 별도 보존한다.
-    # 용도: 이후 대사 교체/후처리 재적용 시 _info.json의 postprocess_settings·speak_text와
-    #       함께 이 원본에서 재합성. 후처리가 없거나 합성에 실패한 경우 .webp 자체가 원본이라 생략.
-    # _raw는 서브디렉토리에 두어 백업 카운트/필터/정리 glob(메인 폴더 비재귀)에 잡히지 않게 한다.
-    if composition_applied:
-        try:
-            raw_dir = os.path.join(backup_dir, "_raw")
-            os.makedirs(raw_dir, exist_ok=True)
-            raw_path = os.path.join(raw_dir, f"{base_name}.webp")
-            # EXIF(워크플로우 메타)는 빼고 저장 — 메인 .webp/_info.json에 이미 있고,
-            # animated WebP + exif 조합의 PIL 쿼크를 피해 안정적으로 저장하기 위함.
-            raw_save_kwargs = {"format": "WEBP", "quality": get_backup_webp_quality()}
-            if get_backup_webp_lossless():
-                raw_save_kwargs["lossless"] = True
-                del raw_save_kwargs["quality"]
-            with Image.open(BytesIO(raw_image_bytes)) as raw_img:
-                if getattr(raw_img, "is_animated", False):
-                    # 원본이 애니메이션이면 모든 프레임을 보존(충실한 원본).
-                    frames = []
-                    for _i in range(getattr(raw_img, "n_frames", 1)):
-                        raw_img.seek(_i)
-                        frames.append(raw_img.convert("RGBA") if raw_img.mode == "RGBA" else raw_img.convert("RGB"))
-                    await asyncio.to_thread(frames[0].save, raw_path, save_all=True, append_images=frames[1:], **raw_save_kwargs)
-                elif raw_img.mode == "RGBA":
-                    await asyncio.to_thread(raw_img.save, raw_path, **raw_save_kwargs)
+                if img.mode == "RGBA":
+                    img.save(webp_path, **save_kwargs)
                 else:
-                    await asyncio.to_thread(lambda: raw_img.convert("RGB").save(raw_path, **raw_save_kwargs))
-            print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
-            raw_saved_extension = ".webp"
+                    img.convert("RGB").save(webp_path, **save_kwargs)
         except Exception as e:
-            print(f"[BACKUP] ⚠ 원본(_raw) 저장 실패 (무시, 합성본은 정상 저장됨): {e}")
-            traceback.print_exc()
+            print(f"[BACKUP] ✗ 이미지 로드 실패: {e}")
+            return None, ""
 
-    # 2) 원본 워크플로우 JSON 저장 (긍정/부정 프롬프트만 실제 사용값으로 덮어씌움)
-    workflow_path = os.path.join(backup_dir, f"{base_name}.json")
-    if provider == "chansub":
-        # 챈섭 백업은 로컬 워크플로우 블럭 없이 실제 사용한 두 프롬프트만 저장한다.
-        with open(workflow_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {"provider": "chansub", "positive": positive, "negative": negative},
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"[BACKUP] 챈섭 프롬프트 저장: {base_name}.json")
-    elif backup_original_workflow:
-        wf_copy = copy.deepcopy(backup_original_workflow)
-        # JSON workflows have no separate negative-prompt node. Preserve the
-        # builder's negative draft for editing and regeneration as well.
-        wf_copy["negative"] = negative
-        if "nodes" in wf_copy:
-            for node in wf_copy["nodes"]:
-                title = node.get("title", "")
-                wv = node.get("widgets_values")
-                if title == "긍정프롬프트" and isinstance(wv, list) and len(wv) > 0:
-                    node["widgets_values"][0] = positive
-                elif title == "부정프롬프트" and isinstance(wv, list) and len(wv) > 0:
-                    node["widgets_values"][0] = negative
-        with open(workflow_path, "w", encoding="utf-8") as f:
-            json.dump(wf_copy, f, indent=2, ensure_ascii=False)
-        # 채팅 내용이 있으면 별도 파일로 저장
-        if chat_content:
-            chat_path = os.path.join(backup_dir, f"{base_name}_chat.txt")
-            with open(chat_path, "w", encoding="utf-8") as f:
-                f.write(chat_content)
-        # 강화 프롬프트가 있으면 별도 파일로 저장
-        if enhanced_positive:
-            enhanced_path = os.path.join(backup_dir, f"{base_name}_enhanced.txt")
-            with open(enhanced_path, "w", encoding="utf-8") as f:
-                f.write(enhanced_positive)
-        # NSFW 와일드카드 정보를 JSON으로 저장 (미사용 시에도 상태 저장)
-        if enhanced_positive and wildcard_info is not None:
-            wildcard_path = os.path.join(backup_dir, f"{base_name}_wildcard.json")
-            with open(wildcard_path, "w", encoding="utf-8") as f:
-                json.dump(wildcard_info, f, ensure_ascii=False, indent=2)
-        print(f"[BACKUP] 워크플로우 저장: {base_name}.json")
+        orig_size = len(image_bytes)
+        webp_size = os.path.getsize(webp_path)
+        print(f"[BACKUP] 이미지 저장: {base_name}.webp ({orig_size:,}B → {webp_size:,}B)")
 
-    # Keep asset-heavy JSON out of the draft read by every gallery listing.
-    # Historical submissions must never be rebuilt from today's presets/assets.
-    if submitted_prompt is not None:
-        with open(os.path.join(backup_dir, f"{base_name}_submitted_prompt.json"), "w", encoding="utf-8") as f:
-            json.dump(submitted_prompt, f, ensure_ascii=False, separators=(",", ":"))
+        # 후처리가 적용된 백업은 합성 전 원본(대사 없음)을 _raw/{base}.webp로 별도 보존한다.
+        saved_raw_ext = ""
+        if composition_applied:
+            try:
+                raw_dir = os.path.join(backup_dir, "_raw")
+                os.makedirs(raw_dir, exist_ok=True)
+                raw_path = os.path.join(raw_dir, f"{base_name}.webp")
+                raw_save_kwargs = {"format": "WEBP", "quality": webp_quality}
+                if webp_lossless:
+                    raw_save_kwargs["lossless"] = True
+                    del raw_save_kwargs["quality"]
+                with Image.open(BytesIO(raw_image_bytes)) as raw_img:
+                    if getattr(raw_img, "is_animated", False):
+                        frames = []
+                        for _i in range(getattr(raw_img, "n_frames", 1)):
+                            raw_img.seek(_i)
+                            frames.append(raw_img.convert("RGBA") if raw_img.mode == "RGBA" else raw_img.convert("RGB"))
+                        frames[0].save(raw_path, save_all=True, append_images=frames[1:], **raw_save_kwargs)
+                    elif raw_img.mode == "RGBA":
+                        raw_img.save(raw_path, **raw_save_kwargs)
+                    else:
+                        raw_img.convert("RGB").save(raw_path, **raw_save_kwargs)
+                print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
+                saved_raw_ext = ".webp"
+            except Exception as e:
+                print(f"[BACKUP] ⚠ 원본(_raw) 저장 실패 (무시, 합성본은 정상 저장됨): {e}")
+                traceback.print_exc()
+
+        # 2) 원본 워크플로우 JSON 저장 (긍정/부정 프롬프트만 실제 사용값으로 덮어씌움)
+        workflow_path = os.path.join(backup_dir, f"{base_name}.json")
+        if provider == "chansub":
+            with open(workflow_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"provider": "chansub", "positive": positive, "negative": negative},
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            print(f"[BACKUP] 챈섭 프롬프트 저장: {base_name}.json")
+        elif backup_original_workflow:
+            wf_copy = copy.deepcopy(backup_original_workflow)
+            wf_copy["negative"] = negative
+            if "nodes" in wf_copy:
+                for node in wf_copy["nodes"]:
+                    title = node.get("title", "")
+                    wv = node.get("widgets_values")
+                    if title == "긍정프롬프트" and isinstance(wv, list) and len(wv) > 0:
+                        node["widgets_values"][0] = positive
+                    elif title == "부정프롬프트" and isinstance(wv, list) and len(wv) > 0:
+                        node["widgets_values"][0] = negative
+            with open(workflow_path, "w", encoding="utf-8") as f:
+                json.dump(wf_copy, f, indent=2, ensure_ascii=False)
+            if chat_content:
+                chat_path = os.path.join(backup_dir, f"{base_name}_chat.txt")
+                with open(chat_path, "w", encoding="utf-8") as f:
+                    f.write(chat_content)
+            if enhanced_positive:
+                enhanced_path = os.path.join(backup_dir, f"{base_name}_enhanced.txt")
+                with open(enhanced_path, "w", encoding="utf-8") as f:
+                    f.write(enhanced_positive)
+            if enhanced_positive and wildcard_info is not None:
+                wildcard_path = os.path.join(backup_dir, f"{base_name}_wildcard.json")
+                with open(wildcard_path, "w", encoding="utf-8") as f:
+                    json.dump(wildcard_info, f, ensure_ascii=False, indent=2)
+            print(f"[BACKUP] 워크플로우 저장: {base_name}.json")
+
+        # Keep asset-heavy JSON out of the draft read by every gallery listing.
+        # Historical submissions must never be rebuilt from today's presets/assets.
+        if submitted_prompt is not None:
+            with open(os.path.join(backup_dir, f"{base_name}_submitted_prompt.json"), "w", encoding="utf-8") as f:
+                json.dump(submitted_prompt, f, ensure_ascii=False, separators=(",", ":"))
+
+        return image_size, saved_raw_ext
+
+    image_size, raw_saved_extension = await asyncio.to_thread(_write_backup_artifacts_sync)
+    if image_size is None:
+        return None, image_bytes  # 합성(또는 원본) 이미지를 호출자에게 반환 (risu 전송 등)
 
     # 3) 변환 정보 저장 — workshop과 backup_dir은 함수 시작에서 확정했다.
     info_to_save = copy.deepcopy(backup_conversion_info)
@@ -3668,12 +3734,8 @@ async def save_backup(
     # 이미지 크기 + _raw 보존 확장자 — 이후 백업 목록/영상화 참조 조회가 파일 탐색·
     # PIL 열기 없이 이 메타데이터로 판정한다(구 백업은 기존 탐색 폴백 유지).
     # 합성 실패/미적용이면 raw_extension="" (메인 이미지가 곧 원본).
-    try:
-        info_to_save["image_width"] = int(img.size[0])
-        info_to_save["image_height"] = int(img.size[1])
-    except Exception as e:
-        print(f"[BACKUP] ⚠ 이미지 크기 기록 실패, 무시: {e}")
-        traceback.print_exc()
+    info_to_save["image_width"] = image_size[0]
+    info_to_save["image_height"] = image_size[1]
     info_to_save["raw_extension"] = raw_saved_extension
     if backup_multi_char:
         info_to_save["illustration_multi_char"] = backup_multi_char
@@ -3690,19 +3752,23 @@ async def save_backup(
         )
     if manual_character_tags:
         # Keep the exact editable inputs with their image, independent of later card edits.
-        snapshots = copy.deepcopy(manual_character_tags)
-        previous_versions = {name: 0 for name in snapshots}
-        for previous_path in glob.glob(os.path.join(backup_dir, "*_info.json")):
-            previous_name = os.path.basename(previous_path)[:-len("_info.json")]
-            previous_info = _read_backup_info_for_scan(backup_dir, previous_name) or {}
-            if previous_info.get("bot_name") != bot_name:
-                continue
+        def _resolve_manual_tag_snapshots_sync():
+            snapshots = copy.deepcopy(manual_character_tags)
+            previous_versions = {name: 0 for name in snapshots}
+            for previous_path in glob.glob(os.path.join(backup_dir, "*_info.json")):
+                previous_name = os.path.basename(previous_path)[:-len("_info.json")]
+                previous_info = _read_backup_info_for_scan(backup_dir, previous_name) or {}
+                if previous_info.get("bot_name") != bot_name:
+                    continue
+                for name, snapshot in snapshots.items():
+                    previous = (previous_info.get("manual_character_tags") or {}).get(name)
+                    if isinstance(previous, dict) and previous.get("visual_profile_id") == snapshot.get("visual_profile_id"):
+                        previous_versions[name] = max(previous_versions[name], int(previous.get("version") or 0))
             for name, snapshot in snapshots.items():
-                previous = (previous_info.get("manual_character_tags") or {}).get(name)
-                if isinstance(previous, dict) and previous.get("visual_profile_id") == snapshot.get("visual_profile_id"):
-                    previous_versions[name] = max(previous_versions[name], int(previous.get("version") or 0))
-        for name, snapshot in snapshots.items():
-            snapshot["version"] = previous_versions[name] + 1
+                snapshot["version"] = previous_versions[name] + 1
+            return snapshots
+
+        snapshots = await asyncio.to_thread(_resolve_manual_tag_snapshots_sync)
         info_to_save["manual_character_tags"] = snapshots
         print(f"[BACKUP:MANUAL_HISTORY] 버전 저장: base={base_name}, bot={bot_name!r}, versions="
               f"{ {name: item['version'] for name, item in snapshots.items()} }")
@@ -3749,11 +3815,14 @@ async def save_backup(
     if flow_run_id:
         info_to_save["illustration_flow_run_id"] = flow_run_id
     info_path = os.path.join(backup_dir, f"{base_name}_info.json")
-    with open(info_path, "w", encoding="utf-8") as f:
-        json.dump(info_to_save, f, indent=2, ensure_ascii=False)
 
-    # 4) 오래된 백업 정리 — 워크숍별 폴더에서만 정리한다.
-    await asyncio.to_thread(cleanup_backups, backup_dir)
+    def _finish_backup_io_sync():
+        with open(info_path, "w", encoding="utf-8") as f:
+            json.dump(info_to_save, f, indent=2, ensure_ascii=False)
+        cleanup_backups(backup_dir)
+
+    # 4) 메타데이터 기록 및 오래된 백업 정리 — 워크숍별 폴더에서만 정리한다.
+    await asyncio.to_thread(_finish_backup_io_sync)
     # 5) 필터 인덱스 캐시 무효화 (신규 백업 + 정리된 백업 반영)
     _invalidate_backup_filter_cache(backup_dir)
 
@@ -4423,32 +4492,73 @@ async def generate_image_with_prompt(
             "api_workflow": copy.deepcopy(preset_api_workflow),
             "conversion_info": copy.deepcopy(current_conversion_info),
         }
-        risu_prompt = build_prompt(positive, negative, workflow_api=preset_api_workflow,
-                                  illustration_prompt_json=illustration_prompt_json)
+
+    # 참조 이미지 리사이즈/인코딩, JSON 조립 및 deepcopy는 이벤트 루프를
+    # 막지 않도록 워커 스레드에서 수행한다.
+    import asyncio as _asyncio
+
+    def _build_and_prepare_prompt_sync():
+        doc_holder: dict = {}
+        if getattr(build_prompt, "_supports_flow_defer", False):
+            built = build_prompt(
+                positive,
+                negative,
+                workflow_api=preset_api_workflow,
+                illustration_prompt_json=illustration_prompt_json,
+                record_flow=False,
+                out_document=doc_holder,
+            )
+            flow_deferred = True
+        else:
+            built = build_prompt(
+                positive,
+                negative,
+                workflow_api=preset_api_workflow,
+                illustration_prompt_json=illustration_prompt_json,
+            )
+            flow_deferred = False
+        submitted_doc = doc_holder.get("document")
         if seed is not None:
-            for node in risu_prompt.values():
+            for node in built.values():
                 inputs = node.get("inputs", {})
                 for key in ("seed", "noise_seed"):
                     if key in inputs and not isinstance(inputs[key], list):
                         inputs[key] = int(seed)
             from illustration_json import is_illustration_json_workflow
-            if is_illustration_json_workflow(risu_prompt):
-                for node in risu_prompt.values():
+            if is_illustration_json_workflow(built):
+                for node in built.values():
                     if node.get("_meta", {}).get("title") == "긍정프롬프트":
-                        payload = json.loads(node["inputs"]["value"])
+                        payload = submitted_doc if isinstance(submitted_doc, dict) else json.loads(node["inputs"]["value"])
                         if isinstance(payload.get("workflow"), dict):
                             payload["workflow"]["seed"] = int(seed)
                         else:
                             payload["fields"]["SEED"] = int(seed)
+                        submitted_doc = payload
                         node["inputs"]["value"] = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             print(f"[MANGA:SEED] 최종 워크플로우 공통 시드 적용: {seed}")
         # 비교 진단은 캐시용 API 그래프가 아니라 Comfy에 실제로 제출된 최종
         # 그래프를 비교해야 한다. ContextVar에만 보관해 일반 응답/백업에는
         # 노출하거나 저장하지 않는다.
-        workflow_snapshot["submitted_workflow"] = copy.deepcopy(risu_prompt)
+        workflow_snapshot["submitted_workflow"] = copy.deepcopy(built)
         from illustration_json import is_illustration_json_workflow
-        if is_illustration_json_workflow(risu_prompt):
-            workflow_snapshot["submitted_prompt"] = json.loads(extract_prompts_by_title(risu_prompt, "긍정프롬프트"))
+        if is_illustration_json_workflow(built):
+            if isinstance(submitted_doc, dict):
+                workflow_snapshot["submitted_prompt"] = copy.deepcopy(submitted_doc)
+            else:
+                submitted_doc = json.loads(extract_prompts_by_title(built, "긍정프롬프트"))
+                workflow_snapshot["submitted_prompt"] = submitted_doc
+        decoded_refs = None
+        if flow_deferred and isinstance(submitted_doc, dict):
+            import illustration_flow as _illustration_flow
+            decoded_refs = _illustration_flow.decode_reference_assets(submitted_doc)
+        return built, submitted_doc, decoded_refs, flow_deferred
+
+    risu_prompt, _submitted_doc, _decoded_refs, _flow_deferred = await _asyncio.to_thread(
+        _build_and_prepare_prompt_sync
+    )
+    if _flow_deferred and _submitted_doc is not None:
+        import illustration_flow as _illustration_flow
+        _illustration_flow.record_reference_images(_submitted_doc, decoded_assets=_decoded_refs)
     CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
     api_workflow_snapshot = workflow_snapshot["api_workflow"]
     illust_port = None
@@ -12271,6 +12381,8 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             toggles.pop("original_asset_instruction", None)
             toggles.pop("genre", None)
             toggles.pop("genre_work_title", None)
+            toggles.pop("genre_crossover_background", None)
+            toggles.pop("genre_crossover_works", None)
             toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
                 app_config.get("illustration_workflow_type")
             )
@@ -12285,6 +12397,8 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
         raw = copy.deepcopy(raw)
         raw.pop("genre", None)
         raw.pop("genre_work_title", None)
+        raw.pop("genre_crossover_background", None)
+        raw.pop("genre_crossover_works", None)
         if raw.pop("original_asset_instruction", None) is not None:
             print(
                 "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction 저장 요청을 "
@@ -12294,6 +12408,8 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
         toggles.pop("original_asset_instruction", None)
         toggles.pop("genre", None)
         toggles.pop("genre_work_title", None)
+        toggles.pop("genre_crossover_background", None)
+        toggles.pop("genre_crossover_works", None)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")
@@ -13386,7 +13502,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                     "output": history_record.get("output") or terminal_error,
                 })
             try:
-                lighbd_service._log_lighbd_history(history_record)
+                await lighbd_service._log_lighbd_history_async(history_record)
                 history_logged = True
             except Exception as history_error:
                 print(
@@ -13459,7 +13575,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                     )
                     traceback.print_exc()
                 if not history_logged:
-                    lighbd_service._log_lighbd_history(history_record)
+                    await lighbd_service._log_lighbd_history_async(history_record)
                     history_logged = True
                 try:
                     await resp.write_eof()
@@ -14490,11 +14606,19 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     client_id = str(uuid.uuid4())
+    raw_events = str(request.query.get("events", "") or "").strip()
+    allowed_events = (
+        frozenset(name.strip() for name in raw_events.split(",") if name.strip())
+        if raw_events else None
+    )
 
     registered = await frontend_ws_manager.register(client_id, ws)
     if not registered:
         print(f"[FE-WS] 연결 승인 실패 client={client_id[:8]}")
         return ws
+    entry = frontend_ws_connections.get(client_id)
+    if entry is not None:
+        entry["events"] = allowed_events
 
     try:
         # Send initial reschedule status
@@ -16746,7 +16870,7 @@ async def handle_api_backup_llm_trace(
                     prompt_tokens = int(usage.get("prompt_tokens") or llm_service._approx_input_tokens(messages))
                     completion_tokens = int(usage.get("completion_tokens") or llm_service._approx_tokens(output))
                     history_id = str(event.get("attempt_id") or execution.execution_id)
-                    lighbd_service._log_lighbd_history({
+                    await lighbd_service._log_lighbd_history_async({
                         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                         "history_id": history_id, "prompt_id": history_id,
                         "execution_id": history_id,
@@ -21873,7 +21997,7 @@ def _log_auto_feedback_review_history(
             record["attempt"] = attempt
         if total_attempts is not None:
             record["total_attempts"] = total_attempts
-        lighbd_service._log_lighbd_history(record)
+        lighbd_service._log_lighbd_history_background(record)
     except Exception as exc:
         print(
             f"[AUTO_FEEDBACK:DETAIL] LB 자세히 기록 실패: "
@@ -23036,6 +23160,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["comfy_launch_profiles"] = normalize_comfy_launch_profiles(
                         body.get("comfy_launch_profiles")
                     )
+                    body[COMFY_LAUNCH_NETWORK_DEFAULTS_MIGRATED_KEY] = True
                 except ComfyRuntimeValidationError as e:
                     print(
                         "[CONFIG] ComfyUI 실행 프로필 저장 거부: "
@@ -23651,6 +23776,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
 
             # ComfyUI 포트 업데이트
             global REAL_COMFY_PORT, REAL_COMFY_ILLUST_PORT
+            if any(key in body for key in COMFY_PORT_CONFIG_KEYS.values()):
+                app_config[COMFY_LAUNCH_PORT_DEFAULTS_MIGRATED_KEY] = True
             if "comfyui_port" in body:
                 REAL_COMFY_PORT = int(body["comfyui_port"])
             if "comfyui_port_illustration" in body:
@@ -25146,9 +25273,34 @@ async def handle_api_workflow_files(request: web.Request) -> web.Response:
 
 
 # ─── 미들웨어 ────────────────────────────────────────────
+_QUIET_REQUEST_LOG_PREFIXES = (
+    "/api/backup_image/",
+    "/api/backup_poster/",
+    "/api/bot_mode/image/",
+    "/api/asset_mode/image/",
+    "/api/bg-asset/image/",
+    "/api/internal_lora/image/",
+    "/api/style_lora/trained/preview/",
+)
+
+
+def _should_log_request(request) -> bool:
+    if request.method != "GET":
+        return True
+    if request.query.get("monitor") == "1":
+        return False
+    if request.path.startswith(_QUIET_REQUEST_LOG_PREFIXES):
+        return False
+    if request.path == "/api/illustration_flow" and request.query.get("image") == "1":
+        return False
+    return True
+
+
 @web.middleware
 async def log_middleware(request, handler):
-    log_to_file("requests.log", f">>> {request.method} {request.path_qs}")
+    should_log = _should_log_request(request)
+    if should_log:
+        log_to_file("requests.log", f">>> {request.method} {request.path_qs}")
     try:
         # 키 조회·저장·삭제 API에만 대시보드의 서명된 세션을 요구한다.
         # 태그 결과 전송 등 기존 연동 API에는 브라우저 로그인을 요구하지 않는다.
@@ -25176,10 +25328,12 @@ async def log_middleware(request, handler):
             response = await handler(request)
         if key_api and not response.prepared:
             response.headers["Cache-Control"] = "no-store"
-        log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> {response.status}")
+        if should_log or response.status >= 400:
+            log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> {response.status}")
         return response
     except web.HTTPException as e:
-        log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> HTTP {e.status}")
+        if should_log or e.status >= 400:
+            log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> HTTP {e.status}")
         raise
     except Exception as e:
         log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> ERROR: {e}")
@@ -25441,11 +25595,9 @@ comfy_runtime_manager = register_comfy_runtime_routes(
 def _configured_comfy_ports_for_video_engine() -> list[tuple[int, int]]:
     config = load_config()
     ports: list[tuple[int, int]] = []
-    for instance_id, key, fallback in (
-        (1, "comfyui_port", 8188),
-        (2, "comfyui_port_2", 8187),
-        (3, "comfyui_port_3", 8186),
-    ):
+    for instance_id in COMFY_INSTANCE_IDS:
+        key = COMFY_PORT_CONFIG_KEYS[instance_id]
+        fallback = DEFAULT_COMFY_PORTS[instance_id]
         try:
             port = int(config.get(key, fallback))
             if not 1 <= port <= 65535:
@@ -27248,7 +27400,7 @@ def _record_preset_import_detail(
         }
         if error:
             record["error"] = str(error)
-        lighbd_service._log_lighbd_history(record)
+        lighbd_service._log_lighbd_history_background(record)
         print(
             "[PRESET_IMPORT_DETAIL] 자세히 기록 완료: "
             f"phase={phase}, status={record['status']}, history_id={history_id}"
@@ -28835,6 +28987,31 @@ async def handle_api_asset_mode_image(request: web.Request) -> web.Response:
                 f"path={filepath!r}, status=404"
             )
             return web.Response(text="Not found", status=404)
+
+        if request.query.get("postprocess") == "1":
+            store = globals().get("asset_postprocess_store")
+            if store is not None:
+                from asset_postprocess import (
+                    ASSET_WORKSPACE,
+                    has_active_postprocess,
+                    render_cached_postprocess_file,
+                )
+                postprocess_settings = await asyncio.to_thread(store.read)
+                if has_active_postprocess(ASSET_WORKSPACE, postprocess_settings):
+                    image_data, content_type, applied = await asyncio.to_thread(
+                        render_cached_postprocess_file,
+                        filepath,
+                        ASSET_WORKSPACE,
+                        postprocess_settings,
+                    )
+                    return web.Response(
+                        body=image_data,
+                        content_type=content_type,
+                        headers={
+                            "Cache-Control": "no-store, no-cache, must-revalidate",
+                            "X-Postprocess-Applied": "1" if applied else "0",
+                        },
+                    )
 
         # 에셋은 삭제 후 같은 파일명으로 다시 업로드될 수 있다. FileResponse의
         # ETag/Last-Modified 조건부 응답을 사용하면 브라우저가 이전 파일 바이트를
@@ -37185,7 +37362,8 @@ app.router.add_post("/api/style_lora/trained/cleanup-non-representative", handle
 
 async def handle_api_queue_status(request):
     """큐 전체 상태 조회"""
-    return web.json_response(queue_manager.get_status())
+    monitor = request.query.get("monitor") == "1"
+    return web.json_response(queue_manager.get_status(monitor=monitor))
 
 async def handle_api_queue_add(request):
     """큐에 작업 추가"""
@@ -37632,9 +37810,11 @@ async def on_startup(app):
             comfy_runtime_manager,
             profiles=app_config.get("comfy_launch_profiles"),
             ports={
-                1: app_config.get("comfyui_port", 8188),
-                2: app_config.get("comfyui_port_2", 8187),
-                3: app_config.get("comfyui_port_3", 8186),
+                instance_id: app_config.get(
+                    COMFY_PORT_CONFIG_KEYS[instance_id],
+                    DEFAULT_COMFY_PORTS[instance_id],
+                )
+                for instance_id in COMFY_INSTANCE_IDS
             },
         )
     except Exception as e:

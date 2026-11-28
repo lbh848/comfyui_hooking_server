@@ -2276,12 +2276,23 @@ td .badge {
   margin: 48px auto;
   padding: 0 20px;
 }
+.spin {
+  animation: settings-spin 1s linear infinite;
+}
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,
   *:after {
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+  .spin {
+    animation: none;
   }
 }
 .comfy-instance-tabs > button { display: inline-flex; align-items: center; gap: 8px; }
@@ -2298,6 +2309,21 @@ td .badge {
 .comfy-runtime-fields > .field { margin-top: 18px; }
 .comfy-runtime-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
 .comfy-runtime-page .setting-row p { max-width: 100%; }
+.comfy-runtime-security-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger);
+  border-radius: 7px;
+  background: #fff4f5;
+  color: var(--danger);
+}
+.comfy-runtime-security-warning > svg { flex-shrink: 0; margin-top: 2px; }
+.comfy-runtime-security-warning > div { min-width: 0; flex: 1; }
+.comfy-runtime-security-warning strong { display: block; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.comfy-runtime-security-warning p { margin: 4px 0 0; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
   .comfy-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .comfy-runtime-grid > .field:first-child { grid-column: 1 / -1; }

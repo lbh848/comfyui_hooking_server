@@ -37,11 +37,11 @@
     },
     {
       "name": "comfyui-easy-use",
-      "sha256": "2a80ae5517780aaed5e3a013f986a6f956970f9a3bad941f35a5615c135caeb7",
-      "size": 1920042,
+      "sha256": "73f42612d24f60797698dd2e612f2cb32b3f7506074f04ff6cdf85102bfb482a",
+      "size": 4061553,
       "source_type": "archive",
-      "url": "https://cdn.comfy.org/yolain/comfyui-easy-use/1.3.6/node.zip",
-      "version": "1.3.6"
+      "url": "https://cdn.comfy.org/yolain/comfyui-easy-use/1.4.2/node.zip",
+      "version": "1.4.2"
     },
     {
       "name": "comfyui-impact-pack",
@@ -456,6 +456,13 @@
       "url": "https://huggingface.co/kohya-ss/Anima-LLLite/resolve/10bbc6686d3b094917e15b9737aaa52275202004/anima-lllite-inpainting-v2.safetensors"
     },
     {
+      "id": "anima-lllite-any-test-like-v2",
+      "relative_path": "models/controlnet/anima-lllite-any-test-like-v2.safetensors",
+      "sha256": "8863424f04a2445815a827b22cbda557a085d2752e05fab54a2b303821a9e3b2",
+      "size": 16403008,
+      "url": "https://huggingface.co/kohya-ss/Anima-LLLite/resolve/36ba7f2f498a1ca63cc77fc7a1298652f72d4524/anima-lllite-any-test-like-v2.safetensors"
+    },
+    {
       "id": "anime-sharp-v4-upscaler",
       "relative_path": "models/upscale_models/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
       "sha256": "b641c9eb10b43f26538177aa8f0fef8b9fc2a153afd1431d0a062a84c49ce6d0",
@@ -644,6 +651,22 @@
       "sha256": "d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b",
       "size": 249521340,
       "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/2929efe3cdd506c0a430bcfca70a9a8d805cc095/vae/flux2-vae_small.safetensors"
+    },
+    {
+      "id": "moss-rgba-vae",
+      "license": "GPL-3.0",
+      "relative_path": "models/vae/moss_rgba_vae.safetensors",
+      "sha256": "61d3a083fd225b99058d9cbf2d5d44cccf25149adc833e2e65105c7a0104dc9d",
+      "size": 336223512,
+      "url": "https://huggingface.co/ChenkinLab/CKMoss-Image-RGBA/resolve/8a53ccca4f36ac090cedbd8422fb5aa44832ad2f/vae/moss_rgba_vae.safetensors"
+    },
+    {
+      "id": "moss-rgba-dit-lora",
+      "license": "GPL-3.0",
+      "relative_path": "models/loras/moss_rgba_dit_lora.safetensors",
+      "sha256": "5ffeb1fc8dc237abdcb1e9d565baa6df639a85db6e7105017719541d2e01a3c4",
+      "size": 298178320,
+      "url": "https://huggingface.co/ChenkinLab/CKMoss-Image-RGBA/resolve/8a53ccca4f36ac090cedbd8422fb5aa44832ad2f/loras/moss_rgba_dit_lora.safetensors"
     },
     {
       "id": "moss-charref-v2",
@@ -1125,6 +1148,21 @@
         ]
       },
       {
+        "id": "workflow_pack_extra_paths.asset_moss_4step_rgba",
+        "name": "배포_공방_에셋_MOSS_4STEP_투명배경_V1.json",
+        "archive_name": "workflows/배포_공방_에셋_MOSS_4STEP_투명배경_V1.json",
+        "bindings": [
+          "workflow_pack_extra_paths.asset_moss_4step_rgba"
+        ],
+        "model_ids": [
+          "moss-4step-akhaliq-v2",
+          "moss-image-sft-int8",
+          "moss-rgba-dit-lora",
+          "moss-rgba-vae",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
         "id": "workflow_pack_extra_paths.asset_moss_50step",
         "name": "배포_공방_에셋_MOSS_50STEP_V1.json",
         "archive_name": "workflows/배포_공방_에셋_MOSS_50STEP_V1.json",
@@ -1133,6 +1171,47 @@
         ],
         "model_ids": [
           "flux2-vae-small",
+          "moss-image-sft-int8",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
+        "id": "bg_anima_only_asset_workflow_source_path",
+        "name": "배포_공방_배경_ANIMA_V1.json",
+        "archive_name": "workflows/배포_공방_배경_ANIMA_V1.json",
+        "bindings": [
+          "bg_anima_only_asset_workflow_source_path"
+        ],
+        "model_ids": [
+          "anima-lllite-any-test-like-v2",
+          "anima-text-encoder",
+          "anima-vae"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.bg_asset_moss_8step",
+        "name": "배포_공방_배경_MOSS_8STEP_V1.json",
+        "archive_name": "workflows/배포_공방_배경_MOSS_8STEP_V1.json",
+        "bindings": [
+          "bg_moss_asset_workflow_source_path",
+          "workflow_pack_extra_paths.bg_asset_moss_8step"
+        ],
+        "model_ids": [
+          "flux2-vae-small",
+          "moss-image-sft-8step-dmd-int8",
+          "qwen35-9b-w4a8"
+        ]
+      },
+      {
+        "id": "workflow_pack_extra_paths.bg_asset_moss_4step",
+        "name": "배포_공방_배경_MOSS_4STEP_V1.json",
+        "archive_name": "workflows/배포_공방_배경_MOSS_4STEP_V1.json",
+        "bindings": [
+          "workflow_pack_extra_paths.bg_asset_moss_4step"
+        ],
+        "model_ids": [
+          "flux2-vae-small",
+          "moss-4step-akhaliq-v2",
           "moss-image-sft-int8",
           "qwen35-9b-w4a8"
         ]
@@ -1216,7 +1295,12 @@
       "moss_asset_workflow_source_path",
       "workflow_pack_extra_paths.asset_moss_8step",
       "workflow_pack_extra_paths.asset_moss_4step",
+      "workflow_pack_extra_paths.asset_moss_4step_rgba",
       "workflow_pack_extra_paths.asset_moss_50step",
+      "bg_anima_only_asset_workflow_source_path",
+      "bg_moss_asset_workflow_source_path",
+      "workflow_pack_extra_paths.bg_asset_moss_8step",
+      "workflow_pack_extra_paths.bg_asset_moss_4step",
       "workflow_pack_extra_paths.lora_training_anima_v2",
       "workflow_pack_extra_paths.lora_training_anima_v2_1",
       "workflow_pack_extra_paths.style_lora_training_anima_v2",

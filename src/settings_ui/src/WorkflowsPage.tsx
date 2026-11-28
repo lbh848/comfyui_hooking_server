@@ -28,11 +28,11 @@ type RunStatus = {
     workflow_skipped?: { binding: string; reason: string }[]; duration_seconds?: number; result_path?: string };
 };
 type Group = { id: string; category: string; name: string; itemIds: string[] };
-const workflowTabs = ["삽화", "에셋", "편집", "학습", "유틸리티", "미분류"] as const;
+const workflowTabs = ["삽화", "에셋", "배경", "편집", "학습", "유틸리티", "미분류"] as const;
 type WorkflowTab = typeof workflowTabs[number];
 type WorkflowAssignment = { id: string; category: WorkflowTab; name: string };
 type WorkflowGroupMove = { item: WorkflowItem; assignments: WorkflowAssignment[] };
-function usesModelGroups(tab: string) { return ["삽화", "에셋", "학습"].includes(tab); }
+function usesModelGroups(tab: string) { return ["삽화", "에셋", "배경", "학습"].includes(tab); }
 function workflowGroupsForItem(item: WorkflowItem, groups: Group[], defaults: Group[]) {
   const memberships = (item.source === "pack" ? defaults : groups).filter(group => group.itemIds.includes(item.id));
   return memberships.length ? memberships : defaults.filter(group => group.itemIds.includes(item.id));
@@ -40,6 +40,7 @@ function workflowGroupsForItem(item: WorkflowItem, groups: Group[], defaults: Gr
 function workflowTab(category: string): WorkflowTab {
   if (category === "삽화") return "삽화";
   if (["에셋", "에셋 및 수정"].includes(category)) return "에셋";
+  if (["배경", "배경 에셋"].includes(category)) return "배경";
   if (["이미지 편집", "편집"].includes(category)) return "편집";
   if (["LoRA 학습", "학습"].includes(category)) return "학습";
   if (category === "미분류") return "미분류";

@@ -1340,13 +1340,23 @@ class QueueManager:
 
     def _item_status_dict(self, item: QueueItem) -> dict:
         snapshot = item
-        if item.type in {"illustration", "illustration_llm_build"}:
+        if item.type in {
+            "illustration",
+            "illustration_llm_build",
+            "illustration_easy_edit",
+            "illustration_context",
+            "regenerate",
+            "character_maker_illustration",
+            "restore_manual",
+        }:
             # Status polling and WebSocket updates need identifiers/progress,
             # not the workflow, chat or embedded reference images. Filter before
             # asdict() so each update also avoids deep-copying those documents.
             snapshot = copy.copy(item)
-            snapshot.params = {key: value for key, value in item.params.items()
-                               if key not in {"prompt_data", "raw_body", "payload"}}
+            snapshot.params = {
+                key: value for key, value in item.params.items()
+                if key not in {"prompt_data", "raw_body", "payload", "edit_body"}
+            }
         elif item.type == "asset_generation":
             # The batch screen only reads the slot ID from the generation body.
             # Keep embedded images, prompts and the model snapshot on the queued job.
@@ -1396,8 +1406,36 @@ class QueueManager:
                 and item.completed_at >= cutoff)
         ]
 
-    def get_status(self) -> dict:
+    def get_status(self, *, monitor: bool = False) -> dict:
         self._prune_finished_items()
+        items = [self._item_status_dict(i) for i in self.items]
+        processing = self._processing or any(
+            item.status in ("processing", "waiting") for item in self.items
+        )
+        pending_count = len([
+            i for i in self.items
+            if i.status == "pending"
+            or (i.status == "waiting" and getattr(i, "_comfy_submission", None) is not None)
+        ])
+        # LLM lane: 'processing' = 게이트를 잡아 실제 API 호출 중인 항목 수(=실제 동시 호출 수),
+        # 'waiting' = 워커가 꺼냈지만 슬롯 게이트 대기 중인 항목 수.
+        llm_running_count = len([
+            i for i in self.items
+            if i.type in LLM_TYPES and i.status == "processing"
+        ])
+        llm_waiting_count = len([
+            i for i in self.items
+            if i.type in LLM_TYPES and i.status == "waiting"
+        ])
+        if monitor:
+            return {
+                "items": items,
+                "processing": processing,
+                "paused": self._paused,
+                "pending_count": pending_count,
+                "llm_running_count": llm_running_count,
+                "llm_waiting_count": llm_waiting_count,
+            }
         # 종료된 배치는 원클릭 대기/재연결보다 긴 6시간 보관한다.
         # 진행 중인 배치는 시간에 관계없이 보존한다.
         cutoff = time.time() - 6 * 60 * 60
@@ -1410,7 +1448,7 @@ class QueueManager:
             for _, item in sorted(self.current_external_items.items())
         ]
         return {
-            "items": [self._item_status_dict(i) for i in self.items],
+            "items": items,
             "batches": {
                 batch_id: {
                     "total": batch["total"], "success": batch["success"],
@@ -1423,22 +1461,11 @@ class QueueManager:
             "current": self._item_status_dict(self.current_item) if self.current_item else None,
             "current_external": current_externals[0] if current_externals else None,
             "current_externals": current_externals,
-            "processing": self._processing or any(
-                item.status in ("processing", "waiting") for item in self.items
-            ),
+            "processing": processing,
             "paused": self._paused,
-            "pending_count": len([i for i in self.items if i.status == "pending"
-                                  or (i.status == "waiting" and getattr(i, "_comfy_submission", None) is not None)]),
-            # LLM lane: 'processing' = 게이트를 잡아 실제 API 호출 중인 항목 수(=실제 동시 호출 수),
-            # 'waiting' = 워커가 꺼냈지만 슬롯 게이트 대기 중인 항목 수.
-            "llm_running_count": len([
-                i for i in self.items
-                if i.type in LLM_TYPES and i.status == "processing"
-            ]),
-            "llm_waiting_count": len([
-                i for i in self.items
-                if i.type in LLM_TYPES and i.status == "waiting"
-            ]),
+            "pending_count": pending_count,
+            "llm_running_count": llm_running_count,
+            "llm_waiting_count": llm_waiting_count,
             "illust_waiting": self._illust_wait_event is not None,
             "illust_wait_started_at": self._illust_wait_started_at,
             "illust_wait_seconds": self._illust_wait_seconds if self._illust_wait_event is not None else 0,
@@ -1735,6 +1762,9 @@ class QueueManager:
     async def _notify_queue_updated(self):
         illustration_flow.queue_sync(self.items)
         if self.notify_frontend:
+            has_subscribers = getattr(self.notify_frontend, "has_subscribers", None)
+            if callable(has_subscribers) and not has_subscribers("queue_updated"):
+                return
             await self.notify_frontend("queue_updated", self.get_status())
 
     async def _wait_after_illustration(self):
@@ -3771,13 +3801,18 @@ class QueueManager:
                         multi_char_context = copy.deepcopy(multi_char_context)
                         multi_char_context["mask_location"] = item._comfy_mask_location
                         item._comfy_mask_directory = multi_char_mask.resolve_mask_directory(comfy_input_dir, item._comfy_mask_location)
-                    prepared_path = multi_char_mask.prepare_region_mask(
-                        comfy_input_dir,
-                        multi_char_context,
-                        mask_location=str(multi_char_context.get("mask_location") or "region_mask"),
-                    )
-                    with open(prepared_path, "rb") as mask_file:
-                        mask_bytes = mask_file.read()
+                    mask_location = str(multi_char_context.get("mask_location") or "region_mask")
+
+                    def _prepare_mask_sync() -> tuple[str, bytes]:
+                        path = multi_char_mask.prepare_region_mask(
+                            comfy_input_dir,
+                            multi_char_context,
+                            mask_location=mask_location,
+                        )
+                        with open(path, "rb") as mask_file:
+                            return path, mask_file.read()
+
+                    prepared_path, mask_bytes = await asyncio.to_thread(_prepare_mask_sync)
                     print(
                         f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 완료: "
                         f"item={item.id}, path={prepared_path}"

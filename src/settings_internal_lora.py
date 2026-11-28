@@ -77,9 +77,20 @@ class InternalLoraRuntime:
         self.process = None
 
     async def start(self) -> None:
+        if (
+            self.session is not None
+            and not self.session.closed
+            and self.process is not None
+            and self.process.poll() is None
+        ):
+            return
         async with self.lock:
-            if self.session is None:
-                self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300))
+            if self.session is None or self.session.closed:
+                connector = aiohttp.TCPConnector(limit=256, limit_per_host=0)
+                self.session = aiohttp.ClientSession(
+                    connector=connector,
+                    timeout=aiohttp.ClientTimeout(total=300),
+                )
             if self.process is not None and self.process.poll() is None:
                 return
             venv_python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -163,21 +174,47 @@ class InternalLoraRuntime:
                                                "/api/bot_mode/lore_npcs/classify_images",
                                                "/api/bot_mode/archive",
                                                "/api/asset_mode/qwen_edit/translate",
-                                               "/api/bg-asset/name_mapping/llm"} else self.session.timeout)
+                                               "/api/bg-asset/name_mapping/llm",
+                                               "/api/bg-asset/lore-theme/generate"} else self.session.timeout)
             async with self.session.request(request.method, self.url + path, params=request.query,
                                             headers=headers, data=request.content if request.can_read_body else None,
                                             timeout=timeout, allow_redirects=False) as upstream:
-                cacheable_media = (illustration and request.method == "GET" and (
-                    path.startswith("/api/backup_poster/") and request.query.get("thumbnail") == "1"
-                    or path.startswith("/api/backup_image/") and bool(request.query.get("v"))
-                    or path == "/api/illustration_flow" and request.query.get("image") == "1"
-                    and request.query.get("thumbnail") == "1" and bool(request.query.get("v"))
-                ))
-                response = web.StreamResponse(status=upstream.status, headers={
+                has_version = bool(request.query.get("v"))
+                cacheable_media = (
+                    request.method == "GET"
+                    and (
+                        (
+                            illustration
+                            and (
+                                path.startswith("/api/backup_poster/") and request.query.get("thumbnail") == "1"
+                                or path.startswith("/api/backup_image/") and has_version
+                                or path.startswith("/api/bot_mode/image/") and has_version
+                                or path == "/api/illustration_flow" and request.query.get("image") == "1" and has_version
+                            )
+                        )
+                        or (
+                            (asset or (not illustration and not bg_asset and not external))
+                            and path.startswith("/api/asset_mode/")
+                            and has_version
+                        )
+                        or (
+                            bg_asset
+                            and path.startswith("/api/bg-asset/")
+                            and has_version
+                        )
+                    )
+                )
+                response_headers = {
                     "Content-Type": upstream.headers.get("Content-Type", "application/json"),
-                    **({"Content-Disposition": upstream.headers["Content-Disposition"]} if "Content-Disposition" in upstream.headers else {}),
                     "Cache-Control": upstream.headers.get("Cache-Control", "no-store") if cacheable_media else "no-store",
-                })
+                }
+                if "Content-Disposition" in upstream.headers:
+                    response_headers["Content-Disposition"] = upstream.headers["Content-Disposition"]
+                if "X-Postprocess-Applied" in upstream.headers:
+                    response_headers["X-Postprocess-Applied"] = upstream.headers["X-Postprocess-Applied"]
+                if "Content-Length" in upstream.headers and "Content-Encoding" not in upstream.headers:
+                    response_headers["Content-Length"] = upstream.headers["Content-Length"]
+                response = web.StreamResponse(status=upstream.status, headers=response_headers)
                 await response.prepare(request)
                 async for chunk in upstream.content.iter_chunked(256 * 1024):
                     await response.write(chunk)

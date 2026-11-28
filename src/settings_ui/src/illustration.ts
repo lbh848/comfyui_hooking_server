@@ -54,11 +54,13 @@ export function useIllustrationAction() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const clearError = useCallback(() => setError(""), []);
+  const clear = useCallback(() => { setError(""); setMessage(""); }, []);
   async function run(action: () => Promise<void>, success = "저장했습니다.") {
     setBusy(true); setError(""); setMessage("");
     try { await action(); setMessage(success); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  return { busy, error, message, run };
+  return { busy, error, message, run, clearError, clear };
 }

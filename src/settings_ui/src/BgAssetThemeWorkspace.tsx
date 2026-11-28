@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Copy, Images, MapPin, PanelRightClose, PanelRightOpen, Pencil, Plus, Save, Sun, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Images, MapPin, PanelRightClose, PanelRightOpen, Pencil, Plus, Save, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { SearchableSelect } from "./SearchableSelect";
 import { TagTextarea } from "./TagTextarea";
@@ -8,7 +8,12 @@ import { AssetGroupedOptions, AssetScopeControls } from "./AssetScopeControls";
 import { AssetGenerationControls, type AssetGenerationControlsProps } from "./AssetGenerationControls";
 import { AssetGenerationStatus } from "./AssetGenerationStatus";
 import { BgAssetGallery } from "./BgAssetGallery";
+import { BgAssetI2iControl } from "./BgAssetI2iControl";
 import { BgAssetThemeMaker } from "./BgAssetThemeMaker";
+import {
+  BgAssetThemeBulkDialog,
+  formatBgBulkUpdateSummary,
+} from "./BgAssetThemeBulkDialog";
 import { useIllustrationModelSelection } from "./IllustrationModelSelection";
 import type { Resources } from "./useResources";
 import type { useBgAssetThemeSettings } from "./useBgAssetThemeSettings";
@@ -20,10 +25,12 @@ import {
   BG_TIME_TEMPLATES,
   bgAssetRequest,
   countBgThemeCombinations,
+  countBgThemeI2iLinks,
   emptyBgPlaceData,
   joinBgTags,
   resolveBgThemePromptParts,
   splitBgTags,
+  validateBgFolderName,
   type AssetRecord,
   type BgPlaceData,
   type BgTimeData,
@@ -38,29 +45,6 @@ type ThemeDialog =
   | { kind: "create-time"; place: string; name: string; tagsText: string }
   | { kind: "rename-time"; place: string; oldName: string; name: string }
   | { kind: "duplicate-time"; place: string; source: string; name: string };
-
-const WINDOWS_RESERVED_STEMS = new Set([
-  "CON", "PRN", "AUX", "NUL",
-  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
-  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
-]);
-
-function validateFolderName(value: string, label: string): string {
-  const clean = value.trim();
-  if (!clean) return `${label}을(를) 입력하세요.`;
-  if (clean.length > 80) return `${label}은(는) 80자 이하로 입력하세요.`;
-  const invalid = Array.from(new Set(Array.from(clean).filter(ch => !/[\p{L}\p{N} _.-]/u.test(ch))));
-  if (invalid.length) {
-    return `${label}에 사용할 수 없는 문자가 있습니다: ${invalid.join(", ")}. 한글·영문·숫자와 공백, _, -, .만 사용할 수 있습니다.`;
-  }
-  if (clean === "." || clean === ".." || clean.endsWith(".")) {
-    return `${label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다.`;
-  }
-  if (WINDOWS_RESERVED_STEMS.has(clean.split(".")[0].toUpperCase())) {
-    return `${label}에 Windows 예약 이름 '${clean}'을(를) 사용할 수 없습니다.`;
-  }
-  return "";
-}
 
 function uniqueCopyName(base: string, existing: string[]): string {
   let candidate = `${base} 복사`;
@@ -83,6 +67,9 @@ export function BgAssetThemeWorkspace({
   makerVisible,
   generation,
   generationError,
+  onThemeUpdated,
+  onOpenBatch,
+  onNotify,
   onWorkQueue,
   onOpenGenerate,
 }: {
@@ -99,6 +86,9 @@ export function BgAssetThemeWorkspace({
   makerVisible: boolean;
   generation: AssetGenerationControlsProps;
   generationError: string;
+  onThemeUpdated: (themeName: string) => Promise<AssetRecord>;
+  onOpenBatch: (themeName: string, options?: { selectCombinations?: { place: string; time: string }[]; catalog?: AssetRecord }) => void;
+  onNotify: (message: string) => void;
   onWorkQueue: () => void;
   onOpenGenerate: () => void;
 }) {
@@ -111,6 +101,7 @@ export function BgAssetThemeWorkspace({
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState<ThemeDialog | null>(null);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const timeTabsRef = useRef<HTMLDivElement>(null);
 
@@ -144,6 +135,7 @@ export function BgAssetThemeWorkspace({
     [timeNames],
   );
   const counts = useMemo(() => countBgThemeCombinations(themeData), [themeData]);
+  const i2iCounts = useMemo(() => countBgThemeI2iLinks(themeData), [themeData]);
   const resolvedPrompt = useMemo(
     () => resolveBgThemePromptParts(themeData, selectedPlace, selectedTime),
     [themeData, selectedPlace, selectedTime],
@@ -220,7 +212,7 @@ export function BgAssetThemeWorkspace({
     setDialogError("");
     if (dialog.kind === "create-theme" || dialog.kind === "duplicate-theme") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "테마 이름");
+      const err = validateBgFolderName(clean, "테마 이름");
       if (err) { setDialogError(err); return; }
       if (Object.hasOwn(tags.themes || {}, clean)) { setDialogError("이미 존재하는 테마 이름입니다."); return; }
       setActionBusy(true);
@@ -242,7 +234,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "create-place") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "장소 이름");
+      const err = validateBgFolderName(clean, "장소 이름");
       if (err) { setDialogError(err); return; }
       if (Object.hasOwn(themeData.places, clean)) { setDialogError("이 테마에 같은 이름의 장소가 이미 있습니다."); return; }
       const initialEntries = BG_TIME_TEMPLATES.filter(item => dialog.initialTimes.includes(item.name));
@@ -257,7 +249,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "rename-place") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "장소 이름");
+      const err = validateBgFolderName(clean, "장소 이름");
       if (err) { setDialogError(err); return; }
       if (clean !== dialog.oldName && Object.hasOwn(themeData.places, clean)) {
         setDialogError("이 테마에 같은 이름의 장소가 이미 있습니다."); return;
@@ -275,7 +267,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "duplicate-place") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "장소 이름");
+      const err = validateBgFolderName(clean, "장소 이름");
       if (err) { setDialogError(err); return; }
       if (Object.hasOwn(themeData.places, clean)) { setDialogError("이 테마에 같은 이름의 장소가 이미 있습니다."); return; }
       themeSettings.updateTheme(current => {
@@ -289,7 +281,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "create-time") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "시간대 이름");
+      const err = validateBgFolderName(clean, "시간대 이름");
       if (err) { setDialogError(err); return; }
       if (Object.hasOwn(themeData.places[dialog.place]?.times || {}, clean)) {
         setDialogError("이 장소에 같은 이름의 시간대가 이미 있습니다."); return;
@@ -305,7 +297,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "rename-time") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "시간대 이름");
+      const err = validateBgFolderName(clean, "시간대 이름");
       if (err) { setDialogError(err); return; }
       if (clean !== dialog.oldName && Object.hasOwn(themeData.places[dialog.place]?.times || {}, clean)) {
         setDialogError("이 장소에 같은 이름의 시간대가 이미 있습니다."); return;
@@ -326,7 +318,7 @@ export function BgAssetThemeWorkspace({
 
     if (dialog.kind === "duplicate-time") {
       const clean = dialog.name.trim();
-      const err = validateFolderName(clean, "시간대 이름");
+      const err = validateBgFolderName(clean, "시간대 이름");
       if (err) { setDialogError(err); return; }
       if (Object.hasOwn(themeData.places[dialog.place]?.times || {}, clean)) {
         setDialogError("이 장소에 같은 이름의 시간대가 이미 있습니다."); return;
@@ -396,7 +388,25 @@ export function BgAssetThemeWorkspace({
 
       <div className="bg-asset-style-footer">
         <AssetScopeControls scope={themeSettings.scope} unlocked={themeSettings.unlocked} disabled={themeActionDisabled} onAction={themeSettings.scopeAction} />
-        {themeName && <Badge>장소 {counts.places}개 · 시간대 {counts.times}개</Badge>}
+        {themeName && (
+          <div className="bg-theme-bulk-actions">
+            <Badge>장소 {counts.places}개 · 시간대 {counts.times}개</Badge>
+            {placeNames.length > 0 && (
+              <>
+                <Badge tone={i2iCounts.linked === i2iCounts.total ? "lavender" : "neutral"}>
+                  i2i 연결 {i2iCounts.linked}/{i2iCounts.total}
+                </Badge>
+                <button
+                  type="button"
+                  className="button secondary small"
+                  disabled={readOnly}
+                  title={themeSettings.locked ? "배포 테마는 배포 풀기 후 일괄 설정할 수 있습니다." : undefined}
+                  onClick={() => setBulkDialogOpen(true)}
+                ><SlidersHorizontal size={13} />시간대 · I2I 일괄 설정</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {(actionError || themeSettings.error || themeSettings.inputError) && <div className="settings-feedback error" role="alert">
@@ -514,7 +524,10 @@ export function BgAssetThemeWorkspace({
                     >
                       <div className="bg-place-item-head">
                         <strong>{placeName}</strong>
-                        <Badge tone={active ? "rose" : "neutral"}>{times.length}개</Badge>
+                        <div className="asset-actions">
+                          {place.i2i_enabled && place.i2i_images.length > 0 && <Badge tone="lavender">i2i</Badge>}
+                          <Badge tone={active ? "rose" : "neutral"}>{times.length}개</Badge>
+                        </div>
                       </div>
                       <span className="bg-place-item-times">{times.length ? times.join(" · ") : "시간대 없음"}</span>
                     </button>
@@ -595,6 +608,25 @@ export function BgAssetThemeWorkspace({
                       />
                     </label>
                   </div>
+                </section>
+
+                <section className="bg-detail-section" aria-label="i2i 기준 이미지">
+                  <div className="bg-detail-section-head">
+                    <h3>i2i 기준 이미지</h3>
+                    <span className="field-help">등록하면 이 장소의 배경 생성·배경 일괄 생성에 자동 적용됩니다.</span>
+                  </div>
+                  <BgAssetI2iControl
+                    place={activePlace}
+                    themeName={themeName}
+                    placeName={selectedPlace}
+                    tags={tags}
+                    disabled={readOnly}
+                    onChange={patch => themeSettings.updateTheme(current => {
+                      const target = current.places[selectedPlace];
+                      if (target) Object.assign(target, patch);
+                      return current;
+                    })}
+                  />
                 </section>
 
                 <section className="bg-detail-section bg-time-section" aria-label="시간대별 설정">
@@ -831,6 +863,28 @@ export function BgAssetThemeWorkspace({
           </div>
         </form>
       </Modal>
+    )}
+
+    {bulkDialogOpen && themeName && (
+      <BgAssetThemeBulkDialog
+        themeName={themeName}
+        themeData={themeData}
+        themeScope={themeSettings.scope === "builtin" ? "builtin" : "local"}
+        builtinUnlockToken={themeSettings.unlockToken}
+        allowOpenBatch
+        onBeforeSave={() => themeSettings.dirty && !themeSettings.locked ? themeSettings.retry() : Promise.resolve(true)}
+        onCompleted={async (result, openBatch) => {
+          const freshCatalog = await onThemeUpdated(themeName);
+          onNotify(formatBgBulkUpdateSummary(result, openBatch && result.times.added_combinations.length > 0));
+          if (openBatch) {
+            onOpenBatch(themeName, {
+              selectCombinations: result.times.added_combinations,
+              catalog: freshCatalog,
+            });
+          }
+        }}
+        onClose={() => setBulkDialogOpen(false)}
+      />
     )}
   </div>;
 }

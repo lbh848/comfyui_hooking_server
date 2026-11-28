@@ -3,6 +3,7 @@ import { Badge, Panel } from "./components";
 import { loraRequest, type LoraData } from "./internalLora";
 import { illustrationRequest } from "./illustration";
 import { isFinishedQueueItem, queueHistoryItems } from "./workQueue";
+import { pushQueueStatus, subscribeQueueStatus } from "./workshopEvents";
 import "./work-queue.css";
 
 const statusLabels: Record<string, string> = {
@@ -16,43 +17,16 @@ export function WorkQueuePage({ notify }: { notify: (message: string) => void })
   const [busy, setBusy] = useState(false);
   const [collapsedErrors, setCollapsedErrors] = useState<Set<string>>(() => new Set());
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let timer: number;
-    let socket: WebSocket | null = null;
-    let reconnect: number;
-    let revision = 0;
-    const receive = (result: LoraData) => {
-      if (controller.signal.aborted) return;
-      revision++;
+  useEffect(() => subscribeQueueStatus(
+    result => {
       setState(result);
       setError("");
-    };
-    const connect = () => {
-      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
-      socket.onmessage = event => {
-        const value = JSON.parse(event.data);
-        if (value.type === "queue_updated") receive(value.data);
-      };
-      socket.onclose = () => {
-        if (!controller.signal.aborted) reconnect = window.setTimeout(connect, 3000);
-      };
-    };
-    const poll = async () => {
-      const before = revision;
-      try {
-        const result = await loraRequest("queue/status", undefined, controller.signal);
-        if (before === revision) receive(result);
-      } catch (e) {
-        if (!controller.signal.aborted) setError((e as Error).message);
-      } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(poll, 2500);
-      }
-    };
-    connect();
-    void poll();
-    return () => { controller.abort(); clearTimeout(timer); clearTimeout(reconnect); socket?.close(); };
-  }, []);
+    },
+    {
+      activateWorker: true,
+      onError: e => setError(e instanceof Error ? e.message : String(e)),
+    },
+  ), []);
 
   async function action(path: string, body: LoraData, item?: LoraData) {
     setBusy(true);
@@ -62,7 +36,8 @@ export function WorkQueuePage({ notify }: { notify: (message: string) => void })
       } else {
         await loraRequest(`queue/${path}`, body);
       }
-      setState(await loraRequest("queue/status"));
+      const next = await loraRequest("queue/status");
+      pushQueueStatus(next);
     } catch (e) {
       notify((e as Error).message);
     } finally {

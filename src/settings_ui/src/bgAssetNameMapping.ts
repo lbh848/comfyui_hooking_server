@@ -38,7 +38,82 @@ export type BgAssetExportBatchPlan = {
   themes: (BgAssetExportPlan & { theme: string })[];
 };
 
+export type BgAssetCommonAtmospheresResult = {
+  atmospheres: string[];
+  placeCount: number;
+  missingThemeCount: number;
+};
+
 const isRecord = (value: unknown): value is AssetRecord => !!value && typeof value === "object" && !Array.isArray(value);
+
+export function bgAssetPlaceAtmospheres(info: AssetRecord): Record<string, string[]> {
+  const raw = info.place_atmospheres;
+  if (isRecord(raw)) {
+    const result: Record<string, string[]> = {};
+    for (const [place, list] of Object.entries(raw)) {
+      result[place] = Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+    }
+    return result;
+  }
+  const fallbackPlaces: string[] = Array.isArray(info.places) ? info.places : [];
+  const fallbackAtmospheres: string[] = Array.isArray(info.atmospheres) ? info.atmospheres : [];
+  return Object.fromEntries(fallbackPlaces.map(place => [place, [...fallbackAtmospheres]]));
+}
+
+export function availableAtmospheresForPlaces(info: AssetRecord, places: string[]): string[] {
+  const placeAtmospheres = bgAssetPlaceAtmospheres(info);
+  const available = new Set<string>();
+  for (const place of places) {
+    for (const atmosphere of placeAtmospheres[place] || []) available.add(atmosphere);
+  }
+  const baseOrder: string[] = Array.isArray(info.atmospheres) ? info.atmospheres : [];
+  const ordered = baseOrder.filter(item => available.has(item));
+  const extras = [...available].filter(item => !baseOrder.includes(item)).sort();
+  return [...ordered, ...extras];
+}
+
+export function countAtmospherePlaces(info: AssetRecord, places: string[]): Record<string, number> {
+  const placeAtmospheres = bgAssetPlaceAtmospheres(info);
+  const counts: Record<string, number> = {};
+  for (const place of new Set(places)) {
+    for (const atmosphere of new Set(placeAtmospheres[place] || [])) {
+      counts[atmosphere] = (counts[atmosphere] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+export function reconcileSelectedAtmospheres(
+  previousAvailable: string[],
+  nextAvailable: string[],
+  previousSelected: string[],
+): string[] {
+  const previousAvailableSet = new Set(previousAvailable);
+  const previousSelectedSet = new Set(previousSelected);
+  return nextAvailable.filter(item => previousSelectedSet.has(item) || !previousAvailableSet.has(item));
+}
+
+export function commonAtmospheresForSelection(
+  entries: { info: AssetRecord; places: string[] }[],
+): BgAssetCommonAtmospheresResult {
+  const missingThemeCount = entries.filter(entry => !entry.places.length).length;
+  if (!entries.length || missingThemeCount > 0) {
+    return { atmospheres: [], placeCount: 0, missingThemeCount };
+  }
+  const placeSets: Set<string>[] = [];
+  for (const entry of entries) {
+    const placeAtmospheres = bgAssetPlaceAtmospheres(entry.info);
+    for (const place of new Set(entry.places)) {
+      placeSets.push(new Set(placeAtmospheres[place] || []));
+    }
+  }
+  if (!placeSets.length) return { atmospheres: [], placeCount: 0, missingThemeCount: 0 };
+  const baseOrder: string[] = Array.isArray(entries[0].info.atmospheres) ? entries[0].info.atmospheres : [];
+  const commonSet = new Set([...placeSets[0]].filter(item => placeSets.every(set => set.has(item))));
+  const ordered = baseOrder.filter(item => commonSet.has(item));
+  const extras = [...commonSet].filter(item => !baseOrder.includes(item)).sort();
+  return { atmospheres: [...ordered, ...extras], placeCount: placeSets.length, missingThemeCount: 0 };
+}
 
 export function bgAssetNameMapping(value: unknown, previous?: BgAssetNameMapping): BgAssetNameMapping {
   if (!isRecord(value)) throw new Error("이름 치환 규칙 JSON 객체를 선택하세요.");

@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { BgAssetForm } from "./BgAssetForm";
+import { BgAssetI2iControl } from "./BgAssetI2iControl";
 import { TagTextarea } from "./TagTextarea";
 import {
   assetCapabilities,
@@ -22,6 +23,7 @@ const bgThemeInlineFields: BgInlineField[] = [
   { key: "place_tags", label: "장소 기본", section: "theme" },
   { key: "time_tags", label: "시간대", section: "theme" },
   { key: "natural_language", label: "자연어", section: "theme" },
+  { key: "i2i", label: "i2i 기준 이미지", section: "theme" },
   { key: "common_tags", label: "테마 공통", section: "theme" },
   { key: "negative_tags", label: "배경 부정", section: "theme" },
 ];
@@ -96,6 +98,20 @@ export function BgAssetGenerationTags({
         onChange={text => themeSettings.updateTheme(current => {
           const target = current.places[placeName];
           if (target) target.tags = splitBgTags(text);
+          return current;
+        })}
+      />;
+    }
+    if (field.key === "i2i") {
+      return <BgAssetI2iControl
+        place={activePlace}
+        themeName={themeSettings.name}
+        placeName={placeName}
+        tags={tags}
+        disabled={editorDisabled}
+        onChange={patch => themeSettings.updateTheme(current => {
+          const target = current.places[placeName];
+          if (target) Object.assign(target, patch);
           return current;
         })}
       />;

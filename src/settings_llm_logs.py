@@ -32,6 +32,7 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
     history_stamp = None
     records_by_id: dict[str, dict] = {}
     summaries: list[dict] = []
+    file_cache: dict[Path, dict] = {}
     settings_reader = RuntimeSettingsReader(config_root(project_root))
 
     def read_llm_config() -> dict:
@@ -58,41 +59,120 @@ def register_llm_logs(app: web.Application, project_root: Path, schema: str, run
         suffix = "" if slot == "llm1" else slot[3:]
         return str(config.get(f"llm_alias{suffix}", "") or "").strip()
 
+    def build_entry(raw_record: dict) -> tuple[dict, str, dict]:
+        serialized = json.dumps(raw_record, ensure_ascii=False, sort_keys=True)
+        base_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        record = raw_record
+        # Older logs can retain thinking text without a separate token count.
+        if record.get("reasoning_tokens") is None:
+            stats = output_token_stats(
+                "", str(record.get("reasoning_text") or record.get("reasoning") or ""),
+                completion_tokens=record.get("completion_tokens"),
+                reasoning_chars=record.get("reasoning_chars") or 0,
+            )
+            record = {**record, **{key: value for key, value in stats.items()
+                                  if key.startswith("reasoning_")}}
+        # Existing history already contains finish details; show them without
+        # rewriting logs or changing identities used by history links.
+        if record.get("status") == "error":
+            record = {**record, "error": format_llm_failure(record.get("error", ""), record)}
+        base_row = {key: record[key] for key in SUMMARY_FIELDS if key in record}
+        base_row["preview"] = str(record.get("error") or record.get("output") or "")[:240]
+        return record, base_hash, base_row
+
+    def load_file_entries(path: Path, loader, *, use_incremental: bool) -> list[tuple[dict, str, dict]]:
+        if not use_incremental:
+            return [build_entry(record) for record in loader(history_path=path, strict=True)]
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            file_cache.pop(path, None)
+            return []
+        size = stat.st_size
+        mtime_ns = stat.st_mtime_ns
+        cached = file_cache.get(path)
+        if cached and cached["mtime_ns"] == mtime_ns and cached["size"] == size:
+            return cached["entries"]
+
+        if (
+            cached
+            and cached["size"] > 0
+            and size > cached["size"]
+            and cached["tail"].endswith(b"\n")
+        ):
+            try:
+                with path.open("rb") as handle:
+                    head = handle.read(len(cached["head"]))
+                    handle.seek(cached["size"] - len(cached["tail"]))
+                    tail = handle.read(len(cached["tail"]))
+                    if head == cached["head"] and tail == cached["tail"]:
+                        appended_bytes = handle.read(size - cached["size"])
+                        new_entries = list(cached["entries"])
+                        for raw_line in appended_bytes.decode("utf-8").splitlines():
+                            line = raw_line.strip()
+                            if not line:
+                                continue
+                            try:
+                                parsed = json.loads(line)
+                            except Exception:
+                                continue
+                            new_entries.append(build_entry(parsed))
+                        new_tail_window = (tail + appended_bytes)[-256:]
+                        file_cache[path] = {
+                            "mtime_ns": mtime_ns,
+                            "size": size,
+                            "head": head,
+                            "tail": new_tail_window,
+                            "entries": new_entries,
+                        }
+                        return new_entries
+            except OSError:
+                raise
+            except UnicodeDecodeError:
+                raise
+
+        with path.open("rb") as handle:
+            raw_bytes = handle.read()
+        entries: list[tuple[dict, str, dict]] = []
+        for raw_line in raw_bytes.decode("utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except Exception:
+                continue
+            entries.append(build_entry(parsed))
+        file_cache[path] = {
+            "mtime_ns": mtime_ns,
+            "size": len(raw_bytes),
+            "head": raw_bytes[:128],
+            "tail": raw_bytes[-256:],
+            "entries": entries,
+        }
+        return entries
+
     def read_history():
         from modes.lighbd_service import _load_lighbd_history, LIGHBD_HISTORY_MAX
-        records = _load_lighbd_history(history_path=history_path, strict=True)
-        records += _load_lighbd_history(history_path=settings_history_path, strict=True)
-        records.sort(key=lambda record: str(record.get("ts") or ""))
-        records = records[-LIGHBD_HISTORY_MAX:]
+        use_incremental = (
+            getattr(_load_lighbd_history, "__module__", "") == "modes.lighbd_service"
+            and getattr(_load_lighbd_history, "__name__", "") == "_load_lighbd_history"
+        )
+        entries = list(load_file_entries(history_path, _load_lighbd_history, use_incremental=use_incremental))
+        entries.extend(load_file_entries(settings_history_path, _load_lighbd_history, use_incremental=use_incremental))
+        entries.sort(key=lambda entry: str(entry[0].get("ts") or ""))
+        entries = entries[-LIGHBD_HISTORY_MAX:]
         config = read_llm_config()
         indexed = {}
         rows = []
         occurrences = {}
-        for record in reversed(records):
-            serialized = json.dumps(record, ensure_ascii=False, sort_keys=True)
-            identity = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        for record, base_hash, base_row in reversed(entries):
             # Identical records still have distinct rows, stable across refreshes.
-            occurrences[identity] = occurrences.get(identity, 0) + 1
-            identity += f"-{occurrences[identity]}"
-            # Older logs can retain thinking text without a separate token count.
-            if record.get("reasoning_tokens") is None:
-                stats = output_token_stats(
-                    "", str(record.get("reasoning_text") or record.get("reasoning") or ""),
-                    completion_tokens=record.get("completion_tokens"),
-                    reasoning_chars=record.get("reasoning_chars") or 0,
-                )
-                record = {**record, **{key: value for key, value in stats.items()
-                                      if key.startswith("reasoning_")}}
-            # Existing history already contains finish details; show them without
-            # rewriting logs or changing identities used by history links.
-            if record.get("status") == "error":
-                record = {**record, "error": format_llm_failure(record.get("error", ""), record)}
+            occurrences[base_hash] = occurrences.get(base_hash, 0) + 1
+            identity = f"{base_hash}-{occurrences[base_hash]}"
             alias = model_alias(record, config)
             indexed[identity] = {**record, "id": identity, "llm_alias": alias}
-            row = {key: record[key] for key in SUMMARY_FIELDS if key in record}
-            row.update(id=identity, llm_alias=alias,
-                       preview=str(record.get("error") or record.get("output") or "")[:240])
-            rows.append(row)
+            rows.append({**base_row, "id": identity, "llm_alias": alias})
         return indexed, rows
 
     def record_history(record):

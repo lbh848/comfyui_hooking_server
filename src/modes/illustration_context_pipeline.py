@@ -46,6 +46,11 @@ from modes.visual_profiles import (
 )
 from modes.illustration_prompt_assembly import PromptText, input_variables, is_symbolic, prompt_join, prompt_sub, symbolic_call2_template, variable
 from modes import illustration_prompt_builders as prompt_builders
+from modes.moss_prompt_contract import (
+    DEFAULT_MOSS_DETAIL_PROMPT_MODE,
+    MOSS_DETAIL_PROMPT_MODES,
+    normalize_moss_detail_prompt_mode,
+)
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,8 +122,10 @@ PROMPT_FILES = {
     # 이미지가 bbox 없이 하나의 요약 캡션으로 그려지는 계약만 추가한다.
     "npc_generation_moss": "npc_generation_moss.txt",
     "npc_generation_secondary": "npc_generation_secondary.txt",
+    "npc_generation_secondary_crossover": "npc_generation_secondary_crossover.txt",
     "genre": "genre.txt",
     "genre_secondary": "genre_secondary.txt",
+    "genre_secondary_crossover": "genre_secondary_crossover.txt",
     "character_resolve": "character.txt",
     "profile_resolve": "profile.txt",
     "emotion_resolve": "emotion_resolve.txt",
@@ -133,8 +140,10 @@ PROMPT_FILES = {
     "call2_plan": "plan.txt",
     "call2_detail": "detail.txt",
     "detail_moss": "detail_moss.txt",
+    "detail_moss_natural": "detail_moss_natural.txt",
     # MOSS 만화 페이지: 한 장을 multi_panel 레이아웃으로 직접 작성한다.
     "detail_manga": "detail_manga.txt",
+    "detail_manga_natural": "detail_manga_natural.txt",
     "manga_select": "manga_select.txt",
     "composite_detail": "composite_detail.txt",
     "call2_keyvis": "keyvisual.txt",
@@ -192,6 +201,8 @@ DEFAULT_TOGGLES = {
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "genre": "",
     "genre_work_title": "",
+    "genre_crossover_background": "",
+    "genre_crossover_works": "",
     "original_asset_count": 1,
     "original_asset_instruction": "",
     "outfit_enabled": False,
@@ -275,6 +286,8 @@ DEFAULT_TOGGLES = {
     # Active illustration model family. DETAIL-MOSS uses its own layout contract
     # because MOSS accepts absolute centered bboxes for objects as well.
     "illustration_model_family": "anima",
+    # MOSS DETAIL prompt mode: "tags" (existing tag-based) or "natural" (natural-language sentences).
+    "moss_detail_prompt_mode": DEFAULT_MOSS_DETAIL_PROMPT_MODE,
     # CharRef v2 reference mode for MOSS. The names list lets DETAIL-MOSS write
     # reference-friendly appearance words for characters that have a card.
     "moss_reference": False,
@@ -554,6 +567,14 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
         out[key] = _bool(out[key])
     if out["profile_resolve_mode"] not in ("per_character", "combined"):
         out["profile_resolve_mode"] = DEFAULT_TOGGLES["profile_resolve_mode"]
+    raw_moss_detail_mode = out.get("moss_detail_prompt_mode")
+    normalized_moss_detail_mode = normalize_moss_detail_prompt_mode(raw_moss_detail_mode)
+    if str(raw_moss_detail_mode or "").strip().lower() not in ("", *MOSS_DETAIL_PROMPT_MODES):
+        print(
+            f"[ILLUST_CONTEXT] 지원하지 않는 MOSS DETAIL 작성 방식 "
+            f"{raw_moss_detail_mode!r}, {normalized_moss_detail_mode} 사용"
+        )
+    out["moss_detail_prompt_mode"] = normalized_moss_detail_mode
     for key in ("emotion_presets_sfw", "emotion_presets_nsfw"):
         out[key] = _emotion_preset_rows(out.get(key))
     out["emotion_representative"] = _emotion_representative_value(
@@ -715,6 +736,8 @@ def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     out["original_asset_instruction"] = instruction
     out["genre"] = str(out.get("genre") or "").strip()
     out["genre_work_title"] = str(out.get("genre_work_title") or "").strip()
+    out["genre_crossover_background"] = str(out.get("genre_crossover_background") or "").strip()
+    out["genre_crossover_works"] = str(out.get("genre_crossover_works") or "").strip()
     if for_generation and output_mode in ("composite", "composite_both"):
         # Correction edits a single generated scene. Layered scenes keep their
         # own DETAIL geometry and always assemble before any image postprocess.
@@ -4913,7 +4936,18 @@ def apply_wardrobe_events(
         elif operation in ("remove", "topless", "bottomless"):
             lowered = {value.casefold() for value in items}
             still_worn = [value for value in worn if value.casefold() not in lowered]
-            removed = list(dict.fromkeys(removed + [value for value in worn if value.casefold() in lowered] + items))
+            stripped_explicit = [value for value in worn if value.casefold() in lowered]
+            coverage_target = (
+                operation if operation in ("topless", "bottomless")
+                else state_label if state_label in ("topless", "bottomless")
+                else ""
+            )
+            stripped_by_coverage = []
+            if coverage_target:
+                from modes.tag_classifier import strip_wardrobe_items_for_coverage
+                still_worn, stripped_by_coverage = strip_wardrobe_items_for_coverage(
+                    still_worn, coverage_target)
+            removed = list(dict.fromkeys(removed + stripped_explicit + stripped_by_coverage + items))
             worn = still_worn
             if state_label:
                 wardrobe["body_state"] = state_label
@@ -7554,7 +7588,7 @@ async def _call_pipeline_llm(
                 history_ids_sink.append(_failure_hid)
         else:
             _trace_append(_failure_hid)
-        lighbd_service._log_lighbd_history(failure_record)
+        lighbd_service._log_lighbd_history_background(failure_record)
 
     try:
         if stream_notify:
@@ -7667,7 +7701,7 @@ async def _call_pipeline_llm(
             ),
         })
         history_record.update(_provider_details())
-        lighbd_service._log_lighbd_history(history_record)
+        await lighbd_service._log_lighbd_history_async(history_record)
         history_logged = True
         return str(result)
     except asyncio.CancelledError:
@@ -7694,7 +7728,7 @@ async def _call_pipeline_llm(
             })
             history_record.update(attempt_meta)
             history_record.update(_provider_details())
-            lighbd_service._log_lighbd_history(history_record)
+            await lighbd_service._log_lighbd_history_async(history_record)
             history_logged = True
         print(
             f"[ILLUST_CONTEXT:{call_name}] LLM 호출 취소: "
@@ -7725,7 +7759,7 @@ async def _call_pipeline_llm(
             })
             history_record.update(attempt_meta)
             history_record.update(_provider_details())
-            lighbd_service._log_lighbd_history(history_record)
+            await lighbd_service._log_lighbd_history_async(history_record)
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()
         raise
@@ -9629,6 +9663,47 @@ def _merge_emotion_asset_resolution(
     return result
 
 
+def _rewrite_scene_plan_candidates(
+    scene_plan: list,
+    *,
+    remapped: dict[str, str],
+    dropped: set[str],
+) -> list:
+    """Apply registered-alias remaps and dropped-candidate cleanup to raw scene_plan."""
+    rewritten = []
+    for scene in scene_plan:
+        if not isinstance(scene, dict):
+            rewritten.append(scene)
+            continue
+        updated = scene
+        if isinstance(scene.get("characters"), list):
+            next_characters = []
+            seen: set[str] = set()
+            for entry in scene["characters"]:
+                if not isinstance(entry, str):
+                    next_characters.append(entry)
+                    continue
+                folded = entry.strip().casefold()
+                if folded in remapped:
+                    resolved = remapped[folded]
+                elif folded in dropped:
+                    continue
+                else:
+                    resolved = entry
+                resolved_folded = resolved.strip().casefold()
+                if resolved_folded in seen:
+                    continue
+                seen.add(resolved_folded)
+                next_characters.append(resolved)
+            updated = {**updated, "characters": next_characters}
+        if isinstance(scene.get("character"), str):
+            folded = scene["character"].strip().casefold()
+            if folded in remapped:
+                updated = {**updated, "character": remapped[folded]}
+        rewritten.append(updated)
+    return rewritten
+
+
 async def _run_resolution_stage(
     *,
     profile_system: str,
@@ -9724,6 +9799,8 @@ async def _run_resolution_stage(
     )
     normalized_raw = _json_object_from_text(raw_output) or {}
     normalized_uncertainties = normalized_raw.get("uncertainties", [])
+    remapped_npcs: dict[str, str] = {}
+    parsed_npc_candidates: list[dict] | None = None
     if profile_inference_enabled:
         normalized_characters = []
         selected_name_set = set(selected_names)
@@ -9758,6 +9835,38 @@ async def _run_resolution_stage(
             for item in raw_characters
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ]
+        if selection_messages is not None:
+            from modes.illustration_npc import (
+                parse_candidates,
+                registered_aliases_from_profiles,
+            )
+            raw_candidates = normalized_raw.get("npc_candidates", [])
+            if "npc_candidates" not in normalized_raw:
+                print(f"[ILLUST_CONTEXT:NPC] {stage_call_name} 응답에 npc_candidates 필드 없음")
+            parsed_npc_candidates = parse_candidates(
+                raw_candidates,
+                candidate_names,
+                current_segments,
+                repair=True,
+                registered_aliases=registered_aliases_from_profiles(selected_profiles),
+                remapped_out=remapped_npcs,
+            )
+            print(
+                f"[ILLUST_CONTEXT:NPC] {stage_call_name} 후보: "
+                f"raw={len(raw_candidates) if isinstance(raw_candidates, list) else 'invalid'}, "
+                f"kept={len(parsed_npc_candidates)}, "
+                f"remapped={len(remapped_npcs)}"
+            )
+            existing_folded = {
+                item["name"].casefold() for item in normalized_characters
+            }
+            for canonical_name in remapped_npcs.values():
+                if canonical_name.casefold() not in existing_folded:
+                    existing_folded.add(canonical_name.casefold())
+                    normalized_characters.append({
+                        "name": canonical_name,
+                        "profile_timeline": [],
+                    })
     parse_output = json.dumps({
         "characters": normalized_characters,
         "uncertainties": normalized_uncertainties,
@@ -9782,38 +9891,25 @@ async def _run_resolution_stage(
         )
     else:
         if selection_messages is not None:
-            from modes.illustration_npc import parse_candidates
             raw_candidates = normalized_raw.get("npc_candidates", [])
-            if "npc_candidates" not in normalized_raw:
-                print(f"[ILLUST_CONTEXT:NPC] {stage_call_name} 응답에 npc_candidates 필드 없음")
-            parsed["npc_candidates"] = parse_candidates(
-                raw_candidates, candidate_names, current_segments, repair=True)
-            print(
-                f"[ILLUST_CONTEXT:NPC] {stage_call_name} 후보: "
-                f"raw={len(raw_candidates) if isinstance(raw_candidates, list) else 'invalid'}, "
-                f"kept={len(parsed['npc_candidates'])}"
-            )
-            # A dropped candidate must not invalidate scenes that mention it; the
-            # scene keeps its emotion, only the stale identity reference is
-            # removed from a characters array.
+            parsed["npc_candidates"] = parsed_npc_candidates or []
+            # A remapped candidate becomes its registered canonical identity in
+            # every selected scene; an invalid dropped candidate is removed from
+            # scene_plan.characters so the scene stays usable.
             if isinstance(raw_candidates, list):
                 retained = {candidate["name"].casefold() for candidate in parsed["npc_candidates"]}
                 dropped = {
                     str(entry.get("name") or "").strip().casefold()
                     for entry in raw_candidates
                     if isinstance(entry, dict) and str(entry.get("name") or "").strip()
-                } - retained
+                } - retained - set(remapped_npcs)
                 scene_plan = normalized_raw.get("scene_plan")
-                if dropped and isinstance(scene_plan, list):
-                    normalized_raw["scene_plan"] = [
-                        {**scene, "characters": [
-                            name for name in scene["characters"]
-                            if str(name).strip().casefold() not in dropped
-                        ]}
-                        if isinstance(scene, dict) and isinstance(scene.get("characters"), list)
-                        else scene
-                        for scene in scene_plan
-                    ]
+                if (remapped_npcs or dropped) and isinstance(scene_plan, list):
+                    normalized_raw["scene_plan"] = _rewrite_scene_plan_candidates(
+                        scene_plan,
+                        remapped=remapped_npcs,
+                        dropped=dropped,
+                    )
         raw_output = json.dumps({
             **({"scene_plan": normalized_raw.get("scene_plan")} if selection_messages is not None else {}),
             **({"npc_candidates": parsed["npc_candidates"]} if "npc_candidates" in parsed else {}),
@@ -10600,10 +10696,8 @@ async def resolve_profiles_before_generation(
         protected = render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
         selection = prompt_builders.selection_messages(
             prompts, prompt_builders.role_context(
-                protected, extra_instruction, genre=toggles.get("genre", ""),
-                genre_prompt=prompts.get("genre", ""),
-                genre_work_title=toggles.get("genre_work_title", ""),
-                genre_secondary_prompt=prompts.get("genre_secondary", "")),
+                protected, extra_instruction,
+                **prompt_builders.genre_role_kwargs(prompts, toggles)),
             render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
             scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "",
             emotion=emotion)

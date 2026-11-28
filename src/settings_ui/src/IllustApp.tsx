@@ -139,11 +139,16 @@ function IllustrationAppContent() {
     setBotSelected(result.bot_selected); bots.reload();
   }, [bots.reload]);
   useEffect(() => {
-    const onFocus = () => bots.reload();
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("illustration-bots-changed", onFocus);
-    return () => { window.removeEventListener("focus", onFocus); window.removeEventListener("illustration-bots-changed", onFocus); };
+    const onChanged = () => bots.reload();
+    window.addEventListener("illustration-bots-changed", onChanged);
+    return () => { window.removeEventListener("illustration-bots-changed", onChanged); };
   }, [bots.reload]);
+  useEffect(() => {
+    if (!active) return;
+    const onFocus = () => { if (!document.hidden) bots.reload(); };
+    window.addEventListener("focus", onFocus);
+    return () => { window.removeEventListener("focus", onFocus); };
+  }, [active, bots.reload]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 760px)");

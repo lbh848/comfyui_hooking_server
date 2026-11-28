@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Plus, Sparkles, Square } from "lucide-react";
-import { Panel } from "./components";
+import { Badge, Panel } from "./components";
 import { useBotApi } from "./BotApiScope";
 import { IllustrationFeedback } from "./IllustBackups";
 import { CharacterImportedLore } from "./IllustCharacterLore";
@@ -8,7 +8,7 @@ import { readCharacterArchives } from "./characterArchiveReader";
 import type { CharacterLoreEntry } from "./characterLore";
 import { saveBotArchives } from "./botArchives";
 import {
-  cancelLoreNpcOperation, LORE_BATCH_CHAR_OPTIONS, mergeLoreNpcCandidates, requestLoreNpc,
+  cancelLoreNpcOperation, classifySoftNameTagStatus, LORE_BATCH_CHAR_OPTIONS, mergeLoreNpcCandidates, requestLoreNpc,
   type AnalysisWarning, type LoreNpc, type LoreNpcCard, type LoreOperation,
 } from "./loreNpcShared";
 
@@ -34,6 +34,57 @@ export function LoreNpcCardDetails({ card }: { card: LoreNpcCard }) {
       ...card.face_tags, ...card.eye_tags].join(", ")}</p>
     {card.visual_context && <p>{card.visual_context}</p>}
   </details>;
+}
+
+export function LoreNpcNameTagEditor({ candidate, disabled, onChange }: {
+  candidate: LoreNpc; disabled: boolean; onChange: (nextTag: string) => void;
+}) {
+  const inputId = useId();
+  if (candidate.card.name_tag === undefined && !candidate.name_tag_match) return null;
+  const tag = candidate.card.name_tag || "";
+  const candidates = candidate.name_tag_match?.candidates || [];
+  const status = classifySoftNameTagStatus(tag, candidates);
+  const statusLabel = status === "matched"
+    ? "사전 확인됨"
+    : status === "review"
+      ? "사전 후보 확인"
+      : status === "unlisted"
+        ? "사전 미등록 · 직접 확인"
+        : "미설정 · 오리지널/일반";
+  return <div className="illust-lore-nametag">
+    <div className="illust-lore-nametag-head">
+      <label className="illust-lore-nametag-label" htmlFor={inputId}>이미지 이름 태그</label>
+      <div className="illust-actions">
+        {candidate.card.source_work && <Badge>원작 · {candidate.card.source_work}</Badge>}
+        <Badge tone={status === "review" ? "rose" : undefined}>{statusLabel}</Badge>
+      </div>
+    </div>
+    <div className="illust-lore-nametag-input">
+      <input
+        id={inputId}
+        value={tag}
+        disabled={disabled}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="비워 두면 외형 태그만으로 생성 (오리지널 캐릭터)"
+        onChange={event => onChange(event.target.value)}
+      />
+      {tag && <button type="button" className="button secondary small" disabled={disabled} onClick={() => onChange("")}>지우기</button>}
+    </div>
+    {candidates.length > 0 && <details className="illust-lore-nametag-candidates" open={status === "review" || undefined}>
+      <summary>단부루 사전 후보 {candidates.length}개 · 클릭해 반영</summary>
+      <div className="illust-lore-nametag-list" role="group" aria-label={`${candidate.name} 단부루 이름 태그 후보`}>
+        {candidates.map(item => <button
+          key={item.id}
+          type="button"
+          className={`button small ${tag.trim() === item.tag ? "primary" : "secondary"}`}
+          aria-pressed={tag.trim() === item.tag}
+          disabled={disabled}
+          onClick={() => onChange(item.tag)}
+        ><strong>{item.tag}</strong><span>{item.description || "설명 없음"}</span></button>)}
+      </div>
+    </details>}
+  </div>;
 }
 
 export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBatchCharsChange, existingNames, busy, onBusyChange, onAdded, onClose }: {
@@ -141,6 +192,12 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
     } finally { finish(); onAdded(); }
   }
 
+  function updateCandidateNameTag(name: string, nextTag: string) {
+    setCandidates(current => current.map(item => item.name === name
+      ? { ...item, card: { ...item.card, name_tag: nextTag } }
+      : item));
+  }
+
   return <>
     <div className="illust-actions"><button type="button" className="button secondary" disabled={busy || !botFiles.length && !moduleFiles.length}
       onClick={() => void generateLoreNpcCards()}><Sparkles size={14} />로어북 기반 NPC 생성</button>
@@ -161,6 +218,7 @@ export function LoreNpcImport({ botName, botFiles, moduleFiles, batchChars, onBa
               <strong>{name}</strong>{status && <span>{status}</span>}</label>
             {candidate.aliases.length > 0 && <p className="field-help">{candidate.aliases.join(" · ")}</p>}
             <p className="illust-lore-text">{candidate.description}</p>
+            <LoreNpcNameTagEditor candidate={candidate} disabled={busy || !!status} onChange={nextTag => updateCandidateNameTag(name, nextTag)} />
             <LoreNpcCardDetails card={candidate.card} />
             {!status && createErrors.has(name) && <IllustrationFeedback error={createErrors.get(name)} />}
             <CharacterImportedLore entries={candidate.entry_indexes.map(index => entries[index])} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Download, Images, Layers, LoaderCircle, Menu, Palette, Play, Plus, RefreshCw, Settings2, SquareDashedMousePointer, Trash2, Upload, UserRound, Workflow, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Download, Images, Layers, LoaderCircle, Menu, Palette, Play, Plus, RefreshCw, Settings2, SquareDashedMousePointer, Trash2, Upload, UserRound, WandSparkles, Workflow, X } from "lucide-react";
 import { Badge, Empty, Modal, Panel } from "./components";
 import { BackgroundModals, ModalPage, useModalWorkspace } from "./ModalWorkspace";
 import { ProgramShutdown, WorkshopSwitcher } from "./WorkshopControls";
@@ -29,6 +29,8 @@ import { useAssetStylePresets } from "./useAssetStylePresets";
 import { AssetStyleSelectionDialog } from "./AssetStyleSelectionDialog";
 import { AssetGallery, type AssetGalleryFocusTarget } from "./AssetGallery";
 import { AssetExport } from "./AssetExport";
+import { AssetPostprocessPage } from "./AssetPostprocessPage";
+import { useWorkspacePostprocess, type AssetPostprocessSettings } from "./assetPostprocess";
 import { AssetGenerationControls, type AssetGenerationControlsProps } from "./AssetGenerationControls";
 import { AssetGenerationTags } from "./AssetGenerationTags";
 import { AssetGenerationStatus } from "./AssetGenerationStatus";
@@ -43,6 +45,7 @@ const pages = [
   { id: "generate", label: "에셋 생성", icon: Images, description: "그림체·캐릭터 적용값으로 에셋을 만들고 결과를 확인하세요." },
   { id: "export", label: "에셋 익스포트", icon: Download, description: "내보낼 복장·표정을 고르고 이름 치환 규칙을 적용해 ZIP으로 저장하세요." },
   { id: "batch", label: "에셋 일괄 생성", icon: Layers, description: "현재 활성화된 그림 모델을 모든 슬롯에 적용합니다. 슬롯마다 프롬프트와 생성 옵션을 설정하세요." },
+  { id: "postprocess", label: "후처리", icon: WandSparkles, description: "원본 에셋을 유지한 채 캐릭터 테두리 등 후처리 효과를 실시간으로 확인하고 익스포트에 적용하세요." },
   { id: "style", label: "그림체 설정", icon: Palette, description: "그림체 프리셋을 선택하고 편집하세요." },
   { id: "character", label: "캐릭터 설정", icon: UserRound, description: "캐릭터를 선택하고 편집하세요." },
   { id: "workflow", label: "그림 모델 설정", icon: Workflow, description: "에셋 생성에 사용할 그림 모델·워크플로우·샘플링·공통 LoRA를 설정하세요." },
@@ -72,6 +75,8 @@ function AssetAppContent() {
   const { draft, setDraft, storageError } = useAssetDraft();
   const tags = useAssetResource("asset_mode/tags");
   const presets = useAssetResource("chain_presets");
+  const postprocess = useWorkspacePostprocess<AssetPostprocessSettings>("asset", active);
+  const postprocessBanner = { active: postprocess.active, revision: postprocess.revision, summary: postprocess.summary };
   const inventory = useResources();
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -325,14 +330,14 @@ function AssetAppContent() {
     : !stylePresets.resource.data ? stylePresets.error
       ? "그림체 프리셋을 불러오지 못했습니다. 그림체 설정에서 다시 불러오세요." : "그림체 프리셋을 불러오는 중입니다."
     : missingChainStyle >= 0 ? `슬롯 ${missingChainStyle + 1}: 그림체 불러오기를 선택하세요. 일괄 설정으로 전체 슬롯에 적용할 수도 있습니다.` : "";
-  const presetActive = info.id === "style" || info.id === "character";
+  const presetActive = info.id === "style" || info.id === "character" || info.id === "postprocess";
   return <div className={`app-shell asset-shell ${visible ? "sidebar-expanded" : "sidebar-collapsed"}${info.id === "generate" ? " asset-generation-active" : ""}${presetActive ? " asset-preset-active" : ""}${info.id === "export" ? " asset-export-active" : ""}${modals.some(item => item.backgrounded) ? " has-background-modals" : ""}`}>
     <a className="skip-link" href="#asset-main" onClick={event => { event.preventDefault(); document.getElementById("asset-main")?.focus(); }}>본문으로 이동</a>
     <header className="topbar"><div className="app-heading"><button className="icon-button sidebar-toggle" aria-label={visible ? "사이드바 접기" : "사이드바 펼치기"} aria-controls="asset-sidebar" aria-expanded={visible} onClick={() => mobile ? setMenu(value => !value) : setCollapsed(value => !value)}><Menu size={20} /></button><WorkshopSwitcher current="asset" onOpen={() => setMenu(false)} /><div className="breadcrumb"><span>에셋</span><ChevronRight size={13} /><strong>{info.label}</strong></div></div><div className="topbar-actions"><span className="local-pill"><span />로컬 전용</span><ProgramShutdown onOpen={() => setMenu(false)} /></div></header>
     {mobile && menu && <div className="sidebar-backdrop" aria-hidden="true" />}
     <aside id="asset-sidebar" className="sidebar" inert={!visible}><nav aria-label="에셋 메뉴">
-      {[{ label: "에셋", ids: ["generate", "export"] }, { label: "자동화", ids: ["batch"] }, { label: "프리셋 설정", ids: ["style", "character", "workflow"] }].map(group => <details className="nav-group" open key={group.label}>
-        <summary>{group.label}<ChevronRight size={13} /></summary><div className="nav-group-items">{pages.filter(page => group.ids.includes(page.id)).map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined} onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}><Icon size={18} /><span>{label}</span>{id === "batch" && <small>{chains.length}</small>}</a>)}</div>
+      {[{ label: "에셋", ids: ["generate", "export"] }, { label: "자동화", ids: ["batch", "postprocess"] }, { label: "프리셋 설정", ids: ["style", "character", "workflow"] }].map(group => <details className="nav-group" open key={group.label}>
+        <summary>{group.label}<ChevronRight size={13} /></summary><div className="nav-group-items">{pages.filter(page => group.ids.includes(page.id)).map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined} onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}><Icon size={18} /><span>{label}</span>{id === "batch" && <small>{chains.length}</small>}{id === "postprocess" && postprocess.active && <small>ON</small>}</a>)}</div>
       </details>)}
       <details className="nav-group" open><summary>{workNavigation.group}<ChevronRight size={13} /></summary><div className="nav-group-items">{workNavigation.items.map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} className={`nav-item ${info.id === id ? "active" : ""}`} aria-current={info.id === id ? "page" : undefined} onClick={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) return; event.preventDefault(); changePage(id); }}><Icon size={18} /><span>{label}</span>{(id === "work-queue" || id === "llm-logs") && <WorkActivityCount page={id} />}</a>)}</div></details>
       <PresetManagementLink className="nav-item" onNavigate={() => setMenu(false)}><Settings2 size={18} /><span>프리셋 관리</span></PresetManagementLink>
@@ -355,14 +360,14 @@ function AssetAppContent() {
             </div>
           </div>}
         </div>
-        <div className="asset-actions"><button className="button" disabled={modelSelection.pending || modelSelection.action.busy || stylePresets.busy} onClick={() => { tags.reload(); presets.reload(); stylePresets.reload(); modelSelection.resource.reload(); }}><RefreshCw size={14} />새로고침</button></div>
+        <div className="asset-actions"><button className="button" disabled={modelSelection.pending || modelSelection.action.busy || stylePresets.busy} onClick={() => { tags.reload(); presets.reload(); stylePresets.reload(); modelSelection.resource.reload(); postprocess.reload(); }}><RefreshCw size={14} />새로고침</button></div>
       </div>
       {(error || tags.error || modelSelection.resource.error || stylePresets.resource.error || storageError) && <div className="settings-feedback error" role="alert">{error || tags.error || modelSelection.resource.error || stylePresets.resource.error || storageError}<button className="button" onClick={() => { setError(""); tags.reload(); stylePresets.reload(); modelSelection.resource.reload(); }}>다시 확인</button></div>}
       {["generate", "batch", "style", "character"].includes(info.id) && !tags.data && !tags.error && <p role="status">에셋과 프리셋을 불러오는 중…</p>}
       {tags.data && <>
         {/* Keep the gallery mounted so folder navigation and loaded assets survive tab switches. */}
         <ModalPage page="generate" pageTitle="에셋 생성" active={info.id === "generate"} onNavigate={changePage} keepMounted>
-          <div className="asset-generation-view"><AssetGallery tags={tags.data} selection={draft.slot} onBrowse={browseGallery} keyboardEnabled={galleryKeyboardEnabled && active && info.id === "generate"} builtinUnlockToken={characterSettings.unlockToken} onCharacterDeleted={name => {
+          <div className="asset-generation-view"><AssetGallery tags={tags.data} selection={draft.slot} postprocess={postprocessBanner} onBrowse={browseGallery} keyboardEnabled={galleryKeyboardEnabled && active && info.id === "generate"} builtinUnlockToken={characterSettings.unlockToken} onCharacterDeleted={name => {
             tags.setData(previous => {
               if (!previous) return previous;
               const characters = { ...previous.characters }; delete characters[name];
@@ -411,8 +416,9 @@ function AssetAppContent() {
           })}</ol>{!chains.length && <Empty title="첫 체인 슬롯 만들기">슬롯마다 서로 다른 프롬프트와 생성 옵션을 설정할 수 있습니다.</Empty>}<button className="button asset-add-chain" disabled={busy} onClick={() => addChain()}><Plus size={16} />체인 슬롯 추가</button>
         </ModalPage>
       </>}
+      <ModalPage page="postprocess" pageTitle="후처리" active={info.id === "postprocess"} onNavigate={changePage} keepMounted><AssetPostprocessPage workspace="asset" active={active && info.id === "postprocess"} initialEntity={draft.slot.character || ""} postprocess={postprocess} /></ModalPage>
       <ModalPage page="workflow" pageTitle="그림 모델 설정" active={info.id === "workflow"} onNavigate={changePage} keepMounted><IllustModelPresets /></ModalPage>
-      <ModalPage page="export" pageTitle="에셋 익스포트" active={info.id === "export"} onNavigate={changePage} keepMounted><AssetExport active={active && info.id === "export"} initialCharacter={draft.slot.character || ""} notify={setToast} /></ModalPage>
+      <ModalPage page="export" pageTitle="에셋 익스포트" active={info.id === "export"} onNavigate={changePage} keepMounted><AssetExport active={active && info.id === "export"} initialCharacter={draft.slot.character || ""} notify={setToast} postprocess={postprocessBanner} onOpenPostprocess={() => changePage("postprocess")} /></ModalPage>
       <ModalPage page="work-queue" pageTitle="작업 큐" active={info.id === "work-queue"} onNavigate={changePage}><WorkQueuePage notify={setToast} /></ModalPage>
       <ModalPage page="llm-logs" pageTitle="LLM 로그" active={info.id === "llm-logs"} onNavigate={changePage}><LlmLogsPage notify={setToast} /></ModalPage>
       <ModalPage page="program-logs" pageTitle="프로그램 로그" active={info.id === "program-logs"} onNavigate={changePage}><ProgramLogsPage notify={setToast} /></ModalPage>

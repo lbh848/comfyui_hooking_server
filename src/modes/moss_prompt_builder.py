@@ -744,6 +744,7 @@ def _moss_render_panel_captions(moss: dict) -> dict:
     bottom = max(box[2] for box, _ in frames.values())
     right = max(box[3] for box, _ in frames.values())
     names = {}
+    grid_groups: dict[tuple[str, str], list[tuple[str, list[int]]]] = {}
     for number, (box, caption) in frames.items():
         if list(box) == [top, left, bottom, right] and "borderless" in caption.lower():
             names[number] = "the continuous full-page scene"
@@ -753,7 +754,44 @@ def _moss_render_panel_captions(moss: dict) -> dict:
             "lower" if cy > top + 2 * (bottom - top) / 3 else "middle")
         col = "left" if cx < left + (right - left) / 3 else (
             "right" if cx > left + 2 * (right - left) / 3 else "center")
-        names[number] = f"the {row}-{col} framed scene"
+        grid_groups.setdefault((row, col), []).append((number, box))
+
+    for (row, col), entries in grid_groups.items():
+        if len(entries) == 1:
+            names[entries[0][0]] = f"the {row}-{col} framed scene"
+            continue
+        cys = [(box[0] + box[2]) / 2 for _, box in entries]
+        cxs = [(box[1] + box[3]) / 2 for _, box in entries]
+        vertical_spread = max(cys) - min(cys)
+        horizontal_spread = max(cxs) - min(cxs)
+        if vertical_spread >= horizontal_spread:
+            ordered = sorted(entries, key=lambda pair: ((pair[1][0] + pair[1][2]) / 2, pair[0]))
+            if len(ordered) == 2:
+                qualifiers = (
+                    ("top", "lower-top") if row == "upper" else
+                    ("upper-bottom", "bottom") if row == "lower" else
+                    ("upper-middle", "lower-middle")
+                )
+            elif len(ordered) == 3:
+                qualifiers = ("top", "middle", "bottom")
+            else:
+                qualifiers = tuple(f"{row}-slot-{i + 1}" for i in range(len(ordered)))
+            for qualifier, (number, _box) in zip(qualifiers, ordered):
+                names[number] = f"the {qualifier}-{col} framed scene"
+        else:
+            ordered = sorted(entries, key=lambda pair: ((pair[1][1] + pair[1][3]) / 2, pair[0]))
+            if len(ordered) == 2:
+                qualifiers = (
+                    ("far-left", "inner-left") if col == "left" else
+                    ("inner-right", "far-right") if col == "right" else
+                    ("left-center", "right-center")
+                )
+            elif len(ordered) == 3:
+                qualifiers = ("left", "center", "right")
+            else:
+                qualifiers = tuple(f"{col}-slot-{i + 1}" for i in range(len(ordered)))
+            for qualifier, (number, _box) in zip(qualifiers, ordered):
+                names[number] = f"the {row}-{qualifier} framed scene"
 
     rendered = copy.deepcopy(moss)
     reference = re.compile(r"\bPANEL\s+(\d+)\b", re.IGNORECASE)

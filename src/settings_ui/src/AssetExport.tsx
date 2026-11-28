@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight, CopyCheck, Download, Eye, RefreshCw, Sparkles, SquaresIntersect } from "lucide-react";
-import { Empty, Modal, Panel } from "./components";
+import { Empty, Modal, Note, Panel } from "./components";
 import { AssetExportCharacters } from "./AssetExportCharacters";
+import { ExportPostprocessChoice } from "./AssetPostprocessPage";
+import type { PostprocessPreviewBannerState } from "./assetPostprocess";
 import { assetMedia, assetRequest, assetResponse, useAssetResource, type AssetRecord } from "./asset";
-import { applyExpressionMappingBatch, assetExportFormats, assetNameMapping, assetNamingLabels, downloadAssetExport, getNameMappingSaveError, summarizeExpressionMapping, validateAssetExport, validateAssetExportBatch, type AssetExportBatchPlan, type AssetExportIssue, type AssetExportPlan, type AssetNameMapping } from "./assetNameMapping";
+import { applyAssetSelectionBatch, applyExpressionMappingBatch, assetExportFormats, assetNameMapping, assetNamingLabels, downloadAssetExport, getNameMappingSaveError, summarizeAssetSelection, summarizeExpressionMapping, validateAssetExport, validateAssetExportBatch, type AssetExportBatchPlan, type AssetExportIssue, type AssetExportPlan, type AssetNameMapping } from "./assetNameMapping";
 import "./assetExport.css";
 import { useIllustrationSaveReport } from "./IllustrationSaveStatus";
 import { useUnsavedChanges } from "./unsavedChanges";
@@ -15,6 +17,7 @@ type ExpressionPreviewItem = { outfit: string; filename: string; image_count: nu
 type ExpressionPreview = {
   character: string; expression: string; loading: boolean; error: string; items: ExpressionPreviewItem[];
 };
+type SelectionBatchKind = "expression" | "outfit";
 const steps = ["캐릭터 선택", "표정 선택", "복장 선택", "이름 설정", "내보내기 확인"];
 const stepDescriptions = [
   "함께 내보낼 캐릭터를 선택한 뒤 다음 단계로 이동하세요.",
@@ -24,6 +27,12 @@ const stepDescriptions = [
   "선택한 캐릭터의 설정을 확인하고 ZIP으로 내보내세요.",
 ];
 const isDraftDirty = (draft?: ExportDraft) => !!draft && JSON.stringify(draft.mapping) !== draft.saved;
+function formatSelectionChange(addedCount: number, removedCount: number): string {
+  if (addedCount > 0 && removedCount > 0) return `+${addedCount} / -${removedCount}`;
+  if (addedCount > 0) return `${addedCount}개 추가`;
+  if (removedCount > 0) return `${removedCount}개 해제`;
+  return "변경 없음";
+}
 
 function ExportIssues({ issues, warning = false }: { issues: AssetExportIssue[]; warning?: boolean }) {
   if (!issues.length) return null;
@@ -101,6 +110,7 @@ function ExportCharacterSelector({
         const selected = name === activeCharacter;
         const dirty = isDraftDirty(draft);
         const hasSaveError = !!saveErrors[name];
+        const emptyExpressions = mode === "expression" && !!draft && draft.expressions.length === 0;
         const expressionSummary = draft && mode === "naming" ? summarizeExpressionMapping(draft.expressions, draft.mapping.expression_mapping) : null;
         const detail = !draft ? "불러오는 중…"
           : mode === "expression" ? `표정 ${draft.expressions.length} / ${draft.info.expressions.length} 선택`
@@ -116,7 +126,8 @@ function ExportCharacterSelector({
           <span className="asset-export-character-box-head">
             <strong>{name}</strong>
             {hasSaveError ? <span className="asset-export-character-dirty">확인 필요</span>
-              : dirty && <span className="asset-export-character-dirty">저장 중</span>}
+              : emptyExpressions ? <span className="asset-export-character-dirty">선택 없음</span>
+                : dirty && <span className="asset-export-character-dirty">저장 중</span>}
           </span>
           <small>{detail}</small>
         </button>;
@@ -128,15 +139,19 @@ function ExportCharacterSelector({
 function ExportOutfitGroups({
   characters,
   drafts,
+  batchReady,
   disabled,
   onChange,
   onChangeAll,
+  onBatchApply,
 }: {
   characters: string[];
   drafts: Record<string, ExportDraft>;
+  batchReady: boolean;
   disabled: boolean;
   onChange: (characterName: string, outfits: string[]) => void;
   onChangeAll: (selectAll: boolean) => void;
+  onBatchApply: (sourceCharacter?: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const query = search.trim().toLocaleLowerCase();
@@ -156,6 +171,13 @@ function ExportOutfitGroups({
       <label className="field">캐릭터·복장 검색<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
       <span className="badge">총 {totalSelected} / {totalAvailable} 선택</span>
       {characters.length > 1 && <div className="asset-actions">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={disabled || !batchReady}
+          title="기준 캐릭터의 선택된 복장을 나머지 선택한 캐릭터에 일괄 적용합니다."
+          onClick={() => onBatchApply()}
+        ><CopyCheck size={14} aria-hidden="true" />복장 선택 일괄 적용</button>
         <button type="button" className="button secondary" disabled={disabled || !totalAvailable || totalSelected === totalAvailable} onClick={() => onChangeAll(true)}>모든 캐릭터 전체 선택</button>
         <button type="button" className="button secondary" disabled={disabled || !totalSelected} onClick={() => onChangeAll(false)}>모든 캐릭터 전체 해제</button>
       </div>}
@@ -167,7 +189,14 @@ function ExportOutfitGroups({
           className="asset-export-outfit-group"
           title={name}
           aside={<div className="asset-actions">
-            <span className="badge">{draft ? `${draft.outfits.length} / ${items.length} 선택` : "불러오는 중…"}</span>
+            <span className={`badge${draft && !draft.outfits.length ? " rose" : ""}`}>{draft ? `${draft.outfits.length} / ${items.length} 선택` : "불러오는 중…"}</span>
+            {characters.length > 1 && <button
+              type="button"
+              className="button secondary"
+              disabled={disabled || !batchReady || !draft || !draft.outfits.length}
+              title={`${name}의 선택된 복장을 나머지 선택한 캐릭터에 일괄 적용합니다.`}
+              onClick={() => onBatchApply(name)}
+            ><CopyCheck size={13} aria-hidden="true" />일괄 적용</button>}
             <button type="button" className="button secondary" disabled={disabled || !draft || !items.length} onClick={() => onChange(name, [...items])}>전체 선택</button>
             <button type="button" className="button secondary" disabled={disabled || !draft || !draft.outfits.length} onClick={() => onChange(name, [])}>전체 해제</button>
           </div>}
@@ -181,7 +210,13 @@ function ExportOutfitGroups({
   </div>;
 }
 
-export function AssetExport({ active, initialCharacter, notify }: { active: boolean; initialCharacter: string; notify: (message: string) => void }) {
+export function AssetExport({ active, initialCharacter, notify, postprocess, onOpenPostprocess }: {
+  active: boolean;
+  initialCharacter: string;
+  notify: (message: string) => void;
+  postprocess?: PostprocessPreviewBannerState;
+  onOpenPostprocess?: () => void;
+}) {
   const characters = useAssetResource(active ? "asset_mode/characters" : null);
   const [character, setCharacter] = useState("");
   const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
@@ -202,7 +237,11 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
   const [expressionPreview, setExpressionPreview] = useState<ExpressionPreview | null>(null);
   const [batchApplyOpen, setBatchApplyOpen] = useState(false);
   const [batchApplySource, setBatchApplySource] = useState("");
+  const [selectionBatchKind, setSelectionBatchKind] = useState<SelectionBatchKind | null>(null);
+  const [selectionBatchSource, setSelectionBatchSource] = useState("");
   const [qualityDraft, setQualityDraft] = useState("");
+  const [preferPostprocess, setPreferPostprocess] = useState(true);
+  const applyPostprocessOnExport = !!postprocess?.active && preferPostprocess;
   const [autosaving, setAutosaving] = useState(false);
   const [autosaveErrors, setAutosaveErrors] = useState<Record<string, string>>({});
   const autosavingRef = useRef(false);
@@ -261,6 +300,26 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
   }) : [];
   const batchTotalChanges = batchTargets.reduce((sum, item) => sum + item.changedCount, 0);
   const batchHasUsableSource = batchSourceOptions.some(item => item.summary.totalFilled > 0);
+  const selectionBatchLabel = selectionBatchKind === "outfit" ? "복장" : "표정";
+  const selectionBatchSourceOptions = selectionBatchKind ? selectedCharacters.flatMap(name => {
+    const draft = drafts[name];
+    if (!draft) return [];
+    const available = selectionBatchKind === "expression" ? draft.info.expressions : draft.info.outfits;
+    const selected = selectionBatchKind === "expression" ? draft.expressions : draft.outfits;
+    return [{ name, selected, summary: summarizeAssetSelection(available, selected) }];
+  }) : [];
+  const selectedSelectionBatchSource = selectionBatchSourceOptions.find(item => item.name === selectionBatchSource) || null;
+  const selectionBatchTargets = selectionBatchKind && selectedSelectionBatchSource ? selectedCharacters.flatMap(name => {
+    if (name === selectedSelectionBatchSource.name) return [];
+    const draft = drafts[name];
+    if (!draft) return [];
+    const available = selectionBatchKind === "expression" ? draft.info.expressions : draft.info.outfits;
+    const selected = selectionBatchKind === "expression" ? draft.expressions : draft.outfits;
+    return [{ name, ...applyAssetSelectionBatch(selectedSelectionBatchSource.selected, available, selected) }];
+  }) : [];
+  const selectionBatchChangedCount = selectionBatchTargets.filter(item => item.changed).length;
+  const selectionBatchEmptyTargets = selectionBatchTargets.filter(item => item.afterCount === 0);
+  const selectionBatchHasUsableSource = selectionBatchSourceOptions.some(item => item.summary.selectedCount > 0);
 
   useEffect(() => {
     if (!active || !characters.data || initialized.current) return;
@@ -310,10 +369,14 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
   useEffect(() => { setExpressionPreview(null); }, [character]);
   useEffect(() => {
     if (step !== 3) { setBatchApplyOpen(false); setBatchApplySource(""); }
-  }, [step]);
+    if ((selectionBatchKind === "expression" && step !== 1) || (selectionBatchKind === "outfit" && step !== 2)) {
+      setSelectionBatchKind(null); setSelectionBatchSource("");
+    }
+  }, [step, selectionBatchKind]);
   useEffect(() => {
     if (batchApplySource && !selectedCharacters.includes(batchApplySource)) setBatchApplySource("");
-  }, [batchApplySource, selectedCharacters]);
+    if (selectionBatchSource && !selectedCharacters.includes(selectionBatchSource)) setSelectionBatchSource("");
+  }, [batchApplySource, selectionBatchSource, selectedCharacters]);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -434,6 +497,37 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
   }
   function editCharacter(name: string) { setCharacter(name); setStep(3); setError(""); setValidationError(""); }
   function closeBatchApplyModal() { setBatchApplyOpen(false); setBatchApplySource(""); }
+  function openSelectionBatchModal(kind: SelectionBatchKind, initialSource = "") {
+    const draft = initialSource ? drafts[initialSource] : undefined;
+    const hasSelection = !!draft && (kind === "expression" ? draft.expressions.length > 0 : draft.outfits.length > 0);
+    setSelectionBatchKind(kind);
+    setSelectionBatchSource(hasSelection ? initialSource : "");
+  }
+  function closeSelectionBatchModal() { setSelectionBatchKind(null); setSelectionBatchSource(""); }
+  function applyBatchSelection() {
+    if (!selectionBatchKind || !selectedSelectionBatchSource || !selectionBatchTargets.length || !selectionBatchChangedCount) return;
+    const kind = selectionBatchKind;
+    const label = kind === "expression" ? "표정" : "복장";
+    const sourceName = selectedSelectionBatchSource.name;
+    const sourceCount = selectedSelectionBatchSource.summary.selectedCount;
+    const changedTargets = selectionBatchTargets.filter(item => item.changed);
+    const updates = new Map(changedTargets.map(item => [item.name, item.selected]));
+    const emptyCount = selectionBatchEmptyTargets.length;
+    setDrafts(previous => {
+      const next = { ...previous };
+      for (const [targetName, selected] of updates) {
+        const draft = previous[targetName];
+        if (!draft) continue;
+        next[targetName] = kind === "expression" ? { ...draft, expressions: selected } : { ...draft, outfits: selected };
+      }
+      return next;
+    });
+    setValidation(null); setBatchValidation(null); setError(""); setValidationError("");
+    closeSelectionBatchModal();
+    notify(emptyCount > 0
+      ? `${sourceName}의 선택 ${label}(${sourceCount}개)을 ${updates.size}명에 일괄 적용했습니다. (${emptyCount}명은 일치하는 ${label}이 없어 선택이 비어 있습니다.)`
+      : `${sourceName}의 선택 ${label}(${sourceCount}개)을 ${updates.size}명에 일괄 적용했습니다.`);
+  }
   function applyBatchExpressions() {
     if (!selectedBatchSource || !batchTargets.length || !batchTotalChanges) return;
     const sourceName = selectedBatchSource.name;
@@ -501,13 +595,15 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
       if (failed) editCharacter(failed.character);
       throw new Error("선택한 캐릭터의 내보내기 오류를 확인하세요.");
     }
-    const response = await assetResponse("asset/export", { characters: batchCharacters }, undefined, "POST", [409]);
+    const response = await assetResponse("asset/export", { characters: batchCharacters, apply_postprocess: applyPostprocessOnExport }, undefined, "POST", [409]);
     if (response.status === 409) {
       setBatchValidation({ key: batchKey, plan: await response.json() });
       throw new Error("내보낼 에셋이 변경되었습니다. 캐릭터별 오류를 확인하세요.");
     }
     downloadAssetExport(await response.blob(), selectedCharacters.length === 1 ? `${selectedCharacters[0]}.zip` : "에셋 익스포트.zip");
-    notify(`${selectedCharacters.length}명 에셋 ZIP 다운로드를 시작했습니다.`);
+    notify(applyPostprocessOnExport
+      ? `${selectedCharacters.length}명 에셋 ZIP(후처리 적용) 다운로드를 시작했습니다.`
+      : `${selectedCharacters.length}명 에셋 ZIP 다운로드를 시작했습니다.`);
   }
   async function llm(mode: "auto_fix" | "full") {
     const result = await assetRequest("asset_mode/name_mapping/llm", { mode, character, mapping: entry.mapping, outfits: entry.outfits, expressions: entry.expressions });
@@ -543,10 +639,12 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     notify(expressions.length ? `선택한 캐릭터의 공통 표정 ${expressions.length}개를 선택했습니다.` : "선택한 캐릭터 모두에게 있는 표정이 없습니다.");
   }
   const missingSelection = !entry?.outfits.length || !entry?.expressions.length;
+  const emptyExpressionCount = batchReady ? selectedCharacters.filter(name => !drafts[name]?.expressions.length).length : 0;
+  const emptyOutfitCount = batchReady ? selectedCharacters.filter(name => !drafts[name]?.outfits.length).length : 0;
   const nextDisabled = !!busy || (
     step === 0 ? !batchReady
-      : step === 1 ? !entry?.expressions.length
-        : step === 2 ? !batchReady || selectedCharacters.some(name => !drafts[name]?.outfits.length)
+      : step === 1 ? !batchReady || emptyExpressionCount > 0
+        : step === 2 ? !batchReady || emptyOutfitCount > 0
           : !entry
   );
   const stepThreeStatus = autosaveErrorMessage ? "자동 저장 실패"
@@ -554,6 +652,11 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
       : autosaving ? "자동 저장 중…"
         : dirtyDraftEntries.length > 0 ? "저장 대기 중…"
           : "자동 저장됨";
+  const footerStatus = busy
+    || (step === 3 ? stepThreeStatus
+      : step === 1 && emptyExpressionCount > 0 ? `표정 미선택 ${emptyExpressionCount}명`
+        : step === 2 && emptyOutfitCount > 0 ? `복장 미선택 ${emptyOutfitCount}명`
+          : `${selectedCharacters.length}명 선택됨`);
 
   return <>
   <div className="asset-export-page">
@@ -583,7 +686,16 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
       mode={step === 1 ? "expression" : "naming"}
       disabled={!!busy}
       onSelect={selectActiveCharacter}
-      actions={step === 3 ? <button
+      actions={step === 1 ? <button
+        type="button"
+        className="button secondary"
+        disabled={!!busy || !batchReady || selectedCharacters.length < 2}
+        title={selectedCharacters.length < 2
+          ? "캐릭터를 2명 이상 선택하면 선택 표정을 일괄 적용할 수 있습니다."
+          : "기준 캐릭터의 선택된 표정을 나머지 선택한 캐릭터에 일괄 적용합니다."}
+        onClick={() => openSelectionBatchModal("expression", character)}
+      ><CopyCheck size={14} aria-hidden="true" />표정 선택 일괄 적용</button>
+      : step === 3 ? <button
         type="button"
         className="button secondary"
         disabled={!!busy || !batchReady || selectedCharacters.length < 2}
@@ -596,9 +708,11 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     {step === 2 && !!selectedCharacters.length && <ExportOutfitGroups
       characters={selectedCharacters}
       drafts={drafts}
+      batchReady={batchReady}
       disabled={!!busy}
       onChange={(target, outfits) => updateDraft(target, { outfits })}
       onChangeAll={setAllOutfits}
+      onBatchApply={source => openSelectionBatchModal("outfit", source)}
     />}
     {(step === 1 || step === 3) && character && !entry && !loadError && <p role="status">이름 치환 규칙을 불러오는 중…</p>}
     {entry && <>
@@ -651,6 +765,13 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
       <div className="asset-export-body">
         {!batchReady && !loadError && <p role="status">캐릭터 설정을 불러오는 중… ({batchCharacters.length}/{selectedCharacters.length})</p>}
         <p className="field-help">모든 캐릭터의 내보내기 설정을 확인한 뒤 ZIP을 만듭니다. 이름 설정 변경 사항은 자동으로 저장됩니다. 대표 이미지는 에셋 생성에서 지정할 수 있습니다.</p>
+        <ExportPostprocessChoice
+          postprocess={postprocess}
+          applyPostprocess={preferPostprocess}
+          disabled={!!busy}
+          onChange={setPreferPostprocess}
+          onOpenPostprocess={onOpenPostprocess}
+        />
         {batchPlan ? <><p className="asset-export-count">{batchPlan.success && <Check size={16} />}{batchPlan.character_count}명 · 내보낼 파일 {batchPlan.file_count}개</p>
           {batchPlan.characters.map(item => <div className="asset-export-batch-result" key={item.character}>
             <div className="asset-export-toolbar"><strong>{item.character}</strong><span>{item.file_count}개 · {item.success ? "내보내기 가능" : "확인 필요"}</span><button className="button" disabled={!!busy} onClick={() => editCharacter(item.character)}>설정 보기</button></div>
@@ -664,7 +785,7 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     </div>
     <footer className="asset-export-footer">
       <button type="button" className="button" disabled={!!busy || step === 0} onClick={() => changeStep(step - 1)}><ChevronLeft size={15} />이전</button>
-      <span role="status">{busy || (step === 3 ? stepThreeStatus : `${selectedCharacters.length}명 선택됨`)}</span>
+      <span role="status">{footerStatus}</span>
       <div className="asset-actions">
         {step < 4 ? <button type="button" className="button primary" disabled={nextDisabled} onClick={() => changeStep(step + 1)}>다음 단계<ChevronRight size={15} /></button>
           : <><button type="button" className="button" disabled={!!busy || !batchReady} onClick={() => void run("선택한 캐릭터 확인 중…", async () => { await validateBatch(); })}><RefreshCw size={15} />선택한 캐릭터 확인</button>
@@ -686,6 +807,7 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
     </>}
   </Modal>}
   {batchApplyOpen && <Modal title="표정 이름 일괄 적용" className="asset-export-batch-modal" backgroundable={false} onClose={closeBatchApplyModal}>
+    <div className="asset-export-batch-body">
     <p className="field-help">기준으로 사용할 캐릭터를 선택하면 채워진 표정 치환 이름을 나머지 선택한 캐릭터에 일괄 적용합니다. 캐릭터 이름, 복장, 출력 설정은 유지됩니다.</p>
     <section className="asset-export-batch-section" aria-label="소스 선택">
       <h3 className="asset-export-batch-section-title">소스 선택</h3>
@@ -740,9 +862,73 @@ export function AssetExport({ active, initialCharacter, notify }: { active: bool
       </div>
       {batchTotalChanges === 0 && <p className="field-help">다른 캐릭터의 선택된 표정에 새로 반영할 변경 사항이 없습니다.</p>}
     </section>}
+    </div>
     <div className="modal-actions">
       <button type="button" className="button secondary" onClick={closeBatchApplyModal}>취소</button>
       <button type="button" className="button primary" disabled={!selectedBatchSource || batchTotalChanges === 0} onClick={applyBatchExpressions}>표정 이름 일괄 적용</button>
+    </div>
+  </Modal>}
+  {selectionBatchKind && <Modal title={`${selectionBatchLabel} 선택 일괄 적용`} className="asset-export-batch-modal" backgroundable={false} onClose={closeSelectionBatchModal}>
+    <div className="asset-export-batch-body">
+    <p className="field-help">기준으로 사용할 캐릭터를 선택하면 해당 캐릭터가 고른 {selectionBatchLabel}과 같은 이름의 {selectionBatchLabel}만 나머지 선택한 캐릭터에서 선택합니다. 해당 캐릭터에 없는 {selectionBatchLabel}은 건너뜁니다.</p>
+    <section className="asset-export-batch-section" aria-label="소스 선택">
+      <h3 className="asset-export-batch-section-title">소스 선택</h3>
+      <div className="asset-export-batch-sources" role="group" aria-label="소스 선택">
+        {selectionBatchSourceOptions.map(({ name, summary }) => {
+          const selected = selectionBatchSource === name;
+          const ratio = summary.total > 0 ? Math.round((summary.selectedCount / summary.total) * 100) : 0;
+          const tone = summary.total > 0 && summary.selectedCount === summary.total ? "is-complete" : summary.selectedCount > 0 ? "is-partial" : "is-empty";
+          const sampleText = summary.samples.length
+            ? `선택: ${summary.samples.join(", ")}${summary.selectedCount > summary.samples.length ? ` 외 ${summary.selectedCount - summary.samples.length}개` : ""}`
+            : `선택된 ${selectionBatchLabel}이 없습니다.`;
+          return <button
+            key={name}
+            type="button"
+            className={`asset-export-batch-source${selected ? " is-selected" : ""}`}
+            aria-pressed={selected}
+            disabled={summary.selectedCount === 0}
+            onClick={() => setSelectionBatchSource(name)}
+          >
+            <span className="asset-export-batch-source-head">
+              <strong>{name}</strong>
+              <span className="asset-export-batch-source-badges">
+                {selectionBatchKind === "expression" && name === character && <span className="badge">현재 편집 중</span>}
+              </span>
+            </span>
+            <span className="asset-export-batch-source-stats">
+              <span>{selectionBatchLabel} {summary.selectedCount} / {summary.total}개 선택</span>
+              <span>{ratio}%</span>
+            </span>
+            <span className={`asset-export-batch-progress ${tone}`} aria-hidden="true"><span style={{ width: `${ratio}%` }} /></span>
+            <small className="asset-export-batch-source-sample" title={sampleText}>{sampleText}</small>
+          </button>;
+        })}
+      </div>
+    </section>
+    {!selectionBatchHasUsableSource && <p className="field-help">선택된 {selectionBatchLabel}이 있는 캐릭터가 없습니다. 먼저 기준 캐릭터의 {selectionBatchLabel}을 하나 이상 선택한 뒤 다시 시도하세요.</p>}
+    {selectedSelectionBatchSource && <section className="asset-export-batch-preview" aria-label="적용 대상 미리보기">
+      <header className="asset-export-batch-preview-header">
+        <strong>적용 대상 ({selectionBatchTargets.length}명)</strong>
+        <span className="badge">{selectionBatchChangedCount > 0 ? `${selectionBatchChangedCount}명 변경` : "변경 없음"}</span>
+      </header>
+      <div className="asset-export-batch-targets">
+        {selectionBatchTargets.map(target => <div className="asset-export-batch-target-row" key={target.name}>
+          <strong>{target.name}</strong>
+          <span className="asset-export-batch-target-meta">
+            <span>{selectionBatchLabel} {target.beforeCount}/{target.total} → {target.afterCount}/{target.total}개{target.missingCount > 0 && target.afterCount > 0 ? ` · ${target.missingCount}개 미보유` : ""}</span>
+            <span className={`badge${target.afterCount === 0 || target.changed ? " rose" : ""}`}>
+              {target.afterCount === 0 ? "일치 없음" : formatSelectionChange(target.addedCount, target.removedCount)}
+            </span>
+          </span>
+        </div>)}
+      </div>
+      {!!selectionBatchEmptyTargets.length && <Note>일치하는 {selectionBatchLabel}이 없는 캐릭터({selectionBatchEmptyTargets.map(item => item.name).join(", ")})는 선택이 0개가 됩니다. 내보내려면 적용 후 해당 캐릭터의 {selectionBatchLabel}을 직접 선택하거나 1단계에서 제외하세요.</Note>}
+      {selectionBatchChangedCount === 0 && !selectionBatchEmptyTargets.length && <p className="field-help">다른 캐릭터의 {selectionBatchLabel} 선택에 새로 반영할 변경 사항이 없습니다.</p>}
+    </section>}
+    </div>
+    <div className="modal-actions">
+      <button type="button" className="button secondary" onClick={closeSelectionBatchModal}>취소</button>
+      <button type="button" className="button primary" disabled={!selectedSelectionBatchSource || selectionBatchChangedCount === 0} onClick={applyBatchSelection}>{selectionBatchLabel} 선택 일괄 적용</button>
     </div>
   </Modal>}
   </>;

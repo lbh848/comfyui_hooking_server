@@ -607,7 +607,7 @@ API는 `GET /api/setting/workflows`, `GET /api/setting/workflows/status`,
 설정 서버를 종료하면 이 서버에서 실행한 Comfy 프로세스도 종료합니다.
 
 원본 실행 엔진 `ComfyRuntimeManager`와 `config/settings.json`의 `appConfig.comfy_launch_profiles`,
-`comfyui_port`, `comfyui_port_2`, `comfyui_port_3`을 재사용합니다. 기본 포트는 8188, 8187, 8186입니다.
+`comfyui_port`, `comfyui_port_2`, `comfyui_port_3`을 재사용합니다. 기본 포트는 8211, 8212, 8213입니다.
 다른 실행기가 사용 중인 포트에서는 중복 실행을 거부하며, 다른 실행기의 프로세스를 종료하지 않습니다.
 설정 서버가 관리하는 Comfy가 실행 중이면 초기 설치를 차단합니다.
 `GET /api/setting/comfy-runtime`은 세 인스턴스 상태를 반환하고,

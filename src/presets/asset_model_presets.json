@@ -872,6 +872,113 @@
           }
         }
       }
+    },
+    {
+      "id": "asset-moss-4step-rgba",
+      "name": "공방-MOSS-4step 투명배경",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_4STEP_투명배경_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": false,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "moss_rgba_vae.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.6,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch"
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset-moss-4step-rgba-8gb",
+      "name": "공방-MOSS-4step 투명배경 8GB",
+      "config": {
+        "asset_workflow_type": "moss",
+        "asset_workflow_source_paths": {
+          "anima_only": "@configured:anima_only",
+          "anima_ilxl": "@configured:anima_ilxl",
+          "moss": "data/comfy/user/default/workflows/배포_공방_에셋_MOSS_4STEP_투명배경_V1.json"
+        }
+      },
+      "workflows": {
+        "moss": {
+          "fields": {
+            "workflow.sequential_offload": true,
+            "workflow.model": "moss_image_sft_int8_convrot.safetensors",
+            "workflow.clip": "qwen3.5_9b_w4a8_gptq.safetensors",
+            "workflow.clip_device": "gpu",
+            "workflow.vae": "moss_rgba_vae.safetensors",
+            "workflow.sampling": {
+              "steps": 5,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 1
+            },
+            "workflow.hiresfix.sampling": {
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "denoise": 0.25
+            },
+            "STYLE_LORA_DATA": {
+              "list": [
+                {
+                  "lora_path": "IXY-MOSS-V1 (1).safetensors",
+                  "str": 0.6,
+                  "BASE": "moss",
+                  "trigger": "@ixy, sketch",
+                  "enabled": true
+                },
+                {
+                  "lora_path": "km_flat_half.safetensors",
+                  "str": 0.3,
+                  "BASE": "moss",
+                  "trigger": ""
+                }
+              ]
+            }
+          }
+        }
+      }
     }
   ]
 }

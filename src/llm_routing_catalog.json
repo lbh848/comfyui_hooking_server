@@ -15,7 +15,7 @@
     {
       "key": "asset_management",
       "label": "에셋 관리",
-      "description": "에셋의 복장·표정 이름 자동 수정과 전체 매핑",
+      "description": "에셋의 복장·표정 이름 자동 수정과 전체 매핑, 배경 에셋 로어북 테마 생성",
       "color": "#3f9c91"
     },
     {
@@ -357,6 +357,21 @@
         "max_retries": 1,
         "fallback_retry_delay_sec": 1,
         "fallback_max_retries": 1
+      }
+    },
+    {
+      "key": "bg_lore_theme_generation",
+      "label": "로어북 배경 테마 생성",
+      "kind": "텍스트/JSON",
+      "modality": "text",
+      "group": "asset_management",
+      "defaults": {
+        "primary": "llm1",
+        "fallback_target": "none",
+        "retry_delay_sec": 1,
+        "max_retries": 1,
+        "fallback_retry_delay_sec": 1,
+        "fallback_max_retries": 0
       }
     },
     {

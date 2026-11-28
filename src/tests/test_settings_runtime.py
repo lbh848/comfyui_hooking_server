@@ -64,7 +64,7 @@ class RuntimeSettingsTests(unittest.TestCase):
             start.assert_not_called()
 
     def test_invalid_ports_and_managed_arguments_do_not_write(self):
-        for port in (8187, 0, 65536, True, 8188.5):
+        for port in (8212, 0, 65536, True, 8211.5):
             with self.subTest(port=port):
                 configuration = self.configuration()
                 configuration["port"] = port
@@ -86,7 +86,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(self.runtime.path.read_text(), "broken")
 
     def test_busy_external_port_is_reported_without_claiming_the_process(self):
-        self.port_probe.side_effect = lambda port: port == 8188
+        self.port_probe.side_effect = lambda port: port == 8211
         instance = self.runtime.status()["instances"][0]
         self.assertTrue(instance["port_in_use"])
         self.assertFalse(instance["running"])
@@ -100,7 +100,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         with patch.object(self.runtime.manager, "start", side_effect=[ComfyRuntimeError("busy port"), {}]) as start:
             self.runtime.autostart()
         self.assertEqual([call.kwargs["instance_id"] for call in start.call_args_list], [1, 3])
-        self.assertEqual([call.kwargs["port"] for call in start.call_args_list], [8188, 8186])
+        self.assertEqual([call.kwargs["port"] for call in start.call_args_list], [8211, 8213])
         self.assertEqual(self.runtime.status()["instances"][0]["startup_error"], "busy port")
 
 
@@ -141,7 +141,7 @@ class RuntimeApiTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post("/api/setting/comfy-runtime/2/start", headers={**self.headers, "If-Match": configuration["revision"]}, json={"port": 1})
             self.assertEqual(response.status, 200)
             self.assertEqual(start.call_args.kwargs["instance_id"], 2)
-            self.assertEqual(start.call_args.kwargs["port"], 8187)
+            self.assertEqual(start.call_args.kwargs["port"], 8212)
             response = await self.client.post("/api/setting/comfy-runtime/2/stop", headers=self.headers, json={})
             self.assertEqual(response.status, 200)
             stop.assert_called_once_with(instance_id=2)

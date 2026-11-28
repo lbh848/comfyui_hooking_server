@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, Play, RefreshCw, Square, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, Play, RefreshCw, Square, Terminal, TriangleAlert } from "lucide-react";
 import { Badge, Panel, Toggle } from "./components";
 import { useUnsavedChanges } from "./unsavedChanges";
 
@@ -20,6 +20,7 @@ type Instance = {
   running: boolean;
   pid: number | null;
   port: number | null;
+  profile?: Profile;
   exit_code: number | null;
   logs: { seq: number; text: string }[];
   log_seq: number;
@@ -207,6 +208,15 @@ export function ComfyRuntimePage() {
   const validation = draft ? validate(draft) : "";
   const saveLabel = saveErrors[selected] ? "자동 저장 실패" : saving === selected ? "저장 중…" : dirty ? validation ? "입력 확인 필요" : "저장 대기 중…" : "자동 저장됨";
   const activePort = instance?.running ? instance.port : Number(draft?.port);
+  const activeHost = (instance?.running ? instance.profile?.listen_all : draft?.profile.listen_all) ? "0.0.0.0" : "127.0.0.1";
+  const draftExposedOptions = [
+    ...(draft?.profile.listen_all ? ["외부 접속 허용 (0.0.0.0)"] : []),
+    ...(draft?.profile.enable_cors ? ["CORS 전체 허용 (*)"] : []),
+  ];
+  const runningExposedOptions = instance?.running ? [
+    ...(instance.profile?.listen_all ? ["외부 접속 허용 (0.0.0.0)"] : []),
+    ...(instance.profile?.enable_cors ? ["CORS 전체 허용 (*)"] : []),
+  ] : [];
   const portInUse = instance?.port_in_use && Number(draft?.port) === instance.configuration.port;
   const stateLabel = connectionError ? "상태 확인 실패" : !instance ? "상태 확인 중…" : instance.running ? "실행 중" : portInUse ? "포트 사용 중" : instance.state === "exited" && instance.exit_code !== 0 ? "실행 오류" : "중지됨";
 
@@ -271,8 +281,15 @@ export function ComfyRuntimePage() {
               </select></label>
               <label className="field">GPU 번호<input type="number" min={0} step={1} placeholder="자동" value={draft.cuda_device} onChange={(event) => edit({ cuda_device: event.target.value })} /></label>
             </div>
-            {toggle("enable_cors", "CORS 전체 허용", "다른 웹 페이지에서 ComfyUI API에 접근할 수 있도록 허용합니다.")}
-            {toggle("listen_all", "외부 접속 허용", "다른 기기에서 이 ComfyUI에 접속할 수 있도록 허용합니다.")}
+            {toggle("enable_cors", "CORS 전체 허용", "다른 웹 페이지에서 ComfyUI API에 접근할 수 있도록 허용합니다. 일반 로컬 사용에서는 끄세요. 켜 두면 방문한 외부 웹페이지·스크립트가 로컬 ComfyUI에 무단 요청을 보낼 수 있습니다.")}
+            {toggle("listen_all", "외부 접속 허용", "0.0.0.0으로 열어 외부 네트워크와 다른 기기의 접속을 허용합니다. 일반 로컬 사용에서는 끄세요. ComfyUI는 자체 인증이 없어 외부에 노출되면 임의 파일 업로드나 채굴기 설치 같은 공격에 악용될 수 있습니다.")}
+            {draftExposedOptions.length > 0 && <div className="comfy-runtime-security-warning" role="alert">
+              <TriangleAlert size={16} aria-hidden="true" />
+              <div>
+                <strong>보안 주의 · {draftExposedOptions.join(", ")} 켜짐</strong>
+                <p>ComfyUI에는 별도 로그인 인증이 없습니다. 외부 네트워크나 악성 웹페이지에서 접근할 수 있는 상태가 되면 무단 실행이나 채굴기 설치 피해가 발생할 수 있습니다. 일반 로컬 사용에서는 두 옵션을 모두 끄고 사용하세요.</p>
+              </div>
+            </div>}
             {toggle("fast", "Fast 모드", "ComfyUI의 실험적 최적화를 활성화합니다.")}
             {toggle("disable_dynamic_vram", "DynamicVRAM 비활성화", "기존 추정 방식으로 모델을 메모리에 불러옵니다.")}
             <label className="field">추가 실행 인자<input value={draft.profile.extra_args} placeholder="--fp32-vae --reserve-vram 1" autoComplete="off" spellCheck={false} onChange={(event) => edit({ profile: { ...draft.profile, extra_args: event.target.value } })} /><span className="field-help">공백이 있는 값은 큰따옴표로 감싸세요.</span></label>
@@ -287,7 +304,15 @@ export function ComfyRuntimePage() {
       </Panel>
       <Panel title={`Comfy#${selected}`} aside={<Badge tone={instance.running && !connectionError ? "green" : "neutral"}>{stateLabel}</Badge>}>
         <div className="panel-body form-stack">
-          <div className="comfy-runtime-summary"><span>127.0.0.1:{activePort}</span>{instance.pid && <span>PID {instance.pid}</span>}{instance.state === "exited" && instance.exit_code !== null && <span>종료 코드 {instance.exit_code}</span>}</div>
+          <div className="comfy-runtime-summary"><span>{activeHost}:{activePort}</span>{instance.pid && <span>PID {instance.pid}</span>}{instance.state === "exited" && instance.exit_code !== null && <span>종료 코드 {instance.exit_code}</span>}</div>
+          {runningExposedOptions.length > 0 && draftExposedOptions.length === 0 && <div className="comfy-runtime-security-warning" role="alert">
+            <TriangleAlert size={16} aria-hidden="true" />
+            <div>
+              <strong>재시작 필요 · 현재 실행 중인 Comfy#{selected}에 {runningExposedOptions.join(", ")} 적용 중</strong>
+              <p>변경한 로컬 전용 설정을 적용하려면 Comfy를 종료한 뒤 다시 실행하세요.</p>
+            </div>
+          </div>}
+          {instance.running && instance.port !== null && instance.port !== instance.configuration.port && runningExposedOptions.length === 0 && <p className="field-help" role="status">현재 포트 {instance.port}에서 실행 중입니다. 저장된 포트({instance.configuration.port})를 적용하려면 종료한 뒤 다시 실행하세요.</p>}
           <div className="comfy-runtime-actions">
             <fieldset className="comfy-runtime-launch" disabled={!!pending}>
               <div className="comfy-runtime-autostart">

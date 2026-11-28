@@ -30,6 +30,36 @@ PANEL_CAMERA_ANGLE = ("eye_level", "high_angle", "low_angle", "side_view",
 PANEL_FOCUS = ("deep_focus", "shallow_focus", "selective_focus")
 ACTOR_PANEL_RELATION = ("breaks_border", "spans_adjacent_panels",
                         "page_foreground_overlay")
+INTERACTION_SPATIAL = (
+    "above_on_top",
+    "straddling_on_top",
+    "behind",
+    "in_front",
+    "beside_close",
+    "face_to_face_close",
+    "below_underneath",
+    "carrying_lifting",
+    "separated",
+)
+INTERACTION_SPATIAL_TEMPLATES = {
+    "above_on_top": "{source} is positioned directly above and on top of {target} underneath",
+    "straddling_on_top": "{source} is straddling on top of {target} underneath",
+    "behind": "{source} is positioned directly behind {target}",
+    "in_front": "{source} is positioned in the foreground directly in front of {target}",
+    "beside_close": "{source} and {target} are pressed close side by side",
+    "face_to_face_close": "{source} and {target} are positioned close face to face",
+    "below_underneath": "{source} is positioned below {target}",
+    "carrying_lifting": "{source} is lifting and supporting {target} off the ground",
+    "separated": "{source} and {target} are separated across the frame",
+}
+_ACTOR_GARMENT_CUE_RE = re.compile(
+    r"\b("
+    r"(?:(?:white|black|dark|light|red|blue|navy|green|gray|grey|brown|pink|beige|cream|yellow|purple|plaid|striped)\s+){1,2}"
+    r"(?:t[\s-]?shirt|shirt|blouse|sweater|vest|cardigan|hoodie|jacket|blazer|coat|dress|skirt|pants|jeans|shorts|uniform|kimono|robe|apron|bra|panties)"
+    r"|completely\s+nude|nude|topless|shirtless|bottomless"
+    r")\b",
+    re.IGNORECASE,
+)
 BALLOON = ("oval", "angular", "narration", "thought", "trembling", "shout",
            "explicit", "soft")
 BALLOON_TAIL = (
@@ -65,6 +95,10 @@ _ACTOR_GENDER_NOUN = {
     "multiple girls": "girls",
     "multiple boys": "boys",
 }
+_ACTOR_NATURAL_GENDER_RE = re.compile(
+    r"\b(old\s+women|old\s+woman|old\s+men|old\s+man|girls|girl|women|woman|boys|boy|men|man|people|person)\b",
+    re.IGNORECASE,
+)
 _ACTOR_HAIR_RE = re.compile(
     r"\b("
     r"(?:(?:light|dark|pale|deep|bright|pastel|ash|golden|platinum|strawberry|"
@@ -105,20 +139,22 @@ FOCUS_PHRASES = {
     "shallow_focus": "shallow focus",
     "selective_focus": "selective focus",
 }
-_BALLOON_FINISH = ("variable-width pen strokes, fine ink grain, "
-                   "off-white fill at 90% opacity")
+_BALLOON_FINISH = (
+    "translucent off-white fill with the underlying background faintly visible "
+    "through it, variable-width pen strokes, fine ink grain"
+)
 BALLOON_PHRASES = {
     # Keep the existing enum for saved plans; describe a drawn contour rather
     # than a geometric ellipse. Ink texture alone leaves the silhouette smooth.
-    "oval": "asymmetric freehand speech balloon, uneven rounded contour, " + _BALLOON_FINISH,
-    "angular": "angular freehand balloon, " + _BALLOON_FINISH,
-    "narration": "hand-drawn rectangular text box, " + _BALLOON_FINISH,
-    "thought": ("uneven cloud thought balloon with a small circle trail, "
+    "oval": "semi-transparent asymmetric freehand speech balloon, uneven rounded contour, " + _BALLOON_FINISH,
+    "angular": "semi-transparent angular freehand balloon, " + _BALLOON_FINISH,
+    "narration": "semi-transparent hand-drawn rectangular text box, " + _BALLOON_FINISH,
+    "thought": ("semi-transparent uneven cloud thought balloon with a small circle trail, "
                 + _BALLOON_FINISH),
-    "trembling": "trembling freehand balloon, broken wavy contour, " + _BALLOON_FINISH,
-    "shout": "uneven hand-drawn starburst balloon, " + _BALLOON_FINISH,
-    "explicit": "soft torn freehand balloon, " + _BALLOON_FINISH,
-    "soft": "soft asymmetric freehand balloon, uneven rounded contour, " + _BALLOON_FINISH,
+    "trembling": "semi-transparent trembling freehand balloon, broken wavy contour, " + _BALLOON_FINISH,
+    "shout": "semi-transparent uneven hand-drawn starburst balloon, " + _BALLOON_FINISH,
+    "explicit": "semi-transparent soft torn freehand balloon, " + _BALLOON_FINISH,
+    "soft": "semi-transparent soft asymmetric freehand balloon, uneven rounded contour, " + _BALLOON_FINISH,
 }
 _TAILED_BALLOONS = {"oval", "angular", "trembling", "shout", "explicit", "soft"}
 
@@ -217,11 +253,216 @@ def describe_actor_visual(instruction: str) -> str:
     """Extract a short visual noun phrase from an actor instruction without internal IDs."""
     text = str(instruction or "")
     gender_match = _ACTOR_GENDER_RE.search(text)
-    noun = _ACTOR_GENDER_NOUN.get(gender_match.group(1).lower(), "character") if gender_match else "character"
+    if gender_match:
+        noun = _ACTOR_GENDER_NOUN.get(gender_match.group(1).lower(), "character")
+    else:
+        natural_match = _ACTOR_NATURAL_GENDER_RE.search(text)
+        noun = " ".join(natural_match.group(1).lower().split()) if natural_match else "character"
     hair_match = _ACTOR_HAIR_RE.search(text)
     if hair_match:
         return f"the {noun} with {hair_match.group(1).lower()}"
     return f"the {noun}"
+
+
+def _relative_actor_position(
+    actor_bbox,
+    other_bboxes: list,
+    *,
+    panel_bbox=None,
+    camera_distance: str = "medium",
+) -> str:
+    """Return a concise relative screen-position phrase comparing one actor against others."""
+    if not actor_bbox or not other_bboxes:
+        return ""
+    actor_x, actor_y = _actor_head_anchor(
+        _clip_bbox_to_panel(actor_bbox, panel_bbox), camera_distance)
+    other_points = [
+        _actor_head_anchor(_clip_bbox_to_panel(box, panel_bbox), camera_distance)
+        for box in other_bboxes
+    ]
+    if panel_bbox and len(panel_bbox) == 4:
+        panel_w = max(1.0, float(panel_bbox[3]) - float(panel_bbox[1]))
+        panel_h = max(1.0, float(panel_bbox[2]) - float(panel_bbox[0]))
+    else:
+        all_boxes = [actor_bbox, *other_bboxes]
+        panel_w = max(1.0, max(float(b[3]) for b in all_boxes) - min(float(b[1]) for b in all_boxes))
+        panel_h = max(1.0, max(float(b[2]) for b in all_boxes) - min(float(b[0]) for b in all_boxes))
+    margin_x = max(32.0, 0.12 * panel_w)
+    margin_y = max(32.0, 0.12 * panel_h)
+    other_xs = [point[0] for point in other_points]
+    other_ys = [point[1] for point in other_points]
+    if actor_x < min(other_xs) - margin_x:
+        return "on the left"
+    if actor_x > max(other_xs) + margin_x:
+        return "on the right"
+    if len(other_xs) >= 2 and min(other_xs) + margin_x < actor_x < max(other_xs) - margin_x:
+        return "in the center"
+    if actor_y < min(other_ys) - margin_y:
+        return "at the top"
+    if actor_y > max(other_ys) + margin_y:
+        return "at the bottom"
+    return ""
+
+
+def _extract_actor_garment_cue(instruction: str) -> str:
+    match = _ACTOR_GARMENT_CUE_RE.search(str(instruction or ""))
+    if not match:
+        return ""
+    cue = " ".join(match.group(1).lower().split())
+    if cue in {"completely nude", "nude", "topless", "shirtless", "bottomless"}:
+        return cue
+    return f"in the {cue}"
+
+
+def describe_distinct_actors(
+    panel_actors: list[dict],
+    *,
+    panel_bbox=None,
+    camera_distance: str = "medium",
+) -> dict[str, str]:
+    """Map actor names (casefolded) to collision-safe visual descriptions without internal IDs.
+
+    Escalates from gender + hair color -> distinguishing garment/coverage cue ->
+    relative bbox screen position whenever two visible actors share the same phrase.
+    """
+    entries = [
+        actor for actor in (panel_actors or [])
+        if isinstance(actor, dict) and str(actor.get("name") or "").strip()
+    ]
+    if not entries:
+        return {}
+    labels = {
+        str(actor["name"]).strip().casefold(): describe_actor_visual(actor.get("instruction") or "")
+        for actor in entries
+    }
+    counts: dict[str, int] = {}
+    for phrase in labels.values():
+        counts[phrase] = counts.get(phrase, 0) + 1
+    if all(count == 1 for count in counts.values()):
+        return labels
+
+    # Fallback 1: add a distinguishing garment/coverage cue for colliding entries.
+    garment_candidates = {}
+    for actor in entries:
+        key = str(actor["name"]).strip().casefold()
+        base = labels[key]
+        if counts.get(base, 0) > 1:
+            cue = _extract_actor_garment_cue(actor.get("instruction") or "")
+            garment_candidates[key] = f"{base} {cue}" if cue else base
+        else:
+            garment_candidates[key] = base
+    garment_counts: dict[str, int] = {}
+    for phrase in garment_candidates.values():
+        garment_counts[phrase] = garment_counts.get(phrase, 0) + 1
+    for key, candidate in garment_candidates.items():
+        if garment_counts.get(candidate, 0) == 1:
+            labels[key] = candidate
+
+    # Fallback 2: add relative bbox position for any remaining collision.
+    final_counts: dict[str, int] = {}
+    for phrase in labels.values():
+        final_counts[phrase] = final_counts.get(phrase, 0) + 1
+    for actor in entries:
+        key = str(actor["name"]).strip().casefold()
+        if final_counts.get(labels[key], 0) <= 1:
+            continue
+        other_boxes = [
+            other["bbox"] for other in entries
+            if other is not actor and other.get("bbox")
+        ]
+        pos = _relative_actor_position(
+            actor.get("bbox"),
+            other_boxes,
+            panel_bbox=panel_bbox,
+            camera_distance=camera_distance,
+        )
+        if pos:
+            labels[key] = f"{labels[key]} {pos}"
+    return labels
+
+
+def compile_interaction_clauses(
+    interactions,
+    panel_actors: list[dict],
+    *,
+    panel_bbox=None,
+    camera_distance: str = "medium",
+    existing_text: str = "",
+) -> str:
+    """Compile optional structured interactions into collision-safe MOSS spatial/occlusion prose.
+
+    Resolves source/target character names strictly to visual descriptions so
+    internal character IDs never leak into MOSS captions.
+    """
+    if not isinstance(interactions, list) or not interactions:
+        return ""
+    distinct = describe_distinct_actors(
+        panel_actors, panel_bbox=panel_bbox, camera_distance=camera_distance)
+    existing_lower = str(existing_text or "").lower()
+    sentences: list[str] = []
+    for entry in interactions:
+        if not isinstance(entry, dict):
+            continue
+        raw_source = str(entry.get("source") or "").strip().strip('"“”').strip()
+        raw_target = str(entry.get("target") or "").strip().strip('"“”').strip()
+        source_label = distinct.get(raw_source.casefold(), "") if raw_source else ""
+        target_label = distinct.get(raw_target.casefold(), "") if raw_target else ""
+        action = str(entry.get("action") or "").strip().rstrip(".")
+        mode = str(entry.get("mode") or "directed").strip().lower()
+        raw_spatial = str(entry.get("spatial") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        spatial = raw_spatial if raw_spatial in INTERACTION_SPATIAL_TEMPLATES else ""
+        contact = str(entry.get("contact") or "").strip().rstrip(".")
+        occludes = str(entry.get("occludes") or "").strip().rstrip(".")
+
+        clauses: list[str] = []
+        concise_action = action if (action and len(action.split()) <= 4) else ""
+        if spatial and source_label and target_label:
+            base = INTERACTION_SPATIAL_TEMPLATES[spatial].format(
+                source=source_label, target=target_label)
+            if concise_action and concise_action.lower() not in base.lower() and concise_action.lower() not in existing_lower:
+                base = f"{base}, {concise_action}"
+            clauses.append(base)
+        elif action:
+            if source_label and target_label:
+                if mode == "mutual":
+                    clauses.append(f"{source_label} and {target_label} engage in {action}")
+                elif concise_action:
+                    clauses.append(f"{source_label} acts on {target_label}, {concise_action}")
+                elif action.lower() not in existing_lower:
+                    clauses.append(action)
+            elif source_label:
+                clauses.append(f"{source_label} performs {action}" if concise_action else action)
+            elif action.lower() not in existing_lower:
+                clauses.append(action)
+        if contact and contact.lower() not in existing_lower:
+            clauses.append(contact)
+        if occludes and occludes.lower() not in existing_lower:
+            clauses.append(occludes)
+        if not clauses:
+            continue
+        # Scrub registered actor IDs accidentally echoed in contact/occludes strings
+        # without clobbering single-letter English words (e.g., "a") or short stopwords.
+        _stop_names = {
+            "an", "in", "on", "to", "of", "at", "by", "he", "it", "is",
+            "as", "or", "no", "up", "so", "we", "me", "my", "do", "go", "be",
+        }
+        combined = "; ".join(clauses)
+        for actor in panel_actors or []:
+            actor_name = str(actor.get("name") or "").strip()
+            replacement = distinct.get(actor_name.casefold())
+            if (
+                not actor_name
+                or not replacement
+                or len(actor_name) < 2
+                or actor_name.casefold() in _stop_names
+            ):
+                continue
+            flags = re.IGNORECASE if (len(actor_name) >= 3 or "_" in actor_name) else 0
+            combined = re.sub(rf"\b{re.escape(actor_name)}\b", replacement, combined, flags=flags)
+        sentence = combined[0].upper() + combined[1:] + "."
+        if sentence.lower() not in existing_lower and sentence not in sentences:
+            sentences.append(sentence)
+    return " ".join(sentences)
 
 
 def describe_speaker_target(
@@ -234,40 +475,18 @@ def describe_speaker_target(
     """Describe the visible speaker visually and, in multi-character shots, by relative position."""
     base = describe_actor_visual(speaker_actor.get("instruction") or "")
     speaker_bbox = speaker_actor.get("bbox")
-    other_actors = [
-        actor for actor in panel_actors
+    other_bboxes = [
+        actor["bbox"] for actor in panel_actors
         if actor is not speaker_actor and actor.get("bbox")
     ]
-    if not speaker_bbox or not other_actors:
+    if not speaker_bbox or not other_bboxes:
         return base
-    speaker_x, speaker_y = _actor_head_anchor(
-        _clip_bbox_to_panel(speaker_bbox, panel_bbox), camera_distance)
-    other_points = [
-        _actor_head_anchor(_clip_bbox_to_panel(actor["bbox"], panel_bbox), camera_distance)
-        for actor in other_actors
-    ]
-    if panel_bbox and len(panel_bbox) == 4:
-        panel_w = max(1.0, float(panel_bbox[3]) - float(panel_bbox[1]))
-        panel_h = max(1.0, float(panel_bbox[2]) - float(panel_bbox[0]))
-    else:
-        all_boxes = [speaker_bbox, *(actor["bbox"] for actor in other_actors)]
-        panel_w = max(1.0, max(float(b[3]) for b in all_boxes) - min(float(b[1]) for b in all_boxes))
-        panel_h = max(1.0, max(float(b[2]) for b in all_boxes) - min(float(b[0]) for b in all_boxes))
-    margin_x = max(32.0, 0.12 * panel_w)
-    margin_y = max(32.0, 0.12 * panel_h)
-    other_xs = [point[0] for point in other_points]
-    other_ys = [point[1] for point in other_points]
-    position = ""
-    if speaker_x < min(other_xs) - margin_x:
-        position = "on the left"
-    elif speaker_x > max(other_xs) + margin_x:
-        position = "on the right"
-    elif len(other_xs) >= 2 and min(other_xs) + margin_x < speaker_x < max(other_xs) - margin_x:
-        position = "in the center"
-    elif speaker_y < min(other_ys) - margin_y:
-        position = "at the top"
-    elif speaker_y > max(other_ys) + margin_y:
-        position = "at the bottom"
+    position = _relative_actor_position(
+        speaker_bbox,
+        other_bboxes,
+        panel_bbox=panel_bbox,
+        camera_distance=camera_distance,
+    )
     return f"{base} {position}" if position else base
 
 
@@ -303,6 +522,7 @@ def vocabulary() -> dict:
             "camera_angle": list(PANEL_CAMERA_ANGLE),
             "focus": list(PANEL_FOCUS),
             "edge": list(PANEL_EDGE),
+            "interaction_spatial": list(INTERACTION_SPATIAL),
         },
         "cross_panel": {"relation": list(ACTOR_PANEL_RELATION)},
         "balloon": {"shape": list(BALLOON), "tail": list(BALLOON_TAIL)},

@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 from configuration import config_path as application_config_path, read_config
-from app_paths import resolve_install_path
+from app_paths import WORKFLOW_DIR, WORKFLOW_FILENAMES, resolve_install_path
 
 from .crypto import WorkflowPackError, create_workflow_pack
 from .manifest import InstallManifest, load_install_manifest
@@ -30,6 +30,7 @@ def collect_workflow_bindings(
     *,
     include_optional: bool = False,
     required_bindings: Iterable[str] | None = None,
+    canonical_distribution: bool = False,
 ) -> dict[str, Path]:
     try:
         config = read_config(config_path)
@@ -51,18 +52,37 @@ def collect_workflow_bindings(
         binding_keys = required + list(
             manifest.workflows.get("optional_bindings", [])
         )
+    project_root = config_path.resolve().parent.parent
+    raw_base_dir = _get_dotted(config, "workflow_base_dir")
+    base_dir_value = (
+        raw_base_dir.strip()
+        if isinstance(raw_base_dir, str) and raw_base_dir.strip()
+        else WORKFLOW_DIR
+    )
+    workflow_base_dir = resolve_install_path(base_dir_value, project_root).resolve()
     bindings: dict[str, Path] = {}
     for key in binding_keys:
         raw_path = _get_dotted(config, key)
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            if key not in required_set:
-                print(
-                    "[COMFY_INSTALL][PACK] 선택 워크플로우 경로가 비어 있어 "
-                    f"팩에서 제외: key={key}"
-                )
-                continue
-            raise WorkflowPackError(f"settings.json 워크플로우 경로가 비었습니다: {key}")
-        path = resolve_install_path(raw_path, config_path.resolve().parent.parent).resolve()
+        canonical_filename = WORKFLOW_FILENAMES.get(key) if canonical_distribution else None
+        if canonical_filename:
+            path = (workflow_base_dir / canonical_filename).resolve()
+            if isinstance(raw_path, str) and raw_path.strip():
+                configured_path = resolve_install_path(raw_path, project_root).resolve()
+                if configured_path != path:
+                    print(
+                        "[COMFY_INSTALL][PACK] 활성 프리셋 대신 배포 기본 워크플로우 사용: "
+                        f"key={key}, configured={configured_path.name}, canonical={path.name}"
+                    )
+        else:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                if key not in required_set:
+                    print(
+                        "[COMFY_INSTALL][PACK] 선택 워크플로우 경로가 비어 있어 "
+                        f"팩에서 제외: key={key}"
+                    )
+                    continue
+                raise WorkflowPackError(f"settings.json 워크플로우 경로가 비었습니다: {key}")
+            path = resolve_install_path(raw_path, project_root).resolve()
         if not path.is_file():
             raise WorkflowPackError(
                 f"워크플로우 파일이 없습니다: key={key}, path={path}"
@@ -161,8 +181,23 @@ def build_workflow_items(
     item_ids_by_bindings = {
         frozenset(item["bindings"]): item["id"] for item in manifest.workflow_items
     }
+    declared_item_by_binding = {
+        binding: item["id"]
+        for item in manifest.workflow_items
+        for binding in item.get("bindings", [])
+    }
     items: list[dict] = []
     for source, item_bindings in grouped.items():
+        declared_ids = sorted({
+            declared_item_by_binding[binding]
+            for binding in item_bindings
+            if binding in declared_item_by_binding
+        })
+        if len(declared_ids) > 1:
+            raise WorkflowPackError(
+                "서로 다른 배포 워크플로우 항목이 같은 파일을 가리킵니다: "
+                f"file={source.name}, items={', '.join(declared_ids)}"
+            )
         sorted_bindings = sorted(item_bindings)
         items.append(
             {
@@ -202,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             config_path,
             manifest,
             include_optional=True,
+            canonical_distribution=True,
         )
         workflow_items = build_workflow_items(
             bindings, manifest

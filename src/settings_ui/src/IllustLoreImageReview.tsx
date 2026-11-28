@@ -4,7 +4,7 @@ import { Panel } from "./components";
 import { SearchableSelect } from "./SearchableSelect";
 import { IllustrationFeedback } from "./IllustBackups";
 import { CharacterImportedLore } from "./IllustCharacterLore";
-import { LoreNpcCardDetails } from "./IllustLoreNpcImport";
+import { LoreNpcCardDetails, LoreNpcNameTagEditor } from "./IllustLoreNpcImport";
 import type { CharacterLoreEntry } from "./characterLore";
 import type { LoreImageGroup, LoreNpc } from "./loreNpcShared";
 
@@ -26,6 +26,7 @@ export function IllustLoreImageReview({
   onToggleAllMatched,
   onToggleImageless,
   onToggleAllImageless,
+  onNameTagChange,
   onReclassify,
 }: {
   candidates: LoreNpc[];
@@ -45,6 +46,7 @@ export function IllustLoreImageReview({
   onToggleAllMatched: (checked: boolean) => void;
   onToggleImageless: (name: string, checked: boolean) => void;
   onToggleAllImageless: (checked: boolean) => void;
+  onNameTagChange: (name: string, nextTag: string) => void;
   onReclassify?: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -204,6 +206,7 @@ export function IllustLoreImageReview({
               </div>
               {candidate.aliases.length > 0 && <p className="field-help">{candidate.aliases.join(" · ")}</p>}
               {candidate.description && <p className="illust-lore-text">{candidate.description}</p>}
+              <LoreNpcNameTagEditor candidate={candidate} disabled={disabled} onChange={nextTag => onNameTagChange(name, nextTag)} />
               <LoreNpcCardDetails card={candidate.card} />
               <details className="illust-lore-entry">
                 <summary>배정된 이미지 묶음 {assignedGroups.length}개 · {imageCount.toLocaleString()}장</summary>
@@ -260,6 +263,7 @@ export function IllustLoreImageReview({
               </label>
               {candidate.aliases.length > 0 && <p className="field-help">{candidate.aliases.join(" · ")}</p>}
               <p className="illust-lore-text">{candidate.description}</p>
+              <LoreNpcNameTagEditor candidate={candidate} disabled={disabled || !!status} onChange={nextTag => onNameTagChange(name, nextTag)} />
               <LoreNpcCardDetails card={candidate.card} />
               {!status && npcErrors.has(name) && <IllustrationFeedback error={npcErrors.get(name)} />}
               <CharacterImportedLore entries={candidate.entry_indexes.map(index => loreEntries[index]).filter(Boolean)} />

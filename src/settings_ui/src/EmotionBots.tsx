@@ -17,6 +17,8 @@ import { IllustBotGenerationSettings } from "./IllustBotGenerationSettings";
 import { IllustMatchingRules } from "./IllustMatchingRules";
 import { clearWorkSession } from "./illustrationWorkSession";
 import { useEmotionRegenerationActivity } from "./useEmotionRegenerationActivity";
+import { usePageVisible } from "./ModalWorkspace";
+import { subscribeWorkshopEvents } from "./workshopEvents";
 import "./asset.css";
 
 type Folder = { name: string; count: number; cover: string };
@@ -178,37 +180,28 @@ export function EmotionBots({ botSelected, addedBot, onBotSelected, onCatalogCha
     outfitResource.reload(); emotionResource.reload(); patchStatus.reload();
     setCardRevision(value => value + 1); onCatalogChange();
   }, [resource.reload, characterResource.reload, profileResource.reload, outfitResource.reload, emotionResource.reload, patchStatus.reload, onCatalogChange]);
+  const pageVisible = usePageVisible();
   const onPreparationRunningChange = useDataPreparationRefresh(refreshCharacterStatus);
   useEffect(() => {
     const refresh = () => refreshCharacterStatus();
     // 프로필 복장 이미지 생성처럼 백업으로 저장되는 작업이 끝나면 폴더/카드 목록을 갱신한다.
     window.addEventListener("emotion-store-changed", refresh);
-    window.addEventListener("focus", refresh);
     return () => {
       window.removeEventListener("emotion-store-changed", refresh);
-      window.removeEventListener("focus", refresh);
     };
   }, [refreshCharacterStatus]);
   useEffect(() => {
+    if (!pageVisible) return;
+    const refresh = () => { if (!document.hidden) refreshCharacterStatus(); };
+    window.addEventListener("focus", refresh);
+    return () => { window.removeEventListener("focus", refresh); };
+  }, [pageVisible, refreshCharacterStatus]);
+  useEffect(() => subscribeWorkshopEvents(value => {
     // 서버가 백업 저장마다 보내는 backup_created를 직접 받는다. 모달을 닫아
     // 폴링이 멈춰 있어도 생성된 복장 이미지가 화면에 바로 반영되게 하기 위함.
-    let socket: WebSocket | null = null;
-    let reconnect: number | undefined;
-    let closed = false;
-    const connect = () => {
-      socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/illust/events?schema=2`);
-      socket.onmessage = event => {
-        try {
-          const value = JSON.parse(event.data);
-          if (value.type === "backup_created") window.dispatchEvent(new Event("emotion-store-changed"));
-          if (value.type === "illustration_completed") window.dispatchEvent(new Event("emotion-store-changed"));
-        } catch { /* malformed event */ }
-      };
-      socket.onclose = () => { if (!closed) reconnect = window.setTimeout(connect, 3000); };
-    };
-    connect();
-    return () => { closed = true; window.clearTimeout(reconnect); socket?.close(); };
-  }, []);
+    if (value.type === "backup_created") window.dispatchEvent(new Event("emotion-store-changed"));
+    if (value.type === "illustration_completed") window.dispatchEvent(new Event("emotion-store-changed"));
+  }), []);
   const characterAdd = useCharacterAddDialogs(bots, name => isLocked(name) || distributionBusy, refreshCharacterStatus);
   function charactersAdded() {
     refreshCharacterStatus();

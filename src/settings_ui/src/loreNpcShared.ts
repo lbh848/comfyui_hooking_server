@@ -1,6 +1,17 @@
 import type { MutableRefObject } from "react";
 import type { BotApi } from "./BotApiScope";
 
+export type LoreNpcNameTagCandidate = {
+  id: number;
+  tag: string;
+  description: string;
+};
+
+export type LoreNpcNameTagMatch = {
+  status: "matched" | "review" | "unlisted" | "empty";
+  candidates: LoreNpcNameTagCandidate[];
+};
+
 export type LoreNpcCard = {
   gender_tag: string;
   appearance: string[];
@@ -9,6 +20,7 @@ export type LoreNpcCard = {
   eye_tags: string[];
   visual_context: string;
   name_tag?: string;
+  source_work?: string;
 };
 
 export type LoreNpc = {
@@ -17,7 +29,38 @@ export type LoreNpc = {
   description: string;
   entry_indexes: number[];
   card: LoreNpcCard;
+  name_tag_match?: LoreNpcNameTagMatch;
 };
+
+const WORK_QUALIFIER_RE = /\s*\\?\([^()]*\\?\)\s*$/;
+const NORMALIZE_TAG_RE = /[^\p{L}\p{N}]+/gu;
+
+export function normalizeNameTagKey(value: string): string {
+  return value.toLowerCase().replace(NORMALIZE_TAG_RE, "");
+}
+
+export function stripNameTagWorkQualifier(value: string): string {
+  const text = value.trim();
+  if (!text) return "";
+  return text.replace(WORK_QUALIFIER_RE, "").trim() || text;
+}
+
+export function classifySoftNameTagStatus(
+  tag: string,
+  candidates: readonly LoreNpcNameTagCandidate[] = [],
+): LoreNpcNameTagMatch["status"] {
+  const proposed = tag.trim();
+  if (!proposed) return "empty";
+  const normProposed = normalizeNameTagKey(proposed);
+  const normBase = normalizeNameTagKey(stripNameTagWorkQualifier(proposed));
+  const matched = candidates.some(item => {
+    const itemNorm = normalizeNameTagKey(item.tag);
+    const itemBase = normalizeNameTagKey(stripNameTagWorkQualifier(item.tag));
+    return itemNorm === normProposed || (!!normBase && itemBase === normBase);
+  });
+  if (matched) return "matched";
+  return candidates.length > 0 ? "review" : "unlisted";
+}
 
 export type LoreImageGroup = {
   id: number;
@@ -101,6 +144,7 @@ export function mergeLoreNpcCandidates(
       name: canonicalExisting.get(key) || old.name,
       aliases: [...new Set([...old.aliases, ...candidate.aliases])],
       entry_indexes: [...new Set([...old.entry_indexes, ...candidate.entry_indexes])],
+      name_tag_match: candidate.name_tag_match ?? old.name_tag_match,
     } : candidate);
   }
   return [...merged.values()];

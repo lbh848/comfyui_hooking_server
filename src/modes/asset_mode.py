@@ -3830,6 +3830,7 @@ class AssetMode:
         char_dir = os.path.join(self.asset_dir, self._safe_dirname(character))
         outfits = set()
         expressions = set()
+        outfit_expressions: dict[str, list[str]] = {}
         if os.path.isdir(char_dir):
             for outfit_dir_name in sorted(os.listdir(char_dir)):
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
@@ -3837,14 +3838,15 @@ class AssetMode:
                     continue
                 if outfit_dir_name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR):
                     continue
-                outfit_has_files = False
+                found_expressions = []
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
                     if os.path.isdir(expr_path) and os.listdir(expr_path):
-                        outfit_has_files = True
+                        found_expressions.append(expr_dir_name)
                         expressions.add(expr_dir_name)
-                if outfit_has_files:
+                if found_expressions:
                     outfits.add(outfit_dir_name)
+                    outfit_expressions[outfit_dir_name] = found_expressions
 
         mapping = self._load_name_mapping().get(character, {})
 
@@ -3855,6 +3857,7 @@ class AssetMode:
             "outfit_mapping": mapping.get("outfits", {}),
             "expressions": sorted(expressions),
             "expression_mapping": mapping.get("expressions", {}),
+            "outfit_expressions": outfit_expressions,
             "export_format": mapping.get("export_format", "webp"),
             "export_quality": mapping.get("export_quality", 90),
             "naming_order": mapping.get("naming_order", ["character", "outfit", "expression"]),
@@ -5224,14 +5227,19 @@ class AssetMode:
         mapping_override: dict | None = None,
         export_plan: dict | None = None,
         video_overrides: dict | None = None,
+        postprocess_settings: dict | None = None,
     ):
         """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환.
         selected_outfits / selected_expressions(디렉터리명 리스트)가 주어지면 해당 항목만 내보낸다.
         None이면 전체 내보내기(기존 동작)."""
         import zipfile, io, logging
         from PIL import Image
+        from asset_postprocess import apply_postprocess, has_active_postprocess
 
         log = logging.getLogger("asset_export")
+        postprocess_active = has_active_postprocess(
+            self.asset_workspace, postprocess_settings
+        )
         plan = export_plan or self.build_character_export_plan(
             character,
             selected_outfits,
@@ -5311,18 +5319,31 @@ class AssetMode:
                         f"{'후처리 결과' if source_for_zip != img_path else '원본'} 추가: "
                         f"{zip_name} (포맷·품질 설정 무시)"
                     )
-                elif orig_ext == ext and not need_recompress:
+                elif orig_ext == ext and not need_recompress and not postprocess_active:
                     zf.write(img_path, zip_name)
                     log.info(f"[ZIP 내보내기] [{added + 1}] 원본 그대로 추가: {zip_name}")
                 else:
                     try:
                         log.info(
                             f"[ZIP 내보내기] [{added + 1}] 변환 중: "
-                            f"{rep_file} → {zip_name} ({pil_format}, q={pil_quality})"
+                            f"{rep_file} → {zip_name} ({pil_format}, q={pil_quality}"
+                            f"{', 후처리' if postprocess_active else ''})"
                         )
                         with Image.open(img_path) as opened:
                             opened.load()
                             img = opened
+                            applied_postprocess = False
+                            if postprocess_active:
+                                img, applied_postprocess = apply_postprocess(
+                                    img, self.asset_workspace, postprocess_settings
+                                )
+                            if not applied_postprocess and orig_ext == ext and not need_recompress:
+                                zf.write(img_path, zip_name)
+                                log.info(
+                                    f"[ZIP 내보내기] [{added + 1}] 후처리 미적용 대상 원본 그대로 추가: {zip_name}"
+                                )
+                                added += 1
+                                continue
                             if pil_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                                 img = img.convert("RGB")
                             elif pil_format != "AVIF" and img.mode not in ("RGB", "RGBA"):
