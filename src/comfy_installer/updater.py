@@ -30,6 +30,7 @@ HOOKING_REPOSITORY = "https://github.com/lbh848/comfyui_hooking_server"
 HOOKING_BRANCH = "main"
 _QUARANTINE_ROOT_NAME = "comfy-installer-quarantine"
 _TRACKED_BACKUP_ROOT_NAME = "update_backup"
+_REPLACED_EXECUTABLES_DIR_NAME = "replaced_executables"
 
 
 @dataclass(frozen=True)
@@ -922,6 +923,137 @@ def backup_and_restore_tracked_changes(
     }
 
 
+def _cleanup_replaced_executables(backup_root: Path) -> None:
+    """Best-effort cleanup of renamed running executables from earlier updates."""
+    replaced_root = backup_root / _REPLACED_EXECUTABLES_DIR_NAME
+    if not replaced_root.is_dir() or replaced_root.is_symlink():
+        return
+    for dirpath, dirnames, filenames in os.walk(replaced_root, topdown=False):
+        current = Path(dirpath)
+        for filename in filenames:
+            try:
+                (current / filename).unlink()
+            except OSError:
+                pass
+        for dirname in dirnames:
+            try:
+                (current / dirname).rmdir()
+            except OSError:
+                pass
+    try:
+        replaced_root.rmdir()
+    except OSError:
+        pass
+
+
+def _changed_executable_paths(root: Path, target_ref: str) -> tuple[Path, ...]:
+    """Return tracked Windows ``.exe`` paths that Git must unlink or replace."""
+    if os.name != "nt":
+        return ()
+    raw_output = _run_git_capture(
+        root,
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=MDT",
+        "-z",
+        "HEAD",
+        target_ref,
+        "--",
+    )
+    if not raw_output:
+        return ()
+    try:
+        decoded = raw_output.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        print(
+            "[COMFY_INSTALL][UPDATE] 변경 실행 파일 경로 UTF-8 해석 실패: "
+            f"root={root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise HookingServerUpdateError(
+            "업데이트 대상 실행 파일 경로를 UTF-8로 해석하지 못해 업데이트를 중단합니다."
+        ) from exc
+    raw_paths = [path for path in decoded.split("\0") if path]
+    validated = _validate_tracked_change_paths(root, raw_paths)
+    executables: list[Path] = []
+    for relative in validated:
+        if relative.suffix.casefold() != ".exe":
+            continue
+        source = root / relative
+        if os.path.lexists(source) and source.is_file() and not source.is_symlink():
+            executables.append(relative)
+    return tuple(executables)
+
+
+def _move_executables_aside(
+    root: Path,
+    paths: tuple[Path, ...],
+    *,
+    backup_root: Path,
+    log: LogCallback | None,
+) -> list[tuple[Path, Path]]:
+    """Rename tracked Windows executables aside so Git can write new copies.
+
+    Windows rejects ``unlink()`` on a running ``.exe`` but allows renaming it on
+    the same volume. Moving the running binary out of the way lets Git materialize
+    the updated executable cleanly without stopping the updater first.
+    """
+    if not paths:
+        return []
+    replaced_root = backup_root / _REPLACED_EXECUTABLES_DIR_NAME
+    if replaced_root.is_symlink():
+        raise HookingServerUpdateError(
+            f"실행 파일 임시 이동 폴더가 심볼릭 링크입니다: {replaced_root}"
+        )
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    stage_dir = replaced_root / f"{stamp}_{uuid.uuid4().hex[:8]}"
+    moved: list[tuple[Path, Path]] = []
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=False)
+        for relative in paths:
+            _assert_no_symlink_parent(root, relative)
+            source = root / relative
+            destination = stage_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+            moved.append((source, destination))
+            _emit(
+                f"실행 중인 실행 파일 교체를 위해 임시 이동: {relative.as_posix()}",
+                log,
+            )
+        return moved
+    except Exception as exc:
+        _restore_moved_executables(moved, log=log)
+        print(
+            "[COMFY_INSTALL][UPDATE] 실행 파일 임시 이동 실패: "
+            f"root={root}, stage={stage_dir}, error={exc}"
+        )
+        traceback.print_exc()
+        raise HookingServerUpdateError(
+            "실행 중인 실행 파일을 교체 준비하지 못했습니다. "
+            f"공방을 종료한 뒤 다시 시도하세요: {exc}"
+        ) from exc
+
+
+def _restore_moved_executables(
+    moved: list[tuple[Path, Path]],
+    *,
+    log: LogCallback | None,
+) -> None:
+    for source, destination in reversed(moved):
+        if destination.exists() and not source.exists():
+            try:
+                os.replace(destination, source)
+                _emit(f"업데이트 실패로 실행 파일 복원: {source.name}", log)
+            except OSError as exc:
+                print(
+                    "[COMFY_INSTALL][UPDATE] 실패 후 실행 파일 복원 실패: "
+                    f"source={source}, destination={destination}, error={exc}"
+                )
+                traceback.print_exc()
+
+
 def _normalize_repository(value: str) -> str:
     return value.strip().rstrip("/").removesuffix(".git").casefold()
 
@@ -981,18 +1113,29 @@ def update_hooking_server(
                 f"[후킹 서버 업데이트] 사용자가 요청하여 origin/{HOOKING_BRANCH} 업데이트 시작: "
                 f"현재={before[:12]}"
             )
+        backup_root = data_root(root) / _TRACKED_BACKUP_ROOT_NAME
+        _cleanup_replaced_executables(backup_root)
         quarantine = _prepare_untracked_quarantine(
             root, log=log,
-            backup_root=data_root(root) / _TRACKED_BACKUP_ROOT_NAME / "untracked",
+            backup_root=backup_root / "untracked",
         )
+        moved_executables: list[tuple[Path, Path]] = []
         try:
-            if has_eol_only_tracked_changes(root):
+            changed_executables = _changed_executable_paths(root, remote)
+            if changed_executables or has_eol_only_tracked_changes(root):
                 run_command(
                     ["git", "merge-base", "--is-ancestor", "HEAD", remote],
                     cwd=root,
                     cancel_event=cancel_event,
                     log=log,
                 )
+                if changed_executables:
+                    moved_executables = _move_executables_aside(
+                        root,
+                        changed_executables,
+                        backup_root=backup_root,
+                        log=log,
+                    )
                 run_command(
                     ["git", "reset", "--hard", remote],
                     cwd=root,
@@ -1009,8 +1152,11 @@ def update_hooking_server(
                     timeout=900,
                 )
         except Exception as update_exc:
+            _restore_moved_executables(moved_executables, log=log)
             try:
-                _restore_untracked_quarantine(root, quarantine, log=log)
+                _restore_untracked_quarantine(
+                    root, quarantine, log=log, keep_conflicts=True
+                )
             except Exception as restore_exc:
                 print(
                     "[COMFY_INSTALL][UPDATE] Git 업데이트 실패 후 미추적 "
@@ -1037,6 +1183,7 @@ def update_hooking_server(
                     f"원인: {update_exc}"
                 ) from update_exc
             raise
+        _cleanup_replaced_executables(backup_root)
         _restore_untracked_quarantine(root, quarantine, log=log, keep_conflicts=True)
         replace_distribution_files(root, remote, "HEAD")
         after = _git_value(root, "rev-parse", "HEAD").lower()
